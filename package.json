@@ -1,17 +1,20 @@
 {
   "name": "minipad-next",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
   "description": "热键呼出的悬浮多标签笔记本,参考 minipad2 的使用体验",
   "scripts": {
     "prepare-assets": "node scripts/prepare.mjs",
+    "preview": "node scripts/prepare.mjs && node scripts/serve.mjs",
+    "test:ui": "node scripts/prepare.mjs && node --test tests/ui.test.mjs",
     "icons": "tauri icon app-icon.svg -o src-tauri/icons",
     "tauri": "tauri",
     "dev": "tauri dev",
     "build": "tauri build"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2.12.1"
+    "@tauri-apps/cli": "^2.12.1",
+    "playwright": "1.56.1"
   },
   "dependencies": {
     "@highlightjs/cdn-assets": "^11.12.0",

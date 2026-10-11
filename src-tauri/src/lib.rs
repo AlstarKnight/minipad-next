@@ -1,12 +1,13 @@
+mod backup;
 mod edge;
 mod notes;
 
 use edge::{Edge, Rect};
-use notes::NoteFile;
+use notes::Book;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
@@ -34,7 +35,12 @@ pub struct Geom {
 
 impl Default for Geom {
     fn default() -> Self {
-        Geom { x: 0, y: 0, w: 440, h: 540 }
+        Geom {
+            x: 0,
+            y: 0,
+            w: 440,
+            h: 540,
+        }
     }
 }
 
@@ -49,6 +55,12 @@ pub struct Settings {
     theme: String,
     font_size: u32,
     notes_dir: String,
+    /// 每天第一次保存时把笔记文件夹打包备份
+    backup_enabled: bool,
+    /// 保留最近几份备份
+    backup_keep: u32,
+    /// 备份放在哪里,空着就用程序数据目录下的 backups
+    backup_dir: String,
     window: Option<Geom>,
 }
 
@@ -63,24 +75,22 @@ impl Default for Settings {
             theme: "system".into(),
             font_size: 14,
             notes_dir: String::new(),
+            backup_enabled: true,
+            backup_keep: 14,
+            backup_dir: String::new(),
             window: None,
         }
     }
 }
 
 #[derive(Serialize)]
-struct Note {
-    name: String,
-    content: String,
-    mode: String,
-}
-
-#[derive(Serialize)]
 struct LoadedState {
     settings: Settings,
     notes_dir: String,
-    notes: Vec<Note>,
-    active: String,
+    /// 全部笔记本,「默认」(名字是空字符串)在最前
+    books: Vec<Book>,
+    /// 当前打开的笔记本
+    book: String,
     /// 启动时热键注册失败的原因(比如被别的软件占用了)
     hotkey_error: Option<String>,
     version: String,
@@ -105,6 +115,19 @@ struct AppState {
     hotkey_paused: AtomicBool,
     /// 窗口出来以后用户打过字:只要窗口还有焦点,就不自动缩回去
     typing: AtomicBool,
+    /// 最近一次自动备份是哪天(这一天就不用再备份了)
+    backup_day: Mutex<String>,
+    /// 后台正在打包备份
+    backup_running: AtomicBool,
+}
+
+#[derive(Serialize)]
+struct BackupInfo {
+    /// 实际使用的备份文件夹
+    dir: String,
+    /// 最近一份备份的日期
+    latest: Option<String>,
+    count: usize,
 }
 
 // ---------- 路径与设置 ----------
@@ -129,6 +152,52 @@ fn notes_dir(app: &AppHandle, settings: &Settings) -> PathBuf {
 fn current_notes_dir(app: &AppHandle) -> PathBuf {
     let s = app.state::<AppState>().settings.lock().unwrap().clone();
     notes_dir(app, &s)
+}
+
+fn backup_dir(app: &AppHandle, settings: &Settings) -> PathBuf {
+    if !settings.backup_dir.trim().is_empty() {
+        return PathBuf::from(settings.backup_dir.trim());
+    }
+    app.path()
+        .app_data_dir()
+        .unwrap_or_else(|_| PathBuf::from("."))
+        .join("backups")
+}
+
+/// `inner` 是不是 `outer` 本身或者在它里面(两个文件夹都要已经存在)
+fn is_inside(inner: &Path, outer: &Path) -> bool {
+    match (fs::canonicalize(inner), fs::canonicalize(outer)) {
+        (Ok(i), Ok(o)) => i.starts_with(o),
+        _ => false,
+    }
+}
+
+/// 改笔记前调用:今天还没备份过就在后台把笔记文件夹打包。
+/// 只试一次,失败了通知前端提示一下,明天(或者重启程序后)再试。
+fn maybe_backup(app: &AppHandle) {
+    let st = app.state::<AppState>();
+    let settings = st.settings.lock().unwrap().clone();
+    if !settings.backup_enabled {
+        return;
+    }
+    let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+    if *st.backup_day.lock().unwrap() == today || st.backup_running.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let notes = notes_dir(app, &settings);
+    let dest = backup_dir(app, &settings);
+    let keep = settings.backup_keep as usize;
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let result = backup::run(&notes, &dest, &today, keep);
+        let st = app.state::<AppState>();
+        *st.backup_day.lock().unwrap() = today;
+        st.backup_running.store(false, Ordering::SeqCst);
+        if let Err(e) = result {
+            eprintln!("{e}");
+            let _ = app.emit("backup-error", e);
+        }
+    });
 }
 
 fn load_settings(app: &AppHandle) -> Settings {
@@ -188,6 +257,8 @@ const WELCOME: &str = r#"# 欢迎使用 Minipad Next
 - 把窗口拖到屏幕**上边、左边或右边**,鼠标移开后会自动贴边隐藏,鼠标碰到边缘再滑出来
 - 内容会自动保存,每个页面就是笔记文件夹里的一个 `.md` 文件
 - 按 **Ctrl+E** 在"编辑"和"阅读"之间切换,阅读模式下代码块右上角有"复制"按钮
+- 页面多了可以分**笔记本**:点标签栏最左边的笔记本名字(或按 **Ctrl+B**)新建和切换,每个笔记本就是笔记文件夹里的一个子文件夹
+- 每天第一次保存时会自动把笔记文件夹备份成 zip,默认保留最近 14 份,可以在设置里改
 
 ```python
 print("点右上角的复制按钮试试")
@@ -198,12 +269,14 @@ print("点右上角的复制按钮试试")
 | 按键 | 作用 |
 | --- | --- |
 | Ctrl+M | 呼出 / 隐藏(全局) |
+| Ctrl+B | 切换笔记本 |
 | Ctrl+T | 新建页面 |
 | Ctrl+E | 编辑 / 阅读切换 |
-| Ctrl+F | 搜索全部页面 |
+| Ctrl+F | 搜索全部笔记本的页面 |
 | Ctrl+Tab | 下一个页面 |
 | Ctrl+1 ~ 9 | 跳到第 N 个页面 |
 | 双击标签 | 重命名 |
+| 右键标签 | 重命名、移到别的笔记本、删除 |
 | Esc | 隐藏窗口 |
 "#;
 
@@ -216,33 +289,23 @@ fn load_state(app: AppHandle) -> Result<LoadedState, String> {
     let dir = notes_dir(&app, &settings);
     fs::create_dir_all(&dir).map_err(|e| format!("无法创建笔记文件夹 {}:{e}", dir.display()))?;
 
-    let mut names = notes::list_names(&dir)?;
-    if names.is_empty() {
+    // 第一次用(文件夹里既没有页面也没有笔记本)时写一页说明
+    if notes::list_names(&dir)?.is_empty() && notes::list_books(&dir)?.is_empty() {
         notes::write_atomic(&notes::note_path(&dir, "欢迎"), WELCOME)?;
-        names.push("欢迎".into());
     }
-
-    let meta = notes::read_meta(&dir);
-    let ordered = notes::order_names(&names, &meta.order);
-    let list = ordered
-        .iter()
-        .map(|n| Note {
-            name: n.clone(),
-            content: notes::read_note(&dir, n),
-            mode: meta.modes.get(n).cloned().unwrap_or_else(|| "edit".into()),
-        })
-        .collect();
-    let active = if ordered.contains(&meta.active) {
-        meta.active.clone()
+    let books = notes::load_books(&dir)?;
+    let saved = notes::read_meta(&dir).book;
+    let book = if books.iter().any(|b| b.name == saved) {
+        saved
     } else {
-        ordered[0].clone()
+        String::new()
     };
     let hotkey_error = st.hotkey_error.lock().unwrap().clone();
     Ok(LoadedState {
         settings,
         notes_dir: dir.to_string_lossy().to_string(),
-        notes: list,
-        active,
+        books,
+        book,
         hotkey_error,
         version: app.package_info().version.to_string(),
         debug: cfg!(debug_assertions),
@@ -251,49 +314,105 @@ fn load_state(app: AppHandle) -> Result<LoadedState, String> {
 
 /// 重新读一遍笔记文件夹,用来发现在别处(网盘同步、其他编辑器)改过的内容
 #[tauri::command]
-fn read_notes(app: AppHandle) -> Result<Vec<NoteFile>, String> {
-    notes::read_all(&current_notes_dir(&app))
+fn read_notes(app: AppHandle) -> Result<Vec<Book>, String> {
+    notes::load_books(&current_notes_dir(&app))
 }
 
 #[tauri::command]
-fn save_note(app: AppHandle, name: String, content: String) -> Result<(), String> {
-    let dir = current_notes_dir(&app);
-    notes::write_atomic(&notes::note_path(&dir, &name), &content)
+fn save_note(app: AppHandle, book: String, name: String, content: String) -> Result<(), String> {
+    let path = notes::page_path(&current_notes_dir(&app), &book, &name)?;
+    maybe_backup(&app);
+    notes::write_atomic(&path, &content)
 }
 
 #[tauri::command]
-fn create_note(app: AppHandle, name: String) -> Result<String, String> {
-    let dir = current_notes_dir(&app);
+fn create_note(app: AppHandle, book: String, name: String) -> Result<String, String> {
+    let dir = notes::book_dir(&current_notes_dir(&app), &book)?;
+    maybe_backup(&app);
     let name = notes::unique_name(&dir, &name, None);
     notes::write_atomic(&notes::note_path(&dir, &name), "")?;
     Ok(name)
 }
 
 #[tauri::command]
-fn rename_note(app: AppHandle, old: String, new: String) -> Result<String, String> {
-    let dir = current_notes_dir(&app);
+fn rename_note(app: AppHandle, book: String, old: String, new: String) -> Result<String, String> {
+    let root = current_notes_dir(&app);
+    let src = notes::page_path(&root, &book, &old)?;
+    let dir = notes::book_dir(&root, &book)?;
     let new = notes::unique_name(&dir, &new, Some(&old));
     if new != old {
-        fs::rename(notes::note_path(&dir, &old), notes::note_path(&dir, &new))
-            .map_err(|e| e.to_string())?;
+        maybe_backup(&app);
+        fs::rename(src, notes::note_path(&dir, &new)).map_err(|e| e.to_string())?;
     }
     Ok(new)
 }
 
 #[tauri::command]
-fn delete_note(app: AppHandle, name: String) -> Result<(), String> {
-    notes::move_to_trash(&current_notes_dir(&app), &name)
+fn delete_note(app: AppHandle, book: String, name: String) -> Result<(), String> {
+    maybe_backup(&app);
+    notes::move_to_trash(&current_notes_dir(&app), &book, &name)
+}
+
+/// 把页面移到另一个笔记本,返回它在那边的名字(重名时会加编号)
+#[tauri::command]
+fn move_note(app: AppHandle, book: String, name: String, target: String) -> Result<String, String> {
+    maybe_backup(&app);
+    notes::move_note(&current_notes_dir(&app), &book, &name, &target)
 }
 
 #[tauri::command]
 fn save_meta(
     app: AppHandle,
+    book: String,
     order: Vec<String>,
     active: String,
     modes: HashMap<String, String>,
 ) -> Result<(), String> {
-    let dir = current_notes_dir(&app);
-    notes::write_meta(&dir, &notes::Meta { order, active, modes })
+    notes::save_book_meta(&current_notes_dir(&app), &book, order, active, modes)
+}
+
+#[tauri::command]
+fn create_book(app: AppHandle, name: String) -> Result<String, String> {
+    maybe_backup(&app);
+    notes::create_book(&current_notes_dir(&app), &name)
+}
+
+#[tauri::command]
+fn rename_book(app: AppHandle, old: String, new: String) -> Result<String, String> {
+    maybe_backup(&app);
+    notes::rename_book(&current_notes_dir(&app), &old, &new)
+}
+
+#[tauri::command]
+fn delete_book(app: AppHandle, name: String) -> Result<(), String> {
+    maybe_backup(&app);
+    notes::delete_book(&current_notes_dir(&app), &name)
+}
+
+/// 记住当前打开的笔记本,下次启动还打开它
+#[tauri::command]
+fn set_current_book(app: AppHandle, book: String) -> Result<(), String> {
+    notes::set_current_book(&current_notes_dir(&app), &book)
+}
+
+#[tauri::command]
+fn backup_info(app: AppHandle) -> BackupInfo {
+    let settings = app.state::<AppState>().settings.lock().unwrap().clone();
+    let dir = backup_dir(&app, &settings);
+    let all = backup::list(&dir);
+    BackupInfo {
+        dir: dir.to_string_lossy().to_string(),
+        latest: all.last().map(|(day, _)| day.clone()),
+        count: all.len(),
+    }
+}
+
+#[tauri::command]
+fn open_backup_dir(app: AppHandle) -> Result<(), String> {
+    let settings = app.state::<AppState>().settings.lock().unwrap().clone();
+    let dir = backup_dir(&app, &settings);
+    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    tauri_plugin_opener::open_path(dir, None::<&str>).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -304,9 +423,18 @@ fn save_settings(app: AppHandle, settings: Settings) -> Result<Settings, String>
     new.window = old.window.clone();
     new.hotkey = new.hotkey.trim().to_string();
     new.notes_dir = new.notes_dir.trim().to_string();
+    new.backup_dir = new.backup_dir.trim().to_string();
+    new.backup_keep = new.backup_keep.clamp(1, 365);
 
     if !new.notes_dir.is_empty() {
         fs::create_dir_all(&new.notes_dir).map_err(|e| format!("无法使用这个文件夹:{e}"))?;
+    }
+    if new.backup_enabled {
+        let dest = backup_dir(&app, &new);
+        fs::create_dir_all(&dest).map_err(|e| format!("无法使用这个备份位置:{e}"))?;
+        if is_inside(&dest, &notes_dir(&app, &new)) {
+            return Err("备份位置不能放在笔记文件夹里面,请换一个文件夹".into());
+        }
     }
     // 先换热键(失败就恢复旧的),再改开机启动(失败就把热键也换回去),保证要么都生效要么都不变
     state.hotkey_paused.store(false, Ordering::SeqCst);
@@ -316,7 +444,11 @@ fn save_settings(app: AppHandle, settings: Settings) -> Result<Settings, String>
     }
     if new.autostart != old.autostart {
         let al = app.autolaunch();
-        let r = if new.autostart { al.enable() } else { al.disable() };
+        let r = if new.autostart {
+            al.enable()
+        } else {
+            al.disable()
+        };
         if let Err(e) = r {
             let _ = register_hotkey(&app, &old.hotkey);
             return Err(format!("开机启动设置失败:{e}"));
@@ -331,6 +463,13 @@ fn save_settings(app: AppHandle, settings: Settings) -> Result<Settings, String>
     if !new.edge_hide {
         restore_from_edge(&app, false);
     }
+    // 换了笔记文件夹或备份位置,今天就在新地方重新判断要不要备份
+    if new.notes_dir != old.notes_dir
+        || new.backup_dir != old.backup_dir
+        || new.backup_enabled != old.backup_enabled
+    {
+        state.backup_day.lock().unwrap().clear();
+    }
     *state.settings.lock().unwrap() = new.clone();
     persist_settings(&app);
     Ok(new)
@@ -340,7 +479,9 @@ fn save_settings(app: AppHandle, settings: Settings) -> Result<Settings, String>
 #[tauri::command]
 fn pause_hotkey(app: AppHandle) {
     let _ = app.global_shortcut().unregister_all();
-    app.state::<AppState>().hotkey_paused.store(true, Ordering::SeqCst);
+    app.state::<AppState>()
+        .hotkey_paused
+        .store(true, Ordering::SeqCst);
 }
 
 #[tauri::command]
@@ -355,8 +496,9 @@ fn note_activity(app: AppHandle) {
 }
 
 #[tauri::command]
-async fn pick_folder(app: AppHandle) -> Option<String> {
-    let mut dialog = app.dialog().file().set_title("选择笔记文件夹");
+async fn pick_folder(app: AppHandle, title: Option<String>) -> Option<String> {
+    let title = title.unwrap_or_else(|| "选择文件夹".into());
+    let mut dialog = app.dialog().file().set_title(title);
     if let Some(win) = main_window(&app) {
         dialog = dialog.set_parent(&win);
     }
@@ -380,7 +522,10 @@ fn open_notes_dir(app: AppHandle) -> Result<(), String> {
 #[tauri::command]
 fn open_link(url: String) -> Result<(), String> {
     let lower = url.to_lowercase();
-    if !(lower.starts_with("http://") || lower.starts_with("https://") || lower.starts_with("mailto:")) {
+    if !(lower.starts_with("http://")
+        || lower.starts_with("https://")
+        || lower.starts_with("mailto:"))
+    {
         return Err("只能打开网页链接".into());
     }
     tauri_plugin_opener::open_url(url, None::<&str>).map_err(|e| e.to_string())
@@ -416,7 +561,9 @@ fn monitor_rect(m: &Monitor) -> Rect {
 fn show_main(app: &AppHandle) {
     if let Some(win) = main_window(app) {
         restore_from_edge(app, false);
-        app.state::<AppState>().typing.store(false, Ordering::SeqCst);
+        app.state::<AppState>()
+            .typing
+            .store(false, Ordering::SeqCst);
         let _ = win.unminimize();
         let _ = win.show();
         let _ = win.set_focus();
@@ -437,7 +584,13 @@ fn toggle_main(app: &AppHandle) {
     let Some(win) = main_window(app) else { return };
     let visible = win.is_visible().unwrap_or(false);
     let focused = win.is_focused().unwrap_or(false);
-    let edge_hidden = app.state::<AppState>().edge.lock().unwrap().hidden.is_some();
+    let edge_hidden = app
+        .state::<AppState>()
+        .edge
+        .lock()
+        .unwrap()
+        .hidden
+        .is_some();
     if visible && focused && !edge_hidden {
         hide_main(app);
     } else {
@@ -454,7 +607,9 @@ fn restore_from_edge(app: &AppHandle, focus: bool) {
         (e.hidden, e.monitor)
     };
     let Some(edge) = edge else { return };
-    let Some(rect) = window_rect(&win) else { return };
+    let Some(rect) = window_rect(&win) else {
+        return;
+    };
     let (x, y) = edge::shown_position(edge, rect, mon);
     let _ = win.set_position(PhysicalPosition::new(x, y));
     {
@@ -553,7 +708,10 @@ fn apply_saved_geometry(win: &WebviewWindow, g: &Geom) {
     let monitors = win.available_monitors().unwrap_or_default();
     let visible = monitors.iter().any(|m| {
         let r = monitor_rect(m);
-        g.x + 40 < r.x + r.w && g.x + g.w as i32 - 40 > r.x && g.y >= r.y - 4 && g.y + 30 < r.y + r.h
+        g.x + 40 < r.x + r.w
+            && g.x + g.w as i32 - 40 > r.x
+            && g.y >= r.y - 4
+            && g.y + 30 < r.y + r.h
     });
     if g.w >= 200 && g.h >= 150 {
         let _ = win.set_size(PhysicalSize::new(g.w, g.h));
@@ -595,7 +753,14 @@ pub fn run() {
             create_note,
             rename_note,
             delete_note,
+            move_note,
             save_meta,
+            create_book,
+            rename_book,
+            delete_book,
+            set_current_book,
+            backup_info,
+            open_backup_dir,
             save_settings,
             pause_hotkey,
             resume_hotkey,
@@ -634,7 +799,8 @@ pub fn run() {
 
             // 托盘
             let toggle = MenuItem::with_id(app, "toggle", "显示 / 隐藏", true, None::<&str>)?;
-            let open_dir = MenuItem::with_id(app, "open_dir", "打开笔记文件夹", true, None::<&str>)?;
+            let open_dir =
+                MenuItem::with_id(app, "open_dir", "打开笔记文件夹", true, None::<&str>)?;
             let sep = PredefinedMenuItem::separator(app)?;
             let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&toggle, &open_dir, &sep, &quit])?;

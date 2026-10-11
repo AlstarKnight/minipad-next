@@ -5,7 +5,8 @@
     3. edge hide: docked at the top edge the window slides away when the cursor leaves, and back when it touches the edge
     4. settings and notes from the 0.1.x folder are moved to the new folder
     5. a second launch does not start a second instance
-  Checks 1 and 4 fail the build. Checks 2, 3 and 5 depend on the desktop session and only emit warnings.
+    6. notebooks and daily backup: an empty current notebook gets its first page, and that first change of the day writes today's backup zip
+  Checks 1, 4 and 6 fail the build. Checks 2, 3 and 5 depend on the desktop session and only emit warnings.
 
   The test deletes Minipad Next's data folders in %APPDATA%, so it only runs on CI unless -Force is given.
 
@@ -59,6 +60,9 @@ function Wait-Until([scriptblock]$Condition, [int]$Seconds) {
 }
 
 function Get-MainWindow { [Win32]::FindByTitle($Title) }
+
+# today's local date as yyyy-MM-dd, the date in the daily backup's file name
+function Get-Today { (Get-Date).ToString("yyyy-MM-dd", [Globalization.CultureInfo]::InvariantCulture) }
 
 function Get-Top([IntPtr]$Hwnd) {
     $r = New-Object Win32+RECT
@@ -174,6 +178,34 @@ if ($proc -and -not $proc.HasExited) {
     }
 }
 Stop-App $proc
+$proc = $null
+
+# ---- notebooks and daily backup ----
+Check "notebooks and daily backup" $true {
+    Remove-Item -LiteralPath $AppDir, $OldDir -Recurse -Force -ErrorAction SilentlyContinue
+    $notes = Join-Path $AppDir "notes"
+    $book = Join-Path $notes "Empty"
+    $backups = Join-Path $AppDir "backups"
+    if (Test-Path -LiteralPath $backups) { throw "could not clear the old backups in $backups" }
+    # a page in the default notebook, an empty notebook, and the empty notebook remembered as the current one
+    New-Item -ItemType Directory -Force -Path $book | Out-Null
+    Set-Content -LiteralPath (Join-Path $notes "root.md") -Value "a page in the default notebook" -Encoding utf8
+    Set-Content -LiteralPath (Join-Path $notes ".minipad.json") -Value '{"book":"Empty"}' -Encoding utf8
+    $day = Get-Today
+    $script:proc = Start-App
+    # the frontend gives the empty current notebook its first page through create_note
+    $created = Wait-Until { @(Get-ChildItem -LiteralPath $book -Filter *.md -ErrorAction SilentlyContinue).Count -gt 0 } 30
+    if (-not $created) { throw "no page was created in the empty current notebook $book" }
+    # that is the first change of the day, so the backend zips the notes folder into today's backup
+    $zipped = Wait-Until {
+        $now = Get-Today
+        @(Get-ChildItem -LiteralPath $backups -Filter *.zip -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -like "*$day.zip" -or $_.Name -like "*$now.zip" }).Count -gt 0
+    } 30
+    if (-not $zipped) { throw "no backup for $day was written to $backups" }
+}
+Stop-App $proc
+$proc = $null
 
 Write-Host ""
 Write-Host "Required checks failed: $($failures.Count). Optional checks with warnings: $($warnings.Count)."
