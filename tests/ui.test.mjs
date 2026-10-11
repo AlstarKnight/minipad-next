@@ -1065,3 +1065,84 @@ describe("editor", () => {
     await until(async () => (await h.toast()).includes("隐藏"), true, "Esc hides the window");
   });
 });
+
+// ---------- 0.2.3:阅读模式的代码块卡片 ----------
+
+const CODE_PAGE = {
+  "": {
+    代码: [
+      "```js 牛奶测试",
+      "const s = 'A previously isolated, newly discovered, randomly mating mammalian species raises its young for 18 years';",
+      "function f(x) {",
+      "  return x * 2;",
+      "}",
+      "```",
+      "",
+      "```",
+      "没有语言也没有标题",
+      "```",
+    ].join("\n"),
+  },
+};
+
+describe("reading mode code blocks", () => {
+  ui(
+    "a code block shows its title, language, line numbers and wraps long lines; it folds and copies",
+    { seed: seed(CODE_PAGE, { modes: { "": { 代码: "view" } } }) },
+    async (h) => {
+      const { p } = h;
+      await p.locator("#preview .codeblock").first().waitFor();
+      const blocks = () =>
+        p.$$eval("#preview .codeblock", (els) =>
+          els.map((e) => ({
+            title: e.querySelector(".cb-title").textContent,
+            lang: e.querySelector(".lang")?.textContent ?? null,
+            lines: e.querySelectorAll(".cb-line").length,
+          })),
+        );
+      assert.deepEqual(await blocks(), [
+        { title: "牛奶测试", lang: "JavaScript", lines: 4 },
+        { title: "", lang: null, lines: 1 },
+      ]);
+      const first = p.locator("#preview .codeblock").first();
+      const numbers = () =>
+        first.locator(".cb-line").evaluateAll((els) => els.map((e) => getComputedStyle(e, "::before").content));
+      assert.deepEqual(await numbers(), Array(4).fill("counter(line)"), "every line is numbered");
+      assert.equal(await first.locator("pre").evaluate((e) => e.scrollWidth - e.clientWidth), 0, "long lines wrap");
+
+      await first.locator(".cb-toggle").click();
+      assert.ok(await first.locator("pre").isHidden(), "the toggle folds the code");
+      assert.equal(await first.locator(".cb-toggle").getAttribute("aria-expanded"), "false");
+      assert.equal(await first.locator(".cb-count").textContent(), "4 行", "a folded block says how many lines it has");
+      await first.locator(".cb-toggle").click();
+      assert.ok(await first.locator("pre").isVisible(), "and unfolds it again");
+      assert.equal(await h.toast(), "", "clicking the header does not switch to editing");
+      assert.ok(await p.isVisible("#preview"), "still in reading mode");
+
+      await first.locator(".copy").click();
+      await until(() => first.locator(".copy").evaluate((b) => b.classList.contains("done")), true, "the copy button shows it copied");
+      const clip = await p.evaluate(() => navigator.clipboard.readText());
+      assert.equal(clip, CODE_PAGE[""].代码.split("\n").slice(1, 5).join("\n"), "copies the code without line numbers");
+    },
+  );
+
+  ui("code line numbers can be turned off in the settings", { seed: seed(CODE_PAGE, { modes: { "": { 代码: "view" } } }) }, async (h) => {
+    const { p } = h;
+    await p.locator("#preview .codeblock").first().waitFor();
+    const numbered = () => p.$eval("#preview .cb-line", (e) => getComputedStyle(e, "::before").content !== "none");
+    assert.equal(await numbered(), true, "on by default");
+    await p.click("#btn-settings");
+    await p.locator("#settings").waitFor();
+    assert.equal(await p.isChecked("#set-code-lines"), true);
+    await p.uncheck("#set-code-lines");
+    await p.click("#set-save");
+    await until(numbered, false, "line numbers hidden");
+    await until(async () => (await h.stored())?.settings?.code_line_numbers, false, "the setting is saved");
+    await p.click("#btn-settings");
+    await p.locator("#settings").waitFor();
+    assert.equal(await p.isChecked("#set-code-lines"), false, "the checkbox remembers it");
+    await p.check("#set-code-lines");
+    await p.click("#set-save");
+    await until(numbered, true, "line numbers back");
+  });
+});
