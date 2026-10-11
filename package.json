@@ -11,7 +11,8 @@
     "build": "tauri build"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2.12.1"
+    "@tauri-apps/cli": "^2.12.1",
+    "playwright": "1.56.1"
   },
   "dependencies": {
     "@highlightjs/cdn-assets": "^11.12.0",
