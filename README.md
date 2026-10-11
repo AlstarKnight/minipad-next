@@ -292,16 +292,12 @@ npx tauri build --target x86_64-pc-windows-gnu
   1. 用 clippy 检查代码(有警告就算失败),跑单元测试;
   2. 构建安装包和免安装版;
   3. 真正启动程序做冒烟测试:窗口能不能出来、前端能不能读写笔记、全局热键、贴边隐藏、从 0.1.x 升级时的数据搬迁、空笔记本自动补一页、每日备份、重复启动只保留一个;
-  4. 把两个 exe 上传成这次运行的构建结果。
+  4. 把两个 exe 上传成这次运行的构建结果;
+  5. 合并到 main 时,新版本自动发布 Release(见下)。
 
-要发布新版本:先把 `package.json`、`src-tauri/Cargo.toml`、`src-tauri/tauri.conf.json` 里的版本号改好并在 `CHANGELOG.md` 写上更新内容,合并到 main 以后推送一个 `v` 开头的标签,例如:
+要发布新版本:把 `package.json`、`src-tauri/Cargo.toml`、`src-tauri/tauri.conf.json` 里的版本号改好,在 `CHANGELOG.md` 加上 `## 版本号` 这一节,然后合并到 main。合并后的构建通过以后,如果这个版本还没有 `v` 开头的标签,会自动建标签 `v版本号`、发布 Release,并附上安装版和免安装版,Release 的说明就是 CHANGELOG 里这个版本的那一节。已经发布过的版本不会重复发布。
 
-```powershell
-git tag v0.2.2
-git push origin v0.2.2
-```
-
-也可以直接在 GitHub 的 Releases 页面点“Draft a new release”,新建一个 `v` 开头的标签再发布,效果一样。构建通过后会把安装版和免安装版附到对应的 Release 上(没有 Release 的话会自动创建)。
+`CHANGELOG.md` 里没有这个版本的那一节时,构建会失败,提醒你补上。想手动发布也可以:推送一个 `v` 开头的标签,或者在 GitHub 的 Releases 页面点“Draft a new release”新建标签再发布,构建通过后同样会附上安装包。
 
 ---
 
@@ -316,6 +312,7 @@ minipad-next/
 ├─ scripts/
 │  ├─ prepare.mjs            构建前准备(复制第三方库,打包 CodeMirror)
 │  ├─ codemirror.mjs         打包 CodeMirror 的入口
+│  ├─ release-notes.mjs      从 CHANGELOG.md 取出某个版本的说明,自动发布时用
 │  ├─ serve.mjs              在浏览器里预览界面(npm run preview,界面测试也用它)
 │  └─ smoke-test.ps1         Windows 冒烟测试
 ├─ tests/
