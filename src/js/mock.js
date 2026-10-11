@@ -5,7 +5,7 @@ import { DEFAULT_DATE_FORMAT } from "./datetime.js";
 
 const KEY = "minipad-next-demo";
 const WELCOME =
-  "# 欢迎使用 Minipad Next\n\n这是浏览器里的界面预览,真正的程序在 Windows 上运行。\n\n```js\nconsole.log('点右上角的复制按钮试试');\n```\n";
+  "# 欢迎使用 Minipad Next\n\n这是浏览器里的界面预览,真正的程序在 Windows 上运行。选中文字试试上面出来的按钮。\n\n- [ ] 点方框勾选任务\n- [x] 已经做完的事\n\n```js 试试复制\nconsole.log('点右上角的复制按钮试试');\n```\n";
 const DEFAULT_SETTINGS = {
   hotkey: "Ctrl+M",
   always_on_top: true,
@@ -134,7 +134,7 @@ export function mockApi() {
       const root = bookOf("");
       if (!Object.keys(root.files).length && !bookNames().length) {
         root.files["欢迎"] = WELCOME;
-        root.meta = { order: ["欢迎"], active: "欢迎", modes: { 欢迎: "view" } };
+        root.meta = { order: ["欢迎"], active: "欢迎", modes: {} };
       }
       return {
         settings: db.settings,

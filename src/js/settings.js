@@ -1,6 +1,6 @@
 // ---------- 设置 ----------
 import { api } from "./api.js";
-import { $, preview } from "./dom.js";
+import { $ } from "./dom.js";
 import { state } from "./state.js";
 import { toast, closeOverlays } from "./ui.js";
 import { flushAll, saveMeta } from "./save.js";
@@ -19,7 +19,6 @@ export function applySettings() {
   $("#btn-pin").classList.toggle("on", s.always_on_top);
   $("#btn-pin").title = s.always_on_top ? "取消置顶" : "窗口置顶";
   applyEditorSettings(s);
-  preview.classList.toggle("code-lines", s.code_line_numbers);
 }
 matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => state.settings && applySettings());
 
@@ -38,7 +37,6 @@ export function openSettings() {
   $("#set-font").value = s.font_size;
   $("#set-dir").value = s.notes_dir;
   $("#set-dir").placeholder = state.notesDir;
-  $("#set-lines").checked = s.line_numbers;
   $("#set-date-format").value = s.date_format;
   updateDatePreview();
   $("#set-code-lines").checked = s.code_line_numbers;
@@ -99,7 +97,6 @@ async function submitSettings() {
     theme: $("#set-theme").value,
     font_size: Math.min(28, Math.max(10, Number($("#set-font").value) || 14)),
     notes_dir: $("#set-dir").value.trim(),
-    line_numbers: $("#set-lines").checked,
     date_format: $("#set-date-format").value.trim(),
     code_line_numbers: $("#set-code-lines").checked,
     backup_enabled: $("#set-backup").checked,
