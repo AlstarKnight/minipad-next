@@ -1,10 +1,11 @@
 // ---------- 提示、对话框、右键菜单 ----------
-import { $, editor } from "./dom.js";
+import { $ } from "./dom.js";
 import { current } from "./state.js";
 import { closeBooks } from "./notebooks.js";
+import { focusEditorView } from "./editor.js";
 
 export function focusEditor() {
-  if (current()?.mode === "edit") editor.focus();
+  if (current()?.mode === "edit") focusEditorView();
 }
 
 let toastTimer;

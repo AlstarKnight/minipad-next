@@ -1,8 +1,8 @@
 // Minipad Next 前端入口:启动、全局快捷键、按钮
 import { api, isMock } from "./api.js";
-import { $, editor, preview, tabsEl } from "./dom.js";
+import { $, preview, tabsEl } from "./dom.js";
 import { state, book, current } from "./state.js";
-import { toast, dialogOpen, closeDialog, closeMenu, closeOverlays } from "./ui.js";
+import { toast, dialogOpen, closeDialog, closeMenu, closeOverlays, focusEditor } from "./ui.js";
 import { markDirty, flushAll, saveMeta, resetActivity } from "./save.js";
 import { reload, syncFromDisk } from "./sync.js";
 import { rememberView, toggleMode } from "./page.js";
@@ -11,10 +11,13 @@ import { toggleBooks, closeBooks, bindBooks } from "./notebooks.js";
 import { setupMarkdown } from "./preview.js";
 import { openSearch, bindSearch } from "./search.js";
 import { openSettings, saveSettings, bindSettings } from "./settings.js";
+import { createEditor, editorView, insertText } from "./editor.js";
+import { formatDate } from "./datetime.js";
 
 // ---------- 启动 ----------
 async function init() {
   setupMarkdown();
+  createEditor({ onChange: markDirty });
   bindUi();
   await reload();
   api.listen("flush", () => flushAll());
@@ -24,7 +27,7 @@ async function init() {
     api.invoke("quit_app");
   });
   api.listen("shown", () => {
-    if (current()?.mode === "edit") editor.focus();
+    focusEditor();
     syncFromDisk();
   });
   api.listen("window-focus", () => {
@@ -32,6 +35,11 @@ async function init() {
     syncFromDisk();
   });
   api.listen("backup-error", (e) => toast("自动备份失败:" + e.payload, 5000));
+}
+
+// 有没有开着的弹层、菜单或对话框
+function anyOverlay() {
+  return dialogOpen() || ["#search", "#settings", "#books", "#ctx"].some((sel) => !$(sel).hidden);
 }
 
 async function hideWindow() {
@@ -42,14 +50,6 @@ async function hideWindow() {
 }
 
 function bindUi() {
-  editor.addEventListener("input", markDirty);
-  editor.addEventListener("keydown", (e) => {
-    if (e.key === "Tab" && !e.ctrlKey && !e.altKey) {
-      e.preventDefault();
-      document.execCommand("insertText", false, "\t");
-    }
-  });
-
   preview.addEventListener("click", (e) => {
     const a = e.target.closest("a");
     if (!a) return;
@@ -96,9 +96,9 @@ function bindUi() {
     if (!e.target.closest("#ctx")) closeMenu();
     if (!e.target.closest("#books, #btn-book, #ctx, #dialog")) closeBooks();
   });
-  // 只在输入框和阅读区保留系统右键菜单
+  // 只在编辑区、输入框和阅读区保留系统右键菜单
   document.addEventListener("contextmenu", (e) => {
-    if (!e.target.closest("textarea, input, #preview")) e.preventDefault();
+    if (!e.target.closest("#editor, textarea, input, #preview")) e.preventDefault();
   });
   // 标签栏上滚轮横向滚动
   tabsEl.addEventListener("wheel", (e) => {
@@ -113,17 +113,25 @@ function bindUi() {
     if (e.isComposing || e.keyCode === 229) return;
     const ctrl = e.ctrlKey || e.metaKey;
     const k = e.key.toLowerCase();
+    // F5 和记事本一样在光标处插入当前的日期时间;弹层、对话框开着或者在输入框里时什么也不做(也不刷新页面)
+    if (e.key === "F5") {
+      e.preventDefault();
+      if (!ctrl && !e.altKey && !anyOverlay() && !e.target.closest?.("input, textarea, select") && current()?.mode === "edit") {
+        insertText(formatDate(new Date(), state.settings?.date_format));
+      }
+      return;
+    }
+    // 正式版里屏蔽浏览器自带的刷新和打印,免得误按
+    if (!state.debug && ctrl && (k === "r" || k === "p")) {
+      e.preventDefault();
+      return;
+    }
     if (dialogOpen()) {
       if (e.key === "Escape" || e.key === "Enter") {
         e.preventDefault();
         // 焦点在"取消"上时按回车也是取消
         closeDialog(e.key === "Enter" && e.target !== $("#dialog-cancel"));
       }
-      return;
-    }
-    // 正式版里屏蔽浏览器自带的刷新和打印,免得误按
-    if (!state.debug && (e.key === "F5" || (ctrl && (k === "r" || k === "p")))) {
-      e.preventDefault();
       return;
     }
     if (e.key === "Escape") {
@@ -169,6 +177,14 @@ function bindUi() {
 }
 
 // 浏览器预览里给界面测试用
-if (isMock) window.__minipad = { state, sync: () => syncFromDisk(true) };
+if (isMock) {
+  window.__minipad = {
+    state,
+    sync: () => syncFromDisk(true),
+    get view() {
+      return editorView();
+    },
+  };
+}
 
 init();

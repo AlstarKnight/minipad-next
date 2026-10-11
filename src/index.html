@@ -30,7 +30,8 @@
   </header>
 
   <main id="main">
-    <textarea id="editor" spellcheck="false" placeholder="写点什么……"></textarea>
+    <!-- 编辑区:CodeMirror 编辑器由 js/editor.js 放进来 -->
+    <div id="editor"></div>
     <article id="preview" class="markdown" hidden></article>
   </main>
 
@@ -82,6 +83,13 @@
       </div>
       <div class="row">
         <button id="set-open-dir" class="link">打开笔记文件夹</button>
+      </div>
+      <h3>编辑器</h3>
+      <label class="row check"><input id="set-lines" type="checkbox" /> <span>显示行号</span></label>
+      <label class="row"><span>F5 插入的日期时间</span><input id="set-date-format" type="text" spellcheck="false" autocomplete="off" /></label>
+      <div class="row col">
+        <span id="set-date-preview" class="muted"></span>
+        <span>写法:yyyy 年、M 月、d 日、H 时、mm 分、ss 秒、dddd 星期几</span>
       </div>
       <h3>每日备份</h3>
       <label class="row check"><input id="set-backup" type="checkbox" /> <span>每天第一次保存时,把笔记文件夹备份成 zip</span></label>

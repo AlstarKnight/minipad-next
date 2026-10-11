@@ -28,6 +28,11 @@ export function renderTabs() {
     t.addEventListener("mousedown", (e) => {
       if (e.button === 0 && !t.querySelector("input")) switchTo(book().notes.indexOf(n));
     });
+    // 按下鼠标时浏览器会把焦点从编辑区拿走,松开时再放回去,点完标签就能接着打字。
+    // 换页时标签重画过,松开时鼠标下面已经是新画的标签,所以不用 click
+    t.addEventListener("mouseup", (e) => {
+      if (e.button === 0 && !t.querySelector("input")) focusEditor();
+    });
     t.addEventListener("dblclick", () => startRename(n));
     t.addEventListener("contextmenu", (e) => {
       e.preventDefault();

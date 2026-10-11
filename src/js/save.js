@@ -1,6 +1,6 @@
 // ---------- 保存 ----------
 import { api } from "./api.js";
-import { $, editor } from "./dom.js";
+import { $ } from "./dom.js";
 import { state, book, current } from "./state.js";
 import { updateCount } from "./page.js";
 
@@ -11,10 +11,9 @@ const metaDirty = new Set();
 // 换了当前笔记本,还没告诉后端
 let bookDirty = false;
 
-export function markDirty() {
-  const n = current();
+// 编辑器里改了页面 n 的内容(n.content 已经是新内容)
+export function markDirty(n = current()) {
   if (!n) return;
-  n.content = editor.value;
   n.dirty = true;
   setSaveStatus("dirty");
   updateCount();
