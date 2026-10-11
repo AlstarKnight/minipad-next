@@ -5,6 +5,8 @@
   "description": "热键呼出的悬浮多标签笔记本,参考 minipad2 的使用体验",
   "scripts": {
     "prepare-assets": "node scripts/prepare.mjs",
+    "preview": "node scripts/prepare.mjs && node scripts/serve.mjs",
+    "test:ui": "node scripts/prepare.mjs && node --test tests/ui.test.mjs",
     "icons": "tauri icon app-icon.svg -o src-tauri/icons",
     "tauri": "tauri",
     "dev": "tauri dev",

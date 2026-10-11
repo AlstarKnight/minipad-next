@@ -17,7 +17,8 @@
 ### 构建
 
 - 前端从一个 `app.js` 拆成 `src/js/` 下按功能分开的几个文件(笔记本、标签、同步、设置等),仍然不需要打包工具。
-- 加入界面测试(`npm run test:ui`,用 Playwright 在浏览器里跑模拟后端),0.2.0 的 24 项检查和新加的笔记本、备份检查都在里面,GitHub Actions 每次都会跑。
+- 加入界面测试(`npm run test:ui`,用 Playwright 在浏览器里跑模拟后端):0.2.0 时手动跑过的浏览器检查全部放了进去,另外加了笔记本、备份设置和输入法回车的检查,GitHub Actions 每次都会跑。
+- 加 `npm run preview`:在浏览器里预览界面(直接双击 `index.html` 打不开 ES 模块)。
 - GitHub Actions 加上 Rust 代码格式检查(rustfmt)和代码检查(clippy,有警告就算失败);冒烟测试加了笔记本和每日备份的检查。
 - Rust 代码统一用 rustfmt 格式化。
 
