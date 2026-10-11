@@ -10,10 +10,11 @@ export const state = {
   debug: false,
 };
 
-// 页面:{ name, content, mode, dirty, scroll, sel, disk }
-// disk 是最近一次从磁盘读到或写到磁盘的内容,用来判断文件有没有在别处被改过
+// 页面:{ name, content, mode, dirty, scroll, disk, state, snap }
+// disk 是最近一次从磁盘读到或写到磁盘的内容,用来判断文件有没有在别处被改过;
+// scroll 是阅读模式的滚动位置;state / snap 是编辑器的状态(光标、撤销记录)和滚动位置,第一次编辑时才有
 export function makeNote(name, content, mode = "edit") {
-  return { name, content, mode, dirty: false, scroll: 0, sel: [0, 0], disk: content };
+  return { name, content, mode, dirty: false, scroll: 0, disk: content, state: null, snap: null };
 }
 
 // 笔记本:「默认」的 name 是空字符串,active 是当前页面在 notes 里的位置

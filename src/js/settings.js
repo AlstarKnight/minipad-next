@@ -5,6 +5,8 @@ import { state } from "./state.js";
 import { toast, closeOverlays } from "./ui.js";
 import { flushAll, saveMeta } from "./save.js";
 import { reload } from "./sync.js";
+import { applyEditorSettings } from "./editor.js";
+import { DEFAULT_DATE_FORMAT, formatDate } from "./datetime.js";
 
 const REPO_URL = "https://github.com/AlstarKnight/minipad-next";
 
@@ -16,6 +18,7 @@ export function applySettings() {
   document.documentElement.style.setProperty("--font-size", (s.font_size || 14) + "px");
   $("#btn-pin").classList.toggle("on", s.always_on_top);
   $("#btn-pin").title = s.always_on_top ? "取消置顶" : "窗口置顶";
+  applyEditorSettings(s);
 }
 matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => state.settings && applySettings());
 
@@ -34,6 +37,9 @@ export function openSettings() {
   $("#set-font").value = s.font_size;
   $("#set-dir").value = s.notes_dir;
   $("#set-dir").placeholder = state.notesDir;
+  $("#set-lines").checked = s.line_numbers;
+  $("#set-date-format").value = s.date_format;
+  updateDatePreview();
   $("#set-backup").checked = s.backup_enabled;
   $("#set-backup-keep").value = s.backup_keep;
   $("#set-backup-dir").value = s.backup_dir;
@@ -50,6 +56,11 @@ export function openSettings() {
       updateBackup();
     })
     .catch(() => {});
+}
+
+// 现在按 F5 会插入什么,跟着输入框实时变;空着就是默认格式
+function updateDatePreview() {
+  $("#set-date-preview").textContent = "现在按 F5 会插入:" + formatDate(new Date(), $("#set-date-format").value.trim());
 }
 
 // 备份的几个输入框跟着勾选框启用 / 停用,说明文字也跟着变
@@ -86,6 +97,8 @@ async function submitSettings() {
     theme: $("#set-theme").value,
     font_size: Math.min(28, Math.max(10, Number($("#set-font").value) || 14)),
     notes_dir: $("#set-dir").value.trim(),
+    line_numbers: $("#set-lines").checked,
+    date_format: $("#set-date-format").value.trim(),
     backup_enabled: $("#set-backup").checked,
     backup_keep: Math.min(365, Math.max(1, Math.round(Number($("#set-backup-keep").value)) || 14)),
     backup_dir: $("#set-backup-dir").value.trim(),
@@ -149,6 +162,8 @@ export function bindSettings() {
   $("#set-cancel").addEventListener("click", () => closeOverlays());
   $("#set-pick-dir").addEventListener("click", () => pickFolder("#set-dir", "选择笔记文件夹"));
   $("#set-open-dir").addEventListener("click", () => api.invoke("open_notes_dir").catch((e) => toast(String(e))));
+  $("#set-date-format").placeholder = DEFAULT_DATE_FORMAT;
+  $("#set-date-format").addEventListener("input", updateDatePreview);
   $("#set-backup").addEventListener("change", updateBackup);
   $("#set-pick-backup").addEventListener("click", () => pickFolder("#set-backup-dir", "选择备份位置"));
   $("#set-open-backup").addEventListener("click", () => api.invoke("open_backup_dir").catch((e) => toast(String(e))));

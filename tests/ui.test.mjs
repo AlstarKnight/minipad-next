@@ -34,7 +34,8 @@ after(async () => {
 });
 
 // ---------- 模拟后端的数据 ----------
-// 0.2.0 的默认设置加上 0.2.1 的备份设置
+// 0.2.0 的默认设置加上 0.2.1 的备份设置。0.2.2 的编辑器设置(行号、日期格式)故意不写,
+// 和从 0.2.1 升级上来的数据一样,由模拟后端补上默认值
 const SETTINGS = {
   hotkey: "Ctrl+M",
   always_on_top: true,
@@ -117,8 +118,16 @@ function helpers(p) {
     activeTab: () => p.$$eval("#tabs .tab.active", (ts) => ts[0]?.textContent.trim() ?? null),
     tab: (name) => p.locator("#tabs .tab").filter({ hasText: new RegExp(`^\\s*${escapeRe(name)}\\s*$`) }),
     bookName: () => p.$$eval("#book-name", (els) => els[0]?.textContent.trim() ?? null),
-    editor: () => p.$$eval("#editor", (els) => els[0]?.value ?? null),
-    selection: () => p.$eval("#editor", (e) => e.value.slice(e.selectionStart, e.selectionEnd)),
+    // 编辑区是 CodeMirror,内容和选区从 window.__minipad.view 读
+    editor: () => p.evaluate(() => window.__minipad?.view?.state.doc.toString() ?? null),
+    selection: () =>
+      p.evaluate(() => {
+        const v = window.__minipad?.view;
+        const s = v?.state.selection.main;
+        return v ? v.state.sliceDoc(s.from, s.to) : null;
+      }),
+    // 光标在不在编辑区里
+    editorFocused: () => p.evaluate(() => !!document.activeElement?.closest?.("#editor")),
     // 正在显示的提示文字(没显示时是空字符串)
     toast: () => p.$eval("#toast", (t) => (t.hidden ? "" : t.textContent)),
     async sync() {
@@ -245,7 +254,7 @@ describe("0.2.0 checks", () => {
     await p.keyboard.type("待办");
     await p.keyboard.press("Enter");
     // 改完名字后光标回到编辑区
-    await p.waitForFunction(() => document.activeElement?.id === "editor" && !document.querySelector("#tabs .tab input"));
+    await p.waitForFunction(() => !!document.activeElement?.closest?.("#editor") && !document.querySelector("#tabs .tab input"));
     await p.keyboard.type("第一行");
     await until(h.tabs, ["欢迎", "待办"], "new tab created and renamed");
     await until(() => h.mockFile("", "待办"), "第一行", "content saved without stray newline");
@@ -833,5 +842,226 @@ describe("settings and dialogs", () => {
     await p.keyboard.press("Enter");
     await until(h.tabs, ["计划"], "a plain Enter renames the tab");
     await until(async () => (await h.mock())?.["工作"]?.files, { 计划: "" });
+  });
+});
+
+// ---------- 0.2.2:CodeMirror 编辑区、列表和任务、F5 插入日期时间 ----------
+
+describe("editor", () => {
+  ui(
+    "each page keeps its own undo history across page switches and reading mode",
+    { seed: seed({ "": { 甲: "甲的内容", 乙: "乙的内容" } }) },
+    async (h) => {
+      const { p } = h;
+      await p.click("#editor");
+      await p.keyboard.press("Control+End");
+      await p.keyboard.type("!!");
+      await until(() => h.mockFile("", "甲"), "甲的内容!!", "typing on 甲 is saved");
+      await h.tab("乙").click();
+      await until(h.editor, "乙的内容", "乙 is shown");
+      assert.ok(await h.editorFocused(), "after clicking a tab the cursor is in the editor");
+      await p.keyboard.press("Control+End");
+      await p.keyboard.type("??");
+      await h.tab("甲").click();
+      await until(h.editor, "甲的内容!!", "back on 甲");
+      // 切到第 2 页再切回来,Ctrl+Z 还能撤销刚才打的字
+      await p.keyboard.press("Control+z");
+      assert.equal(await h.editor(), "甲的内容", "Ctrl+Z undoes what was typed before switching pages");
+      await until(() => h.mockFile("", "甲"), "甲的内容", "the undo is saved");
+      await p.keyboard.press("Control+y");
+      assert.equal(await h.editor(), "甲的内容!!", "Ctrl+Y redoes it");
+      await p.keyboard.press("Control+z");
+      await p.keyboard.press("Control+Shift+z");
+      assert.equal(await h.editor(), "甲的内容!!", "so does Ctrl+Shift+Z");
+      // 换到阅读模式再换回来,撤销记录也还在
+      await p.keyboard.press("Control+e");
+      await p.locator("#preview").waitFor();
+      await p.keyboard.press("Control+e");
+      await p.locator("#editor").waitFor();
+      await p.keyboard.press("Control+z");
+      assert.equal(await h.editor(), "甲的内容", "undo still works after reading mode");
+      // 乙 的撤销记录是它自己的
+      await h.tab("乙").click();
+      await until(h.editor, "乙的内容??", "乙 kept its text");
+      await p.keyboard.press("Control+z");
+      assert.equal(await h.editor(), "乙的内容", "乙 undoes its own typing");
+      await p.keyboard.press("Control+z");
+      assert.equal(await h.editor(), "乙的内容", "and has nothing older to undo");
+      await until(() => h.mockFile("", "乙"), "乙的内容", "乙 saved");
+      await until(() => h.mockFile("", "甲"), "甲的内容", "甲 saved");
+    },
+  );
+
+  ui("a change synced from disk is an undo step of its own", { seed: seed({ "": { 待办: "第一行" } }) }, async (h) => {
+    const { p } = h;
+    await p.click("#editor");
+    await p.keyboard.press("Control+End");
+    await p.keyboard.type("!");
+    await p.keyboard.press("Control+s");
+    await until(() => h.mockFile("", "待办"), "第一行!", "typing saved");
+    await p.evaluate(() => (window.__mockFiles["待办"] = "第一行!\n网盘同步来的"));
+    await syncUntil(h, h.editor, "第一行!\n网盘同步来的", "the synced text shows up");
+    assert.ok(await h.editorFocused(), "the editor keeps the focus");
+    await p.keyboard.press("Control+z");
+    assert.equal(await h.editor(), "第一行!", "Ctrl+Z takes back only the synced change");
+    await until(() => h.mockFile("", "待办"), "第一行!", "and saves that");
+    await p.keyboard.press("Control+z");
+    assert.equal(await h.editor(), "第一行", "the next Ctrl+Z undoes the typing");
+  });
+
+  ui("Enter continues bullet, numbered and task lists; Enter on an empty item ends the list", { seed: seed({ "": { 清单: "" } }) }, async (h) => {
+    const { p } = h;
+    await p.click("#editor");
+    for (const step of ["- 苹果", "Enter", "香蕉", "Enter", "Enter", "1. 第一", "Enter", "第二", "Enter", "Enter", "- [x] 买菜", "Enter", "做饭"]) {
+      if (step === "Enter") await p.keyboard.press("Enter");
+      else await p.keyboard.type(step);
+    }
+    const text = "- 苹果\n- 香蕉\n1. 第一\n2. 第二\n- [x] 买菜\n- [ ] 做饭";
+    assert.equal(await h.editor(), text, "markers continued, empty items end the list, new tasks start unchecked");
+    await until(() => h.mockFile("", "清单"), text, "saved");
+  });
+
+  ui(
+    "Tab and Shift+Tab indent list items and selected lines; in plain text Tab inserts a tab",
+    { seed: seed({ "": { 页: "甲\n乙\n- 项目" } }) },
+    async (h) => {
+      const { p } = h;
+      await p.click("#editor");
+      await p.keyboard.press("Control+End");
+      await p.keyboard.press("Tab");
+      assert.equal(await h.editor(), "甲\n乙\n\t- 项目", "Tab in a list item indents the item");
+      await p.keyboard.press("Shift+Tab");
+      assert.equal(await h.editor(), "甲\n乙\n- 项目", "Shift+Tab outdents it");
+      await p.keyboard.press("Control+a");
+      await p.keyboard.press("Tab");
+      assert.equal(await h.editor(), "\t甲\n\t乙\n\t- 项目", "Tab indents every selected line");
+      await p.keyboard.press("Shift+Tab");
+      assert.equal(await h.editor(), "甲\n乙\n- 项目", "Shift+Tab outdents them");
+      await p.keyboard.press("Control+Home");
+      await p.keyboard.press("End");
+      await p.keyboard.press("Tab");
+      assert.equal(await h.editor(), "甲\t\n乙\n- 项目", "Tab in plain text inserts a tab at the cursor");
+      assert.ok(await h.editorFocused(), "Tab never moves the focus out of the editor");
+      await until(() => h.mockFile("", "页"), "甲\t\n乙\n- 项目", "saved");
+    },
+  );
+
+  ui("Ctrl+Enter turns a line into a task and checks or unchecks it", { seed: seed({ "": { 待办: "买菜\n- 牛奶" } }) }, async (h) => {
+    const { p } = h;
+    const first = async () => (await h.editor()).split("\n")[0];
+    await p.click("#editor");
+    await p.keyboard.press("Control+Home");
+    await p.keyboard.press("Control+Enter");
+    assert.equal(await first(), "- [ ] 买菜", "a plain line becomes an open task");
+    await p.keyboard.press("Control+Enter");
+    assert.equal(await first(), "- [x] 买菜", "Ctrl+Enter checks it");
+    await p.keyboard.press("Control+Enter");
+    assert.equal(await first(), "- [ ] 买菜", "and unchecks it");
+    await p.keyboard.press("Control+End");
+    await p.keyboard.press("Control+Enter");
+    assert.equal(await h.editor(), "- [ ] 买菜\n- [ ] 牛奶", "a list item gets a checkbox");
+    await p.keyboard.press("Control+a");
+    await p.keyboard.press("Control+Enter");
+    assert.equal(await h.editor(), "- [x] 买菜\n- [x] 牛奶", "with several lines selected each one is toggled");
+    await until(() => h.mockFile("", "待办"), "- [x] 买菜\n- [x] 牛奶", "saved");
+  });
+
+  ui("F5 inserts the date and time at the cursor, in the format set in the settings", { seed: seed({ "": { 日记: "今天" } }) }, async (h) => {
+    const { p } = h;
+    // F5 不能刷新页面
+    await p.evaluate(() => (window.__notReloaded = true));
+    await p.click("#editor");
+    await p.keyboard.press("Control+End");
+    await p.keyboard.press("F5");
+    assert.match(await h.editor(), /^今天\d{1,2}:\d{2} \d{4}\/\d{1,2}\/\d{1,2}$/, "the default format is Notepad's H:mm yyyy/M/d");
+
+    await p.click("#btn-settings");
+    await p.locator("#settings").waitFor();
+    assert.equal(await p.inputValue("#set-date-format"), "H:mm yyyy/M/d", "the settings show the default format");
+    await p.fill("#set-date-format", " yyyy-MM-dd ");
+    const today = await p.evaluate(() => {
+      const d = new Date();
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    });
+    await until(() => p.textContent("#set-date-preview"), `现在按 F5 会插入:${today}`, "the preview follows the input");
+    await p.keyboard.press("F5");
+    assert.equal(await p.inputValue("#set-date-format"), " yyyy-MM-dd ", "F5 in an input box inserts nothing");
+    await p.click("#set-save");
+    await until(() => p.isHidden("#settings"), true, "settings saved and closed");
+    await until(async () => (await h.stored())?.settings?.date_format, "yyyy-MM-dd", "the format is saved trimmed");
+
+    await p.click("#editor");
+    await p.keyboard.press("Control+a");
+    await p.keyboard.press("F5");
+    assert.equal(await h.editor(), today, "F5 replaces the selection with the new format");
+    await until(() => h.mockFile("", "日记"), today, "saved");
+
+    // 阅读模式和搜索框开着时 F5 什么也不做
+    await p.keyboard.press("Control+e");
+    await p.locator("#preview").waitFor();
+    await p.keyboard.press("F5");
+    await p.keyboard.press("Control+e");
+    await p.locator("#editor").waitFor();
+    await p.keyboard.press("Control+f");
+    await p.locator("#search").waitFor();
+    await p.keyboard.press("F5");
+    await p.keyboard.press("Escape");
+    assert.equal(await h.editor(), today, "nothing inserted in reading mode or from the search box");
+    assert.equal(await p.evaluate(() => window.__notReloaded), true, "F5 never reloads the page");
+  });
+
+  ui("line numbers can be turned on and off in the settings, on every page", { seed: seed({ "": { 页: "一\n二\n三", 另一页: "只有一行" } }) }, async (h) => {
+    const { p } = h;
+    const numbers = () =>
+      p.$$eval("#editor .cm-lineNumbers .cm-gutterElement", (els) =>
+        els.filter((e) => getComputedStyle(e).visibility !== "hidden").map((e) => e.textContent),
+      );
+    const setLines = async (on) => {
+      await p.click("#btn-settings");
+      await p.locator("#settings").waitFor();
+      assert.equal(await p.isChecked("#set-lines"), !on, "the checkbox shows the current setting");
+      await p.setChecked("#set-lines", on);
+      await p.click("#set-save");
+      await until(() => p.isHidden("#settings"), true, "settings saved and closed");
+    };
+    // 先打开过 另一页,它的编辑状态是在行号关着的时候建的
+    await h.tab("另一页").click();
+    await h.tab("页").click();
+    assert.equal(await p.locator("#editor .cm-lineNumbers").count(), 0, "no line numbers by default");
+    await setLines(true);
+    await until(numbers, ["1", "2", "3"], "line numbers shown");
+    await until(async () => (await h.stored())?.settings?.line_numbers, true, "the setting is saved");
+    await h.tab("另一页").click();
+    await until(numbers, ["1"], "a page opened earlier shows them too");
+    await setLines(false);
+    await until(() => p.locator("#editor .cm-lineNumbers").count(), 0, "line numbers hidden again");
+    await h.tab("页").click();
+    assert.equal(await p.locator("#editor .cm-lineNumbers").count(), 0, "on the other page as well");
+  });
+
+  ui(
+    "Markdown is coloured while editing: headings, bold, inline code, code blocks and tasks",
+    { seed: seed({ "": { 笔记: "# 标题\n\n**粗体** 和 `代码`\n\n```js\nlet a = 1\n```\n\n- [x] 完成" } }) },
+    async (h) => {
+      const { p } = h;
+      await p.locator("#editor .cm-content").waitFor();
+      const text = (sel) => p.$$eval(`#editor ${sel}`, (els) => els.map((e) => e.textContent).join(""));
+      assert.equal(await text(".md-h1"), "# 标题", "heading");
+      assert.equal(await text(".md-strong"), "**粗体**", "bold");
+      assert.equal(await text(".cm-line:not(.cm-codeblock) .md-code"), "代码", "inline code");
+      assert.equal(await text(".md-mark"), "#****`````js```-", "the markup and the code block's language are dimmed");
+      assert.equal(await text(".md-task"), "[x]", "task checkbox");
+      const block = await p.$$eval("#editor .cm-line.cm-codeblock", (els) => els.map((e) => [e.textContent, e.className.includes("-first"), e.className.includes("-last")]));
+      assert.deepEqual(block, [["```js", true, false], ["let a = 1", false, false], ["```", false, true]], "every line of the code block is marked");
+    },
+  );
+
+  ui("Esc hides the window even with text selected in the editor", { seed: seed({ "": { 页: "一些文字" } }) }, async (h) => {
+    const { p } = h;
+    await p.click("#editor");
+    await p.keyboard.press("Control+a");
+    assert.equal(await h.selection(), "一些文字");
+    await p.keyboard.press("Escape");
+    await until(async () => (await h.toast()).includes("隐藏"), true, "Esc hides the window");
   });
 });

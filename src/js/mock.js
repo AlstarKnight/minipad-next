@@ -1,6 +1,7 @@
 // ---------- 浏览器预览用的模拟后端 ----------
 // 数据存在 localStorage 里,命令和真正的后端一一对应
 import { toast } from "./ui.js";
+import { DEFAULT_DATE_FORMAT } from "./datetime.js";
 
 const KEY = "minipad-next-demo";
 const WELCOME =
@@ -14,6 +15,8 @@ const DEFAULT_SETTINGS = {
   theme: "system",
   font_size: 14,
   notes_dir: "",
+  line_numbers: false,
+  date_format: DEFAULT_DATE_FORMAT,
   backup_enabled: true,
   backup_keep: 14,
   backup_dir: "",
@@ -69,6 +72,9 @@ function firstFree(base, taken) {
 
 // 统一成小写、反斜杠,用来比较路径
 const normPath = (p) => p.toLowerCase().replace(/\//g, "\\").replace(/\\+$/, "");
+
+// 和后端一样整理 F5 的日期格式:去掉首尾空格,最多 64 个字(按字算),空着就用默认的
+const tidyDateFormat = (f) => [...String(f ?? "").trim()].slice(0, 64).join("").trimEnd() || DEFAULT_DATE_FORMAT;
 
 export function mockApi() {
   const db = load();
@@ -217,6 +223,7 @@ export function mockApi() {
         notes_dir: String(settings.notes_dir ?? "").trim(),
         backup_dir: String(settings.backup_dir ?? "").trim(),
         backup_keep: Math.min(365, Math.max(1, Math.round(Number(settings.backup_keep)) || 1)),
+        date_format: tidyDateFormat(settings.date_format),
       };
       const notes = normPath(s.notes_dir);
       const dest = normPath(s.backup_dir);

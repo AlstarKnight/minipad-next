@@ -1,18 +1,16 @@
 // ---------- 显示当前页面 ----------
-import { $, editor, preview } from "./dom.js";
+import { $, editorEl, preview } from "./dom.js";
 import { current } from "./state.js";
 import { renderPreview } from "./preview.js";
 import { scheduleMeta } from "./save.js";
+import { showInEditor, leaveEditor, setEditorText, focusEditorView } from "./editor.js";
 
+// 记下当前页面看到哪里:编辑模式存编辑器的状态(光标、撤销记录、滚动位置),阅读模式存滚动位置
 export function rememberView() {
   const n = current();
   if (!n) return;
-  if (n.mode === "edit") {
-    n.scroll = editor.scrollTop;
-    n.sel = [editor.selectionStart, editor.selectionEnd];
-  } else {
-    n.scroll = preview.scrollTop;
-  }
+  if (n.mode === "edit") leaveEditor();
+  else n.scroll = preview.scrollTop;
 }
 
 export function showNote() {
@@ -20,13 +18,13 @@ export function showNote() {
   if (!n) return;
   if (n.mode === "edit") {
     preview.hidden = true;
-    editor.hidden = false;
-    editor.value = n.content;
-    editor.setSelectionRange(n.sel[0], n.sel[1]);
-    editor.scrollTop = n.scroll;
-    editor.focus();
+    // 先显示出来再放内容,编辑器才量得出行高和滚动位置
+    editorEl.hidden = false;
+    showInEditor(n);
+    focusEditorView();
   } else {
-    editor.hidden = true;
+    leaveEditor(true);
+    editorEl.hidden = true;
     preview.hidden = false;
     renderPreview(n.content);
     preview.scrollTop = n.scroll;
@@ -36,18 +34,11 @@ export function showNote() {
   updateCount();
 }
 
-// 当前页面的内容在外面变了:换上新内容,尽量保持光标和滚动位置
+// 当前页面的内容在外面变了(n.content 已经是新内容):换上新内容,尽量保持光标和滚动位置
 export function refreshCurrent() {
   const n = current();
   if (n.mode === "edit") {
-    if (editor.value !== n.content) {
-      const s = editor.selectionStart;
-      const e = editor.selectionEnd;
-      const top = editor.scrollTop;
-      editor.value = n.content;
-      editor.setSelectionRange(Math.min(s, n.content.length), Math.min(e, n.content.length));
-      editor.scrollTop = top;
-    }
+    setEditorText(n);
   } else {
     const top = preview.scrollTop;
     renderPreview(n.content);

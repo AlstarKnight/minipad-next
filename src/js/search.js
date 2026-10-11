@@ -1,11 +1,12 @@
 // ---------- 搜索(全部笔记本) ----------
-import { $, editor } from "./dom.js";
-import { state, book, bookLabel } from "./state.js";
+import { $ } from "./dom.js";
+import { state, book, current, bookLabel } from "./state.js";
 import { closeOverlays } from "./ui.js";
 import { scheduleMeta, scheduleBooks } from "./save.js";
 import { rememberView, showNote } from "./page.js";
 import { renderTabs } from "./tabs.js";
 import { renderBook } from "./notebooks.js";
+import { editorSelectionText, selectInEditor } from "./editor.js";
 
 // { b: 笔记本, n: 页面, pos: 匹配位置,-1 表示标题 }
 let results = [];
@@ -15,7 +16,8 @@ export function openSearch() {
   closeOverlays();
   $("#search").hidden = false;
   const input = $("#search-input");
-  const sel = editor.hidden ? "" : editor.value.slice(editor.selectionStart, editor.selectionEnd);
+  // 编辑时选中了一段文字(不跨行),就拿来当搜索词
+  const sel = current()?.mode === "edit" ? editorSelectionText() : "";
   if (sel && !sel.includes("\n")) input.value = sel;
   input.focus();
   input.select();
@@ -109,28 +111,11 @@ function openResult(idx) {
   const n = r.n;
   b.active = b.notes.indexOf(n);
   n.mode = "edit";
-  if (r.pos >= 0) n.sel = [r.pos, r.pos + qlen];
   renderTabs();
   showNote();
   scheduleMeta(b);
-  if (r.pos >= 0) scrollEditorTo(r.pos);
-}
-
-// 用一个隐藏的镜像元素量出光标所在高度,把匹配位置滚到窗口中间
-function scrollEditorTo(pos) {
-  const cs = getComputedStyle(editor);
-  const m = document.createElement("div");
-  for (const p of ["fontFamily", "fontSize", "lineHeight", "paddingLeft", "paddingRight", "paddingTop", "tabSize", "letterSpacing"]) m.style[p] = cs[p];
-  m.style.position = "absolute";
-  m.style.visibility = "hidden";
-  m.style.whiteSpace = "pre-wrap";
-  m.style.wordWrap = "break-word";
-  m.style.width = editor.clientWidth + "px";
-  m.textContent = editor.value.slice(0, pos);
-  document.body.appendChild(m);
-  const y = m.scrollHeight;
-  m.remove();
-  editor.scrollTop = Math.max(0, y - editor.clientHeight / 2);
+  // 选中匹配的文字,滚到窗口中间
+  if (r.pos >= 0) selectInEditor(r.pos, r.pos + qlen);
 }
 
 export function bindSearch() {
