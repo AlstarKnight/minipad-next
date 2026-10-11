@@ -6,7 +6,7 @@ import { scheduleMeta, scheduleBooks } from "./save.js";
 import { rememberView, showNote } from "./page.js";
 import { renderTabs } from "./tabs.js";
 import { renderBook } from "./notebooks.js";
-import { editorSelectionText, selectInEditor } from "./editor.js";
+import { editorSelectionText, selectMatch } from "./editor.js";
 
 // { b: 笔记本, n: 页面, pos: 匹配位置,-1 表示标题 }
 let results = [];
@@ -17,7 +17,7 @@ export function openSearch() {
   $("#search").hidden = false;
   const input = $("#search-input");
   // 编辑时选中了一段文字(不跨行),就拿来当搜索词
-  const sel = current()?.mode === "edit" ? editorSelectionText() : "";
+  const sel = current() ? editorSelectionText() : "";
   if (sel && !sel.includes("\n")) input.value = sel;
   input.focus();
   input.select();
@@ -69,6 +69,15 @@ function runSearch() {
   });
 }
 
+// text 里 pos 之前有几个 q(不分大小写)
+function countBefore(text, q, pos) {
+  const low = text.toLowerCase();
+  const ql = q.toLowerCase();
+  let k = 0;
+  for (let i = low.indexOf(ql); i !== -1 && i < pos; i = low.indexOf(ql, i + 1)) k++;
+  return k;
+}
+
 function esc(s) {
   return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 }
@@ -97,7 +106,7 @@ function moveResult(d) {
 function openResult(idx) {
   const r = results[idx];
   if (!r) return;
-  const qlen = $("#search-input").value.length;
+  const q = $("#search-input").value;
   closeOverlays();
   // 搜索框开着的时候同步过,页面可能已经不在了
   if (!state.books.includes(r.b) || !r.b.notes.includes(r.n)) return;
@@ -110,12 +119,11 @@ function openResult(idx) {
   const b = book();
   const n = r.n;
   b.active = b.notes.indexOf(n);
-  n.mode = "edit";
   renderTabs();
   showNote();
   scheduleMeta(b);
-  // 选中匹配的文字,滚到窗口中间
-  if (r.pos >= 0) selectInEditor(r.pos, r.pos + qlen);
+  // 选中匹配的文字,滚到窗口中间:文件里这是第几个,编辑器里就选第几个
+  if (r.pos >= 0) selectMatch(q, countBefore(n.content, q, r.pos));
 }
 
 export function bindSearch() {

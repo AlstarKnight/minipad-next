@@ -1,276 +1,397 @@
-// ---------- 编辑区:CodeMirror 6 ----------
+// ---------- 编辑区:Milkdown 富文本编辑器 ----------
+// 看到的是排好版的样子(标题、粗体、列表、代码块……),存到文件里的还是普通的 Markdown。
 // 每个页面有自己的编辑状态(内容、光标、撤销记录):换页时存进页面对象(n.state),换回来再放回编辑器,
-// 所以换过页以后 Ctrl+Z 还能撤销之前打的字。编辑器里显示的页面的最新状态在 view.state 里,不在 n.state 里。
+// 所以换过页以后 Ctrl+Z 还能撤销之前打的字。
+// n.content 是页面的 Markdown;n.stateMd 是 n.state 对应的 Markdown,两个不一样说明文件在别处被改过。
 import {
-  Annotation,
-  Compartment,
-  EditorSelection,
-  EditorState,
-  Prec,
-  Decoration,
-  EditorView,
-  ViewPlugin,
-  drawSelection,
-  keymap,
-  lineNumbers,
-  placeholder,
-  defaultKeymap,
+  Editor,
+  rootCtx,
+  editorViewCtx,
+  parserCtx,
+  serializerCtx,
+  remarkStringifyOptionsCtx,
+  commandsCtx,
+  linkAttr,
+  hardbreakSchema,
+  commonmark,
+  gfm,
   history,
-  historyKeymap,
-  indentLess,
-  indentMore,
-  isolateHistory,
-  redo,
-  HighlightStyle,
-  indentUnit,
-  syntaxHighlighting,
-  syntaxTree,
-  markdown,
-  markdownLanguage,
-  tags as t,
-} from "../vendor/codemirror.js";
+  clipboard,
+  $prose,
+  Plugin,
+  PluginKey,
+  Decoration,
+  DecorationSet,
+  TextSelection,
+  EditorState,
+  closeHistory,
+  NodeSelection,
+  wrapInList,
+  sinkListItem,
+  liftListItem,
+  splitListItem,
+} from "../vendor/milkdown.js";
 import { $ } from "./dom.js";
+import { codeBlockWithTitle, codeBlockView, codeHighlight } from "./codeblock.js";
+import { toolbar } from "./toolbar.js";
 
+let editor = null;
 let view = null;
-// 编辑器里现在放着的页面,阅读模式时是 null
+let ctx = null;
+// 编辑器里现在放着的页面
 let shown = null;
 // 用户改了内容时调用,参数是被改的页面
 let onChange = () => {};
+// 别处来的修改(换页、文件在别处被改过):不算用户的修改,不触发保存
+const EXTERNAL = "minipad-external";
 
-// 从磁盘读来的新内容:不算用户的修改,不触发保存。撤销记录里单独算一步,不和前后打的字连在一起
-const external = Annotation.define();
-const fromDisk = [external.of(true), isolateHistory.of("full")];
+const parse = (md) => ctx.get(parserCtx)(md);
+const serialize = (doc) => ctx.get(serializerCtx)(doc);
 
-// 行号可以在设置里开关。每个页面的状态是分开存的,换页时再按现在的设置调整
-const gutter = new Compartment();
-const withLineNumbers = lineNumbers();
-const noLineNumbers = [];
-let gutterNow = noLineNumbers;
-
-// ---------- Markdown 上色 ----------
-// 只给 class,颜色和字号写在 style.css 里,跟着浅色 / 深色主题变
-const mdStyle = HighlightStyle.define([
-  { tag: t.heading1, class: "md-h1" },
-  { tag: t.heading2, class: "md-h2" },
-  { tag: t.heading3, class: "md-h3" },
-  { tag: t.heading4, class: "md-h4" },
-  { tag: t.heading5, class: "md-h5" },
-  { tag: t.heading6, class: "md-h6" },
-  { tag: t.strong, class: "md-strong" },
-  { tag: t.emphasis, class: "md-em" },
-  { tag: t.strikethrough, class: "md-strike" },
-  { tag: t.monospace, class: "md-code" },
-  { tag: t.link, class: "md-link" },
-  { tag: t.url, class: "md-url" },
-  { tag: t.quote, class: "md-quote" },
-  // # ** - > ``` 这些标记,和代码块后面的语言名
-  { tag: [t.processingInstruction, t.contentSeparator, t.labelName], class: "md-mark" },
-  // 任务列表的 [ ] / [x]
-  { tag: t.atom, class: "md-task" },
-  { tag: t.comment, class: "md-comment" },
-]);
-
-// 代码块整行加背景:第一行和最后一行另外加 class,用来画圆角
-const codeLine = {
-  mid: Decoration.line({ class: "cm-codeblock" }),
-  first: Decoration.line({ class: "cm-codeblock cm-codeblock-first" }),
-  last: Decoration.line({ class: "cm-codeblock cm-codeblock-last" }),
-  only: Decoration.line({ class: "cm-codeblock cm-codeblock-first cm-codeblock-last" }),
-};
-
-function codeBlockLines(v) {
-  const { doc } = v.state;
-  const tree = syntaxTree(v.state);
-  const lines = new Map();
-  for (const { from, to } of v.visibleRanges) {
-    tree.iterate({
-      from,
-      to,
-      enter(node) {
-        if (node.name !== "FencedCode" && node.name !== "CodeBlock") return;
-        const first = doc.lineAt(node.from).number;
-        const last = doc.lineAt(node.to).number;
-        const start = Math.max(first, doc.lineAt(from).number);
-        const end = Math.min(last, doc.lineAt(to).number);
-        for (let i = start; i <= end; i++) {
-          const kind = first === last ? "only" : i === first ? "first" : i === last ? "last" : "mid";
-          lines.set(doc.line(i).from, codeLine[kind]);
-        }
-        return false;
+// ---------- 用户的修改 ----------
+// 每次文档变了,如果不是别处来的修改,就把文档转回 Markdown 存进页面。
+// 转出来和原来一样(比如只是光标动了、或者改了又改回去)就不算修改,文件不会被重写
+const changeKey = new PluginKey("minipad-change");
+const changes = $prose(
+  () =>
+    new Plugin({
+      key: changeKey,
+      state: {
+        init: () => false,
+        apply: (tr, user) => (tr.docChanged ? !tr.getMeta(EXTERNAL) : user),
       },
-    });
-  }
-  return Decoration.set([...lines].map(([pos, deco]) => deco.range(pos)), true);
+      view: () => ({
+        update(v, prev) {
+          if (!shown || v.state.doc === prev.doc || !changeKey.getState(v.state)) return;
+          let md = serialize(v.state.doc);
+          // 原来的文件末尾没有换行,存的时候也不加
+          if (!shown.stateMd.endsWith("\n")) md = md.replace(/\n$/, "");
+          if (md === shown.stateMd) return;
+          shown.content = shown.stateMd = md;
+          onChange(shown);
+        },
+      }),
+    }),
+);
+
+// ---------- 换行 ----------
+// 文件里段落中间的一个换行,在编辑器里也显示成换行(和以前的阅读模式一样),存回去还是一个换行。
+// Milkdown 默认把它显示成空格
+const lineBreak = hardbreakSchema.extendSchema((prev) => (c) => {
+  const base = prev(c);
+  return { ...base, toDOM: (node) => ["br", { "data-type": "hardbreak", "data-is-inline": String(node.attrs.isInline) }] };
+});
+
+// Shift+Enter:段落里换行,不开新段落。存到文件里就是一个换行
+function softBreak(state, dispatch) {
+  const { $from } = state.selection;
+  if ($from.parent.type.spec.code) return false;
+  if (dispatch) dispatch(state.tr.replaceSelectionWith(state.schema.nodes.hardbreak.create({ isInline: true })).scrollIntoView());
+  return true;
 }
 
-const codeBlocks = ViewPlugin.fromClass(
-  class {
-    constructor(v) {
-      this.decorations = codeBlockLines(v);
-    }
-    update(u) {
-      if (u.docChanged || u.viewportChanged || syntaxTree(u.startState) !== syntaxTree(u.state)) {
-        this.decorations = codeBlockLines(u.view);
-      }
-    }
-  },
-  { decorations: (p) => p.decorations },
+// ---------- 空白页面的提示文字 ----------
+const placeholder = $prose(
+  () =>
+    new Plugin({
+      props: {
+        decorations(state) {
+          const { doc } = state;
+          const first = doc.firstChild;
+          if (doc.childCount !== 1 || !first.isTextblock || first.content.size) return null;
+          return DecorationSet.create(doc, [Decoration.node(0, first.nodeSize, { class: "is-empty", "data-placeholder": "写点什么……" })]);
+        },
+      },
+    }),
 );
 
 // ---------- 列表和任务 ----------
-// 列表项:前面的缩进、- * + 或 1. 1)、空格,后面可能跟着 [ ] / [x]
-const LIST_ITEM = /^(\s*)([-*+]|\d+[.)])(\s+)(\[[ xX]\](?:\s|$))?/;
+function listItemsIn(state) {
+  const { from, to } = state.selection;
+  const items = [];
+  state.doc.nodesBetween(from, to, (node, pos) => {
+    if (node.type.name === "list_item") {
+      // 只要最里层的:选区在子项里时不动外面那一项
+      let inner = false;
+      node.descendants((child, p) => {
+        if (child.type.name === "list_item" && pos + 1 + p < to && pos + 1 + p + child.nodeSize > from) inner = true;
+        return !inner;
+      });
+      if (!inner) items.push({ node, pos });
+    }
+    return true;
+  });
+  return items;
+}
 
-// 光标所在的行(选中多行时是每一行),每行只算一次;选区刚好停在某行行首时不算那一行
-function selectedLines(state) {
-  const lines = [];
-  let last = -1;
-  for (const r of state.selection.ranges) {
-    for (let pos = r.from; pos <= r.to; ) {
-      const line = state.doc.lineAt(pos);
-      if (line.number > last && (r.empty || r.to > line.from)) {
-        lines.push(line);
-        last = line.number;
+// Ctrl+Enter:勾选 / 取消勾选任务;列表项变成任务,普通的段落变成任务列表
+export function toggleTask(state, dispatch) {
+  const items = listItemsIn(state);
+  if (items.length) {
+    if (dispatch) {
+      const tr = state.tr;
+      for (const { node, pos } of items) {
+        const checked = node.attrs.checked == null ? false : !node.attrs.checked;
+        tr.setNodeMarkup(pos, null, { ...node.attrs, checked });
       }
-      pos = line.to + 1;
+      dispatch(tr);
     }
+    return true;
   }
-  return lines;
-}
-
-// Tab:选中了多行,或者在列表项里,就整行缩进;否则和以前一样在光标处插入一个制表符
-function tab(v) {
-  const lines = selectedLines(v.state);
-  if (lines.length > 1 || lines.every((l) => LIST_ITEM.test(l.text))) indentMore(v);
-  else v.dispatch(v.state.replaceSelection("\t"), { scrollIntoView: true, userEvent: "input" });
-  // 总是返回 true,不让 Tab 把焦点移出编辑区
-  return true;
-}
-
-function untab(v) {
-  indentLess(v);
-  return true;
-}
-
-// Ctrl+Enter:勾选 / 取消勾选任务;列表项前面加上 [ ],普通的行变成任务
-export function toggleTask(v) {
-  const { state } = v;
-  const changes = [];
-  for (const line of selectedLines(state)) {
-    const m = LIST_ITEM.exec(line.text);
-    if (m && m[4]) {
-      // [ ] 和 [x] 中间那个字符
-      const at = line.from + m[1].length + m[2].length + m[3].length + 1;
-      changes.push({ from: at, to: at + 1, insert: m[4][1] === " " ? "x" : " " });
-    } else if (m) {
-      changes.push({ from: line.from + m[0].length, insert: "[ ] " });
-    } else {
-      changes.push({ from: line.from + /^\s*/.exec(line.text)[0].length, insert: "- [ ] " });
-    }
+  const { bullet_list: list } = state.schema.nodes;
+  let wrapped = null;
+  if (!wrapInList(list)(state, (tr) => (wrapped = tr))) return false;
+  if (dispatch) {
+    const after = state.apply(wrapped);
+    const tr = wrapped;
+    for (const { node, pos } of listItemsIn(after)) tr.setNodeMarkup(pos, null, { ...node.attrs, checked: false });
+    dispatch(tr);
   }
-  const set = state.changes(changes);
-  // 光标正好在插入的位置时放到插入的文字后面
-  v.dispatch({ changes: set, selection: state.selection.map(set, 1), scrollIntoView: true, userEvent: "input" });
   return true;
 }
 
-const editingKeys = Prec.high(
-  keymap.of([
-    { key: "Tab", run: tab, shift: untab },
-    { key: "Mod-Enter", run: toggleTask },
-    // 重做:Ctrl+Y(CodeMirror 自带)和 Ctrl+Shift+Z 都可以,和原来的文本框一样
-    { key: "Shift-Mod-z", run: redo, preventDefault: true },
-  ]),
+// 点任务前面的方框(列表项左边的空白)勾选 / 取消勾选
+function clickTask(v, e) {
+  // 方框画在列表项左边的空白里,点到的可能是列表本身(ul),这时按高度找是哪一项
+  let li = e.target.closest?.('li[data-item-type="task"]');
+  if (!li && e.target.matches?.("ul, ol")) {
+    li = [...e.target.children].find((c) => {
+      const r = c.getBoundingClientRect();
+      return c.dataset.itemType === "task" && e.clientY >= r.top && e.clientY <= r.bottom;
+    });
+  }
+  if (!li || !v.dom.contains(li)) return false;
+  const text = li.firstElementChild;
+  if (!text || e.clientX >= text.getBoundingClientRect().left) return false;
+  const pos = v.posAtDOM(li, 0) - 1;
+  const node = v.state.doc.nodeAt(pos);
+  if (!node || node.type.name !== "list_item") return false;
+  e.preventDefault();
+  v.dispatch(v.state.tr.setNodeMarkup(pos, null, { ...node.attrs, checked: !node.attrs.checked }));
+  return true;
+}
+
+// 代码块里 Tab 插入制表符,列表里 Tab 缩进一级;其他地方的 Tab 什么也不做,但不让焦点跑出编辑区
+function tab(state, dispatch) {
+  const { $from } = state.selection;
+  if ($from.parent.type.spec.code) {
+    if (dispatch) dispatch(state.tr.insertText("\t").scrollIntoView());
+    return true;
+  }
+  sinkListItem(state.schema.nodes.list_item)(state, dispatch);
+  return true;
+}
+function untab(state, dispatch) {
+  liftListItem(state.schema.nodes.list_item)(state, dispatch);
+  return true;
+}
+
+// 在任务后面按 Enter:新的一项是没勾选的任务(Milkdown 默认会照抄上一项的勾)
+function enterInTask(state, dispatch) {
+  const { $from, empty } = state.selection;
+  if (!empty || $from.depth < 2) return false;
+  const item = $from.node(-1);
+  if (item.type.name !== "list_item" || item.attrs.checked == null || !$from.parent.content.size) return false;
+  return splitListItem(item.type, { ...item.attrs, checked: false })(state, dispatch);
+}
+
+// 在最后一个代码块(或表格)的最后一行按 ↓:后面补一个空段落,好接着往下写
+function downOutOfBlock(state, dispatch) {
+  const { $from, empty } = state.selection;
+  if (!empty) return false;
+  const block = $from.node(1);
+  const last = state.doc.lastChild;
+  if (!block || block !== last || !(block.type.spec.code || block.type.name === "table")) return false;
+  if (block.type.spec.code && $from.parent.textContent.indexOf("\n", $from.parentOffset) !== -1) return false;
+  if (dispatch) {
+    const end = state.doc.content.size;
+    const tr = state.tr.insert(end, state.schema.nodes.paragraph.create());
+    dispatch(tr.setSelection(TextSelection.create(tr.doc, end + 1)).scrollIntoView());
+  }
+  return true;
+}
+
+// 打 --- 变成分隔线以后,光标放到分隔线下面的段落里(不然接着打字会把分隔线替换掉)
+const afterRule = $prose(
+  () =>
+    new Plugin({
+      appendTransaction(trs, old, state) {
+        const sel = state.selection;
+        if (!trs.some((tr) => tr.docChanged) || !(sel instanceof NodeSelection) || sel.node.type.name !== "hr") return null;
+        const tr = state.tr;
+        let after = sel.to;
+        if (!state.doc.resolve(after).nodeAfter?.isTextblock) tr.insert(after, state.schema.nodes.paragraph.create());
+        return tr.setSelection(TextSelection.create(tr.doc, after + 1));
+      },
+    }),
 );
 
-// Esc 留给窗口(隐藏窗口、关弹层),不用来收起选区;
-// Ctrl+M 不切换"Tab 移动焦点"的模式,免得误按以后 Tab 不能缩进
-const baseKeys = defaultKeymap.filter((k) => k.key !== "Escape" && k.key !== "Ctrl-m");
+// 链接:Ctrl+点击用系统浏览器打开
+let openLink = () => {};
+function clickLink(v, e) {
+  if (!(e.ctrlKey || e.metaKey)) return false;
+  const a = e.target.closest?.("a[href]");
+  if (!a || !v.dom.contains(a)) return false;
+  e.preventDefault();
+  openLink(a.getAttribute("href"));
+  return true;
+}
+
+// Ctrl+B:选中了文字就加粗;没选中时留给窗口(打开笔记本列表)
+let emptyBold = () => {};
+
+const keys = $prose(
+  () =>
+    new Plugin({
+      props: {
+        handleKeyDown(v, e) {
+          if (e.isComposing || e.keyCode === 229) return false;
+          if (e.key === "Tab" || e.key === "Enter" || e.key === "ArrowDown" || e.key.toLowerCase() === "b") readSelection(v);
+          const mod = e.ctrlKey || e.metaKey;
+          let run = null;
+          if (e.key === "Tab" && !mod && !e.altKey) run = e.shiftKey ? untab : tab;
+          else if (e.key === "Enter" && mod && !e.shiftKey && !e.altKey) run = toggleTask;
+          else if (e.key === "Enter" && e.shiftKey && !mod && !e.altKey) run = softBreak;
+          else if (e.key === "Enter" && !e.shiftKey && !mod && !e.altKey) run = enterInTask;
+          else if (e.key === "ArrowDown" && !e.shiftKey && !mod && !e.altKey) run = downOutOfBlock;
+          else if (mod && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "b" && v.state.selection.empty) {
+            e.preventDefault();
+            emptyBold();
+            return true;
+          }
+          if (!run || !run(v.state, v.dispatch)) return false;
+          e.preventDefault();
+          return true;
+        },
+        handleDOMEvents: {
+          mousedown: (v, e) => e.button === 0 && clickTask(v, e),
+          click: (v, e) => clickLink(v, e),
+        },
+      },
+    }),
+);
+
+// 刚点过鼠标、马上按键时,编辑器可能还没读到新的光标位置(浏览器稍后才通知);先读一下
+function readSelection(v) {
+  try {
+    v.domObserver?.flush();
+  } catch (_) {}
+}
 
 // ---------- 编辑器 ----------
-const extensions = [
-  history(),
-  drawSelection(),
-  EditorView.lineWrapping,
-  EditorState.tabSize.of(4),
-  indentUnit.of("\t"),
-  placeholder("写点什么……"),
-  EditorView.contentAttributes.of({ spellcheck: "false", autocorrect: "off", autocapitalize: "off", "aria-label": "页面内容" }),
-  // 回车续上列表、退格删掉列表标记由 markdown() 自带的按键处理
-  markdown({ base: markdownLanguage, completeHTMLTags: false }),
-  syntaxHighlighting(mdStyle),
-  codeBlocks,
-  editingKeys,
-  keymap.of([...baseKeys, ...historyKeymap]),
-  EditorView.updateListener.of((u) => {
-    if (!u.docChanged || !shown) return;
-    shown.content = u.state.doc.toString();
-    if (u.transactions.some((tr) => tr.docChanged && !tr.annotation(external))) onChange(shown);
-  }),
-];
-
-function makeState(text) {
-  return EditorState.create({ doc: text, extensions: [extensions, gutter.of(gutterNow)] });
-}
-
-// 把 a 改成 b 的最小改动:只换掉中间不一样的部分,光标和滚动位置不会乱跳
-function diff(a, b) {
-  const min = Math.min(a.length, b.length);
-  let s = 0;
-  while (s < min && a.charCodeAt(s) === b.charCodeAt(s)) s++;
-  let e = 0;
-  while (e < min - s && a.charCodeAt(a.length - 1 - e) === b.charCodeAt(b.length - 1 - e)) e++;
-  return { from: s, to: a.length - e, insert: b.slice(s, b.length - e) };
-}
-
-export function createEditor(opts) {
+export async function createEditor(opts) {
   onChange = opts.onChange;
-  view = new EditorView({ state: makeState(""), parent: $("#editor") });
+  openLink = opts.openLink;
+  emptyBold = opts.emptyBold;
+  editor = await Editor.make()
+    .config((c) => {
+      c.set(rootCtx, $("#editor"));
+      // 写回文件时:列表用 -,分隔线用 ---
+      c.update(remarkStringifyOptionsCtx, (o) => ({ ...o, bullet: "-", rule: "-" }));
+      c.set(linkAttr.key, () => ({ title: "Ctrl+点击打开链接" }));
+    })
+    // 自己的按键放在最前面,先于 Milkdown 自带的按键处理(Shift+Enter、Ctrl+B 等)
+    .use(keys)
+    .use(commonmark)
+    .use(gfm)
+    .use(history)
+    .use(clipboard)
+    .use([lineBreak, codeBlockWithTitle, codeBlockView, codeHighlight, changes, placeholder, afterRule, toolbar])
+    .create();
+  editor.action((c) => {
+    ctx = c;
+    view = c.get(editorViewCtx);
+  });
+  view.dom.setAttribute("aria-label", "页面内容");
+  view.dom.spellcheck = false;
 }
 
 export function editorView() {
   return view;
 }
 
+// 测试用:当前页面的 Markdown、纯文字和选中的文字
+export function editorDebug() {
+  return {
+    view,
+    markdown: () => serialize(view.state.doc),
+    text: () => view.state.doc.textBetween(0, view.state.doc.content.size, "\n"),
+    selection: () => editorSelectionText(),
+  };
+}
+
+export function runCommand(cmd, payload) {
+  return ctx.get(commandsCtx).call(cmd.key, payload);
+}
+
+function scroller() {
+  return $("#editor");
+}
+
 // 把编辑器里的页面的状态和滚动位置存回页面对象
 function keep() {
   if (!shown) return;
   shown.state = view.state;
-  shown.snap = view.scrollSnapshot();
+  shown.scroll = scroller().scrollTop;
 }
 
-// 换页、换到编辑模式时调用:放上 n 的状态,内容在别处变过就先换成新内容
+function freshState(md) {
+  return EditorState.create({ schema: view.state.schema, doc: parse(md), plugins: view.state.plugins });
+}
+
+// 把文档换成 md 的内容:只换掉不一样的部分,光标和滚动位置不会乱跳;撤销记录里单独算一步
+function replaceTr(state, md) {
+  const doc = parse(md);
+  const tr = state.tr.setMeta(EXTERNAL, true);
+  const start = state.doc.content.findDiffStart(doc.content);
+  if (start == null) return null;
+  let { a: endA, b: endB } = state.doc.content.findDiffEnd(doc.content);
+  // 两边重叠时往后挪,保证 start ≤ end
+  const overlap = start - Math.min(endA, endB);
+  if (overlap > 0) {
+    endA += overlap;
+    endB += overlap;
+  }
+  closeHistory(tr);
+  tr.replace(start, endA, doc.slice(start, endB));
+  return tr;
+}
+
+// 换页时调用:放上 n 的状态,内容在别处变过就先换成新内容
 export function showInEditor(n) {
   if (shown === n) {
     setEditorText(n);
     return;
   }
   keep();
-  shown = n;
-  let st = n.state || makeState(n.content);
-  let snap = n.snap;
-  const text = st.doc.toString();
-  if (text !== n.content) {
-    st = st.update({ changes: diff(text, n.content), annotations: fromDisk }).state;
-    // 内容变了,存下的滚动位置不一定还对得上
-    snap = null;
+  shown = null;
+  let st = n.state;
+  let scroll = n.scroll || 0;
+  if (!st) {
+    st = freshState(n.content);
+    n.stateMd = n.content;
+  } else if (n.stateMd !== n.content) {
+    const tr = replaceTr(st, n.content);
+    if (tr) st = st.apply(tr);
+    n.stateMd = n.content;
+    scroll = 0;
   }
-  view.setState(st);
-  if (gutter.get(st) !== gutterNow) view.dispatch({ effects: gutter.reconfigure(gutterNow) });
-  view.dispatch({ effects: snap || EditorView.scrollIntoView(st.selection.main.head) });
-}
-
-// 换到阅读模式、或者要记下当前位置时调用
-export function leaveEditor(hide = false) {
-  keep();
-  if (hide) shown = null;
+  view.updateState(st);
+  shown = n;
+  scroller().scrollTop = scroll;
 }
 
 // 编辑器里的页面的内容在别处变了(n.content 已经是新内容):换上新内容,可以撤销回去
 export function setEditorText(n) {
-  if (n !== shown) return;
-  const text = view.state.doc.toString();
-  if (text !== n.content) view.dispatch({ changes: diff(text, n.content), annotations: fromDisk });
+  if (n !== shown || n.stateMd === n.content) return;
+  const tr = replaceTr(view.state, n.content);
+  n.stateMd = n.content;
+  if (tr) view.dispatch(tr);
+}
+
+// 记下当前位置
+export function leaveEditor() {
+  keep();
 }
 
 export function focusEditorView() {
@@ -278,29 +399,48 @@ export function focusEditorView() {
 }
 
 export function editorSelectionText() {
-  const { from, to } = view.state.selection.main;
-  return view.state.sliceDoc(from, to);
+  const { from, to } = view.state.selection;
+  return view.state.doc.textBetween(from, to, "\n");
 }
 
-// 选中 from 到 to,并滚到窗口中间
-export function selectInEditor(from, to) {
-  const len = view.state.doc.length;
-  view.dispatch({
-    selection: EditorSelection.single(Math.min(from, len), Math.min(to, len)),
-    effects: EditorView.scrollIntoView(Math.min(from, len), { y: "center" }),
+// 选中文档里第 nth 个 query(不分大小写),找不到就选第一个;滚到窗口中间
+export function selectMatch(query, nth = 0) {
+  const q = query.toLowerCase();
+  if (!q) return;
+  const found = [];
+  view.state.doc.descendants((node, pos) => {
+    if (!node.isTextblock) return true;
+    // 这一段的文字和每个字在文档里的位置
+    let text = "";
+    const at = [];
+    node.forEach((child, offset) => {
+      const s = child.isText ? child.text : child.type.name === "hardbreak" ? "\n" : "￼";
+      for (let i = 0; i < s.length; i++) at.push(pos + 1 + offset + (child.isText ? i : 0));
+      text += s;
+    });
+    const low = text.toLowerCase();
+    for (let i = low.indexOf(q); i !== -1; i = low.indexOf(q, i + 1)) found.push([at[i], at[i + q.length - 1] + 1]);
+    return false;
   });
+  const hit = found[nth] || found[0];
+  if (!hit) return;
+  const { state } = view;
+  view.dispatch(state.tr.setSelection(TextSelection.create(state.doc, hit[0], hit[1])));
   view.focus();
+  // 滚到窗口中间
+  const box = scroller();
+  const c = view.coordsAtPos(hit[0]);
+  const r = box.getBoundingClientRect();
+  box.scrollTop += c.top - r.top - box.clientHeight / 2;
 }
 
 // 在光标处插入文字(替换选中的部分)
 export function insertText(text) {
-  view.dispatch(view.state.replaceSelection(text), { scrollIntoView: true, userEvent: "input" });
+  readSelection(view);
+  view.dispatch(view.state.tr.insertText(text).scrollIntoView());
   view.focus();
 }
 
 export function applyEditorSettings(s) {
-  gutterNow = s.line_numbers ? withLineNumbers : [];
-  if (view && gutter.get(view.state) !== gutterNow) view.dispatch({ effects: gutter.reconfigure(gutterNow) });
-  // 字号改了以后让编辑器重新量一下行高
-  view?.requestMeasure();
+  $("#editor").classList.toggle("code-lines", s.code_line_numbers !== false);
 }

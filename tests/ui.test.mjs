@@ -18,7 +18,7 @@ let browser;
 let base;
 
 before(async () => {
-  if (!existsSync(join(SRC, "vendor", "marked.js"))) {
+  if (!existsSync(join(SRC, "vendor", "milkdown.js"))) {
     throw new Error("src/vendor/ 里没有第三方库:先运行 node scripts/prepare.mjs(npm run test:ui 会自动运行)");
   }
   // 和 npm run preview 用同一个本地服务器,页面带着程序里的 CSP
@@ -118,14 +118,9 @@ function helpers(p) {
     activeTab: () => p.$$eval("#tabs .tab.active", (ts) => ts[0]?.textContent.trim() ?? null),
     tab: (name) => p.locator("#tabs .tab").filter({ hasText: new RegExp(`^\\s*${escapeRe(name)}\\s*$`) }),
     bookName: () => p.$$eval("#book-name", (els) => els[0]?.textContent.trim() ?? null),
-    // 编辑区是 CodeMirror,内容和选区从 window.__minipad.view 读
-    editor: () => p.evaluate(() => window.__minipad?.view?.state.doc.toString() ?? null),
-    selection: () =>
-      p.evaluate(() => {
-        const v = window.__minipad?.view;
-        const s = v?.state.selection.main;
-        return v ? v.state.sliceDoc(s.from, s.to) : null;
-      }),
+    // 编辑区是 Milkdown 富文本编辑器:当前页面转成 Markdown 的样子(去掉末尾的换行)、选中的文字
+    editor: () => p.evaluate(() => window.__minipad?.editor().markdown().replace(/\n$/, "") ?? null),
+    selection: () => p.evaluate(() => window.__minipad?.editor().selection() ?? null),
     // 光标在不在编辑区里
     editorFocused: () => p.evaluate(() => !!document.activeElement?.closest?.("#editor")),
     // 正在显示的提示文字(没显示时是空字符串)
@@ -242,7 +237,7 @@ function ui(name, ...args) {
 
 describe("0.2.0 checks", () => {
   ui("welcome page: the copy button copies the code block", async ({ p }) => {
-    await p.click("#preview .copy");
+    await p.click("#editor .copy");
     const clip = await p.evaluate(() => navigator.clipboard.readText());
     assert.ok(clip.includes("console.log"), "copy button copies code");
   });
@@ -845,11 +840,11 @@ describe("settings and dialogs", () => {
   });
 });
 
-// ---------- 0.2.2:CodeMirror 编辑区、列表和任务、F5 插入日期时间 ----------
+// ---------- 编辑区(0.2.4 起是 Milkdown 富文本编辑器):撤销记录、Markdown 写法、任务、Tab、F5、工具栏 ----------
 
 describe("editor", () => {
   ui(
-    "each page keeps its own undo history across page switches and reading mode",
+    "each page keeps its own undo history across page switches",
     { seed: seed({ "": { 甲: "甲的内容", 乙: "乙的内容" } }) },
     async (h) => {
       const { p } = h;
@@ -873,13 +868,6 @@ describe("editor", () => {
       await p.keyboard.press("Control+z");
       await p.keyboard.press("Control+Shift+z");
       assert.equal(await h.editor(), "甲的内容!!", "so does Ctrl+Shift+Z");
-      // 换到阅读模式再换回来,撤销记录也还在
-      await p.keyboard.press("Control+e");
-      await p.locator("#preview").waitFor();
-      await p.keyboard.press("Control+e");
-      await p.locator("#editor").waitFor();
-      await p.keyboard.press("Control+z");
-      assert.equal(await h.editor(), "甲的内容", "undo still works after reading mode");
       // 乙 的撤销记录是它自己的
       await h.tab("乙").click();
       await until(h.editor, "乙的内容??", "乙 kept its text");
@@ -888,7 +876,7 @@ describe("editor", () => {
       await p.keyboard.press("Control+z");
       assert.equal(await h.editor(), "乙的内容", "and has nothing older to undo");
       await until(() => h.mockFile("", "乙"), "乙的内容", "乙 saved");
-      await until(() => h.mockFile("", "甲"), "甲的内容", "甲 saved");
+      await until(() => h.mockFile("", "甲"), "甲的内容!!", "甲 saved");
     },
   );
 
@@ -909,61 +897,104 @@ describe("editor", () => {
     assert.equal(await h.editor(), "第一行", "the next Ctrl+Z undoes the typing");
   });
 
-  ui("Enter continues bullet, numbered and task lists; Enter on an empty item ends the list", { seed: seed({ "": { 清单: "" } }) }, async (h) => {
+  ui("Markdown shortcuts format the text while typing, and the file is saved as Markdown", { seed: seed({ "": { 页: "" } }) }, async (h) => {
     const { p } = h;
     await p.click("#editor");
-    for (const step of ["- 苹果", "Enter", "香蕉", "Enter", "Enter", "1. 第一", "Enter", "第二", "Enter", "Enter", "- [x] 买菜", "Enter", "做饭"]) {
+    for (const step of ["# 标题", "Enter", "**粗体**和`代码`", "Enter", "- 苹果", "Enter", "香蕉", "Enter", "Enter", "1. 第一", "Enter", "第二", "Enter", "Enter", "> 引用"]) {
       if (step === "Enter") await p.keyboard.press("Enter");
       else await p.keyboard.type(step);
     }
-    const text = "- 苹果\n- 香蕉\n1. 第一\n2. 第二\n- [x] 买菜\n- [ ] 做饭";
-    assert.equal(await h.editor(), text, "markers continued, empty items end the list, new tasks start unchecked");
-    await until(() => h.mockFile("", "清单"), text, "saved");
+    const html = (sel) => p.$$eval(`#editor .ProseMirror ${sel}`, (els) => els.map((e) => e.textContent));
+    assert.deepEqual(await html("h1"), ["标题"], "# makes a heading");
+    assert.deepEqual(await html("strong"), ["粗体"], "** makes bold");
+    assert.deepEqual(await html(":not(pre) > code"), ["代码"], "backticks make inline code");
+    assert.deepEqual(await html("ul > li"), ["苹果", "香蕉"], "- starts a list and Enter continues it");
+    assert.deepEqual(await html("ol > li"), ["第一", "第二"], "1. starts a numbered list");
+    assert.deepEqual(await html("blockquote"), ["引用"], "> makes a quote");
+    const md = "# 标题\n\n**粗体**和`代码`\n\n- 苹果\n- 香蕉\n\n1. 第一\n2. 第二\n\n> 引用";
+    assert.equal(await h.editor(), md, "the page is Markdown underneath");
+    await until(() => h.mockFile("", "页"), md, "saved as Markdown");
   });
 
   ui(
-    "Tab and Shift+Tab indent list items and selected lines; in plain text Tab inserts a tab",
-    { seed: seed({ "": { 页: "甲\n乙\n- 项目" } }) },
+    "opening a page does not rewrite its file; the first change saves it in the editor's Markdown style",
+    { seed: seed({ "": { 页: "* 甲\n* 乙\n\n一行\n下一行" } }) },
     async (h) => {
       const { p } = h;
-      await p.click("#editor");
-      await p.keyboard.press("Control+End");
-      await p.keyboard.press("Tab");
-      assert.equal(await h.editor(), "甲\n乙\n\t- 项目", "Tab in a list item indents the item");
-      await p.keyboard.press("Shift+Tab");
-      assert.equal(await h.editor(), "甲\n乙\n- 项目", "Shift+Tab outdents it");
-      await p.keyboard.press("Control+a");
-      await p.keyboard.press("Tab");
-      assert.equal(await h.editor(), "\t甲\n\t乙\n\t- 项目", "Tab indents every selected line");
-      await p.keyboard.press("Shift+Tab");
-      assert.equal(await h.editor(), "甲\n乙\n- 项目", "Shift+Tab outdents them");
-      await p.keyboard.press("Control+Home");
+      await p.locator("#editor .ProseMirror li").first().waitFor();
+      assert.deepEqual(await p.$$eval("#editor .ProseMirror br", (els) => els.length), 1, "a single line break stays a line break");
+      await sleep(800);
+      assert.equal(await h.mockFile("", "页"), "* 甲\n* 乙\n\n一行\n下一行", "only looking at a page keeps the file as it was");
+      await p.click("#editor .ProseMirror li >> nth=1");
       await p.keyboard.press("End");
-      await p.keyboard.press("Tab");
-      assert.equal(await h.editor(), "甲\t\n乙\n- 项目", "Tab in plain text inserts a tab at the cursor");
-      assert.ok(await h.editorFocused(), "Tab never moves the focus out of the editor");
-      await until(() => h.mockFile("", "页"), "甲\t\n乙\n- 项目", "saved");
+      await p.keyboard.type("!");
+      await until(() => h.mockFile("", "页"), "- 甲\n- 乙!\n\n一行\n下一行", "after a change the list uses -, line breaks are kept");
     },
   );
 
-  ui("Ctrl+Enter turns a line into a task and checks or unchecks it", { seed: seed({ "": { 待办: "买菜\n- 牛奶" } }) }, async (h) => {
+  ui("tasks: [ ] starts a task, Ctrl+Enter and clicking the box check it", { seed: seed({ "": { 待办: "买菜\n\n- 牛奶" } }) }, async (h) => {
     const { p } = h;
-    const first = async () => (await h.editor()).split("\n")[0];
-    await p.click("#editor");
-    await p.keyboard.press("Control+Home");
+    const tasks = () => p.$$eval('#editor li[data-item-type="task"]', (els) => els.map((e) => [e.textContent, e.dataset.checked === "true"]));
+    await p.click("#editor .ProseMirror p");
     await p.keyboard.press("Control+Enter");
-    assert.equal(await first(), "- [ ] 买菜", "a plain line becomes an open task");
+    // 紧挨着的两个列表,第二个用 * 写,免得打开时合成一个
+    assert.equal(await h.editor(), "- [ ] 买菜\n\n* 牛奶", "Ctrl+Enter turns a paragraph into an open task");
     await p.keyboard.press("Control+Enter");
-    assert.equal(await first(), "- [x] 买菜", "Ctrl+Enter checks it");
+    assert.equal(await h.editor(), "- [x] 买菜\n\n* 牛奶", "Ctrl+Enter checks it");
     await p.keyboard.press("Control+Enter");
-    assert.equal(await first(), "- [ ] 买菜", "and unchecks it");
-    await p.keyboard.press("Control+End");
+    assert.equal(await h.editor(), "- [ ] 买菜\n\n* 牛奶", "and unchecks it");
+    await p.click("#editor .ProseMirror li >> text=牛奶");
     await p.keyboard.press("Control+Enter");
-    assert.equal(await h.editor(), "- [ ] 买菜\n- [ ] 牛奶", "a list item gets a checkbox");
+    assert.deepEqual(await tasks(), [["买菜", false], ["牛奶", false]], "a list item gets a checkbox");
+    // 点方框勾选
+    const box = await p.locator('#editor li[data-item-type="task"] >> nth=1').boundingBox();
+    await p.mouse.click(box.x - 10, box.y + box.height / 2);
+    assert.deepEqual(await tasks(), [["买菜", false], ["牛奶", true]], "clicking the box checks it");
     await p.keyboard.press("Control+a");
     await p.keyboard.press("Control+Enter");
-    assert.equal(await h.editor(), "- [x] 买菜\n- [x] 牛奶", "with several lines selected each one is toggled");
-    await until(() => h.mockFile("", "待办"), "- [x] 买菜\n- [x] 牛奶", "saved");
+    assert.deepEqual(await tasks(), [["买菜", true], ["牛奶", false]], "with everything selected each task is toggled");
+    await until(() => h.mockFile("", "待办"), "- [x] 买菜\n\n* [ ] 牛奶", "saved");
+  });
+
+  ui("Tab indents list items; in a code block Tab inserts a tab; Tab never leaves the editor", { seed: seed({ "": { 页: "- 甲\n- 乙\n\n```\ncode\n```" } }) }, async (h) => {
+    const { p } = h;
+    await p.click("#editor .ProseMirror li >> text=乙");
+    await p.keyboard.press("End");
+    await p.keyboard.press("Tab");
+    assert.equal(await h.editor(), "- 甲\n  - 乙\n\n```\ncode\n```", "Tab makes 乙 a sub item");
+    await p.keyboard.press("Shift+Tab");
+    assert.equal(await h.editor(), "- 甲\n- 乙\n\n```\ncode\n```", "Shift+Tab moves it back");
+    // 代码块是最后一块:Ctrl+End 到代码的末尾,Home 到这一行的开头
+    await p.keyboard.press("Control+End");
+    await p.keyboard.press("Home");
+    await until(h.selection, "", "the cursor is in the code");
+    await p.keyboard.press("Tab");
+    assert.equal(await h.editor(), "- 甲\n- 乙\n\n```\n\tcode\n```", "Tab in code inserts a tab");
+    assert.ok(await h.editorFocused(), "the focus stays in the editor");
+  });
+
+  ui("Enter after a checked task starts an open one; --- and a trailing code block can be typed past", { seed: seed({ "": { 页: "- [x] 做完了" } }) }, async (h) => {
+    const { p } = h;
+    await p.click("#editor .ProseMirror li");
+    await p.keyboard.press("End");
+    await until(h.selection, "", "the cursor is in the task");
+    await p.keyboard.press("Enter");
+    await p.keyboard.type("下一项");
+    assert.equal(await h.editor(), "- [x] 做完了\n- [ ] 下一项", "the new task is not checked");
+    await p.keyboard.press("Enter");
+    await p.keyboard.press("Enter");
+    // 打完 --- 光标在分隔线下面的新段落里,接着打字不会把分隔线换掉
+    await p.keyboard.type("---");
+    await p.keyboard.type("x");
+    await p.keyboard.press("Enter");
+    await p.keyboard.type("```js");
+    await p.keyboard.press("Enter");
+    await p.keyboard.type("a");
+    // 代码块是最后一块时,在最后一行按 ↓ 到它下面
+    await p.keyboard.press("ArrowDown");
+    await p.keyboard.type("后面");
+    assert.equal(await h.editor(), "- [x] 做完了\n- [ ] 下一项\n\n---\n\nx\n\n```js\na\n```\n\n后面");
+    await until(() => h.mockFile("", "页"), "- [x] 做完了\n- [ ] 下一项\n\n---\n\nx\n\n```js\na\n```\n\n后面", "saved");
   });
 
   ui("F5 inserts the date and time at the cursor, in the format set in the settings", { seed: seed({ "": { 日记: "今天" } }) }, async (h) => {
@@ -996,65 +1027,45 @@ describe("editor", () => {
     assert.equal(await h.editor(), today, "F5 replaces the selection with the new format");
     await until(() => h.mockFile("", "日记"), today, "saved");
 
-    // 阅读模式和搜索框开着时 F5 什么也不做
-    await p.keyboard.press("Control+e");
-    await p.locator("#preview").waitFor();
-    await p.keyboard.press("F5");
-    await p.keyboard.press("Control+e");
-    await p.locator("#editor").waitFor();
+    // 搜索框开着时 F5 什么也不做
     await p.keyboard.press("Control+f");
     await p.locator("#search").waitFor();
     await p.keyboard.press("F5");
     await p.keyboard.press("Escape");
-    assert.equal(await h.editor(), today, "nothing inserted in reading mode or from the search box");
+    assert.equal(await h.editor(), today, "nothing inserted from the search box");
     assert.equal(await p.evaluate(() => window.__notReloaded), true, "F5 never reloads the page");
   });
 
-  ui("line numbers can be turned on and off in the settings, on every page", { seed: seed({ "": { 页: "一\n二\n三", 另一页: "只有一行" } }) }, async (h) => {
+  ui("the toolbar formats selected text; Ctrl+B bolds a selection and opens the notebooks without one", { seed: seed({ "": { 页: "一段文字" } }) }, async (h) => {
     const { p } = h;
-    const numbers = () =>
-      p.$$eval("#editor .cm-lineNumbers .cm-gutterElement", (els) =>
-        els.filter((e) => getComputedStyle(e).visibility !== "hidden").map((e) => e.textContent),
-      );
-    const setLines = async (on) => {
-      await p.click("#btn-settings");
-      await p.locator("#settings").waitFor();
-      assert.equal(await p.isChecked("#set-lines"), !on, "the checkbox shows the current setting");
-      await p.setChecked("#set-lines", on);
-      await p.click("#set-save");
-      await until(() => p.isHidden("#settings"), true, "settings saved and closed");
-    };
-    // 先打开过 另一页,它的编辑状态是在行号关着的时候建的
-    await h.tab("另一页").click();
-    await h.tab("页").click();
-    assert.equal(await p.locator("#editor .cm-lineNumbers").count(), 0, "no line numbers by default");
-    await setLines(true);
-    await until(numbers, ["1", "2", "3"], "line numbers shown");
-    await until(async () => (await h.stored())?.settings?.line_numbers, true, "the setting is saved");
-    await h.tab("另一页").click();
-    await until(numbers, ["1"], "a page opened earlier shows them too");
-    await setLines(false);
-    await until(() => p.locator("#editor .cm-lineNumbers").count(), 0, "line numbers hidden again");
-    await h.tab("页").click();
-    assert.equal(await p.locator("#editor .cm-lineNumbers").count(), 0, "on the other page as well");
+    await p.click("#editor .ProseMirror p");
+    await p.keyboard.press("End");
+    assert.ok(await p.isHidden("#toolbar"), "no toolbar without a selection");
+    await p.keyboard.press("Shift+ArrowLeft");
+    await p.keyboard.press("Shift+ArrowLeft");
+    await p.locator("#toolbar").waitFor();
+    await p.click('#toolbar [data-cmd="strong"]');
+    assert.equal(await h.editor(), "一段**文字**", "the B button makes the selection bold");
+    assert.ok(await p.locator('#toolbar [data-cmd="strong"].on').isVisible(), "and shows it is on");
+    await p.click('#toolbar [data-cmd="link"]');
+    await h.answer("https://example.com");
+    await until(h.editor, "一段**[文字](https://example.com)**", "the link button asks for the address");
+    await p.keyboard.press("Control+b");
+    await until(h.editor, "一段[文字](https://example.com)", "Ctrl+B with a selection toggles bold");
+    assert.ok(await p.isHidden("#books"), "and does not open the notebook list");
+    await p.keyboard.press("End");
+    await until(h.selection, "", "nothing selected");
+    await p.keyboard.press("Control+b");
+    await p.locator("#books").waitFor();
+    await p.keyboard.press("Escape");
+    // Ctrl+点击链接用浏览器打开
+    await p.evaluate(() => {
+      window.__opened = [];
+      window.open = (url) => window.__opened.push(url);
+    });
+    await p.click("#editor a", { modifiers: ["Control"] });
+    assert.deepEqual(await p.evaluate(() => window.__opened), ["https://example.com"], "Ctrl+click opens the link");
   });
-
-  ui(
-    "Markdown is coloured while editing: headings, bold, inline code, code blocks and tasks",
-    { seed: seed({ "": { 笔记: "# 标题\n\n**粗体** 和 `代码`\n\n```js\nlet a = 1\n```\n\n- [x] 完成" } }) },
-    async (h) => {
-      const { p } = h;
-      await p.locator("#editor .cm-content").waitFor();
-      const text = (sel) => p.$$eval(`#editor ${sel}`, (els) => els.map((e) => e.textContent).join(""));
-      assert.equal(await text(".md-h1"), "# 标题", "heading");
-      assert.equal(await text(".md-strong"), "**粗体**", "bold");
-      assert.equal(await text(".cm-line:not(.cm-codeblock) .md-code"), "代码", "inline code");
-      assert.equal(await text(".md-mark"), "#****`````js```-", "the markup and the code block's language are dimmed");
-      assert.equal(await text(".md-task"), "[x]", "task checkbox");
-      const block = await p.$$eval("#editor .cm-line.cm-codeblock", (els) => els.map((e) => [e.textContent, e.className.includes("-first"), e.className.includes("-last")]));
-      assert.deepEqual(block, [["```js", true, false], ["let a = 1", false, false], ["```", false, true]], "every line of the code block is marked");
-    },
-  );
 
   ui("Esc hides the window even with text selected in the editor", { seed: seed({ "": { 页: "一些文字" } }) }, async (h) => {
     const { p } = h;
@@ -1066,8 +1077,7 @@ describe("editor", () => {
   });
 });
 
-// ---------- 0.2.3:阅读模式的代码块卡片 ----------
-
+// ---------- 代码块 ----------
 const CODE_PAGE = {
   "": {
     代码: [
@@ -1085,51 +1095,89 @@ const CODE_PAGE = {
   },
 };
 
-describe("reading mode code blocks", () => {
-  ui(
-    "a code block shows its title, language, line numbers and wraps long lines; it folds and copies",
-    { seed: seed(CODE_PAGE, { modes: { "": { 代码: "view" } } }) },
-    async (h) => {
-      const { p } = h;
-      await p.locator("#preview .codeblock").first().waitFor();
-      const blocks = () =>
-        p.$$eval("#preview .codeblock", (els) =>
-          els.map((e) => ({
-            title: e.querySelector(".cb-title").textContent,
-            lang: e.querySelector(".lang")?.textContent ?? null,
-            lines: e.querySelectorAll(".cb-line").length,
-          })),
-        );
-      assert.deepEqual(await blocks(), [
-        { title: "牛奶测试", lang: "JavaScript", lines: 4 },
-        { title: "", lang: null, lines: 1 },
-      ]);
-      const first = p.locator("#preview .codeblock").first();
-      const numbers = () =>
-        first.locator(".cb-line").evaluateAll((els) => els.map((e) => getComputedStyle(e, "::before").content));
-      assert.deepEqual(await numbers(), Array(4).fill("counter(line)"), "every line is numbered");
-      assert.equal(await first.locator("pre").evaluate((e) => e.scrollWidth - e.clientWidth), 0, "long lines wrap");
-
-      await first.locator(".cb-toggle").click();
-      assert.ok(await first.locator("pre").isHidden(), "the toggle folds the code");
-      assert.equal(await first.locator(".cb-toggle").getAttribute("aria-expanded"), "false");
-      assert.equal(await first.locator(".cb-count").textContent(), "4 行", "a folded block says how many lines it has");
-      await first.locator(".cb-toggle").click();
-      assert.ok(await first.locator("pre").isVisible(), "and unfolds it again");
-      assert.equal(await h.toast(), "", "clicking the header does not switch to editing");
-      assert.ok(await p.isVisible("#preview"), "still in reading mode");
-
-      await first.locator(".copy").click();
-      await until(() => first.locator(".copy").evaluate((b) => b.classList.contains("done")), true, "the copy button shows it copied");
-      const clip = await p.evaluate(() => navigator.clipboard.readText());
-      assert.equal(clip, CODE_PAGE[""].代码.split("\n").slice(1, 5).join("\n"), "copies the code without line numbers");
-    },
-  );
-
-  ui("code line numbers can be turned off in the settings", { seed: seed(CODE_PAGE, { modes: { "": { 代码: "view" } } }) }, async (h) => {
+describe("code blocks", () => {
+  ui("a code block shows its title, language, line numbers and wraps long lines; it folds and copies", { seed: seed(CODE_PAGE) }, async (h) => {
     const { p } = h;
-    await p.locator("#preview .codeblock").first().waitFor();
-    const numbered = () => p.$eval("#preview .cb-line", (e) => getComputedStyle(e, "::before").content !== "none");
+    await p.locator("#editor .codeblock").first().waitFor();
+    const blocks = () =>
+      p.$$eval("#editor .codeblock", (els) =>
+        els.map((e) => ({
+          title: e.querySelector(".cb-title").value,
+          lang: e.querySelector(".cb-lang").value,
+          lines: e.querySelectorAll(".cb-gutter span").length,
+        })),
+      );
+    assert.deepEqual(await blocks(), [
+      { title: "牛奶测试", lang: "js", lines: 4 },
+      { title: "", lang: "", lines: 1 },
+    ]);
+    const first = p.locator("#editor .codeblock").first();
+    assert.deepEqual(await first.locator(".cb-gutter span").allTextContents(), ["1", "2", "3", "4"], "every line is numbered");
+    // 第 1 行很长,换了行;第 2 行的行号要在它下面好几行的位置
+    const tops = await first.locator(".cb-gutter span").evaluateAll((els) => els.map((e) => e.offsetTop));
+    assert.ok(tops[1] - tops[0] > tops[2] - tops[1] * 1.5, "a wrapped line keeps its number at its first row");
+    assert.ok((await first.locator(".hljs-keyword").count()) > 0, "the code is highlighted");
+    assert.equal(await first.locator("pre").evaluate((e) => e.scrollWidth - e.clientWidth), 0, "long lines wrap");
+
+    await first.locator(".cb-toggle").click();
+    assert.ok(await first.locator("pre").isHidden(), "the toggle folds the code");
+    assert.equal(await first.locator(".cb-toggle").getAttribute("aria-expanded"), "false");
+    assert.equal(await first.locator(".cb-count").textContent(), "4 行", "a folded block says how many lines it has");
+    await first.locator(".cb-toggle").click();
+    assert.ok(await first.locator("pre").isVisible(), "and unfolds it again");
+
+    await first.locator(".copy").click();
+    await until(() => first.locator(".copy").evaluate((b) => b.classList.contains("done")), true, "the copy button shows it copied");
+    const clip = await p.evaluate(() => navigator.clipboard.readText());
+    assert.equal(clip, CODE_PAGE[""].代码.split("\n").slice(1, 5).join("\n"), "copies the code without line numbers");
+    await sleep(600);
+    assert.equal(await h.mockFile("", "代码"), CODE_PAGE[""].代码, "folding and copying do not change the file");
+  });
+
+  ui("the title and language are edited right on the card and saved in the file", { seed: seed(CODE_PAGE) }, async (h) => {
+    const { p } = h;
+    const second = p.locator("#editor .codeblock >> nth=1");
+    await second.waitFor();
+    await second.locator(".cb-title").click();
+    await p.keyboard.type("新标题");
+    await p.keyboard.press("Enter");
+    assert.ok(await h.editorFocused(), "Enter puts the cursor back into the code");
+    await until(h.editor, CODE_PAGE[""].代码.replace("```\n没有", "```新标题\n没有"), "a title without a language");
+    await second.locator(".cb-lang").click();
+    await p.keyboard.type("py");
+    await p.keyboard.press("Enter");
+    await until(h.editor, CODE_PAGE[""].代码.replace("```\n没有", "```py 新标题\n没有"), "the language goes before the title");
+    // 英文标题的第一个词像语言名,前面补 text
+    const first = p.locator("#editor .codeblock").first();
+    await first.locator(".cb-lang").fill("");
+    await first.locator(".cb-title").fill("Hello world");
+    await first.locator(".cb-title").press("Enter");
+    await until(async () => (await h.editor()).split("\n")[0], "```text Hello world", "an English title without a language gets text in front");
+    // Esc 放弃修改,窗口不隐藏
+    await first.locator(".cb-title").fill("不要了");
+    await first.locator(".cb-title").press("Escape");
+    assert.equal(await first.locator(".cb-title").inputValue(), "Hello world", "Esc puts the old title back");
+    assert.ok(!(await h.toast()).includes("隐藏"), "and does not hide the window");
+    await until(async () => (await h.mockFile("", "代码")).split("\n")[0], "```text Hello world", "saved");
+    // Ctrl+Z 撤销标题和语言的修改
+    await p.keyboard.press("Control+z");
+    await until(async () => (await h.editor()).split("\n")[0], "```js 牛奶测试", "undo takes the title and language back");
+  });
+
+  ui("typing ``` and Enter starts a code block", { seed: seed({ "": { 页: "" } }) }, async (h) => {
+    const { p } = h;
+    await p.click("#editor");
+    await p.keyboard.type("```js");
+    await p.keyboard.press("Enter");
+    await p.keyboard.type("let a = 1");
+    await p.locator("#editor .codeblock").waitFor();
+    assert.equal(await h.editor(), "```js\nlet a = 1\n```");
+  });
+
+  ui("code line numbers can be turned off in the settings", { seed: seed(CODE_PAGE) }, async (h) => {
+    const { p } = h;
+    await p.locator("#editor .codeblock").first().waitFor();
+    const numbered = () => p.$eval("#editor .cb-gutter", (e) => getComputedStyle(e).display !== "none");
     assert.equal(await numbered(), true, "on by default");
     await p.click("#btn-settings");
     await p.locator("#settings").waitFor();

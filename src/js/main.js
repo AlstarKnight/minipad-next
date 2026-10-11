@@ -1,23 +1,24 @@
 // Minipad Next 前端入口:启动、全局快捷键、按钮
 import { api, isMock } from "./api.js";
-import { $, preview, tabsEl } from "./dom.js";
+import { $, tabsEl } from "./dom.js";
 import { state, book, current } from "./state.js";
-import { toast, dialogOpen, closeDialog, closeMenu, closeOverlays, focusEditor } from "./ui.js";
+import { toast, dialogOpen, closeDialog, closeMenu, closeOverlays, focusEditor, askText } from "./ui.js";
 import { markDirty, flushAll, saveMeta, resetActivity } from "./save.js";
 import { reload, syncFromDisk } from "./sync.js";
-import { rememberView, toggleMode } from "./page.js";
+import { rememberView } from "./page.js";
 import { switchTo, newNote, deleteNote } from "./tabs.js";
 import { toggleBooks, closeBooks, bindBooks } from "./notebooks.js";
-import { setupMarkdown } from "./preview.js";
 import { openSearch, bindSearch } from "./search.js";
 import { openSettings, saveSettings, bindSettings } from "./settings.js";
-import { createEditor, editorView, insertText } from "./editor.js";
+import { createEditor, editorDebug, insertText, toggleTask } from "./editor.js";
+import { setLinkPrompt, setTaskCommand } from "./toolbar.js";
 import { formatDate } from "./datetime.js";
 
 // ---------- 启动 ----------
 async function init() {
-  setupMarkdown();
-  createEditor({ onChange: markDirty });
+  setLinkPrompt(() => askText("链接地址", "https://"));
+  setTaskCommand(toggleTask);
+  await createEditor({ onChange: markDirty, openLink, emptyBold: () => toggleBooks() });
   bindUi();
   await reload();
   api.listen("flush", () => flushAll());
@@ -37,6 +38,11 @@ async function init() {
   api.listen("backup-error", (e) => toast("自动备份失败:" + e.payload, 5000));
 }
 
+// 用系统浏览器打开链接(编辑区里 Ctrl+点击链接)
+function openLink(href) {
+  if (/^(https?:|mailto:)/i.test(href || "")) api.invoke("open_link", { url: href }).catch((err) => toast(String(err)));
+}
+
 // 有没有开着的弹层、菜单或对话框
 function anyOverlay() {
   return dialogOpen() || ["#search", "#settings", "#books", "#ctx"].some((sel) => !$(sel).hidden);
@@ -50,22 +56,9 @@ async function hideWindow() {
 }
 
 function bindUi() {
-  preview.addEventListener("click", (e) => {
-    const a = e.target.closest("a");
-    if (!a) return;
-    e.preventDefault();
-    const href = a.getAttribute("href") || "";
-    if (/^(https?:|mailto:)/i.test(href)) api.invoke("open_link", { url: href }).catch((err) => toast(String(err)));
-  });
-  preview.addEventListener("dblclick", (e) => {
-    if (e.target.closest(".codeblock, a")) return;
-    toggleMode();
-  });
-
   $("#btn-book").addEventListener("click", () => toggleBooks());
   $("#btn-new").addEventListener("click", newNote);
   $("#btn-search").addEventListener("click", openSearch);
-  $("#btn-mode").addEventListener("click", toggleMode);
   $("#btn-settings").addEventListener("click", openSettings);
   $("#btn-hide").addEventListener("click", hideWindow);
   $("#btn-pin").addEventListener("click", async () => {
@@ -98,7 +91,7 @@ function bindUi() {
   });
   // 只在编辑区、输入框和阅读区保留系统右键菜单
   document.addEventListener("contextmenu", (e) => {
-    if (!e.target.closest("#editor, textarea, input, #preview")) e.preventDefault();
+    if (!e.target.closest("#editor, textarea, input")) e.preventDefault();
   });
   // 标签栏上滚轮横向滚动
   tabsEl.addEventListener("wheel", (e) => {
@@ -116,7 +109,7 @@ function bindUi() {
     // F5 和记事本一样在光标处插入当前的日期时间;弹层、对话框开着或者在输入框里时什么也不做(也不刷新页面)
     if (e.key === "F5") {
       e.preventDefault();
-      if (!ctrl && !e.altKey && !anyOverlay() && !e.target.closest?.("input, textarea, select") && current()?.mode === "edit") {
+      if (!ctrl && !e.altKey && !anyOverlay() && !e.target.closest?.("input, textarea, select") && current()) {
         insertText(formatDate(new Date(), state.settings?.date_format));
       }
       return;
@@ -141,10 +134,10 @@ function bindUi() {
       else if (!closeOverlays()) hideWindow();
       return;
     }
-    if (!ctrl) return;
+    // 编辑器自己处理过的快捷键(Ctrl+Z、Ctrl+B 加粗……)不再算窗口的
+    if (!ctrl || e.defaultPrevented) return;
     if (k === "b") (e.preventDefault(), toggleBooks());
     else if (k === "t" || k === "n") (e.preventDefault(), newNote());
-    else if (k === "e") (e.preventDefault(), toggleMode());
     else if (k === "f") (e.preventDefault(), openSearch());
     else if (k === "s") (e.preventDefault(), flushAll());
     else if (k === "w") (e.preventDefault(), deleteNote(current()));
@@ -181,9 +174,7 @@ if (isMock) {
   window.__minipad = {
     state,
     sync: () => syncFromDisk(true),
-    get view() {
-      return editorView();
-    },
+    editor: editorDebug,
   };
 }
 

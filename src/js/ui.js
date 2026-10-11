@@ -5,7 +5,7 @@ import { closeBooks } from "./notebooks.js";
 import { focusEditorView } from "./editor.js";
 
 export function focusEditor() {
-  if (current()?.mode === "edit") focusEditorView();
+  if (current()) focusEditorView();
 }
 
 let toastTimer;
