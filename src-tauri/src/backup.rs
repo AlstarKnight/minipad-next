@@ -61,20 +61,22 @@ pub fn run(notes: &Path, dest: &Path, day: &str, keep: usize) -> Result<Option<P
         .and_then(|_| fs::rename(&tmp, &target).map_err(|e| e.to_string()));
     if let Err(e) = written {
         let _ = fs::remove_file(&tmp);
-        return Err(format!("备份失败:{e}"));
+        return Err(format!("打包时出错:{e}"));
     }
-    prune(dest, keep)?;
+    prune(dest, keep);
     Ok(Some(target))
 }
 
-/// 只留最近 `keep` 份(至少一份),多出来的从最旧的删起
-pub fn prune(dest: &Path, keep: usize) -> Result<(), String> {
+/// 只留最近 `keep` 份(至少一份),多出来的从最旧的删起。
+/// 删不掉的(比如正被别的程序打开)先留着,下次备份时再删。
+pub fn prune(dest: &Path, keep: usize) {
     let all = list(dest);
     let extra = all.len().saturating_sub(keep.max(1));
     for (_, path) in &all[..extra] {
-        fs::remove_file(path).map_err(|e| format!("删除旧备份失败:{e}"))?;
+        if let Err(e) = fs::remove_file(path) {
+            eprintln!("删除旧备份 {} 失败:{e}", path.display());
+        }
     }
-    Ok(())
 }
 
 fn write_zip(notes: &Path, out: &Path, dest: &Path) -> Result<(), String> {
@@ -263,7 +265,7 @@ mod tests {
         run(&notes, &dest, "2026-10-05", 1).unwrap();
         assert_eq!(days(&dest), vec!["2026-10-05"]);
         // 保留份数填 0 也至少留一份
-        prune(&dest, 0).unwrap();
+        prune(&dest, 0);
         assert_eq!(days(&dest), vec!["2026-10-05"]);
         assert!(dest.join("我的文件.zip").exists());
         fs::remove_dir_all(&root).unwrap();

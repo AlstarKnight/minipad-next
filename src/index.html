@@ -8,6 +8,7 @@
 </head>
 <body>
   <header id="bar" data-tauri-drag-region>
+    <button id="btn-book" title="切换笔记本 (Ctrl+B)" aria-haspopup="true" aria-expanded="false"><span id="book-name">默认</span><svg viewBox="0 0 16 16"><path d="M4.5 6.5 8 10l3.5-3.5"/></svg></button>
     <div id="tabs" data-tauri-drag-region></div>
     <button id="btn-new" class="icon" title="新建页面 (Ctrl+T)">+</button>
     <div class="spacer" data-tauri-drag-region></div>
@@ -82,6 +83,14 @@
       <div class="row">
         <button id="set-open-dir" class="link">打开笔记文件夹</button>
       </div>
+      <h3>每日备份</h3>
+      <label class="row check"><input id="set-backup" type="checkbox" /> <span>每天第一次保存时,把笔记文件夹备份成 zip</span></label>
+      <label class="row"><span>保留份数</span><input id="set-backup-keep" type="number" min="1" max="365" /></label>
+      <div class="row col">
+        <span>备份位置(留空用默认位置)</span>
+        <div class="inline"><input id="set-backup-dir" type="text" spellcheck="false" /><button id="set-pick-backup" class="small">选择…</button></div>
+      </div>
+      <div class="row"><span id="set-backup-info" class="muted"></span><button id="set-open-backup" class="link">打开备份文件夹</button></div>
       <p id="set-error" class="error" hidden></p>
       <div class="actions">
         <span class="about"><span id="set-version">Minipad Next</span> · <button id="set-repo" class="link">GitHub</button></span>
@@ -91,10 +100,11 @@
     </div>
   </div>
 
-  <!-- 确认对话框 -->
+  <!-- 确认 / 输入名字的对话框 -->
   <div id="dialog" class="overlay center" hidden>
     <div class="panel form dialog">
       <p id="dialog-msg"></p>
+      <input id="dialog-input" type="text" spellcheck="false" autocomplete="off" hidden />
       <div class="actions">
         <button id="dialog-cancel">取消</button>
         <button id="dialog-ok" class="primary">确定</button>
@@ -102,17 +112,23 @@
     </div>
   </div>
 
-  <!-- 标签右键菜单 -->
-  <div id="ctx" class="menu" hidden>
-    <button data-act="rename">重命名</button>
-    <button data-act="delete" class="danger">删除页面</button>
+  <!-- 笔记本列表 -->
+  <div id="books" class="menu books" hidden>
+    <div id="books-title" class="menu-title">笔记本</div>
+    <div id="books-list"></div>
+    <hr />
+    <button id="books-new">新建笔记本…</button>
+    <div id="books-hint" class="menu-hint">右键笔记本可以改名或删除</div>
   </div>
+
+  <!-- 右键菜单(内容由 openMenu 生成) -->
+  <div id="ctx" class="menu" hidden></div>
 
   <div id="toast" hidden></div>
 
   <script src="vendor/marked.js"></script>
   <script src="vendor/purify.js"></script>
   <script src="vendor/highlight.js"></script>
-  <script src="app.js"></script>
+  <script type="module" src="js/main.js"></script>
 </body>
 </html>

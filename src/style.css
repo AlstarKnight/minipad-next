@@ -92,6 +92,42 @@ svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width:
   user-select: none;
 }
 
+/* 当前笔记本,点开切换 */
+#btn-book {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  flex-shrink: 0;
+  /* 窗口变窄时名字先缩短,标签栏才有地方 */
+  max-width: clamp(56px, calc(100vw - 320px), 120px);
+  height: 26px;
+  margin: 0 9px 4px 0;
+  padding: 0 5px 0 8px;
+  border-radius: 6px;
+  color: var(--muted);
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+#btn-book:hover, #btn-book[aria-expanded="true"] { background: var(--accent-soft); color: var(--text); }
+#book-name { overflow: hidden; text-overflow: ellipsis; }
+#btn-book svg { width: 11px; height: 11px; flex-shrink: 0; stroke-width: 1.8; }
+/* 和标签之间的分隔线 */
+#btn-book::after {
+  content: "";
+  position: absolute;
+  top: 6px;
+  bottom: 6px;
+  right: -5px;
+  width: 1px;
+  background: var(--bar-border);
+}
+/* 很窄的窗口里只留箭头 */
+@media (max-width: 320px) {
+  #book-name { display: none; }
+  #btn-book { padding: 0 7px; }
+}
+
 #tabs {
   display: flex;
   align-items: flex-end;
@@ -365,6 +401,12 @@ svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width:
 .form .inline { display: flex; gap: 6px; }
 .form .small { padding: 4px 10px; border-radius: 6px; border: 1px solid var(--bar-border); font-size: 12.5px; white-space: nowrap; }
 .form .small:hover { border-color: var(--accent); }
+.form input:disabled, .form .small:disabled { opacity: 0.5; cursor: default; }
+.form .small:disabled:hover { border-color: var(--bar-border); }
+.form h3 { margin: 16px 0 4px; padding-top: 12px; border-top: 1px solid var(--code-border); font-size: 13px; }
+.muted { color: var(--muted); }
+#set-backup-info { flex: 1; font-size: 12px; }
+#set-open-backup { white-space: nowrap; }
 .actions { display: flex; justify-content: flex-end; align-items: center; gap: 8px; margin-top: 14px; }
 .actions > button { padding: 5px 16px; border-radius: 6px; border: 1px solid var(--bar-border); }
 .actions .primary { background: var(--accent); border-color: var(--accent); color: #fff; }
@@ -373,8 +415,11 @@ svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width:
 .actions .about .link { font-size: 11.5px; }
 
 .overlay.center { align-items: center; inset: 0; }
+/* 对话框盖在笔记本列表上面 */
+#dialog { z-index: 25; }
 .dialog { max-width: 340px; }
 #dialog-msg { margin: 2px 0 0; font-size: 13.5px; line-height: 1.6; white-space: pre-line; }
+#dialog-input { display: block; width: 100%; margin-top: 10px; }
 
 .menu {
   position: fixed;
@@ -387,8 +432,20 @@ svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width:
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
 }
 .menu button { display: block; width: 100%; text-align: left; padding: 5px 10px; border-radius: 5px; font-size: 13px; }
-.menu button:hover { background: var(--accent-soft); }
+.menu button:hover, .menu button:focus { background: var(--accent-soft); outline: none; }
+.menu button:disabled { opacity: 0.45; cursor: default; background: none; }
 .menu .danger { color: var(--danger); }
+.menu hr { margin: 4px 2px; border: none; border-top: 1px solid var(--code-border); }
+.menu-title, .menu-hint { padding: 3px 10px; font-size: 11.5px; color: var(--muted); }
+.menu-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.menu-hint { font-size: 11px; }
+
+/* 笔记本列表 */
+.books { min-width: 180px; max-width: min(280px, calc(100vw - 8px)); max-height: 60vh; overflow-y: auto; }
+.menu .book-item { display: flex; align-items: center; gap: 12px; }
+.book-item .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.book-item .count { flex-shrink: 0; font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.book-item.current { color: var(--accent); }
 
 #toast {
   position: fixed;
