@@ -14,12 +14,22 @@ const editor = $("#editor");
 const preview = $("#preview");
 const tabsEl = $("#tabs");
 
+const REPO_URL = "https://github.com/AlstarKnight/minipad-next";
+
 const state = {
-  notes: [], // { name, content, mode, dirty, scroll, sel }
+  // { name, content, mode, dirty, scroll, sel, disk }
+  // disk 是最近一次从磁盘读到或写到磁盘的内容,用来判断文件有没有在别处被改过
+  notes: [],
   active: 0,
   settings: null,
   notesDir: "",
+  version: "",
+  debug: false,
 };
+
+function makeNote(name, content, mode = "edit") {
+  return { name, content, mode, dirty: false, scroll: 0, sel: [0, 0], disk: content };
+}
 
 // ---------- 启动 ----------
 async function init() {
@@ -33,9 +43,13 @@ async function init() {
     api.invoke("quit_app");
   });
   api.listen("shown", () => {
-    if (current().mode === "edit") editor.focus();
+    if (current()?.mode === "edit") editor.focus();
+    syncFromDisk();
   });
-  api.listen("hotkey-error", (e) => toast("热键注册失败(" + e.payload + "),请在设置里换一个"));
+  api.listen("window-focus", () => {
+    lastActivity = 0;
+    syncFromDisk();
+  });
 }
 
 async function reload() {
@@ -43,13 +57,16 @@ async function reload() {
     const st = await api.invoke("load_state");
     state.settings = st.settings;
     state.notesDir = st.notes_dir;
-    state.notes = st.notes.map((n) => ({ ...n, dirty: false, scroll: 0, sel: [0, 0] }));
+    state.version = st.version || "";
+    state.debug = !!st.debug;
+    state.notes = st.notes.map((n) => makeNote(n.name, n.content, n.mode));
     state.active = Math.max(0, state.notes.findIndex((n) => n.name === st.active));
     applySettings();
     renderTabs();
     showNote();
+    if (st.hotkey_error) toast("热键注册失败(" + st.hotkey_error + "),请在设置里换一个", 5000);
   } catch (e) {
-    toast("读取笔记失败:" + e);
+    toast("读取笔记失败:" + e, 5000);
   }
 }
 
@@ -67,6 +84,7 @@ function markDirty() {
   n.dirty = true;
   setSaveStatus("dirty");
   updateCount();
+  noteActivity();
   clearTimeout(saveTimer);
   saveTimer = setTimeout(flushAll, 500);
 }
@@ -75,15 +93,24 @@ async function flushAll() {
   clearTimeout(saveTimer);
   const dirty = state.notes.filter((n) => n.dirty);
   if (!dirty.length) return;
-  try {
-    for (const n of dirty) {
-      n.dirty = false;
-      await api.invoke("save_note", { name: n.name, content: n.content });
+  let failed = null;
+  for (const n of dirty) {
+    n.dirty = false;
+    const content = n.content;
+    try {
+      await api.invoke("save_note", { name: n.name, content });
+      n.disk = content;
+    } catch (e) {
+      n.dirty = true;
+      failed = e;
     }
+  }
+  if (failed) {
+    setSaveStatus("err", String(failed));
+    // 过一会儿自动重试
+    saveTimer = setTimeout(flushAll, 3000);
+  } else {
     setSaveStatus("saved");
-  } catch (e) {
-    dirty.forEach((n) => (n.dirty = true));
-    setSaveStatus("err", String(e));
   }
 }
 
@@ -111,6 +138,105 @@ function setSaveStatus(kind, msg) {
   const el = $("#st-save");
   el.className = kind === "dirty" ? "dirty" : kind === "err" ? "err" : "";
   el.textContent = kind === "dirty" ? "保存中…" : kind === "err" ? "保存失败:" + msg : "已保存";
+}
+
+// 告诉后端用户在打字:打过字的窗口在有焦点时不会自动贴边缩回去
+let lastActivity = 0;
+function noteActivity() {
+  const now = Date.now();
+  if (now - lastActivity < 1000) return;
+  lastActivity = now;
+  api.invoke("note_activity").catch(() => {});
+}
+
+// ---------- 和磁盘同步(别处改过的文件) ----------
+let syncing = false;
+let lastSync = 0;
+
+async function syncFromDisk() {
+  if (syncing || !state.notes.length || tabsEl.querySelector("input")) return;
+  const now = Date.now();
+  if (now - lastSync < 800) return;
+  lastSync = now;
+  syncing = true;
+  try {
+    await applyDiskNotes(await api.invoke("read_notes"));
+  } catch (e) {
+    console.error(e);
+  } finally {
+    syncing = false;
+  }
+}
+
+async function applyDiskNotes(disk) {
+  const onDisk = new Map(disk.map((d) => [d.name, d.content]));
+  const before = current();
+  let tabsChanged = false;
+  let currentChanged = false;
+
+  // 在别处删掉的页面:这里没有没保存的修改就跟着删掉
+  const kept = state.notes.filter((n) => {
+    if (onDisk.has(n.name) || n.dirty || n.content !== n.disk) return true;
+    tabsChanged = true;
+    return false;
+  });
+
+  // 在别处改过的页面
+  for (const n of kept) {
+    if (!onDisk.has(n.name)) continue;
+    const content = onDisk.get(n.name);
+    if (content === n.disk) continue;
+    if (!n.dirty && n.content === n.disk) {
+      n.content = content;
+      if (n === before) currentChanged = true;
+    } else if (content !== n.content) {
+      toast(`「${n.name}」在别处也被修改了,这里保留了你正在编辑的内容`, 4000);
+    }
+    n.disk = content;
+  }
+
+  // 在别处新建的页面
+  const known = new Set(kept.map((n) => n.name));
+  for (const d of disk) {
+    if (known.has(d.name)) continue;
+    kept.push(makeNote(d.name, d.content));
+    tabsChanged = true;
+  }
+
+  if (!tabsChanged && !currentChanged) return;
+  if (!kept.length) {
+    const name = await api.invoke("create_note", { name: "新页面" });
+    kept.push(makeNote(name, ""));
+  }
+  state.notes = kept;
+  const idx = kept.indexOf(before);
+  state.active = idx >= 0 ? idx : Math.min(state.active, kept.length - 1);
+  if (tabsChanged) {
+    renderTabs();
+    scheduleMeta();
+  }
+  if (current() !== before) showNote();
+  else if (currentChanged) refreshCurrent();
+}
+
+// 当前页面的内容在外面变了:换上新内容,尽量保持光标和滚动位置
+function refreshCurrent() {
+  const n = current();
+  if (n.mode === "edit") {
+    if (editor.value !== n.content) {
+      const s = editor.selectionStart;
+      const e = editor.selectionEnd;
+      const top = editor.scrollTop;
+      editor.value = n.content;
+      editor.setSelectionRange(Math.min(s, n.content.length), Math.min(e, n.content.length));
+      editor.scrollTop = top;
+    }
+  } else {
+    const top = preview.scrollTop;
+    renderPreview(n.content);
+    preview.scrollTop = top;
+  }
+  updateCount();
 }
 
 // ---------- 标签 ----------
@@ -218,7 +344,7 @@ async function newNote() {
   try {
     const name = await api.invoke("create_note", { name: "新页面" });
     rememberView();
-    state.notes.splice(state.active + 1, 0, { name, content: "", mode: "edit", dirty: false, scroll: 0, sel: [0, 0] });
+    state.notes.splice(state.active + 1, 0, makeNote(name, ""));
     state.active += 1;
     renderTabs();
     showNote();
@@ -270,19 +396,22 @@ function startRename(i) {
 
 async function deleteNote(i) {
   const n = state.notes[i];
+  if (!n) return;
   const msg = n.content.trim()
-    ? `删除页面「${n.name}」?\n(文件会移到笔记文件夹的 .trash 里,可以找回)`
+    ? `删除页面「${n.name}」?\n文件会移到笔记文件夹的 .trash 里,需要时可以找回。`
     : `删除空白页面「${n.name}」?`;
-  if (!confirm(msg)) return;
+  if (!(await ask(msg, "删除", true))) return;
   try {
     await flushAll();
     await api.invoke("delete_note", { name: n.name });
-    state.notes.splice(i, 1);
+    const idx = state.notes.indexOf(n);
+    if (idx < 0) return;
+    state.notes.splice(idx, 1);
     if (!state.notes.length) {
       const name = await api.invoke("create_note", { name: "新页面" });
-      state.notes.push({ name, content: "", mode: "edit", dirty: false, scroll: 0, sel: [0, 0] });
+      state.notes.push(makeNote(name, ""));
     }
-    if (state.active >= state.notes.length || i < state.active) state.active = Math.max(0, state.active - 1);
+    if (state.active >= state.notes.length || idx < state.active) state.active = Math.max(0, state.active - 1);
     renderTabs();
     showNote();
     scheduleMeta();
@@ -302,6 +431,30 @@ function openCtx(i, x, y) {
 }
 function closeCtx() {
   $("#ctx").hidden = true;
+}
+
+// ---------- 确认对话框 ----------
+let dialogResolve = null;
+
+function ask(message, okLabel = "确定", danger = false) {
+  closeOverlays();
+  $("#dialog-msg").textContent = message;
+  const ok = $("#dialog-ok");
+  ok.textContent = okLabel;
+  ok.classList.toggle("danger", danger);
+  $("#dialog").hidden = false;
+  ok.focus();
+  return new Promise((resolve) => (dialogResolve = resolve));
+}
+
+function closeDialog(result) {
+  if (!dialogResolve) return false;
+  $("#dialog").hidden = true;
+  const resolve = dialogResolve;
+  dialogResolve = null;
+  resolve(result);
+  if (current()?.mode === "edit") editor.focus();
+  return true;
 }
 
 // ---------- 编辑 / 阅读 ----------
@@ -517,6 +670,7 @@ function openSettings() {
   $("#set-dir").value = s.notes_dir;
   $("#set-dir").placeholder = state.notesDir;
   $("#set-error").hidden = true;
+  $("#set-version").textContent = state.version ? `Minipad Next ${state.version}` : "Minipad Next";
   $("#settings").hidden = false;
 }
 
@@ -554,6 +708,15 @@ async function submitSettings() {
   }
 }
 
+async function pickFolder() {
+  try {
+    const dir = await api.invoke("pick_folder");
+    if (dir) $("#set-dir").value = dir;
+  } catch (e) {
+    toast(String(e));
+  }
+}
+
 function hotkeyFromEvent(e) {
   const mods = [];
   if (e.ctrlKey) mods.push("Ctrl");
@@ -565,7 +728,6 @@ function hotkeyFromEvent(e) {
   let key;
   if (/^Key[A-Z]$/.test(c)) key = c.slice(3);
   else if (/^Digit\d$/.test(c)) key = c.slice(5);
-  else if (/^F\d{1,2}$/.test(c)) key = c;
   else key = c;
   if (!mods.length && !/^F\d{1,2}$/.test(key)) return null;
   return [...mods, key].join("+");
@@ -574,6 +736,7 @@ function hotkeyFromEvent(e) {
 // ---------- 通用 ----------
 function closeOverlays() {
   const wasOpen = !$("#search").hidden || !$("#settings").hidden;
+  closeDialog(false);
   $("#search").hidden = true;
   $("#settings").hidden = true;
   $("#set-hotkey").classList.remove("recording");
@@ -583,12 +746,12 @@ function closeOverlays() {
 }
 
 let toastTimer;
-function toast(msg) {
+function toast(msg, ms = 2600) {
   const t = $("#toast");
   t.textContent = msg;
   t.hidden = false;
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => (t.hidden = true), 2600);
+  toastTimer = setTimeout(() => (t.hidden = true), ms);
 }
 
 async function hideWindow() {
@@ -639,9 +802,16 @@ function bindUi() {
     else if (e.key === "Enter") (e.preventDefault(), openResult(resultSel));
   });
 
+  // 录热键时先停用全局热键,不然按下现在的热键会把窗口藏起来
   const hk = $("#set-hotkey");
-  hk.addEventListener("focus", () => hk.classList.add("recording"));
-  hk.addEventListener("blur", () => hk.classList.remove("recording"));
+  hk.addEventListener("focus", () => {
+    hk.classList.add("recording");
+    api.invoke("pause_hotkey").catch(() => {});
+  });
+  hk.addEventListener("blur", () => {
+    hk.classList.remove("recording");
+    api.invoke("resume_hotkey").catch(() => {});
+  });
   hk.addEventListener("keydown", (e) => {
     if (e.key === "Tab") return;
     e.preventDefault();
@@ -652,7 +822,12 @@ function bindUi() {
   });
   $("#set-save").addEventListener("click", submitSettings);
   $("#set-cancel").addEventListener("click", closeOverlays);
+  $("#set-pick-dir").addEventListener("click", pickFolder);
   $("#set-open-dir").addEventListener("click", () => api.invoke("open_notes_dir").catch((e) => toast(String(e))));
+  $("#set-repo").addEventListener("click", () => api.invoke("open_link", { url: REPO_URL }).catch((e) => toast(String(e))));
+
+  $("#dialog-ok").addEventListener("click", () => closeDialog(true));
+  $("#dialog-cancel").addEventListener("click", () => closeDialog(false));
 
   document.querySelectorAll(".overlay").forEach((o) =>
     o.addEventListener("mousedown", (e) => {
@@ -684,13 +859,25 @@ function bindUi() {
 
   document.addEventListener("keydown", (e) => {
     const ctrl = e.ctrlKey || e.metaKey;
+    const k = e.key.toLowerCase();
+    if (dialogResolve) {
+      if (e.key === "Escape" || e.key === "Enter") {
+        e.preventDefault();
+        closeDialog(e.key === "Enter");
+      }
+      return;
+    }
+    // 正式版里屏蔽浏览器自带的刷新和打印,免得误按
+    if (!state.debug && (e.key === "F5" || (ctrl && (k === "r" || k === "p")))) {
+      e.preventDefault();
+      return;
+    }
     if (e.key === "Escape") {
       e.preventDefault();
       if (!closeOverlays()) hideWindow();
       return;
     }
     if (!ctrl) return;
-    const k = e.key.toLowerCase();
     if (k === "t" || k === "n") (e.preventDefault(), newNote());
     else if (k === "e") (e.preventDefault(), toggleMode());
     else if (k === "f") (e.preventDefault(), openSearch());
@@ -713,6 +900,9 @@ function bindUi() {
 
   window.addEventListener("blur", () => {
     rememberView();
+    flushAll();
+  });
+  window.addEventListener("beforeunload", () => {
     flushAll();
   });
 }
@@ -754,8 +944,15 @@ function mockApi() {
         notes_dir: "(浏览器预览)",
         notes: order.map((n) => ({ name: n, content: db.files[n], mode: db.meta.modes[n] || "edit" })),
         active: order.includes(db.meta.active) ? db.meta.active : order[0],
+        hotkey_error: null,
+        version: "预览",
+        debug: true,
       };
     },
+    read_notes: () =>
+      Object.keys(db.files)
+        .sort()
+        .map((name) => ({ name, content: db.files[name] })),
     save_note: ({ name, content }) => void (db.files[name] = content),
     create_note: ({ name }) => {
       const n = uniq(name);
@@ -772,11 +969,20 @@ function mockApi() {
     delete_note: ({ name }) => void delete db.files[name],
     save_meta: (m) => void (db.meta = m),
     save_settings: ({ settings }) => (db.settings = settings),
+    pause_hotkey: () => {},
+    resume_hotkey: () => {},
+    note_activity: () => {},
+    pick_folder: () => {
+      toast("(预览)会弹出选择文件夹的对话框");
+      return null;
+    },
     hide_window: () => toast("(预览)窗口会隐藏到托盘,按 Ctrl+M 再呼出"),
     open_notes_dir: () => toast("(预览)会在资源管理器里打开笔记文件夹"),
     open_link: ({ url }) => void window.open(url, "_blank", "noopener"),
     quit_app: () => {},
   };
+  // 方便在浏览器控制台里模拟"文件在别处被改了"
+  window.__mockFiles = db.files;
   return {
     invoke: async (cmd, args = {}) => {
       const r = cmds[cmd](args);

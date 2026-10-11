@@ -1,24 +1,27 @@
+mod edge;
+mod notes;
+
+use edge::{Edge, Rect};
+use notes::NoteFile;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{
-    AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, WebviewWindow, WindowEvent,
+    AppHandle, Emitter, Manager, Monitor, PhysicalPosition, PhysicalSize, WebviewWindow,
+    WindowEvent,
 };
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
+use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
-const NOTE_EXT: &str = "md";
-const META_FILE: &str = ".minipad.json";
-const TRASH_DIR: &str = ".trash";
-/// 贴边隐藏后露在屏幕内的宽度(物理像素)
-const EDGE_STRIP: i32 = 4;
-/// 判断"靠边"的容差
-const EDGE_SNAP: i32 = 8;
+/// 0.1.x 用的应用标识符。0.2.0 换了标识符,启动时把旧位置的设置和笔记搬过来。
+const OLD_IDENTIFIER: &str = "com.minipadnext.app";
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(default)]
@@ -65,14 +68,6 @@ impl Default for Settings {
     }
 }
 
-#[derive(Serialize, Deserialize, Default, Clone)]
-#[serde(default)]
-struct Meta {
-    order: Vec<String>,
-    active: String,
-    modes: HashMap<String, String>,
-}
-
 #[derive(Serialize)]
 struct Note {
     name: String,
@@ -86,20 +81,17 @@ struct LoadedState {
     notes_dir: String,
     notes: Vec<Note>,
     active: String,
-}
-
-#[derive(Clone, Copy, PartialEq, Debug)]
-enum Edge {
-    Top,
-    Left,
-    Right,
+    /// 启动时热键注册失败的原因(比如被别的软件占用了)
+    hotkey_error: Option<String>,
+    version: String,
+    debug: bool,
 }
 
 #[derive(Default)]
 struct EdgeState {
     hidden: Option<Edge>,
-    /// 隐藏时所在显示器的范围 (x, y, w, h)
-    monitor: (i32, i32, i32, i32),
+    /// 隐藏时所在显示器的范围
+    monitor: Rect,
     outside_ticks: u32,
 }
 
@@ -108,9 +100,14 @@ struct AppState {
     settings: Mutex<Settings>,
     edge: Mutex<EdgeState>,
     geom: Mutex<Option<Geom>>,
+    hotkey_error: Mutex<Option<String>>,
+    /// 设置里正在录新热键,全局热键暂时停用
+    hotkey_paused: AtomicBool,
+    /// 窗口出来以后用户打过字:只要窗口还有焦点,就不自动缩回去
+    typing: AtomicBool,
 }
 
-// ---------- 路径与文件 ----------
+// ---------- 路径与设置 ----------
 
 fn config_path(app: &AppHandle) -> PathBuf {
     app.path()
@@ -135,19 +132,10 @@ fn current_notes_dir(app: &AppHandle) -> PathBuf {
 }
 
 fn load_settings(app: &AppHandle) -> Settings {
-    fs::read_to_string(config_path(app))
+    fs::read(config_path(app))
         .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
+        .and_then(|b| serde_json::from_str(&notes::decode_text(&b)).ok())
         .unwrap_or_default()
-}
-
-fn write_atomic(path: &Path, data: &str) -> Result<(), String> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
-    let tmp = path.with_extension("tmp~");
-    fs::write(&tmp, data).map_err(|e| e.to_string())?;
-    fs::rename(&tmp, path).map_err(|e| e.to_string())
 }
 
 fn persist_settings(app: &AppHandle) {
@@ -157,86 +145,41 @@ fn persist_settings(app: &AppHandle) {
         s.window = Some(g);
     }
     if let Ok(json) = serde_json::to_string_pretty(&s) {
-        let _ = write_atomic(&config_path(app), &json);
+        let _ = notes::write_atomic(&config_path(app), &json);
     }
 }
 
-/// 把页面名变成合法的 Windows 文件名
-fn sanitize_name(name: &str) -> String {
-    let mut s: String = name
-        .chars()
-        .map(|c| match c {
-            '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*' => '_',
-            c if c.is_control() => '_',
-            c => c,
-        })
-        .collect();
-    s = s.trim().trim_end_matches(['.', ' ']).to_string();
-    if s.starts_with('.') {
-        s = format!("_{}", &s[1..]);
+/// 把 0.1.x 存在旧标识符目录下的设置和笔记搬到新目录
+fn migrate_old_data(app: &AppHandle) {
+    let path = app.path();
+    let targets = [
+        (path.app_config_dir(), "settings.json"),
+        (path.app_data_dir(), "notes"),
+    ];
+    for (dir, item) in targets {
+        let Ok(dir) = dir else { continue };
+        let old = dir.with_file_name(OLD_IDENTIFIER).join(item);
+        if let Err(e) = notes::migrate_path(&old, &dir.join(item)) {
+            eprintln!("迁移 {} 失败: {e}", old.display());
+        }
     }
-    if s.chars().count() > 80 {
-        s = s.chars().take(80).collect();
-    }
-    if s.is_empty() {
-        s = "新页面".into();
-    }
-    let upper = s.to_uppercase();
-    let reserved = ["CON", "PRN", "AUX", "NUL"];
-    if reserved.contains(&upper.as_str())
-        || ((upper.starts_with("COM") || upper.starts_with("LPT"))
-            && upper.len() == 4
-            && upper.as_bytes()[3].is_ascii_digit())
-    {
-        s.push('_');
-    }
-    s
 }
 
-fn note_path(dir: &Path, name: &str) -> PathBuf {
-    dir.join(format!("{name}.{NOTE_EXT}"))
+fn register_hotkey(app: &AppHandle, hotkey: &str) -> Result<(), String> {
+    let gs = app.global_shortcut();
+    let _ = gs.unregister_all();
+    gs.register(hotkey).map_err(|e| e.to_string())
 }
 
-fn unique_name(dir: &Path, base: &str, except: Option<&str>) -> String {
-    let base = sanitize_name(base);
-    // Windows 文件名不区分大小写,这里也按不区分处理
-    let except = except.map(|e| e.to_lowercase());
-    let existing: Vec<String> = fs::read_dir(dir)
-        .map(|rd| {
-            rd.flatten()
-                .filter_map(|e| {
-                    let p = e.path();
-                    if p.extension().and_then(|x| x.to_str()) != Some(NOTE_EXT) {
-                        return None;
-                    }
-                    Some(p.file_stem()?.to_string_lossy().to_lowercase())
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    let taken = |n: &str| {
-        let n = n.to_lowercase();
-        Some(&n) != except.as_ref() && existing.contains(&n)
-    };
-    if !taken(&base) {
-        return base;
+/// 重新启用全局热键(录热键时暂停过的话)
+fn resume_hotkey_if_paused(app: &AppHandle) {
+    let st = app.state::<AppState>();
+    if !st.hotkey_paused.swap(false, Ordering::SeqCst) {
+        return;
     }
-    (2..)
-        .map(|i| format!("{base} ({i})"))
-        .find(|n| !taken(n))
-        .unwrap()
-}
-
-fn read_meta(dir: &Path) -> Meta {
-    fs::read_to_string(dir.join(META_FILE))
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_default()
-}
-
-fn write_meta(dir: &Path, meta: &Meta) -> Result<(), String> {
-    let json = serde_json::to_string_pretty(meta).map_err(|e| e.to_string())?;
-    write_atomic(&dir.join(META_FILE), &json)
+    let hotkey = st.settings.lock().unwrap().hotkey.clone();
+    let result = register_hotkey(app, &hotkey);
+    *st.hotkey_error.lock().unwrap() = result.err().map(|e| format!("{hotkey}:{e}"));
 }
 
 const WELCOME: &str = r#"# 欢迎使用 Minipad Next
@@ -268,47 +211,24 @@ print("点右上角的复制按钮试试")
 
 #[tauri::command]
 fn load_state(app: AppHandle) -> Result<LoadedState, String> {
-    let settings = app.state::<AppState>().settings.lock().unwrap().clone();
+    let st = app.state::<AppState>();
+    let settings = st.settings.lock().unwrap().clone();
     let dir = notes_dir(&app, &settings);
-    fs::create_dir_all(&dir).map_err(|e| format!("无法创建笔记文件夹 {}: {e}", dir.display()))?;
+    fs::create_dir_all(&dir).map_err(|e| format!("无法创建笔记文件夹 {}:{e}", dir.display()))?;
 
-    let mut names: Vec<String> = fs::read_dir(&dir)
-        .map_err(|e| e.to_string())?
-        .flatten()
-        .filter_map(|e| {
-            let p = e.path();
-            if p.is_file() && p.extension().and_then(|x| x.to_str()) == Some(NOTE_EXT) {
-                p.file_stem().map(|s| s.to_string_lossy().to_string())
-            } else {
-                None
-            }
-        })
-        .collect();
-    names.sort();
-
+    let mut names = notes::list_names(&dir)?;
     if names.is_empty() {
-        write_atomic(&note_path(&dir, "欢迎"), WELCOME)?;
+        notes::write_atomic(&notes::note_path(&dir, "欢迎"), WELCOME)?;
         names.push("欢迎".into());
     }
 
-    let meta = read_meta(&dir);
-    let mut ordered: Vec<String> = meta
-        .order
-        .iter()
-        .filter(|n| names.contains(n))
-        .cloned()
-        .collect();
-    for n in &names {
-        if !ordered.contains(n) {
-            ordered.push(n.clone());
-        }
-    }
-
-    let notes = ordered
+    let meta = notes::read_meta(&dir);
+    let ordered = notes::order_names(&names, &meta.order);
+    let list = ordered
         .iter()
         .map(|n| Note {
             name: n.clone(),
-            content: fs::read_to_string(note_path(&dir, n)).unwrap_or_default(),
+            content: notes::read_note(&dir, n),
             mode: meta.modes.get(n).cloned().unwrap_or_else(|| "edit".into()),
         })
         .collect();
@@ -317,53 +237,52 @@ fn load_state(app: AppHandle) -> Result<LoadedState, String> {
     } else {
         ordered[0].clone()
     };
+    let hotkey_error = st.hotkey_error.lock().unwrap().clone();
     Ok(LoadedState {
         settings,
         notes_dir: dir.to_string_lossy().to_string(),
-        notes,
+        notes: list,
         active,
+        hotkey_error,
+        version: app.package_info().version.to_string(),
+        debug: cfg!(debug_assertions),
     })
+}
+
+/// 重新读一遍笔记文件夹,用来发现在别处(网盘同步、其他编辑器)改过的内容
+#[tauri::command]
+fn read_notes(app: AppHandle) -> Result<Vec<NoteFile>, String> {
+    notes::read_all(&current_notes_dir(&app))
 }
 
 #[tauri::command]
 fn save_note(app: AppHandle, name: String, content: String) -> Result<(), String> {
     let dir = current_notes_dir(&app);
-    write_atomic(&note_path(&dir, &name), &content)
+    notes::write_atomic(&notes::note_path(&dir, &name), &content)
 }
 
 #[tauri::command]
 fn create_note(app: AppHandle, name: String) -> Result<String, String> {
     let dir = current_notes_dir(&app);
-    let name = unique_name(&dir, &name, None);
-    write_atomic(&note_path(&dir, &name), "")?;
+    let name = notes::unique_name(&dir, &name, None);
+    notes::write_atomic(&notes::note_path(&dir, &name), "")?;
     Ok(name)
 }
 
 #[tauri::command]
 fn rename_note(app: AppHandle, old: String, new: String) -> Result<String, String> {
     let dir = current_notes_dir(&app);
-    let new = unique_name(&dir, &new, Some(&old));
+    let new = notes::unique_name(&dir, &new, Some(&old));
     if new != old {
-        fs::rename(note_path(&dir, &old), note_path(&dir, &new)).map_err(|e| e.to_string())?;
+        fs::rename(notes::note_path(&dir, &old), notes::note_path(&dir, &new))
+            .map_err(|e| e.to_string())?;
     }
     Ok(new)
 }
 
 #[tauri::command]
 fn delete_note(app: AppHandle, name: String) -> Result<(), String> {
-    let dir = current_notes_dir(&app);
-    let trash = dir.join(TRASH_DIR);
-    fs::create_dir_all(&trash).map_err(|e| e.to_string())?;
-    let stamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    let src = note_path(&dir, &name);
-    if src.exists() {
-        fs::rename(&src, trash.join(format!("{name}.{stamp}.{NOTE_EXT}")))
-            .map_err(|e| e.to_string())?;
-    }
-    Ok(())
+    notes::move_to_trash(&current_notes_dir(&app), &name)
 }
 
 #[tauri::command]
@@ -374,7 +293,7 @@ fn save_meta(
     modes: HashMap<String, String>,
 ) -> Result<(), String> {
     let dir = current_notes_dir(&app);
-    write_meta(&dir, &Meta { order, active, modes })
+    notes::write_meta(&dir, &notes::Meta { order, active, modes })
 }
 
 #[tauri::command]
@@ -383,27 +302,31 @@ fn save_settings(app: AppHandle, settings: Settings) -> Result<Settings, String>
     let old = state.settings.lock().unwrap().clone();
     let mut new = settings;
     new.window = old.window.clone();
+    new.hotkey = new.hotkey.trim().to_string();
+    new.notes_dir = new.notes_dir.trim().to_string();
 
-    if new.hotkey != old.hotkey {
-        let gs = app.global_shortcut();
-        let _ = gs.unregister_all();
-        if let Err(e) = gs.register(new.hotkey.as_str()) {
-            let _ = gs.register(old.hotkey.as_str());
-            return Err(format!("热键 {} 无法使用:{e}", new.hotkey));
-        }
+    if !new.notes_dir.is_empty() {
+        fs::create_dir_all(&new.notes_dir).map_err(|e| format!("无法使用这个文件夹:{e}"))?;
     }
-    if let Some(win) = app.get_webview_window("main") {
-        let _ = win.set_always_on_top(new.always_on_top);
-        let _ = win.set_skip_taskbar(!new.show_in_taskbar);
+    // 先换热键(失败就恢复旧的),再改开机启动(失败就把热键也换回去),保证要么都生效要么都不变
+    state.hotkey_paused.store(false, Ordering::SeqCst);
+    if let Err(e) = register_hotkey(&app, &new.hotkey) {
+        let _ = register_hotkey(&app, &old.hotkey);
+        return Err(format!("热键 {} 无法使用:{e}", new.hotkey));
     }
     if new.autostart != old.autostart {
         let al = app.autolaunch();
         let r = if new.autostart { al.enable() } else { al.disable() };
-        r.map_err(|e| format!("开机启动设置失败:{e}"))?;
+        if let Err(e) = r {
+            let _ = register_hotkey(&app, &old.hotkey);
+            return Err(format!("开机启动设置失败:{e}"));
+        }
     }
-    if !new.notes_dir.trim().is_empty() {
-        fs::create_dir_all(new.notes_dir.trim())
-            .map_err(|e| format!("无法使用这个文件夹:{e}"))?;
+    *state.hotkey_error.lock().unwrap() = None;
+
+    if let Some(win) = main_window(&app) {
+        let _ = win.set_always_on_top(new.always_on_top);
+        let _ = win.set_skip_taskbar(!new.show_in_taskbar);
     }
     if !new.edge_hide {
         restore_from_edge(&app, false);
@@ -411,6 +334,36 @@ fn save_settings(app: AppHandle, settings: Settings) -> Result<Settings, String>
     *state.settings.lock().unwrap() = new.clone();
     persist_settings(&app);
     Ok(new)
+}
+
+/// 设置里录新热键时先停用全局热键,否则按下现在的热键会把窗口藏起来
+#[tauri::command]
+fn pause_hotkey(app: AppHandle) {
+    let _ = app.global_shortcut().unregister_all();
+    app.state::<AppState>().hotkey_paused.store(true, Ordering::SeqCst);
+}
+
+#[tauri::command]
+fn resume_hotkey(app: AppHandle) {
+    resume_hotkey_if_paused(&app);
+}
+
+/// 前端在用户打字时调用(有节流),用来判断贴边隐藏该不该缩回去
+#[tauri::command]
+fn note_activity(app: AppHandle) {
+    app.state::<AppState>().typing.store(true, Ordering::SeqCst);
+}
+
+#[tauri::command]
+async fn pick_folder(app: AppHandle) -> Option<String> {
+    let mut dialog = app.dialog().file().set_title("选择笔记文件夹");
+    if let Some(win) = main_window(&app) {
+        dialog = dialog.set_parent(&win);
+    }
+    dialog
+        .blocking_pick_folder()
+        .and_then(|p| p.into_path().ok())
+        .map(|p| p.to_string_lossy().into_owned())
 }
 
 #[tauri::command]
@@ -445,9 +398,25 @@ fn main_window(app: &AppHandle) -> Option<WebviewWindow> {
     app.get_webview_window("main")
 }
 
+fn window_rect(win: &WebviewWindow) -> Option<Rect> {
+    let p = win.outer_position().ok()?;
+    let s = win.outer_size().ok()?;
+    Some(Rect::new(p.x, p.y, s.width as i32, s.height as i32))
+}
+
+fn monitor_rect(m: &Monitor) -> Rect {
+    Rect::new(
+        m.position().x,
+        m.position().y,
+        m.size().width as i32,
+        m.size().height as i32,
+    )
+}
+
 fn show_main(app: &AppHandle) {
     if let Some(win) = main_window(app) {
         restore_from_edge(app, false);
+        app.state::<AppState>().typing.store(false, Ordering::SeqCst);
         let _ = win.unminimize();
         let _ = win.show();
         let _ = win.set_focus();
@@ -459,6 +428,7 @@ fn hide_main(app: &AppHandle) {
     if let Some(win) = main_window(app) {
         let _ = app.emit("flush", ());
         let _ = win.hide();
+        resume_hotkey_if_paused(app);
         persist_settings(app);
     }
 }
@@ -478,114 +448,112 @@ fn toggle_main(app: &AppHandle) {
 /// 从贴边隐藏状态滑回屏幕内
 fn restore_from_edge(app: &AppHandle, focus: bool) {
     let Some(win) = main_window(app) else { return };
+    let st = app.state::<AppState>();
     let (edge, mon) = {
-        let st = app.state::<AppState>();
         let e = st.edge.lock().unwrap();
         (e.hidden, e.monitor)
     };
     let Some(edge) = edge else { return };
-    let (Ok(pos), Ok(size)) = (win.outer_position(), win.outer_size()) else { return };
-    let (mx, my, mw, _) = mon;
-    let target = match edge {
-        Edge::Top => PhysicalPosition::new(pos.x, my),
-        Edge::Left => PhysicalPosition::new(mx, pos.y),
-        Edge::Right => PhysicalPosition::new(mx + mw - size.width as i32, pos.y),
-    };
-    let _ = win.set_position(target);
+    let Some(rect) = window_rect(&win) else { return };
+    let (x, y) = edge::shown_position(edge, rect, mon);
+    let _ = win.set_position(PhysicalPosition::new(x, y));
     {
-        let st = app.state::<AppState>();
         let mut e = st.edge.lock().unwrap();
         e.hidden = None;
         e.outside_ticks = 0;
     }
-    *app.state::<AppState>().geom.lock().unwrap() = Some(Geom {
-        x: target.x,
-        y: target.y,
-        w: size.width,
-        h: size.height,
-    });
+    st.typing.store(false, Ordering::SeqCst);
+    if let Ok(size) = win.inner_size() {
+        *st.geom.lock().unwrap() = Some(Geom {
+            x,
+            y,
+            w: size.width,
+            h: size.height,
+        });
+    }
     if focus {
         let _ = win.set_focus();
     }
 }
 
 fn edge_tick(app: &AppHandle) {
-    let enabled = app.state::<AppState>().settings.lock().unwrap().edge_hide;
-    if !enabled {
+    let st = app.state::<AppState>();
+    if !st.settings.lock().unwrap().edge_hide {
         return;
     }
     let Some(win) = main_window(app) else { return };
-    if !win.is_visible().unwrap_or(false) || win.is_minimized().unwrap_or(false) {
+    if !win.is_visible().unwrap_or(false)
+        || win.is_minimized().unwrap_or(false)
+        || win.is_maximized().unwrap_or(false)
+        || win.is_fullscreen().unwrap_or(false)
+    {
         return;
     }
-    let (Ok(pos), Ok(size), Ok(cur)) = (win.outer_position(), win.outer_size(), win.cursor_position())
-    else {
+    let (Some(rect), Ok(cur)) = (window_rect(&win), win.cursor_position()) else {
         return;
     };
-    let (cx, cy) = (cur.x as i32, cur.y as i32);
-    let (x, y, w, h) = (pos.x, pos.y, size.width as i32, size.height as i32);
-    let inside = |m: i32| cx >= x - m && cx < x + w + m && cy >= y - m && cy < y + h + m;
+    let (cx, cy) = (cur.x.round() as i32, cur.y.round() as i32);
 
-    let hidden = app.state::<AppState>().edge.lock().unwrap().hidden;
-    if hidden.is_some() {
+    if st.edge.lock().unwrap().hidden.is_some() {
         // 鼠标碰到露出来的那条边就滑出来
-        if inside(1) {
+        if rect.contains_with_margin(cx, cy, 1) {
             restore_from_edge(app, true);
         }
         return;
     }
 
-    let Ok(Some(mon)) = win.current_monitor() else { return };
-    let (mx, my) = (mon.position().x, mon.position().y);
-    let (mw, mh) = (mon.size().width as i32, mon.size().height as i32);
-    let edge = if y <= my + EDGE_SNAP {
-        Some(Edge::Top)
-    } else if x <= mx + EDGE_SNAP {
-        Some(Edge::Left)
-    } else if x + w >= mx + mw - EDGE_SNAP {
-        Some(Edge::Right)
-    } else {
+    // 鼠标还在窗口上,或者正在打字,都不缩回去
+    let busy = rect.contains_with_margin(cx, cy, 2)
+        || (st.typing.load(Ordering::SeqCst) && win.is_focused().unwrap_or(false));
+    let docked = if busy {
         None
+    } else {
+        win.current_monitor().ok().flatten().and_then(|m| {
+            let mon = monitor_rect(&m);
+            let monitors: Vec<Rect> = win
+                .available_monitors()
+                .unwrap_or_default()
+                .iter()
+                .map(monitor_rect)
+                .collect();
+            edge::docked_edge(rect, mon, &monitors).map(|e| (e, mon))
+        })
     };
 
-    let ticks = {
-        let st = app.state::<AppState>();
-        let mut e = st.edge.lock().unwrap();
-        if edge.is_none() || inside(2) {
-            e.outside_ticks = 0;
-        } else {
-            e.outside_ticks += 1;
-        }
-        e.outside_ticks
-    };
     // 鼠标离开约 0.45 秒后再缩回去,避免误触
-    let Some(edge) = edge else { return };
-    if ticks < 3 {
-        return;
-    }
-    {
-        let st = app.state::<AppState>();
+    let ready = {
         let mut e = st.edge.lock().unwrap();
-        e.hidden = Some(edge);
-        e.monitor = (mx, my, mw, mh);
-        e.outside_ticks = 0;
-    }
-    let target = match edge {
-        Edge::Top => PhysicalPosition::new(x, my - h + EDGE_STRIP),
-        Edge::Left => PhysicalPosition::new(mx - w + EDGE_STRIP, y),
-        Edge::Right => PhysicalPosition::new(mx + mw - EDGE_STRIP, y),
+        match docked {
+            None => {
+                e.outside_ticks = 0;
+                None
+            }
+            Some((edge, mon)) => {
+                e.outside_ticks += 1;
+                if e.outside_ticks >= 3 {
+                    e.hidden = Some(edge);
+                    e.monitor = mon;
+                    e.outside_ticks = 0;
+                    Some((edge, mon))
+                } else {
+                    None
+                }
+            }
+        }
     };
-    let _ = app.emit("flush", ());
-    let _ = win.set_position(target);
+    if let Some((edge, mon)) = ready {
+        let (x, y) = edge::hidden_position(edge, rect, mon);
+        let _ = app.emit("flush", ());
+        let _ = win.set_position(PhysicalPosition::new(x, y));
+    }
 }
 
 /// 启动时恢复上次的位置和大小;如果那个位置已经不在任何显示器上就居中
 fn apply_saved_geometry(win: &WebviewWindow, g: &Geom) {
     let monitors = win.available_monitors().unwrap_or_default();
     let visible = monitors.iter().any(|m| {
-        let (mx, my) = (m.position().x, m.position().y);
-        let (mw, mh) = (m.size().width as i32, m.size().height as i32);
-        g.x + 40 < mx + mw && g.x + g.w as i32 - 40 > mx && g.y >= my - 4 && g.y + 30 < my + mh
+        let r = monitor_rect(m);
+        g.x + 40 < r.x + r.w && g.x + g.w as i32 - 40 > r.x && g.y >= r.y - 4 && g.y + 30 < r.y + r.h
     });
     if g.w >= 200 && g.h >= 150 {
         let _ = win.set_size(PhysicalSize::new(g.w, g.h));
@@ -609,6 +577,7 @@ pub fn run() {
             Some(vec!["--hidden"]),
         ))
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, _shortcut, event| {
@@ -621,12 +590,17 @@ pub fn run() {
         .manage(AppState::default())
         .invoke_handler(tauri::generate_handler![
             load_state,
+            read_notes,
             save_note,
             create_note,
             rename_note,
             delete_note,
             save_meta,
             save_settings,
+            pause_hotkey,
+            resume_hotkey,
+            note_activity,
+            pick_folder,
             hide_window,
             open_notes_dir,
             open_link,
@@ -634,16 +608,16 @@ pub fn run() {
         ])
         .setup(|app| {
             let handle = app.handle().clone();
+            migrate_old_data(&handle);
             let settings = load_settings(&handle);
             {
                 let st = handle.state::<AppState>();
                 *st.settings.lock().unwrap() = settings.clone();
                 *st.geom.lock().unwrap() = settings.window.clone();
-            }
-
-            if let Err(e) = handle.global_shortcut().register(settings.hotkey.as_str()) {
-                eprintln!("热键注册失败: {e}");
-                let _ = handle.emit("hotkey-error", format!("{}: {e}", settings.hotkey));
+                if let Err(e) = register_hotkey(&handle, &settings.hotkey) {
+                    eprintln!("热键注册失败: {e}");
+                    *st.hotkey_error.lock().unwrap() = Some(format!("{}:{e}", settings.hotkey));
+                }
             }
 
             let win = main_window(&handle).expect("main window");
@@ -708,19 +682,30 @@ pub fn run() {
         })
         .on_window_event(|window, event| {
             let app = window.app_handle();
+            let st = app.state::<AppState>();
             match event {
                 WindowEvent::CloseRequested { api, .. } => {
                     // 关闭按钮只是隐藏到托盘
                     api.prevent_close();
                     hide_main(app);
                 }
+                WindowEvent::Focused(true) => {
+                    // 前端借这个机会检查笔记有没有在别处被改过
+                    let _ = app.emit("window-focus", ());
+                }
+                WindowEvent::Focused(false) => {
+                    st.typing.store(false, Ordering::SeqCst);
+                    resume_hotkey_if_paused(app);
+                }
                 WindowEvent::Moved(_) | WindowEvent::Resized(_) => {
-                    let st = app.state::<AppState>();
                     if st.edge.lock().unwrap().hidden.is_some() {
                         return;
                     }
-                    if let (Ok(p), Ok(s)) = (window.outer_position(), window.outer_size()) {
-                        if window.is_minimized().unwrap_or(false) || s.width == 0 {
+                    if let (Ok(p), Ok(s)) = (window.outer_position(), window.inner_size()) {
+                        if window.is_minimized().unwrap_or(false)
+                            || window.is_maximized().unwrap_or(false)
+                            || s.width == 0
+                        {
                             return;
                         }
                         *st.geom.lock().unwrap() = Some(Geom {

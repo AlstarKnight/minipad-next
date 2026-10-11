@@ -72,17 +72,32 @@
         <span>字号</span>
         <input id="set-font" type="number" min="10" max="28" />
       </label>
-      <label class="row col">
+      <div class="row col">
         <span>笔记文件夹(留空用默认位置;改了以后会读取新文件夹里的笔记,旧笔记不会自动搬过去)</span>
-        <input id="set-dir" type="text" spellcheck="false" />
-      </label>
+        <div class="inline">
+          <input id="set-dir" type="text" spellcheck="false" />
+          <button id="set-pick-dir" class="small">选择…</button>
+        </div>
+      </div>
       <div class="row">
         <button id="set-open-dir" class="link">打开笔记文件夹</button>
       </div>
       <p id="set-error" class="error" hidden></p>
       <div class="actions">
+        <span class="about"><span id="set-version">Minipad Next</span> · <button id="set-repo" class="link">GitHub</button></span>
         <button id="set-cancel">取消</button>
         <button id="set-save" class="primary">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 确认对话框 -->
+  <div id="dialog" class="overlay center" hidden>
+    <div class="panel form dialog">
+      <p id="dialog-msg"></p>
+      <div class="actions">
+        <button id="dialog-cancel">取消</button>
+        <button id="dialog-ok" class="primary">确定</button>
       </div>
     </div>
   </div>

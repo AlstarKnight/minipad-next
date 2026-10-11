@@ -1,0 +1,135 @@
+//! 贴边隐藏的几何计算(不依赖 Tauri,方便测试)。所有坐标都是物理像素。
+
+/// 贴边隐藏后露在屏幕内的宽度
+pub const STRIP: i32 = 4;
+/// 离屏幕边缘多近算"靠边"
+pub const SNAP: i32 = 8;
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Edge {
+    Top,
+    Left,
+    Right,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub struct Rect {
+    pub x: i32,
+    pub y: i32,
+    pub w: i32,
+    pub h: i32,
+}
+
+impl Rect {
+    pub fn new(x: i32, y: i32, w: i32, h: i32) -> Self {
+        Rect { x, y, w, h }
+    }
+
+    pub fn contains(&self, px: i32, py: i32) -> bool {
+        px >= self.x && px < self.x + self.w && py >= self.y && py < self.y + self.h
+    }
+
+    /// 向外扩 `m` 像素后是否包含这个点
+    pub fn contains_with_margin(&self, px: i32, py: i32, m: i32) -> bool {
+        Rect::new(self.x - m, self.y - m, self.w + 2 * m, self.h + 2 * m).contains(px, py)
+    }
+}
+
+/// 窗口贴着显示器 `mon` 的哪条边。只认外侧的边:那条边外面如果还接着另一块显示器,
+/// 窗口缩过去会露在那块屏幕上,所以不算。
+pub fn docked_edge(win: Rect, mon: Rect, monitors: &[Rect]) -> Option<Edge> {
+    let free = |px: i32, py: i32| !monitors.iter().any(|m| m.contains(px, py));
+    if win.y <= mon.y + SNAP && free(win.x + win.w / 2, mon.y - 1) {
+        Some(Edge::Top)
+    } else if win.x <= mon.x + SNAP && free(mon.x - 1, win.y + win.h / 2) {
+        Some(Edge::Left)
+    } else if win.x + win.w >= mon.x + mon.w - SNAP && free(mon.x + mon.w, win.y + win.h / 2) {
+        Some(Edge::Right)
+    } else {
+        None
+    }
+}
+
+/// 缩进去以后窗口的位置:只露出 STRIP 宽的一条
+pub fn hidden_position(edge: Edge, win: Rect, mon: Rect) -> (i32, i32) {
+    match edge {
+        Edge::Top => (win.x, mon.y - win.h + STRIP),
+        Edge::Left => (mon.x - win.w + STRIP, win.y),
+        Edge::Right => (mon.x + mon.w - STRIP, win.y),
+    }
+}
+
+/// 滑出来以后窗口的位置:正好贴着那条边
+pub fn shown_position(edge: Edge, win: Rect, mon: Rect) -> (i32, i32) {
+    match edge {
+        Edge::Top => (win.x, mon.y),
+        Edge::Left => (mon.x, win.y),
+        Edge::Right => (mon.x + mon.w - win.w, win.y),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const SCREEN: Rect = Rect { x: 0, y: 0, w: 1920, h: 1080 };
+
+    #[test]
+    fn detects_each_edge_of_a_single_screen() {
+        let mons = [SCREEN];
+        assert_eq!(docked_edge(Rect::new(300, 0, 400, 500), SCREEN, &mons), Some(Edge::Top));
+        assert_eq!(docked_edge(Rect::new(300, -20, 400, 500), SCREEN, &mons), Some(Edge::Top));
+        assert_eq!(docked_edge(Rect::new(3, 200, 400, 500), SCREEN, &mons), Some(Edge::Left));
+        assert_eq!(docked_edge(Rect::new(1520, 200, 400, 500), SCREEN, &mons), Some(Edge::Right));
+        assert_eq!(docked_edge(Rect::new(300, 200, 400, 500), SCREEN, &mons), None);
+        // 靠在底边不隐藏
+        assert_eq!(docked_edge(Rect::new(300, 580, 400, 500), SCREEN, &mons), None);
+    }
+
+    #[test]
+    fn ignores_edges_shared_with_another_monitor() {
+        let right = Rect::new(1920, 0, 1920, 1080);
+        let mons = [SCREEN, right];
+        // 左屏的右边挨着右屏,不能往那边缩
+        assert_eq!(docked_edge(Rect::new(1520, 200, 400, 500), SCREEN, &mons), None);
+        // 右屏的左边同理
+        assert_eq!(docked_edge(Rect::new(1922, 200, 400, 500), right, &mons), None);
+        // 右屏的右边是外侧,可以
+        assert_eq!(docked_edge(Rect::new(3440, 200, 400, 500), right, &mons), Some(Edge::Right));
+        // 上下摆放时,下面那块屏的上边不算
+        let below = Rect::new(0, 1080, 1920, 1080);
+        assert_eq!(docked_edge(Rect::new(300, 1080, 400, 500), below, &[SCREEN, below]), None);
+    }
+
+    #[test]
+    fn hide_and_show_positions_round_trip() {
+        let win = Rect::new(300, 0, 400, 500);
+        let (hx, hy) = hidden_position(Edge::Top, win, SCREEN);
+        assert_eq!((hx, hy), (300, -496));
+        let hidden = Rect::new(hx, hy, win.w, win.h);
+        // 露出来的那条边能碰到
+        assert!(hidden.contains(320, 0));
+        assert!(hidden.contains(320, STRIP - 1));
+        assert!(!hidden.contains(320, STRIP));
+        assert_eq!(shown_position(Edge::Top, hidden, SCREEN), (300, 0));
+
+        let win = Rect::new(1520, 100, 400, 500);
+        let (hx, hy) = hidden_position(Edge::Right, win, SCREEN);
+        assert_eq!((hx, hy), (1916, 100));
+        assert_eq!(shown_position(Edge::Right, Rect::new(hx, hy, 400, 500), SCREEN), (1520, 100));
+
+        let win = Rect::new(0, 100, 400, 500);
+        let (hx, hy) = hidden_position(Edge::Left, win, SCREEN);
+        assert_eq!((hx, hy), (-396, 100));
+        assert!(Rect::new(hx, hy, 400, 500).contains(0, 300));
+        assert_eq!(shown_position(Edge::Left, Rect::new(hx, hy, 400, 500), SCREEN), (0, 100));
+    }
+
+    #[test]
+    fn margin_check() {
+        let r = Rect::new(10, 10, 100, 100);
+        assert!(!r.contains(8, 50));
+        assert!(r.contains_with_margin(8, 50, 2));
+        assert!(!r.contains_with_margin(7, 50, 2));
+    }
+}
