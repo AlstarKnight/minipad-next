@@ -17,6 +17,7 @@ const DEFAULT_SETTINGS = {
   notes_dir: "",
   line_numbers: false,
   date_format: DEFAULT_DATE_FORMAT,
+  code_line_numbers: true,
   backup_enabled: true,
   backup_keep: 14,
   backup_dir: "",

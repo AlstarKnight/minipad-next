@@ -62,6 +62,8 @@ pub struct Settings {
     line_numbers: bool,
     /// 按 F5 插入的日期时间格式,写法和 Windows 一样,比如 H:mm yyyy/M/d
     date_format: String,
+    /// 阅读模式里代码块显示行号
+    code_line_numbers: bool,
     /// 每天第一次保存时把笔记文件夹打包备份
     backup_enabled: bool,
     /// 保留最近几份备份
@@ -84,6 +86,7 @@ impl Default for Settings {
             notes_dir: String::new(),
             line_numbers: false,
             date_format: DEFAULT_DATE_FORMAT.into(),
+            code_line_numbers: true,
             backup_enabled: true,
             backup_keep: 14,
             backup_dir: String::new(),
@@ -935,6 +938,7 @@ mod tests {
         }"#;
         let s: Settings = serde_json::from_str(json).unwrap();
         assert!(!s.line_numbers);
+        assert!(s.code_line_numbers);
         assert_eq!(s.date_format, DEFAULT_DATE_FORMAT);
         assert_eq!(s.hotkey, "Ctrl+Alt+M");
         assert!(!s.always_on_top && s.show_in_taskbar && !s.backup_enabled);
