@@ -32,6 +32,9 @@ jobs:
       - name: Check Rust formatting
         run: cargo fmt --check --manifest-path src-tauri/Cargo.toml
 
+      - name: Check that CHANGELOG.md has this version
+        run: node scripts/release-notes.mjs "$(node -p "require('./package.json').version")" > /dev/null
+
       - name: Install dependencies
         run: npm ci
 
@@ -100,3 +103,35 @@ jobs:
         with:
           files: dist/*.exe
           generate_release_notes: true
+
+      # 合并到 main 时,如果 package.json 里的版本还没有对应的 v 标签,
+      # 就自动建标签并发布 Release(说明取自 CHANGELOG.md 里这个版本那一节)。
+      - name: Check whether this version is released
+        id: release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        shell: bash
+        run: |
+          version=$(node -p "require('./package.json').version")
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+          # --exit-code:找到标签返回 0,没有返回 2,其他是出错
+          code=0
+          git ls-remote --exit-code --tags origin "refs/tags/v$version" > /dev/null || code=$?
+          if [ "$code" = 0 ]; then
+            echo "v$version 已经发布过,跳过"
+          elif [ "$code" = 2 ]; then
+            node scripts/release-notes.mjs "$version" > dist/release-notes.md
+            cat dist/release-notes.md
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          else
+            exit "$code"
+          fi
+
+      - name: Publish release for the new version
+        if: steps.release.outputs.publish == 'true'
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ steps.release.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          name: ${{ steps.release.outputs.tag }}
+          body_path: dist/release-notes.md
+          files: dist/*.exe
