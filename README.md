@@ -129,7 +129,7 @@ print("hello")
 - 默认放在上表的 `backups` 文件夹,保留最近 **14** 份,更早的自动删掉(只删程序自己生成的 `笔记备份 日期.zip`,不会动你放在那里的其他文件)。
 - zip 里是笔记文件夹的全部内容,包括所有笔记本、`.minipad.json` 和 `.trash`;`.git` 这类以 `.` 开头的其他文件夹不打包。
 - 要找回内容,解压对应日期的 zip,把需要的 `.md` 文件拷回笔记文件夹即可。
-- 备份出错时(比如备份位置的磁盘满了)会在窗口底部提示一下,当天不再重试。
+- 备份出错时(比如备份位置的磁盘满了)会在窗口底部提示一下。当天不会反复重试,改了备份设置或重启程序以后会再试一次。
 
 ### 设置
 
@@ -243,14 +243,14 @@ npx tauri build --target x86_64-pc-windows-gnu
   3. 真正启动程序做冒烟测试:窗口能不能出来、前端能不能读写笔记、全局热键、贴边隐藏、从 0.1.x 升级时的数据搬迁、空笔记本自动补一页、每日备份、重复启动只保留一个;
   4. 把两个 exe 上传成这次运行的构建结果。
 
-要发布新版本:先把 `package.json`、`src-tauri/Cargo.toml`、`src-tauri/tauri.conf.json` 里的版本号改好并在 `CHANGELOG.md` 写上更新内容,然后推送一个 `v` 开头的标签,例如:
+要发布新版本:先把 `package.json`、`src-tauri/Cargo.toml`、`src-tauri/tauri.conf.json` 里的版本号改好并在 `CHANGELOG.md` 写上更新内容,合并到 main 以后推送一个 `v` 开头的标签,例如:
 
 ```powershell
-git tag v0.2.0
-git push origin v0.2.0
+git tag v0.2.1
+git push origin v0.2.1
 ```
 
-构建通过后会自动创建对应的 Release,并附上安装版和免安装版。
+也可以直接在 GitHub 的 Releases 页面点“Draft a new release”,新建一个 `v` 开头的标签再发布,效果一样。构建通过后会把安装版和免安装版附到对应的 Release 上(没有 Release 的话会自动创建)。
 
 ---
 
@@ -264,6 +264,7 @@ minipad-next/
 ├─ app-icon.svg              程序图标源文件
 ├─ scripts/
 │  ├─ prepare.mjs            构建前准备(复制第三方库)
+│  ├─ serve.mjs              在浏览器里预览界面(npm run preview,界面测试也用它)
 │  └─ smoke-test.ps1         Windows 冒烟测试
 ├─ tests/
 │  └─ ui.test.mjs            界面测试
