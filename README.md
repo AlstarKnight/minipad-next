@@ -1,29 +1,50 @@
 # Minipad Next
 
+[![Build](https://github.com/AlstarKnight/minipad-next/actions/workflows/build.yml/badge.svg)](https://github.com/AlstarKnight/minipad-next/actions/workflows/build.yml)
+
 一个按热键就弹出来的悬浮多标签笔记本。使用体验参考 minipad2,代码是全新写的(没有用 minipad2 的源码),基于 [Tauri 2](https://tauri.app)。
+
+- 全局热键(默认 Ctrl+M)呼出 / 隐藏,窗口小巧、默认置顶
+- 拖到屏幕边缘自动贴边隐藏,鼠标碰到边缘再滑出来
+- 多标签页,自动保存,每页就是一个普通的 `.md` 文件
+- Markdown 阅读模式,代码块带高亮和“复制”按钮
+- 全部页面搜索、深色模式、开机启动、托盘图标
+
+每个版本改了什么见 [CHANGELOG.md](CHANGELOG.md)。
 
 ---
 
-## 一、使用说明
+## 一、下载安装
+
+- **正式版本**:在 [Releases](https://github.com/AlstarKnight/minipad-next/releases) 页面下载 `Minipad-Next-版本号-setup.exe`(安装版)或 `Minipad-Next-版本号-portable.exe`(免安装,直接运行)。
+- **最新构建**:每次推送代码后,[Actions](https://github.com/AlstarKnight/minipad-next/actions/workflows/build.yml) 里对应那次运行的页面底部有 `minipad-next-windows` 压缩包,里面是同样的两个文件(需要登录 GitHub 才能下载)。
+
+程序没有数字签名,第一次运行时 Windows 可能提示“已保护你的电脑”,点“更多信息”再点“仍要运行”即可。
+
+---
+
+## 二、使用说明
 
 ### 呼出和隐藏
 
 | 操作 | 效果 |
 | --- | --- |
 | **Ctrl+M**(全局,任何程序里都能用) | 呼出窗口;窗口已经在前面时再按一次就隐藏 |
-| **Esc** | 隐藏窗口(有搜索框或设置面板打开时先关掉它们) |
+| **Esc** | 隐藏窗口(有搜索框、设置面板或对话框打开时先关掉它们) |
 | 窗口右上角 ✕ | 隐藏到托盘,不会退出 |
 | 左键点托盘图标 | 显示 / 隐藏 |
 | 右键托盘图标 | 显示 / 隐藏、打开笔记文件夹、退出 |
 
-热键可以在设置里改。如果 Ctrl+M 和你常用的软件冲突(比如 OneNote 里 Ctrl+M 是新窗口),换成 Ctrl+Alt+M 之类的组合即可。
+热键可以在设置里改。如果 Ctrl+M 和你常用的软件冲突(比如 OneNote 里 Ctrl+M 是新窗口),换成 Ctrl+Alt+M 之类的组合即可。启动时如果热键已经被别的软件占用,程序会提示你去设置里换一个。
 
 ### 贴边隐藏
 
 把窗口拖到屏幕的**上边、左边或右边**贴住,鼠标离开窗口大约半秒后,窗口会缩到屏幕外面,只露出一条细边。鼠标碰到那条边,窗口会滑出来。
 
-- 不想要这个功能,可以在设置里关掉“靠屏幕边缘时自动隐藏”。
+- 窗口滑出来以后,只要你在里面**打过字**,鼠标移开也不会缩回去,等你点到别的窗口时才缩。只是看一眼(不打字)的话,鼠标一移开就缩回去。
 - 窗口缩进去以后按 Ctrl+M,也能直接把它叫出来。
+- 有多块显示器时,只有外侧的边才会触发(两块屏幕相接的那条边不算)。窗口最大化时也不会触发。
+- 不想要这个功能,可以在设置里关掉“靠屏幕边缘时自动隐藏”。
 
 ### 页面(标签页)
 
@@ -63,32 +84,38 @@ print("hello")
 
 **Ctrl+F** 搜索所有页面的内容和标题。用 ↑ ↓ 选择结果,按 Enter 或点击结果会跳到对应页面,并选中匹配的文字。
 
-### 保存
+### 保存和同步
 
-- 输入时自动保存(停止输入约半秒后写入),切换窗口、隐藏窗口、退出时也会保存。**Ctrl+S** 可以立刻保存。
+- 输入时自动保存(停止输入约半秒后写入),切换窗口、隐藏窗口、退出时也会保存。**Ctrl+S** 可以立刻保存。保存失败会自动重试。
 - 底部状态栏显示“保存中…”、“已保存”或保存失败的原因。
-- 每个页面就是一个普通的 `页面名.md` 文件,可以用任何编辑器打开,也可以用网盘同步。
+- 每个页面就是一个普通的 `页面名.md` 文件(UTF-8 编码),可以用任何编辑器打开,也可以用网盘同步。
+- 文件在别处被改过(网盘同步、用其他编辑器改了),切回 Minipad Next 窗口时会自动读到新内容;在文件夹里新建或删除的 `.md` 文件也会变成或去掉对应的标签页。如果这边正好有还没保存的修改,会保留这边的内容并提示你。
+- 直接拷进笔记文件夹的旧文件,即使是 GBK 编码或带 BOM 的,也能正常显示中文;保存时会存成 UTF-8。
 - 页面顺序、当前页面、每页的模式记录在笔记文件夹里的 `.minipad.json`。
 
 默认位置:
 
 | 内容 | 位置 |
 | --- | --- |
-| 笔记 | `%APPDATA%\com.minipadnext.app\notes\` |
-| 设置(含窗口位置大小) | `%APPDATA%\com.minipadnext.app\settings.json` |
+| 笔记 | `%APPDATA%\io.github.alstarknight.minipadnext\notes\` |
+| 设置(含窗口位置大小) | `%APPDATA%\io.github.alstarknight.minipadnext\settings.json` |
+
+> 0.1.0 版本存在 `%APPDATA%\com.minipadnext.app\` 下。升级到 0.2.0 后第一次启动时会自动把那里的设置和笔记搬到新位置。
 
 ### 设置
 
 点顶栏的齿轮按钮打开设置:
 
-- **呼出热键**:点输入框,然后直接按下想要的组合键(需要包含 Ctrl / Alt / Shift / Win 之一,F1~F12 可以单独用)。
+- **呼出热键**:点输入框,然后直接按下想要的组合键(需要包含 Ctrl / Alt / Shift / Win 之一,F1~F12 可以单独用)。录热键的时候,原来的全局热键会暂时停用。
 - **窗口总在最前**:顶栏的图钉按钮也能切换。
 - **靠屏幕边缘时自动隐藏**
 - **在任务栏显示**:默认不显示,只在托盘里。
 - **开机启动**:开机后自动在托盘待命,不弹窗口。
 - **外观**:跟随系统 / 浅色 / 深色。
 - **字号**:也可以用 **Ctrl+加号** / **Ctrl+减号** 调整。
-- **笔记文件夹**:可以改成网盘同步目录(比如 OneDrive 里的某个文件夹)。改了以后程序会读取新文件夹里的笔记,**旧笔记不会自动搬过去**,需要的话自己把 `.md` 文件复制过去。
+- **笔记文件夹**:可以手动填写,也可以点“选择…”挑一个,比如 OneDrive 里的某个文件夹。改了以后程序会读取新文件夹里的笔记,**旧笔记不会自动搬过去**,需要的话自己把 `.md` 文件复制过去。
+
+设置面板底部显示当前版本号,点“GitHub”会打开项目主页。
 
 ### 快捷键总表
 
@@ -107,7 +134,7 @@ print("hello")
 
 ---
 
-## 二、在 Windows 上构建
+## 三、自己构建
 
 ### 1. 准备环境(只需要做一次)
 
@@ -125,16 +152,26 @@ npm install
 npm run build
 ```
 
-第一次构建要下载并编译 Rust 依赖,会花几分钟,之后就快了。
+第一次构建要下载并编译 Rust 依赖,会花几分钟,之后就快了。`npm run build` 会先把前端用到的第三方库复制到 `src/vendor/`。
 
-`npm run build` 会自动做两件准备工作:把前端用到的第三方库复制到 `src/vendor/`,以及在没有图标时根据 `app-icon.svg` 生成 `src-tauri/icons/`。
-
-### 3. 构建结果
+构建结果:
 
 | 文件 | 说明 |
 | --- | --- |
-| `src-tauri\target\release\bundle\nsis\Minipad Next_0.1.0_x64-setup.exe` | 安装程序 |
+| `src-tauri\target\release\bundle\nsis\Minipad Next_版本号_x64-setup.exe` | 安装程序 |
 | `src-tauri\target\release\minipad-next.exe` | 程序本体,可以直接运行 |
+
+### 3. 测试
+
+```powershell
+cargo test --manifest-path src-tauri/Cargo.toml       # 单元测试:文件名、编码识别、贴边计算等
+```
+
+`scripts/smoke-test.ps1` 是 Windows 冒烟测试,会删掉本机 `%APPDATA%` 里的 Minipad Next 设置和笔记,所以平时只在 GitHub Actions 上自动运行。确实要在一台测试机上跑的话,加上 `-Force`:
+
+```powershell
+pwsh scripts/smoke-test.ps1 -Exe src-tauri/target/release/minipad-next.exe -Force
+```
 
 ### 开发调试
 
@@ -145,6 +182,8 @@ npm run dev
 会以调试模式启动程序,改了 `src/` 里的前端文件后,在窗口里按 **Ctrl+R** 刷新即可看到效果;改了 Rust 代码会自动重新编译。
 
 也可以先运行一次 `npm run prepare-assets`,再直接用浏览器打开 `src/index.html` 看界面。浏览器里用的是模拟后端(数据存在浏览器的 localStorage),热键、托盘、贴边隐藏这些系统功能不会生效。
+
+图标的源文件是 `app-icon.svg`,改了以后运行 `npm run icons` 重新生成 `src-tauri/icons/`。
 
 ### 在 Linux 上交叉编译 Windows 版(可选)
 
@@ -157,29 +196,57 @@ npx tauri build --target x86_64-pc-windows-gnu
 
 ---
 
-## 三、项目结构
+## 四、自动构建和发布
+
+`.github/workflows/build.yml` 会在每次推送和每个 Pull Request 时,在 GitHub 的 Windows 机器上:
+
+1. 跑单元测试;
+2. 构建安装包和免安装版;
+3. 真正启动程序做冒烟测试:窗口能不能出来、前端能不能读写笔记、全局热键、贴边隐藏、从 0.1.x 升级时的数据搬迁、重复启动只保留一个;
+4. 把两个 exe 上传成这次运行的构建结果。
+
+要发布新版本:先把 `package.json`、`src-tauri/Cargo.toml`、`src-tauri/tauri.conf.json` 里的版本号改好并在 `CHANGELOG.md` 写上更新内容,然后推送一个 `v` 开头的标签,例如:
+
+```powershell
+git tag v0.2.0
+git push origin v0.2.0
+```
+
+构建通过后会自动创建对应的 Release,并附上安装版和免安装版。
+
+---
+
+## 五、项目结构
 
 ```
 minipad-next/
-├─ README.md               本文档
-├─ package.json            npm 脚本和前端依赖
-├─ app-icon.svg            程序图标源文件
-├─ scripts/prepare.mjs     构建前准备(复制第三方库、生成图标)
-├─ src/                    前端界面(纯 HTML/CSS/JS,不需要打包器)
+├─ README.md                 本文档
+├─ CHANGELOG.md              更新记录
+├─ package.json              npm 脚本和前端依赖
+├─ app-icon.svg              程序图标源文件
+├─ scripts/
+│  ├─ prepare.mjs            构建前准备(复制第三方库)
+│  └─ smoke-test.ps1         Windows 冒烟测试
+├─ .github/workflows/
+│  └─ build.yml              自动构建、测试、发布
+├─ src/                      前端界面(纯 HTML/CSS/JS,不需要打包器)
 │  ├─ index.html
 │  ├─ style.css
-│  └─ app.js               标签、编辑、阅读、搜索、设置的全部逻辑
-└─ src-tauri/              Rust 后端
+│  └─ app.js                 标签、编辑、阅读、搜索、同步、设置的全部逻辑
+└─ src-tauri/                Rust 后端
    ├─ Cargo.toml
-   ├─ tauri.conf.json      窗口、打包配置
-   ├─ capabilities/        前端权限
+   ├─ tauri.conf.json        窗口、打包配置
+   ├─ capabilities/          前端权限
+   ├─ icons/                 程序图标(由 app-icon.svg 生成)
    └─ src/
       ├─ main.rs
-      └─ lib.rs            热键、托盘、贴边隐藏、笔记读写、设置
+      ├─ lib.rs              命令、热键、托盘、窗口显示隐藏、启动
+      ├─ notes.rs            笔记文件读写、文件名、编码识别、旧数据迁移
+      └─ edge.rs             贴边隐藏的位置计算
 ```
 
-## 四、已知限制
+## 六、已知限制
 
-- 程序没有数字签名,第一次运行时 Windows 可能提示“已保护你的电脑”,点“更多信息”再点“仍要运行”即可。
-- 贴边隐藏是鼠标一离开就缩回去,正在打字时也一样。
-- 程序运行时如果在外部修改了 `.md` 文件,程序不会自动重新读取,重启程序后才会看到变化。
+- 程序没有数字签名,第一次运行时 Windows 可能会拦一下(见上面的下载安装)。
+- 笔记文件夹只读一层,子文件夹里的 `.md` 文件不会显示成标签页。
+- 外部修改是在切回窗口时检查的;窗口一直在前台时,别处的修改要等下次切回来才会显示。

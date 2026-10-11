@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Minipad Next",
-  "version": "0.1.0",
-  "identifier": "com.minipadnext.app",
+  "version": "0.2.0",
+  "identifier": "io.github.alstarknight.minipadnext",
   "build": {
     "frontendDist": "../src",
     "beforeDevCommand": "npm run prepare-assets",
@@ -36,6 +36,9 @@
     "targets": [
       "nsis"
     ],
+    "publisher": "AlstarKnight",
+    "homepage": "https://github.com/AlstarKnight/minipad-next",
+    "shortDescription": "热键呼出的悬浮多标签笔记本",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
