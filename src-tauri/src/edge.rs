@@ -72,18 +72,41 @@ pub fn shown_position(edge: Edge, win: Rect, mon: Rect) -> (i32, i32) {
 mod tests {
     use super::*;
 
-    const SCREEN: Rect = Rect { x: 0, y: 0, w: 1920, h: 1080 };
+    const SCREEN: Rect = Rect {
+        x: 0,
+        y: 0,
+        w: 1920,
+        h: 1080,
+    };
 
     #[test]
     fn detects_each_edge_of_a_single_screen() {
         let mons = [SCREEN];
-        assert_eq!(docked_edge(Rect::new(300, 0, 400, 500), SCREEN, &mons), Some(Edge::Top));
-        assert_eq!(docked_edge(Rect::new(300, -20, 400, 500), SCREEN, &mons), Some(Edge::Top));
-        assert_eq!(docked_edge(Rect::new(3, 200, 400, 500), SCREEN, &mons), Some(Edge::Left));
-        assert_eq!(docked_edge(Rect::new(1520, 200, 400, 500), SCREEN, &mons), Some(Edge::Right));
-        assert_eq!(docked_edge(Rect::new(300, 200, 400, 500), SCREEN, &mons), None);
+        assert_eq!(
+            docked_edge(Rect::new(300, 0, 400, 500), SCREEN, &mons),
+            Some(Edge::Top)
+        );
+        assert_eq!(
+            docked_edge(Rect::new(300, -20, 400, 500), SCREEN, &mons),
+            Some(Edge::Top)
+        );
+        assert_eq!(
+            docked_edge(Rect::new(3, 200, 400, 500), SCREEN, &mons),
+            Some(Edge::Left)
+        );
+        assert_eq!(
+            docked_edge(Rect::new(1520, 200, 400, 500), SCREEN, &mons),
+            Some(Edge::Right)
+        );
+        assert_eq!(
+            docked_edge(Rect::new(300, 200, 400, 500), SCREEN, &mons),
+            None
+        );
         // 靠在底边不隐藏
-        assert_eq!(docked_edge(Rect::new(300, 580, 400, 500), SCREEN, &mons), None);
+        assert_eq!(
+            docked_edge(Rect::new(300, 580, 400, 500), SCREEN, &mons),
+            None
+        );
     }
 
     #[test]
@@ -91,14 +114,26 @@ mod tests {
         let right = Rect::new(1920, 0, 1920, 1080);
         let mons = [SCREEN, right];
         // 左屏的右边挨着右屏,不能往那边缩
-        assert_eq!(docked_edge(Rect::new(1520, 200, 400, 500), SCREEN, &mons), None);
+        assert_eq!(
+            docked_edge(Rect::new(1520, 200, 400, 500), SCREEN, &mons),
+            None
+        );
         // 右屏的左边同理
-        assert_eq!(docked_edge(Rect::new(1922, 200, 400, 500), right, &mons), None);
+        assert_eq!(
+            docked_edge(Rect::new(1922, 200, 400, 500), right, &mons),
+            None
+        );
         // 右屏的右边是外侧,可以
-        assert_eq!(docked_edge(Rect::new(3440, 200, 400, 500), right, &mons), Some(Edge::Right));
+        assert_eq!(
+            docked_edge(Rect::new(3440, 200, 400, 500), right, &mons),
+            Some(Edge::Right)
+        );
         // 上下摆放时,下面那块屏的上边不算
         let below = Rect::new(0, 1080, 1920, 1080);
-        assert_eq!(docked_edge(Rect::new(300, 1080, 400, 500), below, &[SCREEN, below]), None);
+        assert_eq!(
+            docked_edge(Rect::new(300, 1080, 400, 500), below, &[SCREEN, below]),
+            None
+        );
     }
 
     #[test]
@@ -116,13 +151,19 @@ mod tests {
         let win = Rect::new(1520, 100, 400, 500);
         let (hx, hy) = hidden_position(Edge::Right, win, SCREEN);
         assert_eq!((hx, hy), (1916, 100));
-        assert_eq!(shown_position(Edge::Right, Rect::new(hx, hy, 400, 500), SCREEN), (1520, 100));
+        assert_eq!(
+            shown_position(Edge::Right, Rect::new(hx, hy, 400, 500), SCREEN),
+            (1520, 100)
+        );
 
         let win = Rect::new(0, 100, 400, 500);
         let (hx, hy) = hidden_position(Edge::Left, win, SCREEN);
         assert_eq!((hx, hy), (-396, 100));
         assert!(Rect::new(hx, hy, 400, 500).contains(0, 300));
-        assert_eq!(shown_position(Edge::Left, Rect::new(hx, hy, 400, 500), SCREEN), (0, 100));
+        assert_eq!(
+            shown_position(Edge::Left, Rect::new(hx, hy, 400, 500), SCREEN),
+            (0, 100)
+        );
     }
 
     #[test]
