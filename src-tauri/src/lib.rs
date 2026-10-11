@@ -24,6 +24,9 @@ use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 /// 0.1.x 用的应用标识符。0.2.0 换了标识符,启动时把旧位置的设置和笔记搬过来。
 const OLD_IDENTIFIER: &str = "com.minipadnext.app";
 
+/// F5 插入日期时间的默认格式,和中文 Windows 记事本一样,比如 13:45 2026/10/11
+const DEFAULT_DATE_FORMAT: &str = "H:mm yyyy/M/d";
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(default)]
 pub struct Geom {
@@ -55,6 +58,10 @@ pub struct Settings {
     theme: String,
     font_size: u32,
     notes_dir: String,
+    /// 编辑区显示行号
+    line_numbers: bool,
+    /// 按 F5 插入的日期时间格式,写法和 Windows 一样,比如 H:mm yyyy/M/d
+    date_format: String,
     /// 每天第一次保存时把笔记文件夹打包备份
     backup_enabled: bool,
     /// 保留最近几份备份
@@ -75,6 +82,8 @@ impl Default for Settings {
             theme: "system".into(),
             font_size: 14,
             notes_dir: String::new(),
+            line_numbers: false,
+            date_format: DEFAULT_DATE_FORMAT.into(),
             backup_enabled: true,
             backup_keep: 14,
             backup_dir: String::new(),
@@ -218,6 +227,20 @@ fn persist_settings(app: &AppHandle) {
     }
 }
 
+/// 保存前整理前端传来的设置:去掉首尾空格,数字限制在合理范围
+fn tidy_settings(s: &mut Settings) {
+    s.hotkey = s.hotkey.trim().to_string();
+    s.notes_dir = s.notes_dir.trim().to_string();
+    s.backup_dir = s.backup_dir.trim().to_string();
+    s.backup_keep = s.backup_keep.clamp(1, 365);
+    // 日期格式最多 64 个字(按字算,不按字节),空着就用默认的
+    let format: String = s.date_format.trim().chars().take(64).collect();
+    s.date_format = match format.trim_end() {
+        "" => DEFAULT_DATE_FORMAT.to_string(),
+        f => f.to_string(),
+    };
+}
+
 /// 把 0.1.x 存在旧标识符目录下的设置和笔记搬到新目录
 fn migrate_old_data(app: &AppHandle) {
     let path = app.path();
@@ -257,6 +280,7 @@ const WELCOME: &str = r#"# 欢迎使用 Minipad Next
 - 把窗口拖到屏幕**上边、左边或右边**,鼠标移开后会自动贴边隐藏,鼠标碰到边缘再滑出来
 - 内容会自动保存,每个页面就是笔记文件夹里的一个 `.md` 文件
 - 按 **Ctrl+E** 在"编辑"和"阅读"之间切换,阅读模式下代码块右上角有"复制"按钮
+- 编辑时在列表里按 **Enter** 会自动接上 `- ` 或下一个编号,**Ctrl+Enter** 勾选任务,**F5** 插入当前日期时间
 - 页面多了可以分**笔记本**:点标签栏最左边的笔记本名字(或按 **Ctrl+B**)新建和切换,每个笔记本就是笔记文件夹里的一个子文件夹
 - 每天第一次保存时会自动把笔记文件夹备份成 zip,默认保留最近 14 份,可以在设置里改
 
@@ -275,6 +299,8 @@ print("点右上角的复制按钮试试")
 | Ctrl+F | 搜索全部笔记本的页面 |
 | Ctrl+Tab | 下一个页面 |
 | Ctrl+1 ~ 9 | 跳到第 N 个页面 |
+| Ctrl+Enter | 勾选 / 取消勾选任务 |
+| F5 | 插入当前日期时间 |
 | 双击标签 | 重命名 |
 | 右键标签 | 重命名、移到别的笔记本、删除 |
 | Esc | 隐藏窗口 |
@@ -421,10 +447,7 @@ fn save_settings(app: AppHandle, settings: Settings) -> Result<Settings, String>
     let old = state.settings.lock().unwrap().clone();
     let mut new = settings;
     new.window = old.window.clone();
-    new.hotkey = new.hotkey.trim().to_string();
-    new.notes_dir = new.notes_dir.trim().to_string();
-    new.backup_dir = new.backup_dir.trim().to_string();
-    new.backup_keep = new.backup_keep.clamp(1, 365);
+    tidy_settings(&mut new);
 
     if !new.notes_dir.is_empty() {
         fs::create_dir_all(&new.notes_dir).map_err(|e| format!("无法使用这个文件夹:{e}"))?;
@@ -887,4 +910,70 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while running Minipad Next");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn old_settings_get_the_new_defaults() {
+        // 0.2.1 的设置文件里还没有行号和日期格式
+        let json = r#"{
+            "hotkey": "Ctrl+Alt+M",
+            "always_on_top": false,
+            "edge_hide": true,
+            "show_in_taskbar": true,
+            "autostart": false,
+            "theme": "dark",
+            "font_size": 16,
+            "notes_dir": "D:\\笔记",
+            "backup_enabled": false,
+            "backup_keep": 30,
+            "backup_dir": "",
+            "window": { "x": 10, "y": 20, "w": 500, "h": 600 }
+        }"#;
+        let s: Settings = serde_json::from_str(json).unwrap();
+        assert!(!s.line_numbers);
+        assert_eq!(s.date_format, DEFAULT_DATE_FORMAT);
+        assert_eq!(s.hotkey, "Ctrl+Alt+M");
+        assert!(!s.always_on_top && s.show_in_taskbar && !s.backup_enabled);
+        assert_eq!((s.theme.as_str(), s.font_size), ("dark", 16));
+        assert_eq!(s.notes_dir, "D:\\笔记");
+        assert_eq!(s.backup_keep, 30);
+        let g = s.window.unwrap();
+        assert_eq!((g.x, g.y, g.w, g.h), (10, 20, 500, 600));
+    }
+
+    #[test]
+    fn tidy_settings_trims_and_limits() {
+        let mut s = Settings {
+            hotkey: " Ctrl+M ".into(),
+            notes_dir: "  D:\\笔记 ".into(),
+            backup_dir: " ".into(),
+            backup_keep: 0,
+            date_format: "  yyyy-MM-dd  ".into(),
+            ..Settings::default()
+        };
+        tidy_settings(&mut s);
+        assert_eq!(s.hotkey, "Ctrl+M");
+        assert_eq!(s.notes_dir, "D:\\笔记");
+        assert_eq!(s.backup_dir, "");
+        assert_eq!(s.backup_keep, 1);
+        assert_eq!(s.date_format, "yyyy-MM-dd");
+
+        s.backup_keep = 1000;
+        s.date_format = " \t ".into();
+        tidy_settings(&mut s);
+        assert_eq!(s.backup_keep, 365);
+        assert_eq!(s.date_format, DEFAULT_DATE_FORMAT);
+
+        // 按字截断,不会把中文切坏;截断后末尾的空格也去掉
+        s.date_format = "年月日".repeat(30);
+        tidy_settings(&mut s);
+        assert_eq!(s.date_format, format!("{}年", "年月日".repeat(21)));
+        s.date_format = format!("{} H:mm", "年".repeat(63));
+        tidy_settings(&mut s);
+        assert_eq!(s.date_format, "年".repeat(63));
+    }
 }
