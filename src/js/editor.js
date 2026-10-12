@@ -64,7 +64,7 @@ const changes = $prose(
       },
       view: () => ({
         update(v, prev) {
-          if (!shown || v.state.doc === prev.doc || !changeKey.getState(v.state)) return;
+          if (!shown || shown.unreadable || v.state.doc === prev.doc || !changeKey.getState(v.state)) return;
           let md = serialize(v.state.doc);
           // 原来的文件末尾没有换行,存的时候也不加
           if (!shown.stateMd.endsWith("\n")) md = md.replace(/\n$/, "");
@@ -369,7 +369,8 @@ export function showInEditor(n) {
   }
   keep();
   shown = null;
-  let st = n.state;
+  if (n.unreadable) n.state = null;
+  let st = n.unreadable ? null : n.state;
   let scroll = n.scroll || 0;
   if (!st) {
     st = freshState(n.content);
@@ -382,12 +383,19 @@ export function showInEditor(n) {
   }
   view.updateState(st);
   shown = n;
+  view.setProps({ editable: () => !shown?.unreadable });
   scroller().scrollTop = scroll;
 }
 
 // 编辑器里的页面的内容在别处变了(n.content 已经是新内容):换上新内容,可以撤销回去
 export function setEditorText(n) {
-  if (n !== shown || n.stateMd === n.content) return;
+  if (n !== shown) return;
+  view.setProps({ editable: () => !shown?.unreadable });
+  if (n.unreadable) {
+    n.state = null;
+    return;
+  }
+  if (n.stateMd === n.content) return;
   const tr = replaceTr(view.state, n.content);
   n.stateMd = n.content;
   if (tr) view.dispatch(tr);
@@ -399,7 +407,7 @@ export function leaveEditor() {
 }
 
 export function focusEditorView() {
-  view.focus();
+  if (!shown?.unreadable) view.focus();
 }
 
 export function editorSelectionText() {
