@@ -41,7 +41,8 @@ async function writeDirtyNotes() {
     const dirty = [];
     for (const b of state.books) for (const n of b.notes) if (n.dirty && !n.unreadable) dirty.push([b, n]);
     if (!dirty.length) {
-      setSaveStatus("saved");
+      const blocked = state.books.some((b) => b.notes.some((n) => n.unreadable && n.dirty));
+      setSaveStatus(blocked ? "err" : "saved", blocked ? "存在无法读取的未保存页面" : "");
       return;
     }
     let firstError = null;
