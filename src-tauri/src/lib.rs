@@ -236,10 +236,9 @@ fn preferred_storage_dir(program_root: &Path, legacy: &Path, folder: &str) -> Pa
             };
         }
         beside_exe
-    } else if contains_data(legacy) || !beside_exe.is_dir() {
-        legacy.to_path_buf()
     } else {
-        beside_exe
+        // 包括旁边已经有空 notes/ 或 backups/ 的情况。目录不可写就使用 AppData。
+        legacy.to_path_buf()
     }
 }
 
@@ -296,6 +295,21 @@ fn maybe_backup(app: &AppHandle) {
             let _ = app.emit("backup-error", e);
         }
     });
+}
+
+/// 迁移完成后将绝对路径钉在设置中。换安装位置时不再从旧 AppData
+/// 重复复制陈旧的笔记；用户明确设置的路径始终优先。
+fn pin_default_storage(settings: &mut Settings, notes: &Path, backups: &Path) -> bool {
+    let mut changed = false;
+    if settings.notes_dir.trim().is_empty() {
+        settings.notes_dir = notes.to_string_lossy().into_owned();
+        changed = true;
+    }
+    if settings.backup_dir.trim().is_empty() {
+        settings.backup_dir = backups.to_string_lossy().into_owned();
+        changed = true;
+    }
+    changed
 }
 
 fn load_settings(app: &AppHandle) -> Settings {
@@ -1026,12 +1040,24 @@ pub fn run() {
         .setup(|app| {
             let handle = app.handle().clone();
             migrate_old_data(&handle);
-            let settings = load_settings(&handle);
+            let mut settings = load_settings(&handle);
+            // 首次解析默认目录时可能把旧数据安全复制到 EXE 同级。
+            // 把最终目录立即写入设置，重装到别处时仍然读取这份数据。
+            let default_notes = notes_dir(&handle, &settings);
+            let default_backups = backup_dir(&handle, &settings);
+            let pinned = pin_default_storage(&mut settings, &default_notes, &default_backups);
             notes::cleanup_stale_temps(&notes_dir(&handle, &settings));
             {
                 let st = handle.state::<AppState>();
                 *st.settings.lock().unwrap() = settings.clone();
                 *st.geom.lock().unwrap() = settings.window.clone();
+                if pinned {
+                    // 配置目录错误不应让程序空白启动，但必须明确记录写入失败。
+                    let json = serde_json::to_string_pretty(&settings).unwrap_or_default();
+                    if let Err(e) = notes::write_atomic(&config_path(&handle), &json) {
+                        eprintln!("无法记住迁移后的存储路径: {e}");
+                    }
+                }
                 if let Err(e) = register_hotkey(&handle, &settings.hotkey) {
                     eprintln!("热键注册失败: {e}");
                     *st.hotkey_error.lock().unwrap() = Some(format!("{}:{e}", settings.hotkey));
@@ -1242,6 +1268,56 @@ mod tests {
             assert_eq!(s.accent, "", "{bad}");
         }
     }
+    #[test]
+    fn explicit_storage_paths_survive_install_location_changes() {
+        let root = notes::temp_dir("sticky-path");
+        let old_install = root.join("old-app");
+        let new_install = root.join("new-app");
+        let stale_appdata = root.join("old-appdata");
+        fs::create_dir_all(&old_install).unwrap();
+        fs::create_dir_all(&new_install).unwrap();
+        fs::create_dir_all(&stale_appdata).unwrap();
+        fs::write(stale_appdata.join("stale.md"), "旧副本").unwrap();
+        let original = preferred_storage_dir(&old_install, &stale_appdata, "notes");
+        fs::write(original.join("current.md"), "最近更新").unwrap();
+        let mut settings = Settings::default();
+        assert!(pin_default_storage(
+            &mut settings,
+            &original,
+            &old_install.join("backups"),
+        ));
+        let encoded = serde_json::to_string(&settings).unwrap();
+        let reloaded: Settings = serde_json::from_str(&encoded).unwrap();
+        assert!(!pin_default_storage(
+            &mut reloaded.clone(),
+            &new_install.join("notes"),
+            &new_install.join("backups"),
+        ));
+        assert_eq!(PathBuf::from(&reloaded.notes_dir), original);
+        assert_eq!(
+            fs::read_to_string(PathBuf::from(&reloaded.notes_dir).join("current.md")).unwrap(),
+            "最近更新"
+        );
+        assert!(!new_install.join("notes").exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn configured_storage_paths_are_never_overwritten() {
+        let mut settings = Settings {
+            notes_dir: "D:\\\\notes".into(),
+            backup_dir: "E:\\\\backups".into(),
+            ..Settings::default()
+        };
+        assert!(!pin_default_storage(
+            &mut settings,
+            Path::new("C:/app/notes"),
+            Path::new("C:/app/backups"),
+        ));
+        assert_eq!(settings.notes_dir, "D:\\\\notes");
+        assert_eq!(settings.backup_dir, "E:\\\\backups");
+    }
+
     #[test]
     fn default_storage_prefers_program_folder_without_losing_existing_legacy_data() {
         let root = notes::temp_dir("default-path");
