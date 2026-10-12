@@ -505,10 +505,13 @@ fn save_settings(app: AppHandle, settings: Settings) -> Result<Settings, String>
     }
     // 先换热键(失败就恢复旧的),再改开机启动(失败就把热键也换回去),保证要么都生效要么都不变
     let hotkey_changed = new.hotkey != old.hotkey;
-    if hotkey_changed {
+    let retry_hotkey = state.hotkey_error.lock().unwrap().is_some();
+    if hotkey_changed || retry_hotkey {
         state.hotkey_paused.store(false, Ordering::SeqCst);
         if let Err(e) = register_hotkey(&app, &new.hotkey) {
-            let _ = register_hotkey(&app, &old.hotkey);
+            if let Err(restore_error) = register_hotkey(&app, &old.hotkey) {
+                *state.hotkey_error.lock().unwrap() = Some(format!("{}:{restore_error}", old.hotkey));
+            }
             return Err(format!("热键 {} 无法使用:{e}", new.hotkey));
         }
     }
@@ -526,7 +529,9 @@ fn save_settings(app: AppHandle, settings: Settings) -> Result<Settings, String>
             return Err(format!("开机启动设置失败:{e}"));
         }
     }
-    *state.hotkey_error.lock().unwrap() = None;
+    if hotkey_changed || retry_hotkey {
+        *state.hotkey_error.lock().unwrap() = None;
+    }
 
     if let Some(win) = main_window(&app) {
         let _ = win.set_always_on_top(new.always_on_top);
@@ -925,6 +930,7 @@ pub fn run() {
             let handle = app.handle().clone();
             migrate_old_data(&handle);
             let settings = load_settings(&handle);
+            notes::cleanup_stale_temps(&notes_dir(&handle, &settings));
             {
                 let st = handle.state::<AppState>();
                 *st.settings.lock().unwrap() = settings.clone();
