@@ -715,6 +715,52 @@ html[data-edge="right"] #edge-mark { top: 0; bottom: 0; left: 0; width: 8px; }
 html[data-edge="left"] #edge-mark span,
 html[data-edge="right"] #edge-mark span { top: 50%; height: 120px; margin-top: -60px; left: 0; right: 0; }
 
+/* 贴边隐藏展开钮：启用时外露约 34 个物理像素，支持不同 DPI。 */
+html[data-edge-button="on"][data-edge] #edge-mark {
+  background: transparent;
+}
+html[data-edge-button="on"][data-edge="top"] #edge-mark { height: var(--edge-peek, 34px); }
+html[data-edge-button="on"][data-edge="left"] #edge-mark,
+html[data-edge-button="on"][data-edge="right"] #edge-mark { width: var(--edge-peek, 34px); }
+html[data-edge-button="on"] #edge-mark > span { opacity: .5; }
+#edge-expand {
+  display: none;
+  position: absolute;
+  pointer-events: auto;
+  border: 1px solid color-mix(in srgb, var(--accent) 65%, transparent);
+  border-radius: 9px;
+  background: var(--accent-grad);
+  color: white;
+  font-size: 18px;
+  font-weight: bold;
+  box-shadow: 0 2px 8px #0004;
+  cursor: pointer;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+html[data-edge-button="on"][data-edge] #edge-expand { display: flex; }
+html[data-edge="top"] #edge-expand {
+  left: 50%;
+  bottom: 1px;
+  transform: translateX(-50%);
+  width: 74px;
+  height: calc(100% - 2px);
+}
+html[data-edge="left"] #edge-expand,
+html[data-edge="right"] #edge-expand {
+  top: 50%;
+  transform: translateY(-50%);
+  width: calc(100% - 2px);
+  height: 74px;
+}
+html[data-edge="left"] #edge-expand { right: 1px; }
+html[data-edge="right"] #edge-expand { left: 1px; }
+html[data-edge="top"] #edge-expand::before { content: "⌄"; }
+html[data-edge="left"] #edge-expand::before { content: "›"; }
+html[data-edge="right"] #edge-expand::before { content: "‹"; }
+.edge-option { padding-left: 18px; }
+
 /* 读取失败页面只显示告警，不提供编辑与格式操作。 */
 #read-error { position: absolute; inset: 0; z-index: 11; padding: 18px; background: var(--bg); color: var(--text); white-space: pre-wrap; overflow: auto; }
 #read-error[hidden] { display: none; }
