@@ -29,7 +29,7 @@ export function applySettings() {
 }
 // 贴边隐藏的样式:露出的宽度和 Rust 里 edge::strip_for 一致(逻辑像素,Rust 按屏幕缩放换成物理像素)
 const EDGE_STYLES = ["arrow", "line", "hover"];
-const EDGE_STRIP = { arrow: 20, line: 6, hover: 6 };
+const EDGE_STRIP = { arrow: 18, line: 3, hover: 3 };
 const EDGE_PEEK_STRIP = 32;
 export function applyEdgeAppearance() {
   const s = state.settings || {};

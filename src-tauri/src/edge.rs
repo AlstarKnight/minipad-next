@@ -1,9 +1,9 @@
 //! 贴边隐藏的几何计算(不依赖 Tauri,方便测试)。所有坐标都是物理像素。
 
-/// 贴边隐藏后露在屏幕内的宽度(前端在这一条上画标识)
-pub const STRIP: i32 = 6;
 /// 「细线 + 箭头」样式露出的宽度，够放下一个小箭头
-pub const ARROW_STRIP: i32 = 20;
+pub const ARROW_STRIP: i32 = 18;
+/// 「仅细边」和「悬浮按钮」平时露出的宽度:整条就是一根彩色细线
+pub const LINE_STRIP: i32 = 3;
 /// 「细边 + 悬浮按钮」样式在鼠标靠近时滑出的宽度，够放下展开按钮
 pub const PEEK_STRIP: i32 = 32;
 
@@ -12,7 +12,7 @@ pub fn strip_for(style: &str, peeking: bool) -> i32 {
     match (style, peeking) {
         ("arrow", _) => ARROW_STRIP,
         ("hover", true) => PEEK_STRIP,
-        _ => STRIP,
+        _ => LINE_STRIP,
     }
 }
 /// 离屏幕边缘多近算"靠边"
@@ -74,10 +74,10 @@ pub fn docked_edge(win: Rect, mon: Rect, monitors: &[Rect]) -> Option<Edge> {
     }
 }
 
-/// 缩进去以后窗口的位置:只露出 STRIP 宽的一条(测试里用;程序里按样式选宽度)
+/// 缩进去以后窗口的位置:只露出 LINE_STRIP 宽的一条(测试里用;程序里按样式选宽度)
 #[cfg(test)]
 pub fn hidden_position(edge: Edge, win: Rect, mon: Rect) -> (i32, i32) {
-    hidden_position_with_strip(edge, win, mon, STRIP)
+    hidden_position_with_strip(edge, win, mon, LINE_STRIP)
 }
 
 pub fn hidden_position_with_strip(edge: Edge, win: Rect, mon: Rect, strip: i32) -> (i32, i32) {
@@ -169,17 +169,17 @@ mod tests {
     fn hide_and_show_positions_round_trip() {
         let win = Rect::new(300, 0, 400, 500);
         let (hx, hy) = hidden_position(Edge::Top, win, SCREEN);
-        assert_eq!((hx, hy), (300, -500 + STRIP));
+        assert_eq!((hx, hy), (300, -500 + LINE_STRIP));
         let hidden = Rect::new(hx, hy, win.w, win.h);
         // 露出来的那条边能碰到
         assert!(hidden.contains(320, 0));
-        assert!(hidden.contains(320, STRIP - 1));
-        assert!(!hidden.contains(320, STRIP));
+        assert!(hidden.contains(320, LINE_STRIP - 1));
+        assert!(!hidden.contains(320, LINE_STRIP));
         assert_eq!(shown_position(Edge::Top, hidden, SCREEN), (300, 0));
 
         let win = Rect::new(1520, 100, 400, 500);
         let (hx, hy) = hidden_position(Edge::Right, win, SCREEN);
-        assert_eq!((hx, hy), (1920 - STRIP, 100));
+        assert_eq!((hx, hy), (1920 - LINE_STRIP, 100));
         assert_eq!(
             shown_position(Edge::Right, Rect::new(hx, hy, 400, 500), SCREEN),
             (1520, 100)
@@ -187,7 +187,7 @@ mod tests {
 
         let win = Rect::new(0, 100, 400, 500);
         let (hx, hy) = hidden_position(Edge::Left, win, SCREEN);
-        assert_eq!((hx, hy), (-400 + STRIP, 100));
+        assert_eq!((hx, hy), (-400 + LINE_STRIP, 100));
         assert!(Rect::new(hx, hy, 400, 500).contains(0, 300));
         assert_eq!(
             shown_position(Edge::Left, Rect::new(hx, hy, 400, 500), SCREEN),
@@ -197,10 +197,10 @@ mod tests {
 
     #[test]
     fn each_style_leaves_its_own_strip_on_all_edges() {
-        assert_eq!(strip_for("line", false), STRIP);
-        assert_eq!(strip_for("line", true), STRIP);
+        assert_eq!(strip_for("line", false), LINE_STRIP);
+        assert_eq!(strip_for("line", true), LINE_STRIP);
         assert_eq!(strip_for("arrow", false), ARROW_STRIP);
-        assert_eq!(strip_for("hover", false), STRIP);
+        assert_eq!(strip_for("hover", false), LINE_STRIP);
         assert_eq!(strip_for("hover", true), PEEK_STRIP);
         let win = Rect::new(300, 0, 400, 500);
         let s = strip_for("hover", true);

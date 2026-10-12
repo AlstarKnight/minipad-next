@@ -998,6 +998,8 @@ fn restore_from_edge(app: &AppHandle, focus: bool) {
         return;
     };
     let (x, y) = edge::shown_position(edge, rect, mon);
+    // 缩进去时关掉了窗口阴影(不然会在屏幕边上投一大片黑影),放出来再打开
+    let _ = win.set_shadow(true);
     let _ = win.set_position(PhysicalPosition::new(x, y));
     let _ = app.emit("edge-shown", ());
     {
@@ -1134,6 +1136,8 @@ fn edge_tick(app: &AppHandle) {
             edge::hidden_position_with_strip(edge, rect, mon, scaled_strip(&win, &style, false));
         let _ = app.emit("flush", ());
         let _ = app.emit("edge-hidden", edge.name());
+        // Windows 给无边框窗口加的阴影会从露出的细边上投到桌面和别的窗口上,缩进去时先关掉
+        let _ = win.set_shadow(false);
         let _ = win.set_position(PhysicalPosition::new(x, y));
     }
 }
