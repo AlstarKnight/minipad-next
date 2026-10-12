@@ -17,12 +17,18 @@ export function renderTabs() {
   if (!b) return;
   b.notes.forEach((n, i) => {
     const t = document.createElement("div");
-    t.className = "tab" + (i === b.active ? " active" : "");
+    t.className = "tab" + (i === b.active ? " active" : "") + (n.unreadable ? " unreadable" : "");
     t.draggable = true;
     t.dataset.index = i;
-    t.title = n.name;
+    t.title = n.unreadable ? `${n.name}:读取失败:${n.reason || "未知错误"}` : n.name;
     const s = document.createElement("span");
     s.textContent = n.name;
+    if (n.unreadable) {
+      const warning = document.createElement("span");
+      warning.className = "tab-warning";
+      warning.textContent = "⚠";
+      t.appendChild(warning);
+    }
     t.appendChild(s);
     // 事件里用页面对象而不是位置,中途同步过也不会点错页面
     t.addEventListener("mousedown", (e) => {
