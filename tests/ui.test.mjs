@@ -1429,12 +1429,12 @@ describe("theme and accent", () => {
     const mark = () => p.$eval("#edge-mark", (m) => { const r = m.getBoundingClientRect(); return getComputedStyle(m).display === "none" ? null : [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)]; });
     assert.equal(await mark(), null, "no marker while the window is out");
     await p.evaluate(() => window.__mockEmit("edge-hidden", "top"));
-    assert.deepEqual(await mark(), [0, 520, 440, 20], "default style (line + arrow) leaves a 20px strip");
+    assert.deepEqual(await mark(), [0, 522, 440, 18], "default style (line + arrow) leaves an 18px strip");
     assert.equal(await p.isVisible("#edge-expand"), true, "the arrow strip can be clicked");
     await p.evaluate(() => window.__mockEmit("edge-hidden", "left"));
-    assert.deepEqual(await mark(), [420, 0, 20, 540], "left edge");
+    assert.deepEqual(await mark(), [422, 0, 18, 540], "left edge");
     await p.evaluate(() => window.__mockEmit("edge-hidden", "right"));
-    assert.deepEqual(await mark(), [0, 0, 20, 540], "right edge");
+    assert.deepEqual(await mark(), [0, 0, 18, 540], "right edge");
     await p.click("#edge-expand");
     assert.equal(await mark(), null, "clicking expand restores the window");
 
@@ -1451,7 +1451,7 @@ describe("theme and accent", () => {
     await p.click("#set-save");
     await until(() => h.stored().then((s) => [s.settings.edge_style, s.settings.edge_color]), ["line", "linear-gradient(135deg, #5fb4ff, #d66cf0)"]);
     await p.evaluate(() => window.__mockEmit("edge-hidden", "top"));
-    assert.deepEqual(await mark(), [0, 534, 440, 6], "line style keeps the slim 6px strip");
+    assert.deepEqual(await mark(), [0, 537, 440, 3], "line style: the strip is just a 3px line");
     assert.equal(await p.$eval("#edge-expand", (b) => getComputedStyle(b, "::before").display), "none", "no arrow in line style");
     assert.deepEqual(await edgeVars(), ["#5fb4ff", "linear-gradient(135deg, #5fb4ff, #d66cf0)"], "edge uses its own color");
     await p.evaluate(() => window.__mockEmit("edge-shown"));
@@ -1463,15 +1463,15 @@ describe("theme and accent", () => {
     await p.click("#set-save");
     await until(() => h.stored().then((s) => [s.settings.edge_style, s.settings.edge_color]), ["hover", ""]);
     await p.evaluate(() => window.__mockEmit("edge-hidden", "left"));
-    assert.deepEqual(await mark(), [434, 0, 6, 540], "hover style starts as a slim edge");
+    assert.deepEqual(await mark(), [437, 0, 3, 540], "hover style starts as a slim edge");
     assert.equal(await p.$eval("#edge-expand", (b) => getComputedStyle(b, "::before").display), "none", "no button until the mouse comes near");
     assert.equal((await edgeVars())[1], "", "edge color follows the accent again");
     await p.evaluate(() => window.__mockEmit("edge-peek", true));
     assert.deepEqual(await mark(), [408, 0, 32, 540], "mouse near: the strip widens for the button");
     const btn = await p.$eval("#edge-expand", (b) => { const r = b.getBoundingClientRect(); return [Math.round(r.width), Math.round(r.height)]; });
-    assert.deepEqual(btn, [23, 56], "floating button");
+    assert.deepEqual(btn, [20, 56], "floating button");
     await p.evaluate(() => window.__mockEmit("edge-peek", false));
-    assert.deepEqual(await mark(), [434, 0, 6, 540], "mouse away: back to the slim edge");
+    assert.deepEqual(await mark(), [437, 0, 3, 540], "mouse away: back to the slim edge");
     await p.evaluate(() => window.__mockEmit("edge-peek", true));
     await p.click("#edge-expand");
     assert.equal(await mark(), null, "clicking the floating button restores the window");

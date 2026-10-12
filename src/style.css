@@ -715,17 +715,14 @@ html[data-edge] #edge-mark { display: block; }
 html[data-edge="top"] #edge-mark { left: 0; right: 0; bottom: 0; height: var(--edge-peek, 6px); }
 html[data-edge="left"] #edge-mark { top: 0; bottom: 0; right: 0; width: var(--edge-peek, 6px); }
 html[data-edge="right"] #edge-mark { top: 0; bottom: 0; left: 0; width: var(--edge-peek, 6px); }
-/* 发光的细线:贴在朝屏幕里面的那一侧 */
-#edge-mark > span {
-  position: absolute;
-  background: var(--eg);
-  box-shadow: 0 0 6px 1px color-mix(in srgb, var(--ec) 75%, transparent);
-}
-html[data-edge="top"] #edge-mark > span { left: 0; right: 0; bottom: 0; height: 2px; }
-html[data-edge="left"] #edge-mark > span { top: 0; bottom: 0; right: 0; width: 2px; }
-html[data-edge="right"] #edge-mark > span { top: 0; bottom: 0; left: 0; width: 2px; }
-/* 仅细边:整条都亮一点,中间一段更亮 */
-html[data-edge-style="line"] #edge-mark { background: color-mix(in srgb, var(--ec) 22%, var(--bar)); }
+/* 彩色细线:贴在靠屏幕边缘的那一侧 */
+#edge-mark > span { position: absolute; background: var(--eg); }
+html[data-edge="top"] #edge-mark > span { left: 0; right: 0; top: 0; height: 3px; }
+html[data-edge="left"] #edge-mark > span { top: 0; bottom: 0; left: 0; width: 3px; }
+html[data-edge="right"] #edge-mark > span { top: 0; bottom: 0; right: 0; width: 3px; }
+/* 仅细边,以及悬浮按钮样式平时:露出的这一条整条就是彩色细线 */
+html[data-edge-style="line"] #edge-mark,
+html[data-edge-style="hover"]:not([data-edge-peek]) #edge-mark { background: var(--eg); }
 
 /* 展开按钮:整条都能点(碰到这条窗口本来也会滑出来) */
 #edge-expand {
@@ -752,9 +749,9 @@ html[data-edge-style="line"] #edge-mark { background: color-mix(in srgb, var(--e
 }
 html[data-edge="left"] #edge-expand::before { rotate: -90deg; }
 html[data-edge="right"] #edge-expand::before { rotate: 90deg; }
-html[data-edge="top"] #edge-expand { bottom: 2px; }
-html[data-edge="left"] #edge-expand { right: 2px; }
-html[data-edge="right"] #edge-expand { left: 2px; }
+html[data-edge="top"] #edge-expand { top: 3px; }
+html[data-edge="left"] #edge-expand { left: 3px; }
+html[data-edge="right"] #edge-expand { right: 3px; }
 #edge-expand:hover::before { transform: scale(1.2); }
 html[data-edge-style="line"] #edge-expand::before,
 html[data-edge-style="hover"]:not([data-edge-peek]) #edge-expand::before { display: none; }
@@ -768,14 +765,14 @@ html[data-edge-style="hover"][data-edge-peek] #edge-expand {
 }
 html[data-edge-style="hover"][data-edge-peek] #edge-expand::before { background: #fff; filter: none; }
 html[data-edge-style="hover"][data-edge-peek][data-edge="top"] #edge-expand {
-  left: 50%; translate: -50% 0; bottom: 5px; width: 56px; height: calc(100% - 9px);
+  left: 50%; translate: -50% 0; top: 8px; width: 56px; height: calc(100% - 12px);
 }
 html[data-edge-style="hover"][data-edge-peek][data-edge="left"] #edge-expand,
 html[data-edge-style="hover"][data-edge-peek][data-edge="right"] #edge-expand {
-  top: 50%; translate: 0 -50%; height: 56px; width: calc(100% - 9px);
+  top: 50%; translate: 0 -50%; height: 56px; width: calc(100% - 12px);
 }
-html[data-edge-style="hover"][data-edge-peek][data-edge="left"] #edge-expand { right: 5px; }
-html[data-edge-style="hover"][data-edge-peek][data-edge="right"] #edge-expand { left: 5px; }
+html[data-edge-style="hover"][data-edge-peek][data-edge="left"] #edge-expand { left: 8px; }
+html[data-edge-style="hover"][data-edge-peek][data-edge="right"] #edge-expand { right: 8px; }
 .edge-option { padding-left: 18px; }
 .edge-option.off { opacity: .5; }
 
