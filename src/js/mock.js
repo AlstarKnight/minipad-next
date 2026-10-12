@@ -10,6 +10,7 @@ const DEFAULT_SETTINGS = {
   hotkey: "Ctrl+M",
   always_on_top: true,
   edge_hide: true,
+  edge_expand_button: true,
   show_in_taskbar: false,
   autostart: false,
   theme: "system",
@@ -226,7 +227,9 @@ export function mockApi() {
     set_current_book: ({ book }) => void (db.book = book),
     backup_info: () => ({ dir: "(浏览器预览)", latest: db.backups.at(-1) ?? null, count: db.backups.length }),
     open_backup_dir: () => toast("(预览)会在资源管理器里打开备份文件夹"),
-    save_settings: ({ settings }) => {
+    save_settings: ({ settings, migrateNotes }) => {
+      if (migrateNotes && window.__mockControl?.migrationError) throw new Error(window.__mockControl.migrationError);
+      if (migrateNotes && window.__mockControl) window.__mockControl.migrationRequested = true;
       const s = {
         ...settings,
         hotkey: String(settings.hotkey ?? "").trim(),
@@ -250,6 +253,7 @@ export function mockApi() {
       return null;
     },
     hide_window: () => toast("(预览)窗口会隐藏到托盘,按 Ctrl+M 再呼出"),
+    expand_edge: () => window.__mockEmit?.("edge-shown"),
     open_notes_dir: () => toast("(预览)会在资源管理器里打开笔记文件夹"),
     open_link: ({ url }) => void window.open(url, "_blank", "noopener"),
     quit_ack: () => true,
