@@ -1,4 +1,6 @@
 // ---------- 保存 ----------
+// 笔记与元信息各只有一个写入循环。新修改在当前写入完成后再写，
+// 所有主动等待保存的操作都要等队列真正清空，失败则拒绝继续。
 import { api } from "./api.js";
 import { $ } from "./dom.js";
 import { state, book, current } from "./state.js";
@@ -6,12 +8,15 @@ import { updateCount } from "./page.js";
 
 let saveTimer = null;
 let metaTimer = null;
-// 页面顺序、当前页面、模式改过的笔记本
+let noteFlush = null;
+let metaFlush = null;
 const metaDirty = new Set();
-// 换了当前笔记本,还没告诉后端
 let bookDirty = false;
 
-// 编辑器里改了页面 n 的内容(n.content 已经是新内容)
+// 防抖/重试为后台操作，错误由状态栏显示；主动 await 的调用会收到异常。
+const backgroundNotes = () => { void flushAll().catch(() => {}); };
+const backgroundMeta = () => { void saveMeta().catch(() => {}); };
+
 export function markDirty(n = current()) {
   if (!n) return;
   n.dirty = true;
@@ -19,74 +24,98 @@ export function markDirty(n = current()) {
   updateCount();
   noteActivity();
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(flushAll, 500);
+  saveTimer = setTimeout(backgroundNotes, 500);
 }
 
-// 保存所有笔记本里改过的页面
-export async function flushAll() {
+// 同一时刻只允许一个保存循环；写入期间的新修改也会在返回前保存。
+export function flushAll() {
   clearTimeout(saveTimer);
-  const dirty = [];
-  for (const b of state.books) for (const n of b.notes) if (n.dirty) dirty.push([b, n]);
-  if (!dirty.length) return;
-  let failed = null;
-  for (const [b, n] of dirty) {
-    n.dirty = false;
-    const content = n.content;
-    try {
-      await api.invoke("save_note", { book: b.name, name: n.name, content });
-      n.disk = content;
-    } catch (e) {
-      n.dirty = true;
-      failed = e;
-    }
+  if (!noteFlush) {
+    noteFlush = writeDirtyNotes().finally(() => { noteFlush = null; });
   }
-  if (failed) {
-    setSaveStatus("err", String(failed));
-    // 过一会儿自动重试
-    saveTimer = setTimeout(flushAll, 3000);
-  } else {
-    setSaveStatus("saved");
+  return noteFlush;
+}
+
+async function writeDirtyNotes() {
+  while (true) {
+    const dirty = [];
+    for (const b of state.books) for (const n of b.notes) if (n.dirty) dirty.push([b, n]);
+    if (!dirty.length) {
+      setSaveStatus("saved");
+      return;
+    }
+    for (const [b, n] of dirty) {
+      if (!n.dirty || !state.books.includes(b) || !b.notes.includes(n)) continue;
+      // 此时清除 dirty。写入进行中如有新编辑，markDirty 会再将它设为 true。
+      n.dirty = false;
+      const content = n.content;
+      try {
+        await api.invoke("save_note", { book: b.name, name: n.name, content });
+        n.disk = content;
+      } catch (e) {
+        n.dirty = true;
+        setSaveStatus("err", String(e));
+        clearTimeout(saveTimer);
+        saveTimer = setTimeout(backgroundNotes, 3000);
+        throw e;
+      }
+    }
   }
 }
 
 export function scheduleMeta(b = book()) {
   if (b) metaDirty.add(b);
   clearTimeout(metaTimer);
-  metaTimer = setTimeout(saveMeta, 300);
+  metaTimer = setTimeout(backgroundMeta, 300);
 }
 
 export function scheduleBooks() {
   bookDirty = true;
   clearTimeout(metaTimer);
-  metaTimer = setTimeout(saveMeta, 300);
+  metaTimer = setTimeout(backgroundMeta, 300);
 }
 
-export async function saveMeta() {
+export function saveMeta() {
   clearTimeout(metaTimer);
-  // 已经删掉(或在别处消失)的笔记本不用再存
-  const books = [...metaDirty].filter((b) => state.books.includes(b));
-  metaDirty.clear();
-  const sendBook = bookDirty;
-  bookDirty = false;
-  for (const b of books) {
-    const modes = {};
-    b.notes.forEach((n) => (modes[n.name] = n.mode));
-    try {
-      await api.invoke("save_meta", {
-        book: b.name,
-        order: b.notes.map((n) => n.name),
-        active: b.notes[b.active]?.name ?? "",
-        modes,
-      });
-    } catch (e) {
-      console.error(e);
-    }
+  if (!metaFlush) {
+    metaFlush = writeDirtyMeta().finally(() => { metaFlush = null; });
   }
-  if (sendBook && book()) {
-    try {
-      await api.invoke("set_current_book", { book: book().name });
-    } catch (e) {
-      console.error(e);
+  return metaFlush;
+}
+
+async function writeDirtyMeta() {
+  while (metaDirty.size || bookDirty) {
+    if (metaDirty.size) {
+      const b = metaDirty.values().next().value;
+      metaDirty.delete(b);
+      if (!state.books.includes(b)) continue;
+      const modes = {};
+      b.notes.forEach((n) => (modes[n.name] = n.mode));
+      try {
+        await api.invoke("save_meta", {
+          book: b.name,
+          order: b.notes.map((n) => n.name),
+          active: b.notes[b.active]?.name ?? "",
+          modes,
+        });
+      } catch (e) {
+        metaDirty.add(b);
+        setSaveStatus("err", String(e));
+        metaTimer = setTimeout(backgroundMeta, 3000);
+        throw e;
+      }
+    } else {
+      const selected = book()?.name;
+      bookDirty = false;
+      if (selected == null) continue;
+      try {
+        await api.invoke("set_current_book", { book: selected });
+      } catch (e) {
+        bookDirty = true;
+        setSaveStatus("err", String(e));
+        metaTimer = setTimeout(backgroundMeta, 3000);
+        throw e;
+      }
     }
   }
 }
