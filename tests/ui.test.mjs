@@ -1556,6 +1556,16 @@ describe("P0 persistence safety", () => {
     assert.deepEqual(await p.evaluate(() => window.__minipad.state.books[0].notes.map((n) => n.dirty)), [true, false]);
   });
 
+  ui("an unreadable notebook stays visible, but a truly deleted one disappears", { seed: seed({ "": { 首页: "文字" }, 工作: { 周报: "内容" } }) }, async (h) => {
+    const { p } = h;
+    await p.evaluate(() => { window.__mockControl = { unreadableBook: ["工作"] }; });
+    await h.sync();
+    assert.ok((await h.items()).some((i) => i.book === "工作") || (await h.listBooks()).some((i) => i.book === "工作"));
+    await p.evaluate(() => delete window.__mockBooks["工作"]);
+    await h.sync();
+    await until(async () => (await h.listBooks()).some((i) => i.book === "工作"), false, "deleted book disappears");
+  });
+
   ui("unreadable page stays read-only and recovers after a successful sync", { seed: seed({ "": { 好页: "正常内容", 坏页: "磁盘原内容" } }) }, async (h) => {
     const { p } = h;
     await p.evaluate(() => { window.__mockControl = { unreadable: { "": { 坏页: "模拟访问被拒绝" } }, calls: [] }; });
