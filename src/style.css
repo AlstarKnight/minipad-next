@@ -719,5 +719,5 @@ html[data-edge="right"] #edge-mark span { top: 50%; height: 120px; margin-top: -
 #read-error { position: absolute; inset: 0; z-index: 11; padding: 18px; background: var(--bg); color: var(--text); white-space: pre-wrap; overflow: auto; }
 #read-error[hidden] { display: none; }
 .tab.unreadable { opacity: .55; }
-.tab.unreadable .tab-warning { color: #ba772d; font-size: 12px; }
+.tab.unreadable::after { content: "⚠"; color: #ba772d; font-size: 12px; margin-left: 3px; }
 html[data-unreadable] #format-bar, html[data-unreadable] #toolbar { pointer-events: none; opacity: .4; }
