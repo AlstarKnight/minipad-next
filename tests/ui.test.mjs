@@ -1429,11 +1429,23 @@ describe("theme and accent", () => {
     const mark = () => p.$eval("#edge-mark", (m) => { const r = m.getBoundingClientRect(); return getComputedStyle(m).display === "none" ? null : [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)]; });
     assert.equal(await mark(), null, "no marker while the window is out");
     await p.evaluate(() => window.__mockEmit("edge-hidden", "top"));
-    assert.deepEqual(await mark(), [0, 532, 440, 8], "tucked into the top edge: a bar along the bottom");
+    assert.deepEqual(await mark(), [0, 506, 440, 34], "default expand button leaves a visible 34px edge");
     await p.evaluate(() => window.__mockEmit("edge-hidden", "left"));
-    assert.deepEqual(await mark(), [432, 0, 8, 540], "left edge: along the right side");
+    assert.deepEqual(await mark(), [406, 0, 34, 540], "left edge: clickable expand button");
     await p.evaluate(() => window.__mockEmit("edge-hidden", "right"));
-    assert.deepEqual(await mark(), [0, 0, 8, 540], "right edge: along the left side");
+    assert.deepEqual(await mark(), [0, 0, 34, 540], "right edge: clickable expand button");
+    assert.equal(await p.isVisible("#edge-expand"), true, "expand button shown by default");
+    await p.click("#edge-expand");
+    assert.equal(await mark(), null, "clicking expand restores the window");
+
+    await p.click("#btn-settings");
+    assert.equal(await p.isChecked("#set-edge-button"), true, "on by default");
+    await p.uncheck("#set-edge-button");
+    await p.click("#set-save");
+    await until(() => h.stored().then((s) => s.settings.edge_expand_button), false);
+    await p.evaluate(() => window.__mockEmit("edge-hidden", "top"));
+    assert.equal(await p.isVisible("#edge-expand"), false, "off hides the button");
+    assert.deepEqual(await mark(), [0, 532, 440, 8], "off keeps the original slim strip");
     await p.evaluate(() => window.__mockEmit("edge-shown"));
     assert.equal(await mark(), null, "gone when the window slides out");
   });
@@ -1589,6 +1601,36 @@ describe("P0 persistence safety", () => {
     await p.keyboard.press("End");
     await p.keyboard.type("追加");
     await until(() => h.mockFile("", "好页"), "正常内容追加", "healthy page still saves");
+  });
+
+  ui("changing notes folder lets the user choose whether to copy existing pages", { seed: seed({ "": { 页: "原内容" } }) }, async (h) => {
+    const { p } = h;
+    await p.evaluate(() => { window.__mockControl = {}; });
+    await p.click("#btn-settings");
+    assert.equal(await p.isChecked("#set-migrate-notes"), true);
+    assert.equal(await p.isDisabled("#set-migrate-notes"), true);
+    await p.fill("#set-dir", "D:\\NewNotes");
+    assert.equal(await p.isDisabled("#set-migrate-notes"), false);
+    await p.click("#set-save");
+    await until(() => p.evaluate(() => window.__mockControl.migrationRequested), true);
+    assert.equal(await h.mockFile("", "页"), "原内容", "existing notes still available after folder change");
+    await p.click("#btn-settings");
+    await p.fill("#set-dir", "D:\\OtherNotes");
+    await p.uncheck("#set-migrate-notes");
+    await p.click("#set-save");
+    await until(() => p.evaluate(() => window.__minipad.state.settings.notes_dir), "D:\\OtherNotes");
+    assert.equal(await p.evaluate(() => window.__mockControl.migrationRequested), true, "previous copy recorded");
+  });
+
+  ui("a failed folder migration retains settings and current notes", { seed: seed({ "": { 页: "不能丢" } }) }, async (h) => {
+    const { p } = h;
+    await p.evaluate(() => { window.__mockControl = { migrationError: "目标文件夹不为空" }; });
+    await p.click("#btn-settings");
+    await p.fill("#set-dir", "D:\\Occupied");
+    await p.click("#set-save");
+    await until(() => p.textContent("#set-error"), "Error: 目标文件夹不为空");
+    assert.equal(await p.evaluate(() => window.__minipad.state.settings.notes_dir), "");
+    assert.equal(await h.mockFile("", "页"), "不能丢");
   });
 
   ui("rapid settings changes preserve independent fields", { seed: seed({ "": { 页: "文本" } }) }, async (h) => {
