@@ -21,7 +21,7 @@ async function init() {
   await createEditor({ onChange: markDirty, openLink, emptyBold: () => toggleBooks() });
   bindUi();
   await reload();
-  api.listen("flush", () => flushAll());
+  api.listen("flush", () => { void flushAll().catch(() => {}); });
   api.listen("before-quit", async () => {
     try {
       await flushAll();
@@ -175,7 +175,7 @@ function bindUi() {
     if (k === "b") (e.preventDefault(), toggleBooks());
     else if (k === "t" || k === "n") (e.preventDefault(), newNote());
     else if (k === "f") (e.preventDefault(), openSearch());
-    else if (k === "s") (e.preventDefault(), flushAll());
+    else if (k === "s") (e.preventDefault(), void flushAll().catch(() => {}));
     else if (k === "w") (e.preventDefault(), deleteNote(current()));
     else if (e.key === "Tab") {
       e.preventDefault();
@@ -197,11 +197,11 @@ function bindUi() {
 
   window.addEventListener("blur", () => {
     rememberView();
-    flushAll();
+    void flushAll().catch(() => {});
   });
   window.addEventListener("beforeunload", () => {
-    flushAll();
-    saveMeta();
+    void flushAll().catch(() => {});
+    void saveMeta().catch(() => {});
   });
 }
 
