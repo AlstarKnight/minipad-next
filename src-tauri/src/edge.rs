@@ -1,7 +1,7 @@
 //! 贴边隐藏的几何计算(不依赖 Tauri,方便测试)。所有坐标都是物理像素。
 
-/// 贴边隐藏后露在屏幕内的宽度
-pub const STRIP: i32 = 4;
+/// 贴边隐藏后露在屏幕内的宽度(前端在这一条上画标识)
+pub const STRIP: i32 = 6;
 /// 离屏幕边缘多近算"靠边"
 pub const SNAP: i32 = 8;
 
@@ -18,6 +18,17 @@ pub struct Rect {
     pub y: i32,
     pub w: i32,
     pub h: i32,
+}
+
+impl Edge {
+    /// 告诉前端缩到了哪条边,好在露出来的那一条上画标识
+    pub fn name(self) -> &'static str {
+        match self {
+            Edge::Top => "top",
+            Edge::Left => "left",
+            Edge::Right => "right",
+        }
+    }
 }
 
 impl Rect {
@@ -140,7 +151,7 @@ mod tests {
     fn hide_and_show_positions_round_trip() {
         let win = Rect::new(300, 0, 400, 500);
         let (hx, hy) = hidden_position(Edge::Top, win, SCREEN);
-        assert_eq!((hx, hy), (300, -496));
+        assert_eq!((hx, hy), (300, -500 + STRIP));
         let hidden = Rect::new(hx, hy, win.w, win.h);
         // 露出来的那条边能碰到
         assert!(hidden.contains(320, 0));
@@ -150,7 +161,7 @@ mod tests {
 
         let win = Rect::new(1520, 100, 400, 500);
         let (hx, hy) = hidden_position(Edge::Right, win, SCREEN);
-        assert_eq!((hx, hy), (1916, 100));
+        assert_eq!((hx, hy), (1920 - STRIP, 100));
         assert_eq!(
             shown_position(Edge::Right, Rect::new(hx, hy, 400, 500), SCREEN),
             (1520, 100)
@@ -158,7 +169,7 @@ mod tests {
 
         let win = Rect::new(0, 100, 400, 500);
         let (hx, hy) = hidden_position(Edge::Left, win, SCREEN);
-        assert_eq!((hx, hy), (-396, 100));
+        assert_eq!((hx, hy), (-400 + STRIP, 100));
         assert!(Rect::new(hx, hy, 400, 500).contains(0, 300));
         assert_eq!(
             shown_position(Edge::Left, Rect::new(hx, hy, 400, 500), SCREEN),

@@ -35,6 +35,9 @@ async function init() {
     resetActivity();
     syncFromDisk();
   });
+  // 贴边隐藏时,在露出来的那一条上显示标识
+  api.listen("edge-hidden", (e) => (document.documentElement.dataset.edge = e.payload));
+  api.listen("edge-shown", () => delete document.documentElement.dataset.edge);
   api.listen("backup-error", (e) => toast("自动备份失败:" + e.payload, 5000));
 }
 
@@ -83,7 +86,7 @@ function bindUi() {
   });
   document.addEventListener("hide-format-bar", toggleFormatBar);
   document.addEventListener("format-bar-items", (e) =>
-    saveSettings({ ...state.settings, format_bar_hidden: e.detail }).catch((err) => toast(String(err)))
+    saveSettings({ ...state.settings, ...e.detail }).catch((err) => toast(String(err)))
   );
   $("#btn-pin").addEventListener("click", async () => {
     try {

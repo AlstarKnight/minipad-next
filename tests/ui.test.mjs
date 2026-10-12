@@ -1204,6 +1204,7 @@ describe("code blocks", () => {
 // ---------- 格式栏 ----------
 describe("format bar", () => {
   const fb = (cmd) => `#format-bar [data-cmd="${cmd}"]`;
+  const DEFAULT_BAR = "undo redo sep1 block sep2 strong em strike code link color bg sep3 list ol task sep4 quote codeblock table hr".split(" ");
 
   ui("the format bar formats text, follows the cursor and can be hidden", { seed: seed({ "": { 页: "一段文字\n\n第二段" } }) }, async (h) => {
     const { p } = h;
@@ -1302,6 +1303,47 @@ describe("format bar", () => {
     assert.ok(await p.isVisible(fb("strong")), "the others stay");
   });
 
+  ui("the buttons on the bar are reordered by dragging them in the panel, and the order is kept", { seed: seed({ "": { 页: "文字" } }) }, async (h) => {
+    const { p } = h;
+    const bar = () => p.$$eval("#format-bar .fb-items > [data-cmd]:not([hidden])", (els) => els.map((e) => e.dataset.cmd));
+    const panel = () => p.$$eval(".fb-pop .fb-check", (els) => els.map((e) => e.dataset.id));
+    const start = await bar();
+    assert.deepEqual(start.slice(0, 4), ["undo", "redo", "sep1", "block"]);
+    await p.click("#format-bar .fb-more");
+    assert.deepEqual((await panel()).filter((id) => !id.startsWith("sep")), start.filter((id) => !id.startsWith("sep")), "the panel lists the buttons in bar order");
+    // 任务拖到最前面
+    await p.locator('.fb-check[data-id="task"]').dragTo(p.locator('.fb-check[data-id="undo"]'), { targetPosition: { x: 20, y: 2 } });
+    await until(async () => (await bar())[0], "task", "the bar follows at once");
+    assert.equal((await panel())[0], "task", "and so does the panel");
+    // 粗体拖到斜体后面
+    await p.locator('.fb-check[data-id="strong"]').dragTo(p.locator('.fb-check[data-id="em"]'), { targetPosition: { x: 20, y: 17 } });
+    const after = await bar();
+    assert.equal(after.indexOf("strong"), after.indexOf("em") + 1, "dropped on the lower half goes after");
+    await until(async () => (await h.stored())?.settings?.format_bar_order?.slice(0, 3), ["task", "undo", "redo"], "saved");
+    // 关掉一条竖线分隔
+    await p.uncheck('.fb-pop input[value="sep2"]');
+    assert.ok(await p.isHidden('#format-bar [data-cmd="sep2"]'), "a separator can be turned off too");
+    await p.keyboard.press("Escape");
+    await p.reload();
+    await p.waitForSelector(fb("strong"));
+    assert.deepEqual(await bar(), after.filter((id) => id !== "sep2"), "the order survives a restart");
+    // 恢复默认
+    await p.click("#format-bar .fb-more");
+    await p.click(".fb-pop .fb-reset");
+    assert.deepEqual(await bar(), start, "back to the default order");
+    await until(async () => (await h.stored())?.settings?.format_bar_hidden, [], "nothing hidden");
+  });
+
+  ui("a button the saved order does not know yet (added in a newer version) goes back to its default place", { seed: { ...seed({ "": { 页: "文字" } }), settings: { ...SETTINGS, format_bar_order: [...DEFAULT_BAR].reverse().filter((id) => id !== "table").concat(["nope", "strong"]) } } }, async (h) => {
+    const { p } = h;
+    const bar = await p.$$eval("#format-bar .fb-items > [data-cmd]", (els) => els.map((e) => e.dataset.cmd));
+    assert.equal(bar[0], "hr", "the saved order is used");
+    assert.equal(bar.indexOf("table"), bar.indexOf("codeblock") + 1, "the new button sits after the one it follows by default");
+    assert.equal(bar.filter((id) => id === "strong").length, 1, "no duplicates");
+    assert.ok(!bar.includes("nope"), "unknown names are dropped");
+    assert.equal(bar.length, DEFAULT_BAR.length);
+  });
+
   ui("shell code is colored like bash, with command names and options", { seed: seed({ "": { 页: "```shell\n./adb shell sh /x/start.sh\nnpm run build --prod\n```" } }) }, async (h) => {
     const { p } = h;
     const colored = () => p.$$eval("#editor pre code [class*=hljs]", (els) => els.map((e) => [e.className, e.textContent]));
@@ -1360,6 +1402,40 @@ describe("theme and accent", () => {
     await p.click("#set-save");
     await until(async () => (await h.stored())?.settings?.accent, "", "back to the default");
     assert.equal(await marker(), "none");
+  });
+
+  ui("the active tab is highlighted with a top line, the whole tab or a border, as chosen in the settings", { seed: seed({ "": { 甲: "一", 乙: "二" } }) }, async (h) => {
+    const { p } = h;
+    const look = () => p.$eval(".tab.active", (t) => {
+      const b = getComputedStyle(t, "::before");
+      return { height: Math.round(parseFloat(b.height)), opacity: b.opacity, masked: (b.maskComposite || b.webkitMaskComposite || "") !== "" && b.maskImage !== "none" };
+    });
+    assert.deepEqual(await look(), { height: 3, opacity: "1", masked: false }, "a thin line on top by default");
+    for (const [style, check] of [
+      ["fill", (l) => l.height > 20 && l.opacity === "0.32" && !l.masked],
+      ["border", (l) => l.height > 20 && l.opacity === "1" && l.masked],
+      ["line", (l) => l.height === 3],
+    ]) {
+      await p.click("#btn-settings");
+      await p.selectOption("#set-tab-style", style);
+      await p.click("#set-save");
+      await until(async () => (await h.stored())?.settings?.tab_style, style, `${style} is saved`);
+      assert.ok(check(await look()), `${style}: ${JSON.stringify(await look())}`);
+    }
+  });
+
+  ui("while the window is tucked into a screen edge a marker shows on the strip left on screen", { seed: seed({ "": { 页: "文字" } }) }, async (h) => {
+    const { p } = h;
+    const mark = () => p.$eval("#edge-mark", (m) => { const r = m.getBoundingClientRect(); return getComputedStyle(m).display === "none" ? null : [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)]; });
+    assert.equal(await mark(), null, "no marker while the window is out");
+    await p.evaluate(() => window.__mockEmit("edge-hidden", "top"));
+    assert.deepEqual(await mark(), [0, 532, 440, 8], "tucked into the top edge: a bar along the bottom");
+    await p.evaluate(() => window.__mockEmit("edge-hidden", "left"));
+    assert.deepEqual(await mark(), [432, 0, 8, 540], "left edge: along the right side");
+    await p.evaluate(() => window.__mockEmit("edge-hidden", "right"));
+    assert.deepEqual(await mark(), [0, 0, 8, 540], "right edge: along the left side");
+    await p.evaluate(() => window.__mockEmit("edge-shown"));
+    assert.equal(await mark(), null, "gone when the window slides out");
   });
 
   ui("text can get a gradient color, saved as a background-clip span", { seed: seed({ "": { 页: "渐变" } }) }, async (h) => {

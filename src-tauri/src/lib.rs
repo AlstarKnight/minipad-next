@@ -58,6 +58,8 @@ pub struct Settings {
     theme: String,
     /// 强调色:空着是默认的橙色,"#3b82f6" 是纯色,"linear-gradient(135deg, #a, #b)" 是渐变色
     accent: String,
+    /// 活跃标签的高亮:line 顶部线条、fill 整个标签、border 整圈边框
+    tab_style: String,
     font_size: u32,
     notes_dir: String,
     /// 编辑区显示行号
@@ -70,6 +72,8 @@ pub struct Settings {
     format_bar: bool,
     /// 格式栏里不显示的按钮
     format_bar_hidden: Vec<String>,
+    /// 格式栏按钮的顺序(按钮的名字,竖线分隔是 sep1、sep2…),空着就是默认顺序
+    format_bar_order: Vec<String>,
     /// 每天第一次保存时把笔记文件夹打包备份
     backup_enabled: bool,
     /// 保留最近几份备份
@@ -89,6 +93,7 @@ impl Default for Settings {
             autostart: false,
             theme: "system".into(),
             accent: String::new(),
+            tab_style: "line".into(),
             font_size: 14,
             notes_dir: String::new(),
             line_numbers: false,
@@ -96,6 +101,7 @@ impl Default for Settings {
             code_line_numbers: true,
             format_bar: true,
             format_bar_hidden: Vec::new(),
+            format_bar_order: Vec::new(),
             backup_enabled: true,
             backup_keep: 14,
             backup_dir: String::new(),
@@ -255,6 +261,9 @@ fn tidy_settings(s: &mut Settings) {
     {
         s.accent.clear();
     }
+    if !["line", "fill", "border"].contains(&s.tab_style.as_str()) {
+        s.tab_style = "line".into();
+    }
     // 日期格式最多 64 个字(按字算,不按字节),空着就用默认的
     let format: String = s.date_format.trim().chars().take(64).collect();
     s.date_format = match format.trim_end() {
@@ -302,7 +311,7 @@ const WELCOME: &str = r#"# 欢迎使用 Minipad Next
 - 把窗口拖到屏幕**上边、左边或右边**,鼠标移开后会自动贴边隐藏,鼠标碰到边缘再滑出来
 - 内容会自动保存,每个页面就是笔记文件夹里的一个 `.md` 文件
 - 看到的就是排好版的样子:行首打 `# ` 变标题,`- ` 变列表,`> ` 变引用,`**粗体**`、`` `代码` `` 打完就变样;选中文字会出来一排按钮
-- 标签下面的**格式栏**有标题、粗体、列表、表格、<span style="color: #df2a3f">字体颜色</span>和<span style="background-color: #fbe9a6">背景颜色</span>等按钮;右边的按钮可以选显示哪些,顶栏的 **Aa** 可以收起它
+- 标签下面的**格式栏**有标题、粗体、列表、表格、<span style="color: #df2a3f">字体颜色</span>和<span style="background-color: #fbe9a6">背景颜色</span>等按钮;右边的按钮可以选显示哪些、拖动排顺序,顶栏的格式栏按钮(像一个带工具条的小窗口)可以收起它
 - 顶栏的太阳 / 月亮按钮切换深色和浅色;设置里可以换<span style="color: #5fb4ff; background-image: linear-gradient(90deg, #5fb4ff, #d66cf0); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent">强调色,也能用渐变色</span>
 - 在列表里按 **Enter** 接着写下一项,**Ctrl+Enter** 勾选任务,**F5** 插入当前日期时间
 - 打 ```` ``` ```` 再按 Enter 插入代码块;代码块顶栏的"添加标题"和语言点一下就能改,右边有"复制"按钮
@@ -662,6 +671,7 @@ fn restore_from_edge(app: &AppHandle, focus: bool) {
     };
     let (x, y) = edge::shown_position(edge, rect, mon);
     let _ = win.set_position(PhysicalPosition::new(x, y));
+    let _ = app.emit("edge-shown", ());
     {
         let mut e = st.edge.lock().unwrap();
         e.hidden = None;
@@ -749,6 +759,7 @@ fn edge_tick(app: &AppHandle) {
     if let Some((edge, mon)) = ready {
         let (x, y) = edge::hidden_position(edge, rect, mon);
         let _ = app.emit("flush", ());
+        let _ = app.emit("edge-hidden", edge.name());
         let _ = win.set_position(PhysicalPosition::new(x, y));
     }
 }
@@ -1003,6 +1014,24 @@ mod tests {
         s.date_format = format!("{} H:mm", "年".repeat(63));
         tidy_settings(&mut s);
         assert_eq!(s.date_format, "年".repeat(63));
+    }
+
+    #[test]
+    fn tidy_settings_falls_back_to_the_top_line_for_unknown_tab_styles() {
+        for (given, kept) in [
+            ("line", "line"),
+            ("fill", "fill"),
+            ("border", "border"),
+            ("", "line"),
+            ("glow", "line"),
+        ] {
+            let mut s = Settings {
+                tab_style: given.into(),
+                ..Settings::default()
+            };
+            tidy_settings(&mut s);
+            assert_eq!(s.tab_style, kept, "{given}");
+        }
     }
 
     #[test]

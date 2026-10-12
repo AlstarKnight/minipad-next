@@ -7,6 +7,8 @@ import { flushAll, saveMeta } from "./save.js";
 import { reload } from "./sync.js";
 import { applyEditorSettings } from "./editor.js";
 import { DEFAULT_DATE_FORMAT, formatDate } from "./datetime.js";
+// 活跃标签的高亮:顶部线条 / 整个标签 / 整圈边框(见 style.css)
+const TAB_STYLES = ["line", "fill", "border"];
 import { ACCENTS, applyAccent, parseAccent, tidyAccent, gradient } from "./accent.js";
 
 const REPO_URL = "https://github.com/AlstarKnight/minipad-next";
@@ -21,6 +23,7 @@ export function applySettings() {
   $("#btn-pin").title = s.always_on_top ? "取消置顶" : "窗口置顶";
   $("#btn-theme").title = theme === "dark" ? "切换到浅色" : "切换到深色";
   applyAccent(s.accent);
+  document.documentElement.dataset.tabStyle = TAB_STYLES.includes(s.tab_style) ? s.tab_style : "line";
   applyEditorSettings(s);
 }
 matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => state.settings && applySettings());
@@ -38,6 +41,7 @@ export function openSettings() {
   $("#set-autostart").checked = s.autostart;
   $("#set-theme").value = s.theme;
   showAccent(s.accent || "");
+  $("#set-tab-style").value = TAB_STYLES.includes(s.tab_style) ? s.tab_style : "line";
   $("#set-font").value = s.font_size;
   $("#set-dir").value = s.notes_dir;
   $("#set-dir").placeholder = state.notesDir;
@@ -131,6 +135,7 @@ async function submitSettings() {
     autostart: $("#set-autostart").checked,
     theme: $("#set-theme").value,
     accent: pendingAccent,
+    tab_style: $("#set-tab-style").value,
     font_size: Math.min(28, Math.max(10, Number($("#set-font").value) || 14)),
     notes_dir: $("#set-dir").value.trim(),
     date_format: $("#set-date-format").value.trim(),

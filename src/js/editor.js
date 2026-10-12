@@ -34,7 +34,7 @@ import {
 import { $ } from "./dom.js";
 import { codeBlockWithTitle, codeBlockView, codeHighlight } from "./codeblock.js";
 import { toolbar } from "./toolbar.js";
-import { formatBar, setFormatBarHidden } from "./formatbar.js";
+import { formatBar, setFormatBarItems } from "./formatbar.js";
 import { colorSpans, colorHandlers, textColor, textBg } from "./colors.js";
 
 let editor = null;
@@ -449,7 +449,7 @@ export function applyEditorSettings(s) {
   $("#editor").classList.toggle("code-lines", s.code_line_numbers !== false);
   const bar = s.format_bar !== false;
   $("#format-bar").hidden = !bar;
-  setFormatBarHidden(s.format_bar_hidden);
+  setFormatBarItems(s.format_bar_hidden, s.format_bar_order);
   $("#btn-format").classList.toggle("on", bar);
   $("#btn-format").setAttribute("aria-pressed", String(bar));
 }
