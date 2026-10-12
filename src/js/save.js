@@ -18,7 +18,7 @@ const backgroundNotes = () => { void flushAll().catch(() => {}); };
 const backgroundMeta = () => { void saveMeta().catch(() => {}); };
 
 export function markDirty(n = current()) {
-  if (!n) return;
+  if (!n || n.unreadable) return;
   n.dirty = true;
   setSaveStatus("dirty");
   updateCount();
@@ -39,13 +39,13 @@ export function flushAll() {
 async function writeDirtyNotes() {
   while (true) {
     const dirty = [];
-    for (const b of state.books) for (const n of b.notes) if (n.dirty) dirty.push([b, n]);
+    for (const b of state.books) for (const n of b.notes) if (n.dirty && !n.unreadable) dirty.push([b, n]);
     if (!dirty.length) {
       setSaveStatus("saved");
       return;
     }
     for (const [b, n] of dirty) {
-      if (!n.dirty || !state.books.includes(b) || !b.notes.includes(n)) continue;
+      if (!n.dirty || n.unreadable || !state.books.includes(b) || !b.notes.includes(n)) continue;
       // 此时清除 dirty。写入进行中如有新编辑，markDirty 会再将它设为 true。
       n.dirty = false;
       const content = n.content;
