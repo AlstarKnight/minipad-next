@@ -633,6 +633,10 @@ svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width:
 .accent-gradient #toolbar button.on {
   background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 18%, transparent), color-mix(in srgb, var(--accent-end) 18%, transparent));
 }
+/* 亮起来的图标(置顶、格式栏开关、格式按钮)的线条也是渐变色 */
+.accent-gradient .icon.on svg,
+.accent-gradient #format-bar button.on svg,
+.accent-gradient #toolbar button.on svg { stroke: url(#accent-svg-grad); }
 
 /* 设置里的强调色 */
 .accent-swatches { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 6px; }

@@ -67,4 +67,22 @@ export function applyAccent(value) {
   root.setProperty("--accent-grad", a.to ? gradientOf(a.stops, a.deg) : a.from);
   root.setProperty("--accent-soft", `color-mix(in srgb, ${a.from} 16%, transparent)`);
   document.documentElement.classList.toggle("accent-gradient", !!a.to);
+  if (a.to) svgGradient(a.stops);
+}
+
+// 亮起来的图标(比如置顶)是线条画的,渐变色要放进一个 SVG 渐变里,图标的线条再引用它(见 style.css)
+function svgGradient(stops) {
+  let defs = document.getElementById("accent-defs");
+  if (!defs) {
+    defs = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    defs.id = "accent-defs";
+    defs.setAttribute("aria-hidden", "true");
+    defs.style.cssText = "position:absolute;width:0;height:0;overflow:hidden";
+    document.body.append(defs);
+  }
+  const step = (i) => (stops.length > 1 ? (i / (stops.length - 1)) * 100 : 0);
+  defs.innerHTML =
+    `<linearGradient id="accent-svg-grad" gradientUnits="userSpaceOnUse" x1="1" y1="1" x2="15" y2="15">` +
+    stops.map((c, i) => `<stop offset="${step(i)}%" stop-color="${c}"/>`).join("") +
+    `</linearGradient>`;
 }

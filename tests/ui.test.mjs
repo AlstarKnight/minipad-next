@@ -1338,6 +1338,15 @@ describe("theme and accent", () => {
     await p.click("#set-save");
     await until(async () => (await h.stored())?.settings?.accent, "linear-gradient(135deg, #ff5f6d, #ffa94d, #f5d142, #51cf66, #4dabf7, #9775fa)", "saved");
     assert.match(await marker(), /linear-gradient/, "the active tab's line is the gradient");
+    // 置顶这种亮起来的图标,线条也是同一个渐变
+    await p.locator("#btn-pin.on").waitFor(); // 默认就是置顶
+    assert.match(await p.$eval("#btn-pin svg", (s) => getComputedStyle(s).stroke), /url\(.*#accent-svg-grad.*\)/, "the pinned icon is drawn with the gradient");
+    assert.equal(await p.$$eval("#accent-svg-grad stop", (s) => s.length), 6, "all six rainbow colors");
+    await p.click("#btn-pin");
+    await p.locator("#btn-pin:not(.on)").waitFor();
+    assert.equal(await p.$eval("#btn-pin svg", (s) => getComputedStyle(s).stroke), await p.$eval("#btn-pin", (b) => getComputedStyle(b).color), "off: back to the plain color");
+    await p.click("#btn-pin");
+    await p.locator("#btn-pin.on").waitFor();
     // 自定义的纯色
     await p.click("#btn-settings");
     assert.ok(await p.locator('#set-accent button.on[title="彩虹渐变"]').isVisible(), "the saved accent is marked");
