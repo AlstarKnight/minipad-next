@@ -3,7 +3,7 @@ import { api, isMock } from "./api.js";
 import { $, tabsEl } from "./dom.js";
 import { state, book, current } from "./state.js";
 import { toast, dialogOpen, closeDialog, closeMenu, closeOverlays, focusEditor, ask, askText } from "./ui.js";
-import { markDirty, flushAll, saveMeta, resetActivity } from "./save.js";
+import { markDirty, flushAll, saveMeta, pendingNoteCount, resetActivity } from "./save.js";
 import { reload, syncFromDisk } from "./sync.js";
 import { rememberView } from "./page.js";
 import { switchTo, newNote, deleteNote } from "./tabs.js";
@@ -62,7 +62,7 @@ async function handleQuit(id) {
     });
     const result = await Promise.race([completed, timeout]);
     clearTimeout(timer);
-    const pending = state.books.reduce((sum, b) => sum + b.notes.filter((n) => n.dirty).length, 0);
+    const pending = pendingNoteCount();
     if (result.ok && !pending) {
       await api.invoke("quit_app");
       return;
