@@ -38,6 +38,9 @@ pub struct Note {
     pub name: String,
     pub content: String,
     pub mode: String,
+    /// 内容不可读取时保留页面占位，空内容不得回写磁盘。
+    pub unreadable: bool,
+    pub reason: Option<String>,
 }
 
 /// 一个笔记本和它的全部页面(按保存过的顺序)
@@ -277,8 +280,11 @@ pub fn order_names(names: &[String], saved: &[String]) -> Vec<String> {
     ordered
 }
 
-/// 读出一个笔记本的全部页面,带上保存过的顺序、当前页面和模式
-pub fn load_book(root: &Path, book: &str) -> Result<Book, String> {
+/// 测试可替换读取函数，确保单页失败不会影响其他页。
+fn load_book_with_reader<F>(root: &Path, book: &str, mut read: F) -> Result<Book, String>
+where
+    F: FnMut(&Path, &str) -> Result<String, String>,
+{
     let dir = book_dir(root, book)?;
     let meta = read_meta(&dir);
     let names = order_names(&list_names(&dir)?, &meta.order);
@@ -287,20 +293,26 @@ pub fn load_book(root: &Path, book: &str) -> Result<Book, String> {
     } else {
         names.first().cloned().unwrap_or_default()
     };
-    let notes: Vec<Note> = names
+    let notes = names
         .into_iter()
         .map(|name| {
-            Ok(Note {
-                content: read_note(&dir, &name)?,
+            let (content, unreadable, reason) = match read(&dir, &name) {
+                Ok(text) => (text, false, None),
+                Err(e) => (String::new(), true, Some(e)),
+            };
+            Note {
+                content,
+                unreadable,
+                reason,
                 mode: meta
                     .modes
                     .get(&name)
                     .cloned()
                     .unwrap_or_else(|| "edit".into()),
                 name,
-            })
+            }
         })
-        .collect::<Result<_, String>>()?;
+        .collect();
     Ok(Book {
         name: book.to_string(),
         notes,
@@ -308,11 +320,18 @@ pub fn load_book(root: &Path, book: &str) -> Result<Book, String> {
     })
 }
 
-/// 所有笔记本:「默认」在最前,后面是各个子文件夹(读不了的跳过)
+/// 读出一个笔记本；个别页面无法读取时仍将其保留为不可编辑的占位。
+pub fn load_book(root: &Path, book: &str) -> Result<Book, String> {
+    load_book_with_reader(root, book, read_note)
+}
+
+/// 无法读取的子笔记本跳过，不阻断其余笔记本；前端同步必须保留暂时缺失的笔记本。
 pub fn load_books(root: &Path) -> Result<Vec<Book>, String> {
     let mut books = vec![load_book(root, "")?];
     for name in list_books(root)? {
-        books.push(load_book(root, &name)?);
+        if let Ok(book) = load_book(root, &name) {
+            books.push(book);
+        }
     }
     Ok(books)
 }
@@ -654,6 +673,31 @@ mod tests {
         assert_eq!(books[1].notes[0].mode, "edit");
         assert!(books[2].notes.is_empty());
         assert_eq!(books[2].active, "");
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn unreadable_note_does_not_block_other_pages() {
+        let root = temp_dir("unreadable");
+        fs::write(note_path(&root, "好页面"), "安全内容").unwrap();
+        fs::write(note_path(&root, "坏页面"), "原文件不得覆盖").unwrap();
+        let result = load_book_with_reader(&root, "", |dir, name| {
+            if name == "坏页面" {
+                Err("模拟访问被拒绝".to_string())
+            } else {
+                read_note(dir, name)
+            }
+        })
+        .unwrap();
+        assert_eq!(result.notes.len(), 2);
+        let ok = result.notes.iter().find(|n| n.name == "好页面").unwrap();
+        assert_eq!(ok.content, "安全内容");
+        assert!(!ok.unreadable);
+        let bad = result.notes.iter().find(|n| n.name == "坏页面").unwrap();
+        assert!(bad.unreadable);
+        assert_eq!(bad.content, "");
+        assert_eq!(bad.reason.as_deref(), Some("模拟访问被拒绝"));
+        assert_eq!(fs::read_to_string(note_path(&root, "坏页面")).unwrap(), "原文件不得覆盖");
         fs::remove_dir_all(&root).unwrap();
     }
 
