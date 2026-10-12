@@ -12,6 +12,7 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, SystemTime};
 
 static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -75,6 +76,36 @@ pub fn write_atomic(path: &Path, data: &str) -> Result<(), String> {
         let _ = fs::remove_file(&tmp);
     }
     result
+}
+
+/// 启动时清理笔记文件夹和各笔记本中残留超过一小时的临时文件。
+/// 只匹配本程序的临时写入后缀，不进入隐藏文件夹与更深的子目录。
+pub fn cleanup_stale_temps(root: &Path) {
+    let Some(cutoff) = SystemTime::now().checked_sub(Duration::from_secs(3600)) else {
+        return;
+    };
+    let mut dirs = vec![root.to_path_buf()];
+    if let Ok(books) = list_books(root) {
+        dirs.extend(books.into_iter().map(|b| root.join(b)));
+    }
+    for dir in dirs {
+        let Ok(entries) = fs::read_dir(dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if !name.ends_with(".tmp~") {
+                continue;
+            }
+            let Ok(meta) = entry.metadata() else {
+                continue;
+            };
+            if !meta.is_file() || !meta.modified().is_ok_and(|time| time < cutoff) {
+                continue;
+            }
+            let _ = fs::remove_file(entry.path());
+        }
+    }
 }
 
 /// 把名字变成合法的 Windows 文件名,清理完是空的就用 `fallback`
@@ -674,6 +705,35 @@ mod tests {
         assert!(books[2].notes.is_empty());
         assert_eq!(books[2].active, "");
         fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn cleans_only_old_temporary_files_in_root_and_notebooks() {
+        let root = temp_dir("temp-cleanup");
+        let sub = root.join("工作");
+        fs::create_dir_all(&sub).unwrap();
+        let old = root.join("旧.md.123.1.tmp~");
+        let old_sub = sub.join("旧.md.123.2.tmp~");
+        let fresh = sub.join("新.md.123.3.tmp~");
+        let normal = root.join("保留.md");
+        for path in [&old, &old_sub, &fresh, &normal] {
+            fs::write(path, "内容").unwrap();
+        }
+        let past = SystemTime::now() - Duration::from_secs(7200);
+        for path in [&old, &old_sub] {
+            fs::OpenOptions::new()
+                .write(true)
+                .open(path)
+                .unwrap()
+                .set_times(fs::FileTimes::new().set_modified(past))
+                .unwrap();
+        }
+        cleanup_stale_temps(&root);
+        assert!(!old.exists());
+        assert!(!old_sub.exists());
+        assert!(fresh.exists());
+        assert!(normal.exists());
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
