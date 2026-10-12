@@ -151,6 +151,7 @@ export function mockApi() {
         books: readBooks(),
         book: bookNames().includes(db.book) ? db.book : "",
         hotkey_error: null,
+        settings_error: null,
         version: "预览",
         debug: true,
       };
