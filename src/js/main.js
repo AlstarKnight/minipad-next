@@ -134,6 +134,8 @@ function bindUi() {
   $("#btn-search").addEventListener("click", openSearch);
   $("#btn-settings").addEventListener("click", openSettings);
   $("#btn-hide").addEventListener("click", hideWindow);
+  // 缩成悬浮图标(设置里开了悬浮图标才有这个按钮)
+  $("#btn-ball").addEventListener("click", () => api.invoke("collapse_to_ball").catch((e) => toast(String(e))));
   $("#edge-expand").addEventListener("click", () => api.invoke("expand_edge").catch((e) => toast(String(e))));
   $("#btn-format").addEventListener("click", toggleFormatBar);
   // 太阳 / 月亮按钮:在浅色和深色之间切换(设置里的"跟随系统"也会换成选中的这个)
