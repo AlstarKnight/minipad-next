@@ -44,6 +44,7 @@ export function reload() {
       renderTabs();
       showNote();
       if (st.hotkey_error) toast("热键注册失败(" + st.hotkey_error + "),请在设置里换一个", 5000);
+      if (st.settings_error) toast("原设置文件读取失败，已禁用设置写入；请检查 settings.json 后重启：" + st.settings_error, 9000);
     } catch (e) {
       toast("读取笔记失败:" + e, 5000);
     }
