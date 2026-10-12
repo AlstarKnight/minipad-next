@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
@@ -18,7 +18,7 @@ use tauri::{
     WindowEvent,
 };
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
-use tauri_plugin_dialog::DialogExt;
+use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
 /// 0.1.x 用的应用标识符。0.2.0 换了标识符,启动时把旧位置的设置和笔记搬过来。
@@ -133,8 +133,16 @@ struct EdgeState {
 }
 
 #[derive(Default)]
+struct QuitState {
+    active: Option<u64>,
+    waiting_ack: bool,
+}
+
+#[derive(Default)]
 struct AppState {
     settings: Mutex<Settings>,
+    quit: Mutex<QuitState>,
+    quit_sequence: AtomicU64,
     edge: Mutex<EdgeState>,
     geom: Mutex<Option<Geom>>,
     hotkey_error: Mutex<Option<String>>,
@@ -606,6 +614,74 @@ fn quit_app(app: AppHandle) {
     app.exit(0);
 }
 
+#[tauri::command]
+fn quit_ack(app: AppHandle, id: u64) -> bool {
+    let state = app.state::<AppState>();
+    let mut quit = state.quit.lock().unwrap();
+    if quit.active == Some(id) && quit.waiting_ack {
+        quit.waiting_ack = false;
+        true
+    } else {
+        false
+    }
+}
+
+#[tauri::command]
+fn quit_cancel(app: AppHandle, id: u64) {
+    let state = app.state::<AppState>();
+    let mut quit = state.quit.lock().unwrap();
+    if quit.active == Some(id) && !quit.waiting_ack {
+        quit.active = None;
+    }
+}
+
+// 只在前端完全没有确认收到消息时，才由系统原生对话框接管退出。
+fn request_tray_quit(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    let id = {
+        let mut quit = state.quit.lock().unwrap();
+        if quit.active.is_some() {
+            return;
+        }
+        let id = state.quit_sequence.fetch_add(1, Ordering::SeqCst) + 1;
+        quit.active = Some(id);
+        quit.waiting_ack = true;
+        id
+    };
+    let _ = app.emit("before-quit", id);
+    let handle = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_secs(10));
+        let state = handle.state::<AppState>();
+        {
+            let mut quit = state.quit.lock().unwrap();
+            if quit.active != Some(id) || !quit.waiting_ack {
+                return;
+            }
+            quit.waiting_ack = false;
+        }
+        let dialog_app = handle.clone();
+        handle
+            .dialog()
+            .message("程序没有响应，仍要退出吗？尚未保存的笔记可能丢失。")
+            .title("Minipad Next")
+            .kind(MessageDialogKind::Warning)
+            .buttons(MessageDialogButtons::OkCancelCustom(
+                "仍要退出".into(),
+                "取消".into(),
+            ))
+            .show(move |confirmed| {
+                if confirmed {
+                    quit_app(dialog_app);
+                } else {
+                    let state = dialog_app.state::<AppState>();
+                    state.quit.lock().unwrap().active = None;
+                    show_main(&dialog_app);
+                }
+            });
+    });
+}
+
 // ---------- 窗口显示 / 隐藏 / 贴边 ----------
 
 fn main_window(app: &AppHandle) -> Option<WebviewWindow> {
@@ -841,7 +917,9 @@ pub fn run() {
             show_window,
             open_notes_dir,
             open_link,
-            quit_app
+            quit_app,
+            quit_ack,
+            quit_cancel
         ])
         .setup(|app| {
             let handle = app.handle().clone();
@@ -887,8 +965,7 @@ pub fn run() {
                         let _ = open_notes_dir(app.clone());
                     }
                     "quit" => {
-                        // 前端保存成功后通过 quit_app 确认退出
-                        let _ = app.emit("before-quit", ());
+                        request_tray_quit(app);
                     }
                     _ => {}
                 })
