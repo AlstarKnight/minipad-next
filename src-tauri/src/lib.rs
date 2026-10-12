@@ -8,8 +8,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
@@ -18,7 +18,7 @@ use tauri::{
     WindowEvent,
 };
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
-use tauri_plugin_dialog::DialogExt;
+use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
 /// 0.1.x 用的应用标识符。0.2.0 换了标识符,启动时把旧位置的设置和笔记搬过来。
@@ -53,6 +53,10 @@ pub struct Settings {
     hotkey: String,
     always_on_top: bool,
     edge_hide: bool,
+    /// 贴边隐藏后的样式:arrow 细线 + 箭头 / line 仅细边高亮 / hover 细边 + 悬浮按钮
+    edge_style: String,
+    /// 贴边标识的颜色,写法同 accent;空着跟随强调色
+    edge_color: String,
     show_in_taskbar: bool,
     autostart: bool,
     theme: String,
@@ -89,6 +93,8 @@ impl Default for Settings {
             hotkey: "Ctrl+M".into(),
             always_on_top: true,
             edge_hide: true,
+            edge_style: "arrow".into(),
+            edge_color: String::new(),
             show_in_taskbar: false,
             autostart: false,
             theme: "system".into(),
@@ -113,6 +119,7 @@ impl Default for Settings {
 #[derive(Serialize)]
 struct LoadedState {
     settings: Settings,
+    settings_error: Option<String>,
     notes_dir: String,
     /// 全部笔记本,「默认」(名字是空字符串)在最前
     books: Vec<Book>,
@@ -127,14 +134,27 @@ struct LoadedState {
 #[derive(Default)]
 struct EdgeState {
     hidden: Option<Edge>,
+    /// 「细边 + 悬浮按钮」样式下,鼠标靠近后按钮已经浮出
+    peeking: bool,
     /// 隐藏时所在显示器的范围
     monitor: Rect,
     outside_ticks: u32,
 }
 
 #[derive(Default)]
+struct QuitState {
+    active: Option<u64>,
+    waiting_ack: bool,
+}
+
+#[derive(Default)]
 struct AppState {
     settings: Mutex<Settings>,
+    /// 配置文件不存在或成功读取时才可以写回。读失败/解析失败时保持原文件。
+    settings_write_allowed: AtomicBool,
+    settings_read_error: Mutex<Option<String>>,
+    quit: Mutex<QuitState>,
+    quit_sequence: AtomicU64,
     edge: Mutex<EdgeState>,
     geom: Mutex<Option<Geom>>,
     hotkey_error: Mutex<Option<String>>,
@@ -166,14 +186,91 @@ fn config_path(app: &AppHandle) -> PathBuf {
         .join("settings.json")
 }
 
+/// 默认与可执行文件放在一起；旧版本已有的数据优先保留原位置。
+/// 安装目录不可写时继续使用用户数据目录，不影响在 Program Files 的安装。
+static DEFAULT_NOTES_PATH: OnceLock<PathBuf> = OnceLock::new();
+static DEFAULT_BACKUP_PATH: OnceLock<PathBuf> = OnceLock::new();
+
+fn default_storage_dir(app: &AppHandle, folder: &str) -> PathBuf {
+    let cache = if folder == "notes" {
+        &DEFAULT_NOTES_PATH
+    } else {
+        &DEFAULT_BACKUP_PATH
+    };
+    cache
+        .get_or_init(|| {
+            let legacy = app
+                .path()
+                .app_data_dir()
+                .unwrap_or_else(|_| PathBuf::from("."))
+                .join(folder);
+            let Some(program_root) = std::env::current_exe()
+                .ok()
+                .and_then(|p| p.parent().map(Path::to_path_buf))
+            else {
+                return legacy;
+            };
+            preferred_storage_dir(&program_root, &legacy, folder)
+        })
+        .clone()
+}
+
+fn contains_data(path: &Path) -> bool {
+    fs::read_dir(path).is_ok_and(|mut entries| entries.next().is_some())
+}
+
+fn preferred_storage_dir(program_root: &Path, legacy: &Path, folder: &str) -> PathBuf {
+    preferred_storage_dir_with_probe(program_root, legacy, folder, |root| {
+        let probe = root.join(format!(".minipad-write-{}.tmp~", std::process::id()));
+        let writable = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&probe)
+            .is_ok();
+        if writable {
+            let _ = fs::remove_file(&probe);
+        }
+        writable
+    })
+}
+
+/// 测试可注入权限检查，Windows 的只读属性不能可靠模拟目录 ACL。
+fn preferred_storage_dir_with_probe(
+    program_root: &Path,
+    legacy: &Path,
+    folder: &str,
+    writable: impl FnOnce(&Path) -> bool,
+) -> PathBuf {
+    let beside_exe = program_root.join(folder);
+    // 若安装目录已有笔记，以那份数据为准；绝不覆盖已有目录。
+    if contains_data(&beside_exe) {
+        return beside_exe;
+    }
+    // 只在需要建目录或迁移旧数据时检测可写性，结果由 OnceLock 缓存。
+    if writable(program_root) {
+        if contains_data(legacy) {
+            // 旧版本的默认内容安全复制到 exe 旁边；原文件仍然保留。
+            // 若目标不可写、发生冲突或复制失败，就继续读取旧位置。
+            return match notes::copy_notes_for_switch(legacy, &beside_exe) {
+                Ok(()) => beside_exe,
+                Err(e) => {
+                    eprintln!("迁移旧默认目录失败，继续使用原目录: {e}");
+                    legacy.to_path_buf()
+                }
+            };
+        }
+        beside_exe
+    } else {
+        // 包括旁边已经有空 notes/ 或 backups/ 的情况。目录不可写就使用 AppData。
+        legacy.to_path_buf()
+    }
+}
+
 fn notes_dir(app: &AppHandle, settings: &Settings) -> PathBuf {
     if !settings.notes_dir.trim().is_empty() {
         return PathBuf::from(settings.notes_dir.trim());
     }
-    app.path()
-        .app_data_dir()
-        .unwrap_or_else(|_| PathBuf::from("."))
-        .join("notes")
+    default_storage_dir(app, "notes")
 }
 
 fn current_notes_dir(app: &AppHandle) -> PathBuf {
@@ -185,10 +282,7 @@ fn backup_dir(app: &AppHandle, settings: &Settings) -> PathBuf {
     if !settings.backup_dir.trim().is_empty() {
         return PathBuf::from(settings.backup_dir.trim());
     }
-    app.path()
-        .app_data_dir()
-        .unwrap_or_else(|_| PathBuf::from("."))
-        .join("backups")
+    default_storage_dir(app, "backups")
 }
 
 /// `inner` 是不是 `outer` 本身或者在它里面(两个文件夹都要已经存在)
@@ -227,21 +321,84 @@ fn maybe_backup(app: &AppHandle) {
     });
 }
 
-fn load_settings(app: &AppHandle) -> Settings {
-    fs::read(config_path(app))
-        .ok()
-        .and_then(|b| serde_json::from_str(&notes::decode_text(&b)).ok())
-        .unwrap_or_default()
+/// 迁移完成后将绝对路径钉在设置中。换安装位置时不再从旧 AppData
+/// 重复复制陈旧的笔记；用户明确设置的路径始终优先。
+fn pin_default_storage(settings: &mut Settings, notes: &Path, backups: &Path) -> bool {
+    let mut changed = false;
+    if settings.notes_dir.trim().is_empty() {
+        settings.notes_dir = notes.to_string_lossy().into_owned();
+        changed = true;
+    }
+    if settings.backup_dir.trim().is_empty() {
+        settings.backup_dir = backups.to_string_lossy().into_owned();
+        changed = true;
+    }
+    changed
+}
+
+/// 区分文件不存在与读取/解析失败；只有前两种可安全写回。
+/// 不可读取的配置本次运行使用默认值，但不得覆盖原有 settings.json。
+fn decode_settings_result(result: std::io::Result<Vec<u8>>) -> (Settings, bool, Option<String>) {
+    match result {
+        Ok(bytes) => match serde_json::from_str::<Settings>(&notes::decode_text(&bytes)) {
+            Ok(settings) => (settings, true, None),
+            Err(e) => (
+                Settings::default(),
+                false,
+                Some(format!("设置文件解析失败:{e}")),
+            ),
+        },
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => (Settings::default(), true, None),
+        Err(e) => (
+            Settings::default(),
+            false,
+            Some(format!("设置文件读取失败:{e}")),
+        ),
+    }
+}
+
+fn load_settings(app: &AppHandle) -> (Settings, bool, Option<String>) {
+    decode_settings_result(fs::read(config_path(app)))
+}
+
+fn write_settings_if_allowed(
+    path: &Path,
+    settings: &Settings,
+    allowed: bool,
+) -> Result<(), String> {
+    if !allowed {
+        // 保护原文件：即使后来暂时恢复可写，也不能用本次运行的默认值覆盖。
+        return Ok(());
+    }
+    let json = serde_json::to_string_pretty(settings).map_err(|e| e.to_string())?;
+    notes::write_atomic(path, &json)
 }
 
 fn persist_settings(app: &AppHandle) {
     let state = app.state::<AppState>();
+    if !state.settings_write_allowed.load(Ordering::SeqCst) {
+        return;
+    }
     let mut s = state.settings.lock().unwrap().clone();
     if let Some(g) = state.geom.lock().unwrap().clone() {
         s.window = Some(g);
     }
-    if let Ok(json) = serde_json::to_string_pretty(&s) {
-        let _ = notes::write_atomic(&config_path(app), &json);
+    if let Err(e) = write_settings_if_allowed(&config_path(app), &s, true) {
+        eprintln!("保存设置失败:{e}");
+    }
+}
+
+const EDGE_STYLES: [&str; 3] = ["arrow", "line", "hover"];
+
+/// 颜色(强调色、贴边标识色)只是给界面用的一小段文字,太长或者有奇怪的字符就不要
+fn tidy_color(c: &mut String) {
+    *c = c.trim().to_string();
+    if c.len() > 160
+        || !c
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || " #(),-.".contains(ch))
+    {
+        c.clear();
     }
 }
 
@@ -251,15 +408,10 @@ fn tidy_settings(s: &mut Settings) {
     s.notes_dir = s.notes_dir.trim().to_string();
     s.backup_dir = s.backup_dir.trim().to_string();
     s.backup_keep = s.backup_keep.clamp(1, 365);
-    // 强调色只是给界面用的一小段文字,太长或者有奇怪的字符就不要
-    s.accent = s.accent.trim().to_string();
-    if s.accent.len() > 160
-        || !s
-            .accent
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || " #(),-.".contains(c))
-    {
-        s.accent.clear();
+    tidy_color(&mut s.accent);
+    tidy_color(&mut s.edge_color);
+    if !EDGE_STYLES.contains(&s.edge_style.as_str()) {
+        s.edge_style = "arrow".into();
     }
     if !["line", "fill", "border"].contains(&s.tab_style.as_str()) {
         s.tab_style = "line".into();
@@ -363,8 +515,10 @@ fn load_state(app: AppHandle) -> Result<LoadedState, String> {
         String::new()
     };
     let hotkey_error = st.hotkey_error.lock().unwrap().clone();
+    let settings_error = st.settings_read_error.lock().unwrap().clone();
     Ok(LoadedState {
         settings,
+        settings_error,
         notes_dir: dir.to_string_lossy().to_string(),
         books,
         book,
@@ -378,6 +532,16 @@ fn load_state(app: AppHandle) -> Result<LoadedState, String> {
 #[tauri::command]
 fn read_notes(app: AppHandle) -> Result<Vec<Book>, String> {
     notes::load_books(&current_notes_dir(&app))
+}
+
+#[tauri::command]
+fn book_exists(app: AppHandle, book: String) -> Result<bool, String> {
+    let dir = notes::book_dir(&current_notes_dir(&app), &book)?;
+    match fs::metadata(dir) {
+        Ok(meta) => Ok(meta.is_dir()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(_) => Ok(true),
+    }
 }
 
 #[tauri::command]
@@ -477,15 +641,85 @@ fn open_backup_dir(app: AppHandle) -> Result<(), String> {
     tauri_plugin_opener::open_path(dir, None::<&str>).map_err(|e| e.to_string())
 }
 
+/// 设置变更按热键、开机启动、文件复制的顺序提交；文件复制必须最后执行。
+/// 迁移失败时撤回已经成功的系统设置，并报告任何回滚失败。
+fn apply_settings_side_effects<H, A, M>(
+    hotkey_changed: bool,
+    autostart_changed: bool,
+    autostart_enabled: bool,
+    mut set_hotkey: H,
+    mut set_autostart: A,
+    copy_notes: M,
+) -> Result<(), String>
+where
+    H: FnMut(bool) -> Result<(), String>,
+    A: FnMut(bool) -> Result<(), String>,
+    M: FnOnce() -> Result<(), String>,
+{
+    if hotkey_changed {
+        if let Err(e) = set_hotkey(true) {
+            let rollback = set_hotkey(false).err();
+            return Err(append_rollback_error(e, rollback.into_iter().collect()));
+        }
+    }
+    if autostart_changed {
+        if let Err(e) = set_autostart(autostart_enabled) {
+            let rollback = if hotkey_changed {
+                set_hotkey(false).err()
+            } else {
+                None
+            };
+            return Err(append_rollback_error(e, rollback.into_iter().collect()));
+        }
+    }
+    if let Err(e) = copy_notes() {
+        let mut errors = Vec::new();
+        if autostart_changed {
+            if let Err(revert) = set_autostart(!autostart_enabled) {
+                errors.push(revert);
+            }
+        }
+        if hotkey_changed {
+            if let Err(revert) = set_hotkey(false) {
+                errors.push(revert);
+            }
+        }
+        return Err(append_rollback_error(e, errors));
+    }
+    Ok(())
+}
+
+fn append_rollback_error(original: String, rollback: Vec<String>) -> String {
+    if rollback.is_empty() {
+        original
+    } else {
+        format!("{original}（回滚失败：{}）", rollback.join("；"))
+    }
+}
+
 #[tauri::command]
-fn save_settings(app: AppHandle, settings: Settings) -> Result<Settings, String> {
+fn save_settings(
+    app: AppHandle,
+    settings: Settings,
+    migrate_notes: Option<bool>,
+) -> Result<Settings, String> {
     let state = app.state::<AppState>();
+    if !state.settings_write_allowed.load(Ordering::SeqCst) {
+        let reason = state.settings_read_error.lock().unwrap().clone();
+        return Err(format!(
+            "启动时无法读取原设置文件，已禁止覆盖；请恢复原文件并重新启动。{}",
+            reason.unwrap_or_default()
+        ));
+    }
     let old = state.settings.lock().unwrap().clone();
     let mut new = settings;
     new.window = old.window.clone();
     tidy_settings(&mut new);
 
-    if !new.notes_dir.is_empty() {
+    let old_notes = notes_dir(&app, &old);
+    let new_notes = notes_dir(&app, &new);
+    let copying_notes = old_notes != new_notes && migrate_notes.unwrap_or(false);
+    if !copying_notes && !new.notes_dir.is_empty() {
         fs::create_dir_all(&new.notes_dir).map_err(|e| format!("无法使用这个文件夹:{e}"))?;
     }
     if new.backup_enabled {
@@ -495,31 +729,47 @@ fn save_settings(app: AppHandle, settings: Settings) -> Result<Settings, String>
             return Err("备份位置不能放在笔记文件夹里面,请换一个文件夹".into());
         }
     }
-    // 先换热键(失败就恢复旧的),再改开机启动(失败就把热键也换回去),保证要么都生效要么都不变
-    state.hotkey_paused.store(false, Ordering::SeqCst);
-    if let Err(e) = register_hotkey(&app, &new.hotkey) {
-        let _ = register_hotkey(&app, &old.hotkey);
-        return Err(format!("热键 {} 无法使用:{e}", new.hotkey));
-    }
-    if new.autostart != old.autostart {
-        let al = app.autolaunch();
-        let r = if new.autostart {
-            al.enable()
-        } else {
-            al.disable()
-        };
-        if let Err(e) = r {
-            let _ = register_hotkey(&app, &old.hotkey);
-            return Err(format!("开机启动设置失败:{e}"));
-        }
-    }
-    *state.hotkey_error.lock().unwrap() = None;
+    // 先验证并更新全局热键和开机启动，最后才复制目录。
+    // 后续失败时回滚系统设置，避免产生“设置未切换、目标已有副本”的半途状态。
+    let hotkey_changed = new.hotkey != old.hotkey;
+    let retry_hotkey = state.hotkey_error.lock().unwrap().is_some();
+    let update_hotkey = hotkey_changed || retry_hotkey;
+    let update_autostart = new.autostart != old.autostart;
+    let autolaunch = app.autolaunch();
+    apply_settings_side_effects(
+        update_hotkey,
+        update_autostart,
+        new.autostart,
+        |use_new| {
+            state.hotkey_paused.store(false, Ordering::SeqCst);
+            let target = if use_new { &new.hotkey } else { &old.hotkey };
+            let result = register_hotkey(&app, target);
+            *state.hotkey_error.lock().unwrap() =
+                result.as_ref().err().map(|e| format!("{target}:{e}"));
+            result.map_err(|e| format!("热键 {target} 无法使用:{e}"))
+        },
+        |enable| {
+            let result = if enable {
+                autolaunch.enable()
+            } else {
+                autolaunch.disable()
+            };
+            result.map_err(|e| format!("开机启动设置失败:{e}"))
+        },
+        || {
+            if copying_notes {
+                notes::copy_notes_for_switch(&old_notes, &new_notes)?;
+            }
+            Ok(())
+        },
+    )?;
 
     if let Some(win) = main_window(&app) {
         let _ = win.set_always_on_top(new.always_on_top);
         let _ = win.set_skip_taskbar(!new.show_in_taskbar);
     }
-    if !new.edge_hide {
+    // 关掉贴边隐藏或者换了样式(露出的宽度不同),先把窗口放出来
+    if !new.edge_hide || new.edge_style != old.edge_style {
         restore_from_edge(&app, false);
     }
     // 换了笔记文件夹或备份位置,今天就在新地方重新判断要不要备份
@@ -573,6 +823,16 @@ fn hide_window(app: AppHandle) {
 }
 
 #[tauri::command]
+fn show_window(app: AppHandle) {
+    show_main(&app);
+}
+
+#[tauri::command]
+fn expand_edge(app: AppHandle) {
+    restore_from_edge(&app, true);
+}
+
+#[tauri::command]
 fn open_notes_dir(app: AppHandle) -> Result<(), String> {
     let dir = current_notes_dir(&app);
     tauri_plugin_opener::open_path(dir, None::<&str>).map_err(|e| e.to_string())
@@ -594,6 +854,74 @@ fn open_link(url: String) -> Result<(), String> {
 fn quit_app(app: AppHandle) {
     persist_settings(&app);
     app.exit(0);
+}
+
+#[tauri::command]
+fn quit_ack(app: AppHandle, id: u64) -> bool {
+    let state = app.state::<AppState>();
+    let mut quit = state.quit.lock().unwrap();
+    if quit.active == Some(id) && quit.waiting_ack {
+        quit.waiting_ack = false;
+        true
+    } else {
+        false
+    }
+}
+
+#[tauri::command]
+fn quit_cancel(app: AppHandle, id: u64) {
+    let state = app.state::<AppState>();
+    let mut quit = state.quit.lock().unwrap();
+    if quit.active == Some(id) && !quit.waiting_ack {
+        quit.active = None;
+    }
+}
+
+// 只在前端完全没有确认收到消息时，才由系统原生对话框接管退出。
+fn request_tray_quit(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    let id = {
+        let mut quit = state.quit.lock().unwrap();
+        if quit.active.is_some() {
+            return;
+        }
+        let id = state.quit_sequence.fetch_add(1, Ordering::SeqCst) + 1;
+        quit.active = Some(id);
+        quit.waiting_ack = true;
+        id
+    };
+    let _ = app.emit("before-quit", id);
+    let handle = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_secs(10));
+        let state = handle.state::<AppState>();
+        {
+            let mut quit = state.quit.lock().unwrap();
+            if quit.active != Some(id) || !quit.waiting_ack {
+                return;
+            }
+            quit.waiting_ack = false;
+        }
+        let dialog_app = handle.clone();
+        handle
+            .dialog()
+            .message("程序没有响应，仍要退出吗？尚未保存的笔记可能丢失。")
+            .title("Minipad Next")
+            .kind(MessageDialogKind::Warning)
+            .buttons(MessageDialogButtons::OkCancelCustom(
+                "仍要退出".into(),
+                "取消".into(),
+            ))
+            .show(move |confirmed| {
+                if confirmed {
+                    quit_app(dialog_app);
+                } else {
+                    let state = dialog_app.state::<AppState>();
+                    state.quit.lock().unwrap().active = None;
+                    show_main(&dialog_app);
+                }
+            });
+    });
 }
 
 // ---------- 窗口显示 / 隐藏 / 贴边 ----------
@@ -675,6 +1003,7 @@ fn restore_from_edge(app: &AppHandle, focus: bool) {
     {
         let mut e = st.edge.lock().unwrap();
         e.hidden = None;
+        e.peeking = false;
         e.outside_ticks = 0;
     }
     st.typing.store(false, Ordering::SeqCst);
@@ -689,6 +1018,12 @@ fn restore_from_edge(app: &AppHandle, focus: bool) {
     if focus {
         let _ = win.set_focus();
     }
+}
+
+/// 露出的宽度按逻辑像素算,换成这块屏幕的物理像素(高分屏上不会变细)
+fn scaled_strip(win: &tauri::WebviewWindow, style: &str, peeking: bool) -> i32 {
+    let scale = win.scale_factor().unwrap_or(1.0);
+    (f64::from(edge::strip_for(style, peeking)) * scale).round() as i32
 }
 
 fn edge_tick(app: &AppHandle) {
@@ -709,10 +1044,46 @@ fn edge_tick(app: &AppHandle) {
     };
     let (cx, cy) = (cur.x.round() as i32, cur.y.round() as i32);
 
-    if st.edge.lock().unwrap().hidden.is_some() {
-        // 鼠标碰到露出来的那条边就滑出来
-        if rect.contains_with_margin(cx, cy, 1) {
-            restore_from_edge(app, true);
+    let (hidden, peeking, mon) = {
+        let e = st.edge.lock().unwrap();
+        (e.hidden, e.peeking, e.monitor)
+    };
+    if let Some(edge) = hidden {
+        let inside = rect.contains_with_margin(cx, cy, 1);
+        if st.settings.lock().unwrap().edge_style != "hover" {
+            // 鼠标碰到露出来的那条边就滑出来
+            if inside {
+                restore_from_edge(app, true);
+            }
+            return;
+        }
+        // 悬浮按钮样式:靠近时只浮出按钮,点按钮才展开;离开约 0.45 秒后收回细边
+        let change = {
+            let mut e = st.edge.lock().unwrap();
+            if inside {
+                e.outside_ticks = 0;
+                (!peeking).then_some(true)
+            } else if peeking {
+                e.outside_ticks += 1;
+                (e.outside_ticks >= 3).then_some(false)
+            } else {
+                None
+            }
+        };
+        if let Some(peek) = change {
+            {
+                let mut e = st.edge.lock().unwrap();
+                e.peeking = peek;
+                e.outside_ticks = 0;
+            }
+            let (x, y) = edge::hidden_position_with_strip(
+                edge,
+                rect,
+                mon,
+                scaled_strip(&win, "hover", peek),
+            );
+            let _ = win.set_position(PhysicalPosition::new(x, y));
+            let _ = app.emit("edge-peek", peek);
         }
         return;
     }
@@ -757,7 +1128,10 @@ fn edge_tick(app: &AppHandle) {
         }
     };
     if let Some((edge, mon)) = ready {
-        let (x, y) = edge::hidden_position(edge, rect, mon);
+        let style = st.settings.lock().unwrap().edge_style.clone();
+        st.edge.lock().unwrap().peeking = false;
+        let (x, y) =
+            edge::hidden_position_with_strip(edge, rect, mon, scaled_strip(&win, &style, false));
         let _ = app.emit("flush", ());
         let _ = app.emit("edge-hidden", edge.name());
         let _ = win.set_position(PhysicalPosition::new(x, y));
@@ -810,6 +1184,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             load_state,
             read_notes,
+            book_exists,
             save_note,
             create_note,
             rename_note,
@@ -828,18 +1203,41 @@ pub fn run() {
             note_activity,
             pick_folder,
             hide_window,
+            show_window,
+            expand_edge,
             open_notes_dir,
             open_link,
-            quit_app
+            quit_app,
+            quit_ack,
+            quit_cancel
         ])
         .setup(|app| {
             let handle = app.handle().clone();
             migrate_old_data(&handle);
-            let settings = load_settings(&handle);
+            let (mut settings, write_allowed, read_error) = load_settings(&handle);
+            if let Some(e) = &read_error {
+                eprintln!("{e}；本次运行使用默认值，禁止自动覆盖 settings.json");
+            }
+            // 首次解析默认目录时可能把旧数据安全复制到 EXE 同级。
+            // 配置损坏/暂时不可读时，运行中可使用默认目录，但不得将其写回配置文件。
+            let default_notes = notes_dir(&handle, &settings);
+            let default_backups = backup_dir(&handle, &settings);
+            let pinned = pin_default_storage(&mut settings, &default_notes, &default_backups);
+            notes::cleanup_stale_temps(&notes_dir(&handle, &settings));
             {
                 let st = handle.state::<AppState>();
+                st.settings_write_allowed
+                    .store(write_allowed, Ordering::SeqCst);
+                *st.settings_read_error.lock().unwrap() = read_error;
                 *st.settings.lock().unwrap() = settings.clone();
                 *st.geom.lock().unwrap() = settings.window.clone();
+                if pinned && write_allowed {
+                    if let Err(e) =
+                        write_settings_if_allowed(&config_path(&handle), &settings, true)
+                    {
+                        eprintln!("无法记住迁移后的存储路径: {e}");
+                    }
+                }
                 if let Err(e) = register_hotkey(&handle, &settings.hotkey) {
                     eprintln!("热键注册失败: {e}");
                     *st.hotkey_error.lock().unwrap() = Some(format!("{}:{e}", settings.hotkey));
@@ -876,14 +1274,7 @@ pub fn run() {
                         let _ = open_notes_dir(app.clone());
                     }
                     "quit" => {
-                        // 让页面先把没保存的内容写盘,再退出
-                        let _ = app.emit("before-quit", ());
-                        let app = app.clone();
-                        std::thread::spawn(move || {
-                            std::thread::sleep(Duration::from_millis(1500));
-                            persist_settings(&app);
-                            app.exit(0);
-                        });
+                        request_tray_quit(app);
                     }
                     _ => {}
                 })
@@ -953,6 +1344,69 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn settings_read_states_distinguish_missing_valid_corrupt_and_unreadable() {
+        let root = notes::temp_dir("settings-read-guard");
+        let path = root.join("settings.json");
+
+        let (missing, can_write, err) = decode_settings_result(fs::read(&path));
+        assert!(can_write);
+        assert!(err.is_none());
+        assert_eq!(missing.hotkey, "Ctrl+M");
+
+        let original = r#"{"hotkey":"Ctrl+Alt+M","notes_dir":"D:\\\\custom","theme":"dark"}"#;
+        fs::write(&path, original).unwrap();
+        let (loaded, can_write, err) = decode_settings_result(fs::read(&path));
+        assert!(can_write);
+        assert!(err.is_none());
+        assert_eq!(loaded.hotkey, "Ctrl+Alt+M");
+        assert_eq!(loaded.theme, "dark");
+
+        let corrupt = b"{\"hotkey\": ".to_vec();
+        fs::write(&path, &corrupt).unwrap();
+        let (fallback, can_write, err) = decode_settings_result(fs::read(&path));
+        assert!(!can_write);
+        assert!(err.unwrap().contains("解析失败"));
+        write_settings_if_allowed(&path, &fallback, can_write).unwrap();
+        assert_eq!(fs::read(&path).unwrap(), corrupt);
+
+        let (fallback, can_write, err) = decode_settings_result(Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "模拟杀毒软件占用",
+        )));
+        assert!(!can_write);
+        assert!(err.unwrap().contains("读取失败"));
+        write_settings_if_allowed(&path, &fallback, can_write).unwrap();
+        assert_eq!(fs::read(&path).unwrap(), corrupt);
+
+        // 恢复为合法 JSON 后，下次启动可继续读取自定义位置。
+        fs::write(&path, original).unwrap();
+        let (recovered, can_write, err) = decode_settings_result(fs::read(&path));
+        assert!(can_write);
+        assert!(err.is_none());
+        assert_eq!(recovered.notes_dir, "D:\\\\custom");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn unreadable_settings_never_get_pinned_back_to_disk() {
+        let root = notes::temp_dir("settings-guarded-pin");
+        let path = root.join("settings.json");
+        let damaged = b"old settings must survive";
+        fs::write(&path, damaged).unwrap();
+        let (mut fallback, can_write, _) = decode_settings_result(fs::read(&path));
+        let pinned = pin_default_storage(
+            &mut fallback,
+            &root.join("installed").join("notes"),
+            &root.join("installed").join("backups"),
+        );
+        assert!(pinned);
+        assert!(!can_write);
+        write_settings_if_allowed(&path, &fallback, can_write).unwrap();
+        assert_eq!(fs::read(&path).unwrap(), damaged);
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn old_settings_get_the_new_defaults() {
@@ -1035,6 +1489,26 @@ mod tests {
     }
 
     #[test]
+    fn tidy_settings_checks_edge_style_and_color() {
+        let mut s = Settings::default();
+        assert_eq!(s.edge_style, "arrow");
+        assert_eq!(s.edge_color, "");
+        for style in ["arrow", "line", "hover"] {
+            s.edge_style = style.into();
+            tidy_settings(&mut s);
+            assert_eq!(s.edge_style, style);
+        }
+        s.edge_style = "glow".into();
+        s.edge_color = " linear-gradient(135deg, #5fb4ff, #d66cf0) ".into();
+        tidy_settings(&mut s);
+        assert_eq!(s.edge_style, "arrow");
+        assert_eq!(s.edge_color, "linear-gradient(135deg, #5fb4ff, #d66cf0)");
+        s.edge_color = "url(javascript:x)".into();
+        tidy_settings(&mut s);
+        assert_eq!(s.edge_color, "");
+    }
+
+    #[test]
     fn tidy_settings_keeps_only_plain_accent_values() {
         let mut s = Settings::default();
         for ok in [
@@ -1056,5 +1530,227 @@ mod tests {
             tidy_settings(&mut s);
             assert_eq!(s.accent, "", "{bad}");
         }
+    }
+    #[test]
+    fn hotkey_failure_prevents_folder_copy() {
+        use std::cell::{Cell, RefCell};
+        let events = RefCell::new(Vec::new());
+        let copied = Cell::new(false);
+        let error = apply_settings_side_effects(
+            true,
+            true,
+            true,
+            |new| {
+                events
+                    .borrow_mut()
+                    .push(if new { "new-hotkey" } else { "old-hotkey" });
+                if new {
+                    Err("快捷键被占用".into())
+                } else {
+                    Ok(())
+                }
+            },
+            |enabled| {
+                events.borrow_mut().push(if enabled {
+                    "autostart-on"
+                } else {
+                    "autostart-off"
+                });
+                Ok(())
+            },
+            || {
+                copied.set(true);
+                Ok(())
+            },
+        )
+        .unwrap_err();
+        assert!(error.contains("快捷键被占用"));
+        assert_eq!(*events.borrow(), ["new-hotkey", "old-hotkey"]);
+        assert!(!copied.get());
+    }
+
+    #[test]
+    fn autostart_failure_does_not_copy_and_restores_hotkey() {
+        use std::cell::{Cell, RefCell};
+        let events = RefCell::new(Vec::new());
+        let copied = Cell::new(false);
+        let error = apply_settings_side_effects(
+            true,
+            true,
+            true,
+            |new| {
+                events
+                    .borrow_mut()
+                    .push(if new { "new-hotkey" } else { "old-hotkey" });
+                Ok(())
+            },
+            |enabled| {
+                events.borrow_mut().push(if enabled {
+                    "autostart-on"
+                } else {
+                    "autostart-off"
+                });
+                Err("启动设置不可用".into())
+            },
+            || {
+                copied.set(true);
+                Ok(())
+            },
+        )
+        .unwrap_err();
+        assert!(error.contains("启动设置不可用"));
+        assert_eq!(
+            *events.borrow(),
+            ["new-hotkey", "autostart-on", "old-hotkey"]
+        );
+        assert!(!copied.get());
+    }
+
+    #[test]
+    fn folder_copy_failure_reverts_autostart_and_hotkey() {
+        use std::cell::RefCell;
+        let events = RefCell::new(Vec::new());
+        let root = notes::temp_dir("settings-rollback");
+        let old_dir = root.join("old");
+        let dest = root.join("dest");
+        fs::create_dir_all(&old_dir).unwrap();
+        fs::write(old_dir.join("note.md"), "old").unwrap();
+        fs::create_dir_all(&dest).unwrap();
+        fs::write(dest.join("occupied.md"), "no overwrite").unwrap();
+        let err = apply_settings_side_effects(
+            true,
+            true,
+            true,
+            |new| {
+                events
+                    .borrow_mut()
+                    .push(if new { "new-hotkey" } else { "old-hotkey" });
+                Ok(())
+            },
+            |enabled| {
+                events.borrow_mut().push(if enabled {
+                    "autostart-on"
+                } else {
+                    "autostart-off"
+                });
+                Ok(())
+            },
+            || notes::copy_notes_for_switch(&old_dir, &dest),
+        )
+        .unwrap_err();
+        assert!(err.contains("目标文件夹为空"));
+        assert_eq!(
+            *events.borrow(),
+            ["new-hotkey", "autostart-on", "autostart-off", "old-hotkey"]
+        );
+        assert_eq!(
+            fs::read_to_string(dest.join("occupied.md")).unwrap(),
+            "no overwrite"
+        );
+        assert_eq!(fs::read_to_string(old_dir.join("note.md")).unwrap(), "old");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn explicit_storage_paths_survive_install_location_changes() {
+        let root = notes::temp_dir("sticky-path");
+        let old_install = root.join("old-app");
+        let new_install = root.join("new-app");
+        let stale_appdata = root.join("old-appdata");
+        fs::create_dir_all(&old_install).unwrap();
+        fs::create_dir_all(&new_install).unwrap();
+        fs::create_dir_all(&stale_appdata).unwrap();
+        fs::write(stale_appdata.join("stale.md"), "旧副本").unwrap();
+        let original = preferred_storage_dir(&old_install, &stale_appdata, "notes");
+        fs::write(original.join("current.md"), "最近更新").unwrap();
+        let mut settings = Settings::default();
+        assert!(pin_default_storage(
+            &mut settings,
+            &original,
+            &old_install.join("backups"),
+        ));
+        let encoded = serde_json::to_string(&settings).unwrap();
+        let reloaded: Settings = serde_json::from_str(&encoded).unwrap();
+        assert!(!pin_default_storage(
+            &mut reloaded.clone(),
+            &new_install.join("notes"),
+            &new_install.join("backups"),
+        ));
+        assert_eq!(PathBuf::from(reloaded.notes_dir.as_str()), original);
+        assert_eq!(
+            fs::read_to_string(PathBuf::from(reloaded.notes_dir.as_str()).join("current.md"))
+                .unwrap(),
+            "最近更新"
+        );
+        assert_eq!(
+            reloaded.backup_dir,
+            old_install.join("backups").to_string_lossy()
+        );
+        assert!(!new_install.join("notes").exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn unwritable_install_folder_falls_back_even_with_empty_notes_directory() {
+        let root = notes::temp_dir("readonly-install");
+        let program = root.join("installed");
+        let legacy = root.join("appdata");
+        fs::create_dir_all(program.join("notes")).unwrap();
+        fs::create_dir_all(program.join("backups")).unwrap();
+        for folder in ["notes", "backups"] {
+            assert_eq!(
+                preferred_storage_dir_with_probe(&program, &legacy, folder, |_| false),
+                legacy
+            );
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn configured_storage_paths_are_never_overwritten() {
+        let mut settings = Settings {
+            notes_dir: "D:\\\\notes".into(),
+            backup_dir: "E:\\\\backups".into(),
+            ..Settings::default()
+        };
+        assert!(!pin_default_storage(
+            &mut settings,
+            Path::new("C:/app/notes"),
+            Path::new("C:/app/backups"),
+        ));
+        assert_eq!(settings.notes_dir, "D:\\\\notes");
+        assert_eq!(settings.backup_dir, "E:\\\\backups");
+    }
+
+    #[test]
+    fn default_storage_prefers_program_folder_without_losing_existing_legacy_data() {
+        let root = notes::temp_dir("default-path");
+        let program = root.join("program");
+        let legacy = root.join("legacy-notes");
+        fs::create_dir_all(&program).unwrap();
+        assert_eq!(
+            preferred_storage_dir(&program, &legacy, "notes"),
+            program.join("notes")
+        );
+        fs::create_dir_all(&legacy).unwrap();
+        fs::write(legacy.join("previous.md"), "old").unwrap();
+        assert_eq!(
+            preferred_storage_dir(&program, &legacy, "notes"),
+            program.join("notes")
+        );
+        assert_eq!(
+            fs::read_to_string(program.join("notes").join("previous.md")).unwrap(),
+            "old"
+        );
+        assert_eq!(
+            fs::read_to_string(legacy.join("previous.md")).unwrap(),
+            "old"
+        );
+        fs::write(program.join("notes").join("new.md"), "new").unwrap();
+        assert_eq!(
+            preferred_storage_dir(&program, &legacy, "notes"),
+            program.join("notes")
+        );
+        fs::remove_dir_all(root).unwrap();
     }
 }

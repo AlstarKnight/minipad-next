@@ -36,6 +36,7 @@ function runSearch() {
   // 当前笔记本的结果排在最前,其余按笔记本列表的顺序
   for (const b of [book(), ...state.books.filter((x) => x !== book())]) {
     for (const n of b.notes) {
+      if (n.unreadable) continue;
       if (n.name.toLowerCase().includes(ql)) results.push({ b, n, pos: -1 });
       const text = n.content.toLowerCase();
       let pos = text.indexOf(ql);

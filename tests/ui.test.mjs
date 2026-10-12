@@ -1429,13 +1429,52 @@ describe("theme and accent", () => {
     const mark = () => p.$eval("#edge-mark", (m) => { const r = m.getBoundingClientRect(); return getComputedStyle(m).display === "none" ? null : [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)]; });
     assert.equal(await mark(), null, "no marker while the window is out");
     await p.evaluate(() => window.__mockEmit("edge-hidden", "top"));
-    assert.deepEqual(await mark(), [0, 532, 440, 8], "tucked into the top edge: a bar along the bottom");
+    assert.deepEqual(await mark(), [0, 520, 440, 20], "default style (line + arrow) leaves a 20px strip");
+    assert.equal(await p.isVisible("#edge-expand"), true, "the arrow strip can be clicked");
     await p.evaluate(() => window.__mockEmit("edge-hidden", "left"));
-    assert.deepEqual(await mark(), [432, 0, 8, 540], "left edge: along the right side");
+    assert.deepEqual(await mark(), [420, 0, 20, 540], "left edge");
     await p.evaluate(() => window.__mockEmit("edge-hidden", "right"));
-    assert.deepEqual(await mark(), [0, 0, 8, 540], "right edge: along the left side");
+    assert.deepEqual(await mark(), [0, 0, 20, 540], "right edge");
+    await p.click("#edge-expand");
+    assert.equal(await mark(), null, "clicking expand restores the window");
+
+    const edgeVars = () => p.evaluate(() => [getComputedStyle(document.querySelector("#edge-mark")).getPropertyValue("--ec").trim(), document.documentElement.style.getPropertyValue("--edge-grad")]);
+    await p.click("#btn-settings");
+    assert.equal(await p.inputValue("#set-edge-style"), "arrow", "line + arrow by default");
+    assert.equal(await p.getAttribute("#set-edge-color button.on", "title"), "跟随强调色", "edge color follows the accent by default");
+    await p.uncheck("#set-edge");
+    assert.equal(await p.isDisabled("#set-edge-style"), true, "edge options are off while edge hiding is off");
+    await p.check("#set-edge");
+    // 仅细边 + 单独的渐变色
+    await p.selectOption("#set-edge-style", "line");
+    await p.click('#set-edge-color button[title="蓝紫渐变"]');
+    await p.click("#set-save");
+    await until(() => h.stored().then((s) => [s.settings.edge_style, s.settings.edge_color]), ["line", "linear-gradient(135deg, #5fb4ff, #d66cf0)"]);
+    await p.evaluate(() => window.__mockEmit("edge-hidden", "top"));
+    assert.deepEqual(await mark(), [0, 534, 440, 6], "line style keeps the slim 6px strip");
+    assert.equal(await p.$eval("#edge-expand", (b) => getComputedStyle(b, "::before").display), "none", "no arrow in line style");
+    assert.deepEqual(await edgeVars(), ["#5fb4ff", "linear-gradient(135deg, #5fb4ff, #d66cf0)"], "edge uses its own color");
     await p.evaluate(() => window.__mockEmit("edge-shown"));
-    assert.equal(await mark(), null, "gone when the window slides out");
+
+    // 细边 + 悬浮按钮:平时细边,靠近时多露出一点并浮出按钮
+    await p.click("#btn-settings");
+    await p.selectOption("#set-edge-style", "hover");
+    await p.click('#set-edge-color button[title="跟随强调色"]');
+    await p.click("#set-save");
+    await until(() => h.stored().then((s) => [s.settings.edge_style, s.settings.edge_color]), ["hover", ""]);
+    await p.evaluate(() => window.__mockEmit("edge-hidden", "left"));
+    assert.deepEqual(await mark(), [434, 0, 6, 540], "hover style starts as a slim edge");
+    assert.equal(await p.$eval("#edge-expand", (b) => getComputedStyle(b, "::before").display), "none", "no button until the mouse comes near");
+    assert.equal((await edgeVars())[1], "", "edge color follows the accent again");
+    await p.evaluate(() => window.__mockEmit("edge-peek", true));
+    assert.deepEqual(await mark(), [408, 0, 32, 540], "mouse near: the strip widens for the button");
+    const btn = await p.$eval("#edge-expand", (b) => { const r = b.getBoundingClientRect(); return [Math.round(r.width), Math.round(r.height)]; });
+    assert.deepEqual(btn, [23, 56], "floating button");
+    await p.evaluate(() => window.__mockEmit("edge-peek", false));
+    assert.deepEqual(await mark(), [434, 0, 6, 540], "mouse away: back to the slim edge");
+    await p.evaluate(() => window.__mockEmit("edge-peek", true));
+    await p.click("#edge-expand");
+    assert.equal(await mark(), null, "clicking the floating button restores the window");
   });
 
   ui("text can get a gradient color, saved as a background-clip span", { seed: seed({ "": { 页: "渐变" } }) }, async (h) => {
@@ -1454,4 +1493,184 @@ describe("theme and accent", () => {
     await p.locator('#editor span[data-color^="linear-gradient"]').waitFor();
     assert.equal(await h.editor(), md, "read back the same after a restart");
   });
+});
+
+
+// ---------- P0：保存与退出安全 ----------
+describe("P0 persistence safety", () => {
+  ui("a failed note write retains dirty content and a later retry saves it", { seed: seed({ "": { 页: "原内容" } }) }, async (h) => {
+    const { p } = h;
+    await p.evaluate(() => {
+      window.__mockControl = { fail: { save_note: "模拟磁盘已满" } };
+      const note = window.__minipad.state.books[0].notes[0];
+      note.content = "尚未保存的内容";
+      note.dirty = true;
+    });
+    await p.keyboard.press("Control+s");
+    await until(() => p.textContent("#st-save"), "保存失败:Error: 模拟磁盘已满", "write failure displayed");
+    assert.equal(await h.mockFile("", "页"), "原内容", "failed save did not change disk");
+    assert.equal(await p.evaluate(() => window.__minipad.state.books[0].notes[0].dirty), true, "dirty flag survives failure");
+    await p.evaluate(() => delete window.__mockControl.fail.save_note);
+    await p.keyboard.press("Control+s");
+    await until(() => h.mockFile("", "页"), "尚未保存的内容", "retry persisted the content");
+    assert.equal(await p.evaluate(() => window.__minipad.state.books[0].notes[0].dirty), false);
+  });
+
+  ui("a slow write is followed by newer edits without losing the latest content", { seed: seed({ "": { 页: "旧内容" } }) }, async (h) => {
+    const { p } = h;
+    await p.evaluate(() => {
+      window.__mockControl = { delay: { save_note: 250 } };
+      const note = window.__minipad.state.books[0].notes[0];
+      note.content = "第一版";
+      note.dirty = true;
+    });
+    await p.keyboard.press("Control+s");
+    await p.evaluate(() => {
+      const note = window.__minipad.state.books[0].notes[0];
+      note.content = "第二版";
+      note.dirty = true;
+    });
+    await p.keyboard.press("Control+s");
+    await until(() => h.mockFile("", "页"), "第二版", "newer edit persisted after first write");
+    assert.equal(await p.evaluate(() => window.__minipad.state.books[0].notes[0].dirty), false);
+  });
+  ui("the quit dialog can cancel and explicitly force exit after a write error", { seed: seed({ "": { 页: "原内容" } }) }, async (h) => {
+    const { p } = h;
+    await p.evaluate(() => {
+      window.__mockControl = { fail: { save_note: "模拟保存失败" }, calls: [] };
+      const note = window.__minipad.state.books[0].notes[0];
+      note.content = "未保存";
+      note.dirty = true;
+      window.__mockEmit("before-quit", 1);
+    });
+    await p.locator("#dialog").waitFor();
+    assert.match(await p.textContent("#dialog-msg"), /有 1 页没保存成功.*模拟保存失败/);
+    await p.click("#dialog-cancel");
+    assert.equal(await p.evaluate(() => window.__mockControl.calls.includes("quit_app")), false);
+    assert.ok(await p.evaluate(() => window.__mockControl.calls.includes("quit_cancel")));
+    await p.evaluate(() => window.__mockEmit("before-quit", 2));
+    await p.locator("#dialog").waitFor();
+    await p.click("#dialog-ok");
+    await until(() => p.evaluate(() => window.__mockControl.calls.includes("quit_app")), true, "confirmed force exit");
+    assert.equal(await h.mockFile("", "页"), "原内容", "failed write never overwrote the file");
+  });
+
+  ui("a stalled save prompts without exiting automatically", { seed: seed({ "": { 页: "原内容" } }) }, async (h) => {
+    const { p } = h;
+    await p.evaluate(() => {
+      window.__mockControl = { delay: { save_note: 300 }, quitTimeoutMs: 40, calls: [] };
+      const note = window.__minipad.state.books[0].notes[0];
+      note.content = "等待写入";
+      note.dirty = true;
+      window.__mockEmit("before-quit", 11);
+    });
+    await p.locator("#dialog").waitFor();
+    assert.match(await p.textContent("#dialog-msg"), /保存等待超过 10 秒/);
+    await p.click("#dialog-cancel");
+    assert.equal(await p.evaluate(() => window.__mockControl.calls.includes("quit_app")), false);
+    await until(() => h.mockFile("", "页"), "等待写入", "background save eventually completes");
+    await p.evaluate(() => {
+      const note = window.__minipad.state.books[0].notes[0];
+      note.content = "下一次写入";
+      note.dirty = true;
+      window.__mockEmit("before-quit", 12);
+    });
+    await p.locator("#dialog").waitFor();
+    await p.click("#dialog-ok");
+    await until(() => p.evaluate(() => window.__mockControl.calls.includes("quit_app")), true);
+  });
+
+  ui("one failed page does not prevent a second page from being saved", { seed: seed({ "": { 甲: "一", 乙: "二" } }) }, async (h) => {
+    const { p } = h;
+    await p.evaluate(() => {
+      window.__mockControl = { failNote: { 甲: "这一页无法写入" } };
+      for (const note of window.__minipad.state.books[0].notes) {
+        note.content += "新";
+        note.dirty = true;
+      }
+    });
+    await p.keyboard.press("Control+s");
+    await until(() => h.mockFile("", "乙"), "二新", "healthy page saved");
+    assert.equal(await h.mockFile("", "甲"), "一", "failed page left intact");
+    assert.deepEqual(await p.evaluate(() => window.__minipad.state.books[0].notes.map((n) => n.dirty)), [true, false]);
+  });
+
+  ui("an unreadable notebook stays visible, but a truly deleted one disappears", { seed: seed({ "": { 首页: "文字" }, 工作: { 周报: "内容" } }) }, async (h) => {
+    const { p } = h;
+    await p.evaluate(() => { window.__mockControl = { unreadableBook: ["工作"] }; });
+    await h.sync();
+    assert.ok((await h.items()).some((i) => i.book === "工作") || (await h.listBooks()).some((i) => i.book === "工作"));
+    await p.evaluate(() => delete window.__mockBooks["工作"]);
+    await h.sync();
+    await until(async () => (await h.listBooks()).some((i) => i.book === "工作"), false, "deleted book disappears");
+  });
+
+  ui("unreadable page stays read-only and recovers after a successful sync", { seed: seed({ "": { 好页: "正常内容", 坏页: "磁盘原内容" } }) }, async (h) => {
+    const { p } = h;
+    await p.evaluate(() => { window.__mockControl = { unreadable: { "": { 坏页: "模拟访问被拒绝" } }, calls: [] }; });
+    await h.sync();
+    await until(() => p.locator(".tab.unreadable").count(), 1, "warning tab appears");
+    await h.tab("坏页").click();
+    assert.ok(await p.isVisible("#read-error"));
+    assert.match(await p.textContent("#read-error"), /这一页读取失败:模拟访问被拒绝/);
+    assert.equal(await p.getAttribute("#editor .ProseMirror", "contenteditable"), "false");
+    await p.keyboard.type("不能输入");
+    await p.keyboard.press("Control+s");
+    assert.equal(await h.mockFile("", "坏页"), "磁盘原内容");
+    assert.equal(await p.evaluate(() => window.__mockControl.calls.filter((x) => x === "save_note").length), 0);
+    await p.evaluate(() => delete window.__mockControl.unreadable[""].坏页);
+    await h.sync();
+    await until(() => p.isHidden("#read-error"), true, "page becomes editable again");
+    assert.equal(await p.getAttribute("#editor .ProseMirror", "contenteditable"), "true");
+    assert.equal(await h.editor(), "磁盘原内容");
+    await h.tab("好页").click();
+    await p.locator("#editor .ProseMirror").click();
+    await p.keyboard.press("End");
+    await p.keyboard.type("追加");
+    await until(() => h.mockFile("", "好页"), "正常内容追加", "healthy page still saves");
+  });
+
+  ui("changing notes folder lets the user choose whether to copy existing pages", { seed: seed({ "": { 页: "原内容" } }) }, async (h) => {
+    const { p } = h;
+    await p.evaluate(() => { window.__mockControl = {}; });
+    await p.click("#btn-settings");
+    assert.equal(await p.isChecked("#set-migrate-notes"), true);
+    assert.equal(await p.isDisabled("#set-migrate-notes"), true);
+    await p.fill("#set-dir", "D:\\NewNotes");
+    assert.equal(await p.isDisabled("#set-migrate-notes"), false);
+    await p.click("#set-save");
+    await until(() => p.evaluate(() => window.__mockControl.migrationRequested), true);
+    assert.equal(await h.mockFile("", "页"), "原内容", "existing notes still available after folder change");
+    await p.click("#btn-settings");
+    await p.fill("#set-dir", "D:\\OtherNotes");
+    await p.uncheck("#set-migrate-notes");
+    await p.click("#set-save");
+    await until(() => p.evaluate(() => window.__minipad.state.settings.notes_dir), "D:\\OtherNotes");
+    assert.equal(await p.evaluate(() => window.__mockControl.migrationRequested), true, "previous copy recorded");
+  });
+
+  ui("a failed folder migration retains settings and current notes", { seed: seed({ "": { 页: "不能丢" } }) }, async (h) => {
+    const { p } = h;
+    await p.evaluate(() => { window.__mockControl = { migrationError: "目标文件夹不为空" }; });
+    await p.click("#btn-settings");
+    await p.fill("#set-dir", "D:\\Occupied");
+    await p.click("#set-save");
+    await until(() => p.textContent("#set-error"), "Error: 目标文件夹不为空");
+    assert.equal(await p.evaluate(() => window.__minipad.state.settings.notes_dir), "");
+    assert.equal(await h.mockFile("", "页"), "不能丢");
+  });
+
+  ui("rapid settings changes preserve independent fields", { seed: seed({ "": { 页: "文本" } }) }, async (h) => {
+    const { p } = h;
+    await p.evaluate(() => {
+      window.__mockControl = { delay: { save_settings: 150 } };
+      document.dispatchEvent(new CustomEvent("format-bar-items", { detail: { format_bar_hidden: ["undo"] } }));
+      document.dispatchEvent(new CustomEvent("format-bar-items", { detail: { format_bar_order: ["strong", "undo"] } }));
+    });
+    await until(async () => {
+      const s = (await h.stored())?.settings;
+      return [s?.format_bar_hidden, s?.format_bar_order];
+    }, [["undo"], ["strong", "undo"]], "both settings survive concurrent submissions");
+  });
+
 });

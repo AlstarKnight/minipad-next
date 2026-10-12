@@ -39,6 +39,7 @@
   <main id="main">
     <!-- 编辑区:Milkdown 编辑器由 js/editor.js 放进来 -->
     <div id="editor" class="code-lines"></div>
+    <div id="read-error" role="alert" hidden></div>
   </main>
 
   <footer id="status">
@@ -65,6 +66,24 @@
       </label>
       <label class="row check"><input id="set-top" type="checkbox" /> <span>窗口总在最前</span></label>
       <label class="row check"><input id="set-edge" type="checkbox" /> <span>靠屏幕边缘时自动隐藏</span></label>
+      <label class="row edge-option">
+        <span>贴边后的样式</span>
+        <select id="set-edge-style">
+          <option value="arrow">细线 + 箭头</option>
+          <option value="line">仅细边高亮</option>
+          <option value="hover">细边 + 悬浮按钮(鼠标靠近时浮出)</option>
+        </select>
+      </label>
+      <div class="row col edge-option">
+        <span>贴边标识的颜色</span>
+        <div id="set-edge-color" class="accent-swatches"></div>
+        <div class="accent-custom">
+          <span>自定义</span>
+          <input id="set-edge-from" type="color" value="#d9822b" title="颜色" />
+          <label><input id="set-edge-grad" type="checkbox" /> 渐变到</label>
+          <input id="set-edge-to" type="color" value="#f7c34b" title="渐变的另一端" />
+        </div>
+      </div>
       <label class="row check"><input id="set-taskbar" type="checkbox" /> <span>在任务栏显示</span></label>
       <label class="row check"><input id="set-autostart" type="checkbox" /> <span>开机启动(启动后藏在托盘)</span></label>
       <label class="row">
@@ -98,12 +117,13 @@
         <input id="set-font" type="number" min="10" max="28" />
       </label>
       <div class="row col">
-        <span>笔记文件夹(留空用默认位置;改了以后会读取新文件夹里的笔记,旧笔记不会自动搬过去)</span>
+        <span>笔记文件夹（留空使用程序所在目录下的 notes；旧版笔记会安全复制过去，原文件保留）</span>
         <div class="inline">
           <input id="set-dir" type="text" spellcheck="false" />
           <button id="set-pick-dir" class="small">选择…</button>
         </div>
       </div>
+      <label class="row check"><input id="set-migrate-notes" type="checkbox" checked /> <span>更换文件夹时复制已有笔记（旧文件保留，目标需为空）</span></label>
       <div class="row">
         <button id="set-open-dir" class="link">打开笔记文件夹</button>
       </div>
@@ -119,7 +139,7 @@
       <label class="row check"><input id="set-backup" type="checkbox" /> <span>每天第一次保存时,把笔记文件夹备份成 zip</span></label>
       <label class="row"><span>保留份数</span><input id="set-backup-keep" type="number" min="1" max="365" /></label>
       <div class="row col">
-        <span>备份位置(留空用默认位置)</span>
+        <span>备份位置（留空使用程序所在目录下的 backups；旧版备份会安全复制过去，原文件保留）</span>
         <div class="inline"><input id="set-backup-dir" type="text" spellcheck="false" /><button id="set-pick-backup" class="small">选择…</button></div>
       </div>
       <div class="row"><span id="set-backup-info" class="muted"></span><button id="set-open-backup" class="link">打开备份文件夹</button></div>
@@ -161,6 +181,6 @@
   <script src="vendor/highlight.js"></script>
   <script type="module" src="js/main.js"></script>
   <!-- 贴边隐藏时露在屏幕边上的标识(见 style.css) -->
-  <div id="edge-mark" aria-hidden="true"><span></span></div>
+  <div id="edge-mark"><span aria-hidden="true"></span><button id="edge-expand" type="button" aria-label="展开悬浮笔记" title="展开悬浮笔记"></button></div>
 </body>
 </html>

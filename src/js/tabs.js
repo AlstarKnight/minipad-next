@@ -17,10 +17,10 @@ export function renderTabs() {
   if (!b) return;
   b.notes.forEach((n, i) => {
     const t = document.createElement("div");
-    t.className = "tab" + (i === b.active ? " active" : "");
+    t.className = "tab" + (i === b.active ? " active" : "") + (n.unreadable ? " unreadable" : "");
     t.draggable = true;
     t.dataset.index = i;
-    t.title = n.name;
+    t.title = n.unreadable ? `${n.name}:读取失败:${n.reason || "未知错误"}` : n.name;
     const s = document.createElement("span");
     s.textContent = n.name;
     t.appendChild(s);

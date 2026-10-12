@@ -44,6 +44,7 @@ export function reload() {
       renderTabs();
       showNote();
       if (st.hotkey_error) toast("热键注册失败(" + st.hotkey_error + "),请在设置里换一个", 5000);
+      if (st.settings_error) toast("原设置文件读取失败，已禁用设置写入；请检查 settings.json 后重启：" + st.settings_error, 9000);
     } catch (e) {
       toast("读取笔记失败:" + e, 5000);
     }
@@ -80,12 +81,18 @@ export async function applyDisk(disk) {
   let tabsChanged = false;
   let currentChanged = false;
 
-  // 在别处删掉的笔记本:里面没有没保存的修改就跟着去掉,「默认」一直都在
-  const books = state.books.filter((b) => {
-    if (b.name === "" || onDisk.has(b.name) || b.notes.some(edited)) return true;
-    booksChanged = true;
-    return false;
-  });
+  // 缺失的笔记本有两种情况：目录已删除，或者仍存在但暂时读不了。
+  // 仅对确实不存在且没有本地未保存修改的笔记本执行删除同步。
+  const books = [];
+  for (const b of state.books) {
+    if (b.name === "" || onDisk.has(b.name) || b.notes.some(edited)) {
+      books.push(b);
+      continue;
+    }
+    const exists = await api.invoke("book_exists", { book: b.name }).catch(() => true);
+    if (exists) books.push(b);
+    else booksChanged = true;
+  }
 
   for (const b of books) {
     const d = onDisk.get(b.name);
@@ -124,25 +131,50 @@ export async function applyDisk(disk) {
   else if (currentChanged) refreshCurrent();
 }
 
-// 把一个笔记本在磁盘上的样子合并进来;tabs: 页面有增减,content: 当前页面的内容换了
+// 同步读取失败不能覆盖本地内容，也不能把暂时不可读当作删除。
 function mergeBook(b, d) {
-  const onDisk = new Map(d.notes.map((n) => [n.name, n.content]));
+  const onDisk = new Map(d.notes.map((n) => [n.name, n]));
   const before = b.notes[b.active];
   let tabs = false;
   let content = false;
 
-  // 在别处删掉的页面:这里没有没保存的修改就跟着删掉
   const kept = b.notes.filter((n) => {
     if (onDisk.has(n.name) || edited(n)) return true;
     tabs = true;
     return false;
   });
 
-  // 在别处改过的页面
   for (const n of kept) {
-    if (!onDisk.has(n.name)) continue;
-    const text = onDisk.get(n.name);
-    if (text === n.disk) continue;
+    const dn = onDisk.get(n.name);
+    if (!dn) continue;
+    if (dn.unreadable) {
+      if (!n.unreadable) {
+        if (edited(n)) toast(`「${n.name}」读取失败，已保留未保存的修改`, 5000);
+        n.unreadable = true;
+        n.state = null;
+        tabs = true;
+        if (n === before) content = true;
+      }
+      const reason = dn.reason || "未知错误";
+      if (n.reason !== reason) {
+        n.reason = reason;
+        tabs = true;
+        if (n === before) content = true;
+      }
+      // 本地内容及 disk 基准都保留，禁止将读取失败占位写入磁盘。
+      continue;
+    }
+
+    const recovered = n.unreadable;
+    if (recovered) {
+      n.unreadable = false;
+      n.reason = null;
+      n.state = null;
+      tabs = true;
+      if (n === before) content = true;
+    }
+    const text = dn.content;
+    if (text === n.disk && !recovered) continue;
     if (!edited(n)) {
       n.content = text;
       if (n === before) content = true;
@@ -152,11 +184,10 @@ function mergeBook(b, d) {
     n.disk = text;
   }
 
-  // 在别处新建的页面
   const known = new Set(kept.map((n) => n.name));
   for (const dn of d.notes) {
     if (known.has(dn.name)) continue;
-    kept.push(makeNote(dn.name, dn.content, dn.mode));
+    kept.push(makeNote(dn.name, dn.content, dn.mode, !!dn.unreadable, dn.reason ?? null));
     tabs = true;
   }
 

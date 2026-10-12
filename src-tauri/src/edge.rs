@@ -2,6 +2,19 @@
 
 /// 贴边隐藏后露在屏幕内的宽度(前端在这一条上画标识)
 pub const STRIP: i32 = 6;
+/// 「细线 + 箭头」样式露出的宽度，够放下一个小箭头
+pub const ARROW_STRIP: i32 = 20;
+/// 「细边 + 悬浮按钮」样式在鼠标靠近时滑出的宽度，够放下展开按钮
+pub const PEEK_STRIP: i32 = 32;
+
+/// 贴边隐藏后露在屏幕内的宽度(逻辑像素,用的时候乘上屏幕缩放):按样式(arrow / line / hover)和悬浮按钮是否浮出
+pub fn strip_for(style: &str, peeking: bool) -> i32 {
+    match (style, peeking) {
+        ("arrow", _) => ARROW_STRIP,
+        ("hover", true) => PEEK_STRIP,
+        _ => STRIP,
+    }
+}
 /// 离屏幕边缘多近算"靠边"
 pub const SNAP: i32 = 8;
 
@@ -61,12 +74,17 @@ pub fn docked_edge(win: Rect, mon: Rect, monitors: &[Rect]) -> Option<Edge> {
     }
 }
 
-/// 缩进去以后窗口的位置:只露出 STRIP 宽的一条
+/// 缩进去以后窗口的位置:只露出 STRIP 宽的一条(测试里用;程序里按样式选宽度)
+#[cfg(test)]
 pub fn hidden_position(edge: Edge, win: Rect, mon: Rect) -> (i32, i32) {
+    hidden_position_with_strip(edge, win, mon, STRIP)
+}
+
+pub fn hidden_position_with_strip(edge: Edge, win: Rect, mon: Rect, strip: i32) -> (i32, i32) {
     match edge {
-        Edge::Top => (win.x, mon.y - win.h + STRIP),
-        Edge::Left => (mon.x - win.w + STRIP, win.y),
-        Edge::Right => (mon.x + mon.w - STRIP, win.y),
+        Edge::Top => (win.x, mon.y - win.h + strip),
+        Edge::Left => (mon.x - win.w + strip, win.y),
+        Edge::Right => (mon.x + mon.w - strip, win.y),
     }
 }
 
@@ -174,6 +192,29 @@ mod tests {
         assert_eq!(
             shown_position(Edge::Left, Rect::new(hx, hy, 400, 500), SCREEN),
             (0, 100)
+        );
+    }
+
+    #[test]
+    fn each_style_leaves_its_own_strip_on_all_edges() {
+        assert_eq!(strip_for("line", false), STRIP);
+        assert_eq!(strip_for("line", true), STRIP);
+        assert_eq!(strip_for("arrow", false), ARROW_STRIP);
+        assert_eq!(strip_for("hover", false), STRIP);
+        assert_eq!(strip_for("hover", true), PEEK_STRIP);
+        let win = Rect::new(300, 0, 400, 500);
+        let s = strip_for("hover", true);
+        assert_eq!(
+            hidden_position_with_strip(Edge::Top, win, SCREEN, s),
+            (300, -500 + s)
+        );
+        assert_eq!(
+            hidden_position_with_strip(Edge::Left, win, SCREEN, s),
+            (-400 + s, 0)
+        );
+        assert_eq!(
+            hidden_position_with_strip(Edge::Right, win, SCREEN, s),
+            (1920 - s, 0)
         );
     }
 

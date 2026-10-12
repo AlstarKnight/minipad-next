@@ -9,7 +9,12 @@ use encoding_rs::{Encoding, GB18030};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, SystemTime};
+
+static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 pub const NOTE_EXT: &str = "md";
 pub const TRASH_DIR: &str = ".trash";
@@ -34,6 +39,9 @@ pub struct Note {
     pub name: String,
     pub content: String,
     pub mode: String,
+    /// 内容不可读取时保留页面占位，空内容不得回写磁盘。
+    pub unreadable: bool,
+    pub reason: Option<String>,
 }
 
 /// 一个笔记本和它的全部页面(按保存过的顺序)
@@ -48,9 +56,56 @@ pub fn write_atomic(path: &Path, data: &str) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
-    let tmp = path.with_extension("tmp~");
-    fs::write(&tmp, data).map_err(|e| e.to_string())?;
-    fs::rename(&tmp, path).map_err(|e| e.to_string())
+    // 同一文件可能由不同调用方同时写入；临时文件名必须唯一。
+    let seq = TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let mut file_name = path.file_name().ok_or("无效的文件路径")?.to_os_string();
+    file_name.push(format!(".{}.{}.tmp~", std::process::id(), seq));
+    let tmp = path.with_file_name(file_name);
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&tmp)
+        .map_err(|e| e.to_string())?;
+    let result = (|| {
+        file.write_all(data.as_bytes()).map_err(|e| e.to_string())?;
+        file.sync_all().map_err(|e| e.to_string())?;
+        drop(file);
+        fs::rename(&tmp, path).map_err(|e| e.to_string())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&tmp);
+    }
+    result
+}
+
+/// 启动时清理笔记文件夹和各笔记本中残留超过一小时的临时文件。
+/// 只匹配本程序的临时写入后缀，不进入隐藏文件夹与更深的子目录。
+pub fn cleanup_stale_temps(root: &Path) {
+    let Some(cutoff) = SystemTime::now().checked_sub(Duration::from_secs(3600)) else {
+        return;
+    };
+    let mut dirs = vec![root.to_path_buf()];
+    if let Ok(books) = list_books(root) {
+        dirs.extend(books.into_iter().map(|b| root.join(b)));
+    }
+    for dir in dirs {
+        let Ok(entries) = fs::read_dir(dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if !name.ends_with(".tmp~") {
+                continue;
+            }
+            let Ok(meta) = entry.metadata() else {
+                continue;
+            };
+            if !meta.is_file() || !meta.modified().is_ok_and(|time| time < cutoff) {
+                continue;
+            }
+            let _ = fs::remove_file(entry.path());
+        }
+    }
 }
 
 /// 把名字变成合法的 Windows 文件名,清理完是空的就用 `fallback`
@@ -223,10 +278,10 @@ pub fn decode_text(bytes: &[u8]) -> String {
     text.replace("\r\n", "\n")
 }
 
-pub fn read_note(dir: &Path, name: &str) -> String {
+pub fn read_note(dir: &Path, name: &str) -> Result<String, String> {
     fs::read(note_path(dir, name))
         .map(|b| decode_text(&b))
-        .unwrap_or_default()
+        .map_err(|e| format!("无法读取笔记「{name}」: {e}"))
 }
 
 pub fn read_meta(dir: &Path) -> Meta {
@@ -256,8 +311,11 @@ pub fn order_names(names: &[String], saved: &[String]) -> Vec<String> {
     ordered
 }
 
-/// 读出一个笔记本的全部页面,带上保存过的顺序、当前页面和模式
-pub fn load_book(root: &Path, book: &str) -> Result<Book, String> {
+/// 测试可替换读取函数，确保单页失败不会影响其他页。
+fn load_book_with_reader<F>(root: &Path, book: &str, mut read: F) -> Result<Book, String>
+where
+    F: FnMut(&Path, &str) -> Result<String, String>,
+{
     let dir = book_dir(root, book)?;
     let meta = read_meta(&dir);
     let names = order_names(&list_names(&dir)?, &meta.order);
@@ -268,14 +326,22 @@ pub fn load_book(root: &Path, book: &str) -> Result<Book, String> {
     };
     let notes = names
         .into_iter()
-        .map(|name| Note {
-            content: read_note(&dir, &name),
-            mode: meta
-                .modes
-                .get(&name)
-                .cloned()
-                .unwrap_or_else(|| "edit".into()),
-            name,
+        .map(|name| {
+            let (content, unreadable, reason) = match read(&dir, &name) {
+                Ok(text) => (text, false, None),
+                Err(e) => (String::new(), true, Some(e)),
+            };
+            Note {
+                content,
+                unreadable,
+                reason,
+                mode: meta
+                    .modes
+                    .get(&name)
+                    .cloned()
+                    .unwrap_or_else(|| "edit".into()),
+                name,
+            }
         })
         .collect();
     Ok(Book {
@@ -285,7 +351,12 @@ pub fn load_book(root: &Path, book: &str) -> Result<Book, String> {
     })
 }
 
-/// 所有笔记本:「默认」在最前,后面是各个子文件夹(读不了的跳过)
+/// 读出一个笔记本；个别页面无法读取时仍将其保留为不可编辑的占位。
+pub fn load_book(root: &Path, book: &str) -> Result<Book, String> {
+    load_book_with_reader(root, book, read_note)
+}
+
+/// 无法读取的子笔记本跳过，不阻断其余笔记本；前端同步必须保留暂时缺失的笔记本。
 pub fn load_books(root: &Path) -> Result<Vec<Book>, String> {
     let mut books = vec![load_book(root, "")?];
     for name in list_books(root)? {
@@ -426,6 +497,55 @@ pub fn migrate_path(old: &Path, new: &Path) -> Result<bool, String> {
     }
     copy_recursive(old, new)?;
     Ok(true)
+}
+
+/// 更换笔记目录时安全复制全部内容。新目录必须为空，源目录会保留以便恢复。
+/// 在目标目录同级先写临时目录，只有完全复制成功才切换到目标目录。
+pub fn copy_notes_for_switch(source: &Path, destination: &Path) -> Result<(), String> {
+    if !source.is_dir() {
+        return Err(format!("原笔记目录不存在:{}", source.display()));
+    }
+    let parent = destination.parent().ok_or("目标路径无效")?;
+    fs::create_dir_all(parent).map_err(|e| format!("无法建立目标目录的上级文件夹:{e}"))?;
+    let source_abs = fs::canonicalize(source).map_err(|e| e.to_string())?;
+    let dest_abs = if destination.exists() {
+        fs::canonicalize(destination).map_err(|e| e.to_string())?
+    } else {
+        fs::canonicalize(parent)
+            .map_err(|e| e.to_string())?
+            .join(destination.file_name().ok_or("目标路径无效")?)
+    };
+    if dest_abs.starts_with(&source_abs) || source_abs.starts_with(&dest_abs) {
+        return Err("新旧笔记文件夹不能互相包含".into());
+    }
+    if destination.exists()
+        && (!destination.is_dir()
+            || fs::read_dir(destination)
+                .map_err(|e| format!("无法检查目标目录:{e}"))?
+                .next()
+                .is_some())
+    {
+        return Err("迁移要求目标文件夹为空；如果要使用已有笔记文件夹，请取消勾选迁移".into());
+    }
+    let seq = TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let stage = parent.join(format!(".minipad-copy-{}-{seq}", std::process::id()));
+    if stage.exists() {
+        return Err("迁移临时目录已存在，请重试".into());
+    }
+    if let Err(e) = copy_recursive(source, &stage) {
+        let _ = fs::remove_dir_all(&stage);
+        return Err(format!("笔记迁移失败，原笔记保留:{e}"));
+    }
+    let result = (|| {
+        if destination.exists() {
+            fs::remove_dir(destination).map_err(|e| format!("目标目录已变化:{e}"))?;
+        }
+        fs::rename(&stage, destination).map_err(|e| format!("完成迁移失败:{e}"))
+    })();
+    if result.is_err() {
+        let _ = fs::remove_dir_all(&stage);
+    }
+    result
 }
 
 fn copy_recursive(src: &Path, dst: &Path) -> Result<(), String> {
@@ -633,6 +753,85 @@ mod tests {
         assert_eq!(books[1].notes[0].mode, "edit");
         assert!(books[2].notes.is_empty());
         assert_eq!(books[2].active, "");
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn cleans_only_old_temporary_files_in_root_and_notebooks() {
+        let root = temp_dir("temp-cleanup");
+        let sub = root.join("工作");
+        fs::create_dir_all(&sub).unwrap();
+        let old = root.join("旧.md.123.1.tmp~");
+        let old_sub = sub.join("旧.md.123.2.tmp~");
+        let fresh = sub.join("新.md.123.3.tmp~");
+        let normal = root.join("保留.md");
+        for path in [&old, &old_sub, &fresh, &normal] {
+            fs::write(path, "内容").unwrap();
+        }
+        let past = SystemTime::now() - Duration::from_secs(7200);
+        for path in [&old, &old_sub] {
+            fs::OpenOptions::new()
+                .write(true)
+                .open(path)
+                .unwrap()
+                .set_times(fs::FileTimes::new().set_modified(past))
+                .unwrap();
+        }
+        cleanup_stale_temps(&root);
+        assert!(!old.exists());
+        assert!(!old_sub.exists());
+        assert!(fresh.exists());
+        assert!(normal.exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn switching_note_folder_copies_everything_and_keeps_original() {
+        let root = temp_dir("folder-switch");
+        let old = root.join("old");
+        let next = root.join("new");
+        fs::create_dir_all(old.join("项目")).unwrap();
+        fs::create_dir_all(old.join(".trash")).unwrap();
+        fs::write(old.join("我的.md"), "保留文本").unwrap();
+        fs::write(old.join("项目").join("周报.md"), "项目内容").unwrap();
+        fs::write(old.join(".trash").join("旧.md"), "回收站").unwrap();
+        copy_notes_for_switch(&old, &next).unwrap();
+        for path in ["我的.md", "项目/周报.md", ".trash/旧.md"] {
+            assert_eq!(
+                fs::read(next.join(path)).unwrap(),
+                fs::read(old.join(path)).unwrap()
+            );
+        }
+        assert!(copy_notes_for_switch(&old, &next).is_err());
+        assert!(copy_notes_for_switch(&old, &old.join("inside")).is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn unreadable_note_does_not_block_other_pages() {
+        let root = temp_dir("unreadable");
+        fs::write(note_path(&root, "好页面"), "安全内容").unwrap();
+        fs::write(note_path(&root, "坏页面"), "原文件不得覆盖").unwrap();
+        let result = load_book_with_reader(&root, "", |dir, name| {
+            if name == "坏页面" {
+                Err("模拟访问被拒绝".to_string())
+            } else {
+                read_note(dir, name)
+            }
+        })
+        .unwrap();
+        assert_eq!(result.notes.len(), 2);
+        let ok = result.notes.iter().find(|n| n.name == "好页面").unwrap();
+        assert_eq!(ok.content, "安全内容");
+        assert!(!ok.unreadable);
+        let bad = result.notes.iter().find(|n| n.name == "坏页面").unwrap();
+        assert!(bad.unreadable);
+        assert_eq!(bad.content, "");
+        assert_eq!(bad.reason.as_deref(), Some("模拟访问被拒绝"));
+        assert_eq!(
+            fs::read_to_string(note_path(&root, "坏页面")).unwrap(),
+            "原文件不得覆盖"
+        );
         fs::remove_dir_all(&root).unwrap();
     }
 

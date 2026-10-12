@@ -10,6 +10,8 @@ const DEFAULT_SETTINGS = {
   hotkey: "Ctrl+M",
   always_on_top: true,
   edge_hide: true,
+  edge_style: "arrow",
+  edge_color: "",
   show_in_taskbar: false,
   autostart: false,
   theme: "system",
@@ -127,11 +129,14 @@ export function mockApi() {
     const order = meta.order.filter((n) => names.includes(n)).concat(names.filter((n) => !meta.order.includes(n)));
     return {
       name,
-      notes: order.map((n) => ({ name: n, content: files[n], mode: meta.modes[n] || "edit" })),
+      notes: order.map((n) => {
+        const reason = window.__mockControl?.unreadable?.[name]?.[n] || null;
+        return { name: n, content: reason ? "" : files[n], mode: meta.modes[n] || "edit", unreadable: !!reason, reason };
+      }),
       active: order.includes(meta.active) ? meta.active : (order[0] ?? ""),
     };
   };
-  const readBooks = () => ["", ...bookNames()].map(readBook);
+  const readBooks = () => ["", ...bookNames()].filter((name) => !window.__mockControl?.unreadableBook?.includes(name)).map(readBook);
 
   const cmds = {
     load_state: () => {
@@ -147,11 +152,13 @@ export function mockApi() {
         books: readBooks(),
         book: bookNames().includes(db.book) ? db.book : "",
         hotkey_error: null,
+        settings_error: null,
         version: "预览",
         debug: true,
       };
     },
     read_notes: () => readBooks(),
+    book_exists: ({ book }) => has(db.books, book),
     save_note: ({ book, name, content }) => {
       backup();
       bookOf(book).files[name] = content;
@@ -222,7 +229,9 @@ export function mockApi() {
     set_current_book: ({ book }) => void (db.book = book),
     backup_info: () => ({ dir: "(浏览器预览)", latest: db.backups.at(-1) ?? null, count: db.backups.length }),
     open_backup_dir: () => toast("(预览)会在资源管理器里打开备份文件夹"),
-    save_settings: ({ settings }) => {
+    save_settings: ({ settings, migrateNotes }) => {
+      if (migrateNotes && window.__mockControl?.migrationError) throw new Error(window.__mockControl.migrationError);
+      if (migrateNotes && window.__mockControl) window.__mockControl.migrationRequested = true;
       const s = {
         ...settings,
         hotkey: String(settings.hotkey ?? "").trim(),
@@ -246,8 +255,12 @@ export function mockApi() {
       return null;
     },
     hide_window: () => toast("(预览)窗口会隐藏到托盘,按 Ctrl+M 再呼出"),
+    expand_edge: () => window.__mockEmit?.("edge-shown"),
     open_notes_dir: () => toast("(预览)会在资源管理器里打开笔记文件夹"),
     open_link: ({ url }) => void window.open(url, "_blank", "noopener"),
+    quit_ack: () => true,
+    quit_cancel: () => {},
+    show_window: () => {},
     quit_app: () => {},
   };
 
@@ -259,6 +272,12 @@ export function mockApi() {
   window.__mockEmit = (ev, payload) => (listeners[ev] || []).forEach((cb) => cb({ event: ev, payload }));
   return {
     invoke: async (cmd, args = {}) => {
+      // 测试专用：在页面控制台可模拟慢磁盘与写入失败。
+      const test = window.__mockControl;
+      if (Array.isArray(test?.calls)) test.calls.push(cmd);
+      if (test?.delay?.[cmd]) await new Promise((resolve) => setTimeout(resolve, test.delay[cmd]));
+      if (test?.fail?.[cmd]) throw new Error(test.fail[cmd]);
+      if (cmd === "save_note" && test?.failNote?.[args.name]) throw new Error(test.failNote[args.name]);
       try {
         return cmds[cmd](args);
       } finally {
