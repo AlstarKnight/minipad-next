@@ -1485,7 +1485,8 @@ mod tests {
         ));
         assert_eq!(PathBuf::from(reloaded.notes_dir.as_str()), original);
         assert_eq!(
-            fs::read_to_string(PathBuf::from(reloaded.notes_dir.as_str()).join("current.md")).unwrap(),
+            fs::read_to_string(PathBuf::from(reloaded.notes_dir.as_str()).join("current.md"))
+                .unwrap(),
             "最近更新"
         );
         assert_eq!(
