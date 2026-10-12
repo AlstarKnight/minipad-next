@@ -254,9 +254,8 @@ fn utf16_units(bytes: &[u8]) -> Vec<u16> {
     if b.starts_with(&[0xFF, 0xFE]) {
         b = &b[2..];
     }
-    b.chunks_exact(2)
-        .map(|c| u16::from_le_bytes([c[0], c[1]]))
-        .collect()
+    let (pairs, _) = b.as_chunks::<2>();
+    pairs.iter().map(|&p| u16::from_le_bytes(p)).collect()
 }
 
 /// 用户选的可能是 minipad2 的程序文件夹、它的 data 文件夹,或者 minipad2.idx 本身
