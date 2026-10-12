@@ -114,15 +114,30 @@ function updateBackup() {
   $("#set-backup-info").textContent = text;
 }
 
-export async function saveSettings(next) {
-  const dirChanged = next.notes_dir.trim() !== (state.settings.notes_dir || "").trim();
-  if (dirChanged) {
-    await flushAll();
-    await saveMeta();
-  }
-  state.settings = await api.invoke("save_settings", { settings: next });
-  applySettings();
-  if (dirChanged) await reload();
+// UI 操作可能在上一笔设置仍在保存时继续发生。按触发时的状态计算差异，
+// 串行合并到最新已保存的设置，避免旧快照将刚刚改变的选项覆盖。
+let settingsQueue = Promise.resolve();
+export function saveSettings(next) {
+  const baseline = state.settings;
+  const changed = Object.fromEntries(Object.entries(next).filter(([key, value]) =>
+    JSON.stringify(value) !== JSON.stringify(baseline[key])
+  ));
+  const save = async () => {
+    if (!Object.keys(changed).length) return state.settings;
+    const merged = { ...state.settings, ...changed };
+    const dirChanged = merged.notes_dir.trim() !== (state.settings.notes_dir || "").trim();
+    if (dirChanged) {
+      await flushAll();
+      await saveMeta();
+    }
+    state.settings = await api.invoke("save_settings", { settings: merged });
+    applySettings();
+    if (dirChanged) await reload();
+    return state.settings;
+  };
+  const task = settingsQueue.then(save);
+  settingsQueue = task.catch(() => {});
+  return task;
 }
 
 async function submitSettings() {
