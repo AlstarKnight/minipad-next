@@ -499,6 +499,54 @@ pub fn migrate_path(old: &Path, new: &Path) -> Result<bool, String> {
     Ok(true)
 }
 
+/// 更换笔记目录时安全复制全部内容。新目录必须为空，源目录会保留以便恢复。
+/// 在目标目录同级先写临时目录，只有完全复制成功才切换到目标目录。
+pub fn copy_notes_for_switch(source: &Path, destination: &Path) -> Result<(), String> {
+    if !source.is_dir() {
+        return Err(format!("原笔记目录不存在:{}", source.display()));
+    }
+    let parent = destination.parent().ok_or("目标路径无效")?;
+    fs::create_dir_all(parent).map_err(|e| format!("无法建立目标目录的上级文件夹:{e}"))?;
+    let source_abs = fs::canonicalize(source).map_err(|e| e.to_string())?;
+    let dest_abs = if destination.exists() {
+        fs::canonicalize(destination).map_err(|e| e.to_string())?
+    } else {
+        fs::canonicalize(parent)
+            .map_err(|e| e.to_string())?
+            .join(destination.file_name().ok_or("目标路径无效")?)
+    };
+    if dest_abs.starts_with(&source_abs) || source_abs.starts_with(&dest_abs) {
+        return Err("新旧笔记文件夹不能互相包含".into());
+    }
+    if destination.exists() {
+        if !destination.is_dir() || fs::read_dir(destination)
+            .map_err(|e| format!("无法检查目标目录:{e}"))?
+            .next().is_some()
+        {
+            return Err("迁移要求目标文件夹为空；如果要使用已有笔记文件夹，请取消勾选迁移".into());
+        }
+    }
+    let seq = TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let stage = parent.join(format!(".minipad-copy-{}-{seq}", std::process::id()));
+    if stage.exists() {
+        return Err("迁移临时目录已存在，请重试".into());
+    }
+    if let Err(e) = copy_recursive(source, &stage) {
+        let _ = fs::remove_dir_all(&stage);
+        return Err(format!("笔记迁移失败，原笔记保留:{e}"));
+    }
+    let result = (|| {
+        if destination.exists() {
+            fs::remove_dir(destination).map_err(|e| format!("目标目录已变化:{e}"))?;
+        }
+        fs::rename(&stage, destination).map_err(|e| format!("完成迁移失败:{e}"))
+    })();
+    if result.is_err() {
+        let _ = fs::remove_dir_all(&stage);
+    }
+    result
+}
+
 fn copy_recursive(src: &Path, dst: &Path) -> Result<(), String> {
     if src.is_dir() {
         fs::create_dir_all(dst).map_err(|e| e.to_string())?;
@@ -733,6 +781,25 @@ mod tests {
         assert!(!old_sub.exists());
         assert!(fresh.exists());
         assert!(normal.exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn switching_note_folder_copies_everything_and_keeps_original() {
+        let root = temp_dir("folder-switch");
+        let old = root.join("old");
+        let next = root.join("new");
+        fs::create_dir_all(old.join("项目")).unwrap();
+        fs::create_dir_all(old.join(".trash")).unwrap();
+        fs::write(old.join("我的.md"), "保留文本").unwrap();
+        fs::write(old.join("项目").join("周报.md"), "项目内容").unwrap();
+        fs::write(old.join(".trash").join("旧.md"), "回收站").unwrap();
+        copy_notes_for_switch(&old, &next).unwrap();
+        for path in ["我的.md", "项目/周报.md", ".trash/旧.md"] {
+            assert_eq!(fs::read(next.join(path)).unwrap(), fs::read(old.join(path)).unwrap());
+        }
+        assert!(copy_notes_for_switch(&old, &next).is_err());
+        assert!(copy_notes_for_switch(&old, &old.join("inside")).is_err());
         fs::remove_dir_all(root).unwrap();
     }
 
