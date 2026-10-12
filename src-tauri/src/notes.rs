@@ -757,7 +757,10 @@ mod tests {
         assert!(bad.unreadable);
         assert_eq!(bad.content, "");
         assert_eq!(bad.reason.as_deref(), Some("模拟访问被拒绝"));
-        assert_eq!(fs::read_to_string(note_path(&root, "坏页面")).unwrap(), "原文件不得覆盖");
+        assert_eq!(
+            fs::read_to_string(note_path(&root, "坏页面")).unwrap(),
+            "原文件不得覆盖"
+        );
         fs::remove_dir_all(&root).unwrap();
     }
 
