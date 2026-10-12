@@ -211,14 +211,11 @@ fn contains_data(path: &Path) -> bool {
 
 fn preferred_storage_dir(program_root: &Path, legacy: &Path, folder: &str) -> PathBuf {
     let beside_exe = program_root.join(folder);
-    // 旧用户升级后，绝不能因为默认目录改变就出现一个空白笔记本。
-    if contains_data(legacy) && !contains_data(&beside_exe) {
-        return legacy.to_path_buf();
-    }
-    if beside_exe.is_dir() {
+    // 若安装目录已有笔记，以那份数据为准；绝不覆盖已有目录。
+    if contains_data(&beside_exe) {
         return beside_exe;
     }
-    // 创建目录前只检测可执行文件所在目录的可写性，不向安装目录落垃圾文件。
+    // 只在需要建目录或迁移旧数据时检测可写性，结果由 OnceLock 缓存。
     let probe = program_root.join(format!(".minipad-write-{}.tmp~", std::process::id()));
     let writable = fs::OpenOptions::new()
         .write(true)
@@ -226,10 +223,23 @@ fn preferred_storage_dir(program_root: &Path, legacy: &Path, folder: &str) -> Pa
         .open(&probe)
         .is_ok();
     if writable {
-        let _ = fs::remove_file(probe);
+        let _ = fs::remove_file(&probe);
+        if contains_data(legacy) {
+            // 旧版本的默认内容安全复制到 exe 旁边；原文件仍然保留。
+            // 若目标不可写、发生冲突或复制失败，就继续读取旧位置。
+            return match notes::copy_notes_for_switch(legacy, &beside_exe) {
+                Ok(()) => beside_exe,
+                Err(e) => {
+                    eprintln!("迁移旧默认目录失败，继续使用原目录: {e}");
+                    legacy.to_path_buf()
+                }
+            };
+        }
         beside_exe
-    } else {
+    } else if contains_data(legacy) || !beside_exe.is_dir() {
         legacy.to_path_buf()
+    } else {
+        beside_exe
     }
 }
 
@@ -1231,7 +1241,9 @@ mod tests {
         assert_eq!(preferred_storage_dir(&program, &legacy, "notes"), program.join("notes"));
         fs::create_dir_all(&legacy).unwrap();
         fs::write(legacy.join("previous.md"), "old").unwrap();
-        assert_eq!(preferred_storage_dir(&program, &legacy, "notes"), legacy);
+        assert_eq!(preferred_storage_dir(&program, &legacy, "notes"), program.join("notes"));
+        assert_eq!(fs::read_to_string(program.join("notes").join("previous.md")).unwrap(), "old");
+        assert_eq!(fs::read_to_string(legacy.join("previous.md")).unwrap(), "old");
         fs::create_dir_all(program.join("notes")).unwrap();
         fs::write(program.join("notes").join("new.md"), "new").unwrap();
         assert_eq!(preferred_storage_dir(&program, &legacy, "notes"), program.join("notes"));
