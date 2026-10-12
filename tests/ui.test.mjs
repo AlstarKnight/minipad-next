@@ -1495,18 +1495,90 @@ describe("P0 persistence safety", () => {
     await until(() => h.mockFile("", "页"), "第二版", "newer edit persisted after first write");
     assert.equal(await p.evaluate(() => window.__minipad.state.books[0].notes[0].dirty), false);
   });
-  ui("the quit event never exits when note persistence fails", { seed: seed({ "": { 页: "原内容" } }) }, async (h) => {
+  ui("the quit dialog can cancel and explicitly force exit after a write error", { seed: seed({ "": { 页: "原内容" } }) }, async (h) => {
     const { p } = h;
     await p.evaluate(() => {
       window.__mockControl = { fail: { save_note: "模拟保存失败" }, calls: [] };
       const note = window.__minipad.state.books[0].notes[0];
       note.content = "未保存";
       note.dirty = true;
-      window.__mockEmit("before-quit");
+      window.__mockEmit("before-quit", 1);
     });
-    await until(() => p.textContent("#toast"), "保存失败，已取消退出：Error: 模拟保存失败", "quit aborts on failure");
-    assert.equal(await h.mockFile("", "页"), "原内容");
-    assert.equal(await p.evaluate(() => window.__mockControl.calls.includes("quit_app")), false, "quit command was never sent");
+    await p.locator("#dialog").waitFor();
+    assert.match(await p.textContent("#dialog-msg"), /有 1 页没保存成功.*模拟保存失败/);
+    await p.click("#dialog-cancel");
+    assert.equal(await p.evaluate(() => window.__mockControl.calls.includes("quit_app")), false);
+    assert.ok(await p.evaluate(() => window.__mockControl.calls.includes("quit_cancel")));
+    await p.evaluate(() => window.__mockEmit("before-quit", 2));
+    await p.locator("#dialog").waitFor();
+    await p.click("#dialog-ok");
+    await until(() => p.evaluate(() => window.__mockControl.calls.includes("quit_app")), true, "confirmed force exit");
+    assert.equal(await h.mockFile("", "页"), "原内容", "failed write never overwrote the file");
+  });
+
+  ui("a stalled save prompts without exiting automatically", { seed: seed({ "": { 页: "原内容" } }) }, async (h) => {
+    const { p } = h;
+    await p.evaluate(() => {
+      window.__mockControl = { delay: { save_note: 300 }, quitTimeoutMs: 40, calls: [] };
+      const note = window.__minipad.state.books[0].notes[0];
+      note.content = "等待写入";
+      note.dirty = true;
+      window.__mockEmit("before-quit", 11);
+    });
+    await p.locator("#dialog").waitFor();
+    assert.match(await p.textContent("#dialog-msg"), /保存等待超过 10 秒/);
+    await p.click("#dialog-cancel");
+    assert.equal(await p.evaluate(() => window.__mockControl.calls.includes("quit_app")), false);
+    await until(() => h.mockFile("", "页"), "等待写入", "background save eventually completes");
+    await p.evaluate(() => {
+      const note = window.__minipad.state.books[0].notes[0];
+      note.content = "下一次写入";
+      note.dirty = true;
+      window.__mockEmit("before-quit", 12);
+    });
+    await p.locator("#dialog").waitFor();
+    await p.click("#dialog-ok");
+    await until(() => p.evaluate(() => window.__mockControl.calls.includes("quit_app")), true);
+  });
+
+  ui("one failed page does not prevent a second page from being saved", { seed: seed({ "": { 甲: "一", 乙: "二" } }) }, async (h) => {
+    const { p } = h;
+    await p.evaluate(() => {
+      window.__mockControl = { failNote: { 甲: "这一页无法写入" } };
+      for (const note of window.__minipad.state.books[0].notes) {
+        note.content += "新";
+        note.dirty = true;
+      }
+    });
+    await p.keyboard.press("Control+s");
+    await until(() => h.mockFile("", "乙"), "二新", "healthy page saved");
+    assert.equal(await h.mockFile("", "甲"), "一", "failed page left intact");
+    assert.deepEqual(await p.evaluate(() => window.__minipad.state.books[0].notes.map((n) => n.dirty)), [true, false]);
+  });
+
+  ui("unreadable page stays read-only and recovers after a successful sync", { seed: seed({ "": { 好页: "正常内容", 坏页: "磁盘原内容" } }) }, async (h) => {
+    const { p } = h;
+    await p.evaluate(() => { window.__mockControl = { unreadable: { "": { 坏页: "模拟访问被拒绝" } }, calls: [] }; });
+    await h.sync();
+    await until(() => p.locator(".tab.unreadable").count(), 1, "warning tab appears");
+    await h.tab("坏页").click();
+    assert.ok(await p.isVisible("#read-error"));
+    assert.match(await p.textContent("#read-error"), /这一页读取失败:模拟访问被拒绝/);
+    assert.equal(await p.getAttribute("#editor .ProseMirror", "contenteditable"), "false");
+    await p.keyboard.type("不能输入");
+    await p.keyboard.press("Control+s");
+    assert.equal(await h.mockFile("", "坏页"), "磁盘原内容");
+    assert.equal(await p.evaluate(() => window.__mockControl.calls.filter((x) => x === "save_note").length), 0);
+    await p.evaluate(() => delete window.__mockControl.unreadable[""].坏页);
+    await h.sync();
+    await until(() => p.isHidden("#read-error"), true, "page becomes editable again");
+    assert.equal(await p.getAttribute("#editor .ProseMirror", "contenteditable"), "true");
+    assert.equal(await h.editor(), "磁盘原内容");
+    await h.tab("好页").click();
+    await p.locator("#editor .ProseMirror").click();
+    await p.keyboard.press("End");
+    await p.keyboard.type("追加");
+    await until(() => h.mockFile("", "好页"), "正常内容追加", "healthy page still saves");
   });
 
   ui("rapid settings changes preserve independent fields", { seed: seed({ "": { 页: "文本" } }) }, async (h) => {
