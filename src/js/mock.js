@@ -127,7 +127,10 @@ export function mockApi() {
     const order = meta.order.filter((n) => names.includes(n)).concat(names.filter((n) => !meta.order.includes(n)));
     return {
       name,
-      notes: order.map((n) => ({ name: n, content: files[n], mode: meta.modes[n] || "edit" })),
+      notes: order.map((n) => {
+        const reason = window.__mockControl?.unreadable?.[name]?.[n] || null;
+        return { name: n, content: reason ? "" : files[n], mode: meta.modes[n] || "edit", unreadable: !!reason, reason };
+      }),
       active: order.includes(meta.active) ? meta.active : (order[0] ?? ""),
     };
   };
