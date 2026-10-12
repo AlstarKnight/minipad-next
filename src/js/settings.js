@@ -7,6 +7,7 @@ import { flushAll, saveMeta } from "./save.js";
 import { reload } from "./sync.js";
 import { applyEditorSettings } from "./editor.js";
 import { DEFAULT_DATE_FORMAT, formatDate } from "./datetime.js";
+import { ACCENTS, applyAccent, parseAccent, tidyAccent, gradient } from "./accent.js";
 
 const REPO_URL = "https://github.com/AlstarKnight/minipad-next";
 
@@ -18,6 +19,8 @@ export function applySettings() {
   document.documentElement.style.setProperty("--font-size", (s.font_size || 14) + "px");
   $("#btn-pin").classList.toggle("on", s.always_on_top);
   $("#btn-pin").title = s.always_on_top ? "取消置顶" : "窗口置顶";
+  $("#btn-theme").title = theme === "dark" ? "切换到浅色" : "切换到深色";
+  applyAccent(s.accent);
   applyEditorSettings(s);
 }
 matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => state.settings && applySettings());
@@ -34,6 +37,7 @@ export function openSettings() {
   $("#set-taskbar").checked = s.show_in_taskbar;
   $("#set-autostart").checked = s.autostart;
   $("#set-theme").value = s.theme;
+  showAccent(s.accent || "");
   $("#set-font").value = s.font_size;
   $("#set-dir").value = s.notes_dir;
   $("#set-dir").placeholder = state.notesDir;
@@ -57,6 +61,36 @@ export function openSettings() {
       updateBackup();
     })
     .catch(() => {});
+}
+
+// ---- 强调色:一排色块(纯色和渐变),下面是自定义的两个取色框 ----
+let pendingAccent = "";
+
+function showAccent(value) {
+  pendingAccent = tidyAccent(value);
+  const box = $("#set-accent");
+  if (!box.childElementCount) {
+    for (const a of ACCENTS) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.title = a.name;
+      b.dataset.accent = a.value;
+      b.style.setProperty("--sw", a.value || "#d9822b");
+      b.addEventListener("click", () => showAccent(a.value));
+      box.appendChild(b);
+    }
+  }
+  for (const b of box.children) b.classList.toggle("on", b.dataset.accent === pendingAccent);
+  const a = parseAccent(pendingAccent) || { from: "#d9822b", to: "" };
+  $("#set-accent-from").value = a.from;
+  $("#set-accent-grad").checked = !!a.to;
+  if (a.to) $("#set-accent-to").value = a.to;
+  $("#set-accent-to").disabled = !a.to;
+}
+
+function customAccent() {
+  const from = $("#set-accent-from").value;
+  showAccent($("#set-accent-grad").checked ? gradient(from, $("#set-accent-to").value) : from);
 }
 
 // 现在按 F5 会插入什么,跟着输入框实时变;空着就是默认格式
@@ -96,6 +130,7 @@ async function submitSettings() {
     show_in_taskbar: $("#set-taskbar").checked,
     autostart: $("#set-autostart").checked,
     theme: $("#set-theme").value,
+    accent: pendingAccent,
     font_size: Math.min(28, Math.max(10, Number($("#set-font").value) || 14)),
     notes_dir: $("#set-dir").value.trim(),
     date_format: $("#set-date-format").value.trim(),
@@ -162,6 +197,7 @@ export function bindSettings() {
   });
   $("#set-save").addEventListener("click", submitSettings);
   $("#set-cancel").addEventListener("click", () => closeOverlays());
+  for (const id of ["#set-accent-from", "#set-accent-to", "#set-accent-grad"]) $(id).addEventListener("input", customAccent);
   $("#set-pick-dir").addEventListener("click", () => pickFolder("#set-dir", "选择笔记文件夹"));
   $("#set-open-dir").addEventListener("click", () => api.invoke("open_notes_dir").catch((e) => toast(String(e))));
   $("#set-date-format").placeholder = DEFAULT_DATE_FORMAT;

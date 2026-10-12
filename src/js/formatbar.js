@@ -4,7 +4,8 @@
 import { $prose, Plugin, commandsCtx, undo, redo, liftListItem, TextSelection, wrapInOrderedListCommand, wrapInBulletListCommand, turnIntoTextCommand, wrapInHeadingCommand } from "../vendor/milkdown.js";
 import { BUTTONS, headingLevel } from "./toolbar.js";
 import { openMenu, closeMenu } from "./ui.js";
-import { TEXT_COLORS, BG_COLORS, setColor, colorAt } from "./colors.js";
+import { TEXT_COLORS, TEXT_GRADIENTS, BG_COLORS, setColor, colorAt } from "./colors.js";
+import { parseAccent } from "./accent.js";
 
 const ICON = {
   undo: '<svg viewBox="0 0 16 16"><path d="M5.5 3.5 2.5 6.5l3 3"/><path d="M2.5 6.5h7a4 4 0 0 1 0 8H7"/></svg>',
@@ -94,7 +95,7 @@ const ITEMS = [
   { ...byId.strike, inline: true },
   { ...byId.code, inline: true },
   { ...byId.link, inline: true },
-  { id: "color", label: ICON.color, title: "字体颜色", inline: true, palette: { mark: "text_color", colors: TEXT_COLORS, none: "默认颜色" } },
+  { id: "color", label: ICON.color, title: "字体颜色", inline: true, palette: { mark: "text_color", colors: TEXT_COLORS, gradients: TEXT_GRADIENTS, none: "默认颜色" } },
   { id: "bg", label: ICON.bg, title: "背景颜色", inline: true, palette: { mark: "text_bg", colors: BG_COLORS, none: "无背景" } },
   { sep: true },
   { ...byId.list, title: "列表", active: listActive("bullet_list"), run: toggleList("bullet_list", wrapInBulletListCommand) },
@@ -204,7 +205,7 @@ class FormatBar {
     this.popFor = null;
   }
 
-  paletteMenu(btn, { mark, colors, none }) {
+  paletteMenu(btn, { mark, colors, gradients, none }) {
     const now = colorAt(this.view.state, mark);
     const pick = (value) => {
       this.closePop();
@@ -215,19 +216,29 @@ class FormatBar {
     clear.className = "fb-none";
     clear.textContent = none;
     clear.addEventListener("click", () => pick(""));
-    const grid = document.createElement("div");
-    grid.className = "fb-swatches";
-    for (const c of colors) {
-      const b = document.createElement("button");
-      b.className = "fb-swatch" + (c.value === now ? " on" : "");
-      b.dataset.color = c.value;
-      b.title = c.name;
-      b.style.setProperty(mark === "text_color" ? "--fg" : "--sw", c.value);
-      b.textContent = mark === "text_color" ? "A" : "";
-      b.addEventListener("click", () => pick(c.value));
-      grid.appendChild(b);
+    const grid = (list, cls) => {
+      const g = document.createElement("div");
+      g.className = "fb-swatches " + cls;
+      for (const c of list) {
+        const b = document.createElement("button");
+        b.className = "fb-swatch" + (c.value === now ? " on" : "");
+        b.dataset.color = c.value;
+        b.title = c.name;
+        b.style.setProperty(mark === "text_color" ? "--fg" : "--sw", c.value);
+        b.textContent = mark === "text_color" ? "A" : "";
+        b.addEventListener("click", () => pick(c.value));
+        g.appendChild(b);
+      }
+      return g;
+    };
+    const parts = [clear, grid(colors, "")];
+    if (gradients) {
+      const title = document.createElement("div");
+      title.className = "menu-title";
+      title.textContent = "渐变色";
+      parts.push(title, grid(gradients, "fb-gradients"));
     }
-    this.openPop(btn, [clear, grid]);
+    this.openPop(btn, parts);
   }
 
   customize(btn) {
@@ -301,7 +312,8 @@ class FormatBar {
       }
       if (it.palette) {
         const c = colorAt(state, it.palette.mark);
-        btn.querySelector(".swatch").style.fill = c || btn.dataset.last || "";
+        const shown = c || btn.dataset.last || "";
+        btn.querySelector(".swatch").style.fill = parseAccent(shown)?.from || shown;
         btn.classList.toggle("on", !!c);
       } else btn.classList.toggle("on", !!it.active?.(state));
       btn.disabled = (it.inline && code) || (it.enabled ? !it.enabled(state) : false);

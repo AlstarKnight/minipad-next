@@ -56,6 +56,8 @@ pub struct Settings {
     show_in_taskbar: bool,
     autostart: bool,
     theme: String,
+    /// 强调色:空着是默认的橙色,"#3b82f6" 是纯色,"linear-gradient(135deg, #a, #b)" 是渐变色
+    accent: String,
     font_size: u32,
     notes_dir: String,
     /// 编辑区显示行号
@@ -86,6 +88,7 @@ impl Default for Settings {
             show_in_taskbar: false,
             autostart: false,
             theme: "system".into(),
+            accent: String::new(),
             font_size: 14,
             notes_dir: String::new(),
             line_numbers: false,
@@ -242,6 +245,16 @@ fn tidy_settings(s: &mut Settings) {
     s.notes_dir = s.notes_dir.trim().to_string();
     s.backup_dir = s.backup_dir.trim().to_string();
     s.backup_keep = s.backup_keep.clamp(1, 365);
+    // 强调色只是给界面用的一小段文字,太长或者有奇怪的字符就不要
+    s.accent = s.accent.trim().to_string();
+    if s.accent.len() > 160
+        || !s
+            .accent
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || " #(),-.".contains(c))
+    {
+        s.accent.clear();
+    }
     // 日期格式最多 64 个字(按字算,不按字节),空着就用默认的
     let format: String = s.date_format.trim().chars().take(64).collect();
     s.date_format = match format.trim_end() {
@@ -290,6 +303,7 @@ const WELCOME: &str = r#"# 欢迎使用 Minipad Next
 - 内容会自动保存,每个页面就是笔记文件夹里的一个 `.md` 文件
 - 看到的就是排好版的样子:行首打 `# ` 变标题,`- ` 变列表,`> ` 变引用,`**粗体**`、`` `代码` `` 打完就变样;选中文字会出来一排按钮
 - 标签下面的**格式栏**有标题、粗体、列表、表格、<span style="color: #df2a3f">字体颜色</span>和<span style="background-color: #fbe9a6">背景颜色</span>等按钮;右边的按钮可以选显示哪些,顶栏的 **Aa** 可以收起它
+- 顶栏的太阳 / 月亮按钮切换深色和浅色;设置里可以换<span style="color: #5fb4ff; background-image: linear-gradient(90deg, #5fb4ff, #d66cf0); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent">强调色,也能用渐变色</span>
 - 在列表里按 **Enter** 接着写下一项,**Ctrl+Enter** 勾选任务,**F5** 插入当前日期时间
 - 打 ```` ``` ```` 再按 Enter 插入代码块;代码块顶栏的"添加标题"和语言点一下就能改,右边有"复制"按钮
 - 页面多了可以分**笔记本**:点标签栏最左边的笔记本名字(或按 **Ctrl+B**)新建和切换,每个笔记本就是笔记文件夹里的一个子文件夹
@@ -989,5 +1003,29 @@ mod tests {
         s.date_format = format!("{} H:mm", "年".repeat(63));
         tidy_settings(&mut s);
         assert_eq!(s.date_format, "年".repeat(63));
+    }
+
+    #[test]
+    fn tidy_settings_keeps_only_plain_accent_values() {
+        let mut s = Settings::default();
+        for ok in [
+            "",
+            "#3b82f6",
+            "linear-gradient(135deg, #ff5f6d, #ffa94d, #f5d142)",
+        ] {
+            s.accent = format!("  {ok} ");
+            tidy_settings(&mut s);
+            assert_eq!(s.accent, ok);
+        }
+        let long = "#".repeat(200);
+        for bad in [
+            "url(javascript:x)",
+            "red; background: url(x)",
+            long.as_str(),
+        ] {
+            s.accent = bad.to_string();
+            tidy_settings(&mut s);
+            assert_eq!(s.accent, "", "{bad}");
+        }
     }
 }

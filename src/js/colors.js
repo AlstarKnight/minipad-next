@@ -2,8 +2,11 @@
 // Markdown 没有颜色的写法,所以存成 HTML 的 span(别的 Markdown 编辑器一般也认):
 //   <span style="color: #df2a3f">红字</span>
 //   <span style="background-color: #fbe9a6">黄底</span>
+// 渐变色的字用 background-clip: text 的写法,前面的 color 是不支持渐变的编辑器里显示的颜色:
+//   <span style="color: #38d6c4; background-image: linear-gradient(90deg, #38d6c4, #7f8ff5); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent">渐变</span>
 // 读文件时把成对的 <span style=…> 和 </span> 收拢成 textColor / textBg 节点,编辑器里就是两种文字标记
 import { $markSchema, $remark } from "../vendor/milkdown.js";
+import { GRADIENTS, gradientOf, parseAccent, tidyAccent } from "./accent.js";
 
 // 颜色板:字体颜色在浅色、深色背景上都看得清;背景色在深色主题里会调淡(见 style.css)
 export const TEXT_COLORS = [
@@ -15,6 +18,9 @@ export const TEXT_COLORS = [
   { name: "蓝色", value: "#117cee" },
   { name: "紫色", value: "#8a3fd4" },
 ];
+// 字体的渐变色:从左到右
+export const TEXT_GRADIENTS = GRADIENTS.map((g) => ({ name: g.name + "渐变", value: gradientOf(g.stops, 90) }));
+
 export const BG_COLORS = [
   { name: "灰色", value: "#e4e5e7" },
   { name: "红色", value: "#fbd4d0" },
@@ -31,18 +37,35 @@ const cleanColor = (v) => {
   v = (v || "").trim();
   return COLOR.test(v) ? v : "";
 };
+// 渐变色:只认 linear-gradient(角度, #颜色, #颜色) 这种写法
+const cleanGradient = (v) => (parseAccent(v)?.to ? tidyAccent(v) : "");
+const isGradient = (v) => (v || "").startsWith("linear-gradient(");
+
+// 字体颜色在页面上和文件里的 style
+export function colorStyle(value) {
+  if (!isGradient(value)) return `color: ${value}`;
+  const from = parseAccent(value)?.from || "";
+  return `color: ${from}; background-image: ${value}; -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent`;
+}
 
 function parseStyle(style) {
   const out = {};
+  let grad = "";
+  let clipText = false;
   for (const part of style.split(";")) {
     const i = part.indexOf(":");
     if (i < 0) continue;
     const key = part.slice(0, i).trim().toLowerCase();
-    const value = cleanColor(part.slice(i + 1));
+    const raw = part.slice(i + 1).trim();
+    if ((key === "background-clip" || key === "-webkit-background-clip") && raw.toLowerCase() === "text") clipText = true;
+    if ((key === "background-image" || key === "background") && cleanGradient(raw)) grad = cleanGradient(raw);
+    const value = cleanColor(raw);
     if (!value) continue;
     if (key === "color") out.color = value;
     else if (key === "background-color" || key === "background") out.bg = value;
   }
+  // 渐变色的字:背景是渐变、只画在字上
+  if (grad && clipText) out.color = grad;
   return out;
 }
 
@@ -90,16 +113,16 @@ export const colorSpans = $remark("minipadColorSpans", () => () => (tree) => {
 
 // 写回文件时的样子
 export const colorHandlers = {
-  textColor: (node, _, state, info) => `<span style="color: ${node.color}">${state.containerPhrasing(node, info)}</span>`,
+  textColor: (node, _, state, info) => `<span style="${colorStyle(node.color)}">${state.containerPhrasing(node, info)}</span>`,
   textBg: (node, _, state, info) => `<span style="background-color: ${node.bg}">${state.containerPhrasing(node, info)}</span>`,
 };
 
-function colorMark(name, attr, mdType, cssProp) {
+function colorMark(name, attr, mdType, style) {
   return $markSchema(name, () => ({
     attrs: { [attr]: { default: "" } },
     inclusive: true,
-    parseDOM: [{ tag: `span[data-${attr}]`, getAttrs: (dom) => ({ [attr]: cleanColor(dom.dataset[attr]) }) }],
-    toDOM: (mark) => ["span", { [`data-${attr}`]: mark.attrs[attr], style: `${cssProp}: ${mark.attrs[attr]}` }, 0],
+    parseDOM: [{ tag: `span[data-${attr}]`, getAttrs: (dom) => ({ [attr]: cleanColor(dom.dataset[attr]) || cleanGradient(dom.dataset[attr]) }) }],
+    toDOM: (mark) => ["span", { [`data-${attr}`]: mark.attrs[attr], style: style(mark.attrs[attr]) }, 0],
     parseMarkdown: {
       match: (node) => node.type === mdType,
       runner: (state, node, markType) => {
@@ -118,8 +141,8 @@ function colorMark(name, attr, mdType, cssProp) {
 }
 
 // 背景色在页面上用 --mark-bg 变量,深色主题里调淡一些(见 style.css)
-export const textColor = colorMark("text_color", "color", "textColor", "color");
-export const textBg = colorMark("text_bg", "bg", "textBg", "--mark-bg");
+export const textColor = colorMark("text_color", "color", "textColor", colorStyle);
+export const textBg = colorMark("text_bg", "bg", "textBg", (v) => `--mark-bg: ${v}`);
 
 // 给选中的文字换颜色;value 为空就去掉颜色。没选中文字时,接下来打的字用这个颜色
 export function setColor(view, markName, value) {
