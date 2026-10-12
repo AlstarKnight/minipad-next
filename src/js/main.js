@@ -2,7 +2,7 @@
 import { api, isMock } from "./api.js";
 import { $, tabsEl } from "./dom.js";
 import { state, book, current } from "./state.js";
-import { toast, dialogOpen, closeDialog, closeMenu, closeOverlays, focusEditor, askText } from "./ui.js";
+import { toast, dialogOpen, closeDialog, closeMenu, closeOverlays, focusEditor, ask, askText } from "./ui.js";
 import { markDirty, flushAll, saveMeta, resetActivity } from "./save.js";
 import { reload, syncFromDisk } from "./sync.js";
 import { rememberView } from "./page.js";
@@ -22,16 +22,7 @@ async function init() {
   bindUi();
   await reload();
   api.listen("flush", () => { void flushAll().catch(() => {}); });
-  api.listen("before-quit", async () => {
-    try {
-      await flushAll();
-      await saveMeta();
-      await api.invoke("quit_app");
-    } catch (e) {
-      toast("保存失败，已取消退出：" + String(e), 7000);
-      await api.invoke("show_window").catch(() => {});
-    }
-  });
+  api.listen("before-quit", (e) => { void handleQuit(e.payload); });
   api.listen("shown", () => {
     focusEditor();
     syncFromDisk();
@@ -44,6 +35,54 @@ async function init() {
   api.listen("edge-hidden", (e) => (document.documentElement.dataset.edge = e.payload));
   api.listen("edge-shown", () => delete document.documentElement.dataset.edge);
   api.listen("backup-error", (e) => toast("自动备份失败:" + e.payload, 5000));
+}
+
+// 托盘退出确认后，给正常保存最多 10 秒。超时只弹确认，不直接退出。
+// 单个请求在取消或退出确认前不会重复弹窗。
+let quitInProgress = false;
+async function handleQuit(id) {
+  if (quitInProgress) return;
+  quitInProgress = true;
+  try {
+    // ack 必须先发，表示 WebView 收到了消息，绝不代表已完成保存。
+    if (!(await api.invoke("quit_ack", { id }))) return;
+    const timeoutMs = isMock ? (window.__mockControl?.quitTimeoutMs ?? 10000) : 10000;
+    let timer;
+    const completed = (async () => {
+      try {
+        await flushAll();
+        await saveMeta();
+        return { ok: true, error: "" };
+      } catch (e) {
+        return { ok: false, error: String(e) };
+      }
+    })();
+    const timeout = new Promise((resolve) => {
+      timer = setTimeout(() => resolve({ ok: false, error: "保存等待超过 10 秒" }), timeoutMs);
+    });
+    const result = await Promise.race([completed, timeout]);
+    clearTimeout(timer);
+    const pending = state.books.reduce((sum, b) => sum + b.notes.filter((n) => n.dirty).length, 0);
+    if (result.ok && !pending) {
+      await api.invoke("quit_app");
+      return;
+    }
+    await api.invoke("show_window");
+    const detail = result.error || "部分页面仍有未保存的修改";
+    const message = pending
+      ? `有 ${pending} 页没保存成功（${detail}），仍要退出吗？`
+      : `笔记元信息未保存成功（${detail}），仍要退出吗？`;
+    if (await ask(message, "仍要退出", true)) {
+      await api.invoke("quit_app");
+    } else {
+      await api.invoke("quit_cancel", { id });
+    }
+  } catch (e) {
+    toast("退出确认失败：" + String(e), 7000);
+    await api.invoke("quit_cancel", { id }).catch(() => {});
+  } finally {
+    quitInProgress = false;
+  }
 }
 
 // 用系统浏览器打开链接(编辑区里 Ctrl+点击链接)
