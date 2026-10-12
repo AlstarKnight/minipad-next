@@ -257,15 +257,26 @@ const cache = new WeakMap();
 
 const ENTITY = { "&amp;": "&", "&lt;": "<", "&gt;": ">", "&quot;": '"', "&#x27;": "'", "&#39;": "'" };
 
+// highlight.js 里 shell 是"命令行会话"(只给 $ 提示符上色),平时写 shell 的代码块其实是 bash 脚本
+const ALIAS = { shell: "bash", sh: "bash", zsh: "bash", cmd: "dos", bat: "dos", ps: "powershell", ps1: "powershell", vue: "xml", html: "xml", toml: "ini", jsonc: "json" };
+
+// 代码块用哪种语言上色:写的语言认识就用它;没写或者不认识就猜一个;text 这类纯文本不上色
+export function highlightLanguage(lang) {
+  lang = (lang || "").toLowerCase();
+  const name = ALIAS[lang] || lang;
+  if (name && hljs.getLanguage(name)) return name;
+  return null;
+}
+
 function highlightRanges(node) {
   if (cache.has(node)) return cache.get(node);
   const text = node.textContent;
-  const lang = node.attrs.language;
+  const lang = highlightLanguage(node.attrs.language);
   let html = null;
   try {
-    if (lang && hljs.getLanguage(lang)) html = hljs.highlight(text, { language: lang, ignoreIllegals: true }).value;
-    // 没写语言时猜一个来上色,猜的不一定对,所以不显示猜出来的语言名
-    else if (!lang && text.length < 20000) html = hljs.highlightAuto(text).value;
+    if (lang) html = hljs.highlight(text, { language: lang, ignoreIllegals: true }).value;
+    // 没写语言(或者语言不认识)时猜一个来上色,猜的不一定对,所以不显示猜出来的语言名
+    else if (text.length < 20000) html = hljs.highlightAuto(text).value;
   } catch (_) {}
   const ranges = [];
   if (html) {
@@ -283,8 +294,31 @@ function highlightRanges(node) {
       }
     }
   }
+  if (lang === "bash") shellCommands(text, ranges);
   cache.set(node, ranges);
   return ranges;
+}
+
+// highlight.js 的 bash 只认 echo、cd 这些内置命令,adb、git、npm 这样的命令名和 -x、--force 参数都不上色。
+// 这里补上:每条命令开头的词(行首,或者 | && || ; 后面)当函数名,- 开头的参数当属性
+function shellCommands(text, ranges) {
+  const taken = (from, to) => ranges.some(([a, b]) => a < to && from < b);
+  const add = [];
+  const cmd = /(^|[|;&(]\s*|\n)([ \t]*)((?:sudo\s+)?)([^\s|;&()=<>'"#$`]+)(?=[\s;|&)]|$)/g;
+  let m;
+  while ((m = cmd.exec(text))) {
+    const from = m.index + m[1].length + m[2].length + m[3].length;
+    const to = from + m[4].length;
+    if (!taken(from, to)) add.push([from, to, "hljs-title function_"]);
+  }
+  const opt = /(?<=[\s=])--?[A-Za-z][\w-]*/g;
+  while ((m = opt.exec(text))) {
+    const from = m.index;
+    const to = from + m[0].length;
+    if (!taken(from, to)) add.push([from, to, "hljs-attr"]);
+  }
+  ranges.push(...add);
+  ranges.sort((a, b) => a[0] - b[0]);
 }
 
 function decorate(doc) {

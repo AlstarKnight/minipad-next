@@ -1036,8 +1036,14 @@ describe("editor", () => {
     assert.equal(await p.evaluate(() => window.__notReloaded), true, "F5 never reloads the page");
   });
 
-  ui("the toolbar formats selected text; Ctrl+B bolds a selection and opens the notebooks without one", { seed: seed({ "": { 页: "一段文字" } }) }, async (h) => {
+  ui("with the format bar hidden a toolbar formats selected text; Ctrl+B bolds a selection and opens the notebooks without one", { seed: seed({ "": { 页: "一段文字" } }) }, async (h) => {
     const { p } = h;
+    await p.click("#editor .ProseMirror p");
+    await p.keyboard.press("Shift+Home");
+    await sleep(200);
+    assert.ok(await p.isHidden("#toolbar"), "no floating toolbar while the format bar is shown");
+    await p.click("#btn-format");
+    await until(() => p.isHidden("#format-bar"), true);
     await p.click("#editor .ProseMirror p");
     await p.keyboard.press("End");
     assert.ok(await p.isHidden("#toolbar"), "no toolbar without a selection");
@@ -1192,5 +1198,117 @@ describe("code blocks", () => {
     await p.check("#set-code-lines");
     await p.click("#set-save");
     await until(numbered, true, "line numbers back");
+  });
+});
+
+// ---------- 格式栏 ----------
+describe("format bar", () => {
+  const fb = (cmd) => `#format-bar [data-cmd="${cmd}"]`;
+
+  ui("the format bar formats text, follows the cursor and can be hidden", { seed: seed({ "": { 页: "一段文字\n\n第二段" } }) }, async (h) => {
+    const { p } = h;
+    assert.ok(await p.isVisible("#format-bar"), "shown by default");
+    await p.click("#editor .ProseMirror p >> nth=0");
+    await p.keyboard.press("End");
+    await until(h.selection, "", "the cursor is in the first paragraph");
+    assert.ok(await p.isDisabled(fb("undo")), "nothing to undo yet");
+    // 正文 / 标题下拉
+    assert.equal((await p.textContent(fb("block"))).trim(), "正文");
+    await p.click(fb("block"));
+    await p.click('#ctx [data-act="h2"]');
+    assert.equal(await h.editor(), "## 一段文字\n\n第二段", "the menu turns the paragraph into a heading");
+    assert.equal((await p.textContent(fb("block"))).trim(), "标题 2", "and shows the heading level");
+    assert.ok(await h.editorFocused(), "the cursor stays in the editor");
+    await p.click(fb("undo"));
+    assert.equal(await h.editor(), "一段文字\n\n第二段", "undo button");
+    await p.click(fb("redo"));
+    assert.equal(await h.editor(), "## 一段文字\n\n第二段", "redo button");
+    // 选中文字加粗
+    await p.keyboard.press("Shift+Home");
+    await p.click(fb("strong"));
+    assert.equal(await h.editor(), "## **一段文字**\n\n第二段");
+    assert.ok(await p.locator(`${fb("strong")}.on`).isVisible(), "bold shows as on");
+    await p.keyboard.press("End");
+    // 列表:点一下变列表,再点取消,编号和列表互换
+    await p.click("#editor .ProseMirror p >> text=第二段");
+    await p.click(fb("list"));
+    assert.equal(await h.editor(), "## **一段文字**\n\n- 第二段");
+    await p.click(fb("ol"));
+    assert.equal(await h.editor(), "## **一段文字**\n\n1. 第二段", "the numbered list button switches the list");
+    await p.click(fb("ol"));
+    assert.equal(await h.editor(), "## **一段文字**\n\n第二段", "and clicking it again ends the list");
+    await p.keyboard.press("End");
+    await p.click(fb("hr"));
+    await p.keyboard.type("下面");
+    await p.click(fb("table"));
+    await p.keyboard.type("格");
+    assert.match(await h.editor(), /^## \*\*一段文字\*\*\n\n第二段\n\n---\n\n下面\n\n\| 格 +\| +\| +\|\n\| :?-+ \|/, "the rule and the table go after the paragraph, the cursor into them");
+    // 收起和打开
+    await p.click("#format-bar .fb-hide");
+    await until(() => p.isHidden("#format-bar"), true, "the arrow hides the bar");
+    await until(async () => (await h.stored())?.settings?.format_bar, false, "remembered");
+    assert.ok(await h.editorFocused(), "the cursor goes back to the editor");
+    await p.click("#btn-format");
+    await until(() => p.isVisible("#format-bar"), true, "Aa shows it again");
+    await until(async () => (await h.stored())?.settings?.format_bar, true);
+  });
+
+  ui("text and background colors are saved as spans in the Markdown", { seed: seed({ "": { 页: '红<span style="color: #df2a3f">字</span>' } }) }, async (h) => {
+    const { p } = h;
+    assert.equal(await p.locator('#editor span[data-color="#df2a3f"]').textContent(), "字", "a colored span in the file shows in color");
+    await p.click("#editor .ProseMirror p");
+    await p.keyboard.press("End");
+    await p.keyboard.press("Shift+ArrowLeft");
+    await until(h.selection, "字");
+    assert.ok(await p.locator(`${fb("color")}.on`).isVisible(), "the color button shows the selection has a color");
+    await p.click(fb("color"));
+    await p.locator(".fb-pop").waitFor();
+    assert.ok(await p.locator('.fb-pop .fb-swatch.on[data-color="#df2a3f"]').isVisible(), "the current color is marked");
+    await p.click('.fb-pop .fb-swatch[data-color="#117cee"]');
+    assert.equal(await h.editor(), '红<span style="color: #117cee">字</span>', "a new text color");
+    await p.keyboard.press("Shift+Home");
+    await p.click(fb("bg"));
+    await p.click('.fb-pop .fb-swatch[data-color="#fbe9a6"]');
+    assert.equal(
+      await h.editor(),
+      '<span style="background-color: #fbe9a6">红<span style="color: #117cee">字</span></span>',
+      "background color on both characters",
+    );
+    await p.click(fb("color"));
+    await p.click(".fb-pop .fb-none");
+    assert.equal(await h.editor(), '<span style="background-color: #fbe9a6">红字</span>', "默认颜色 removes the text color");
+    await until(() => h.mockFile("", "页"), '<span style="background-color: #fbe9a6">红字</span>', "saved");
+    // Esc 只关颜色板
+    await p.click(fb("bg"));
+    await p.locator(".fb-pop").waitFor();
+    await p.keyboard.press("Escape");
+    await until(() => p.isHidden(".fb-pop"), true, "Esc closes the palette");
+    assert.equal(await h.toast(), "", "and does not hide the window");
+  });
+
+  ui("the buttons on the bar can be chosen", { seed: seed({ "": { 页: "文字" } }) }, async (h) => {
+    const { p } = h;
+    await p.click("#format-bar .fb-more");
+    await p.locator(".fb-pop .fb-checks").waitFor();
+    await p.uncheck('.fb-pop input[value="strike"]');
+    await p.uncheck('.fb-pop input[value="undo"]');
+    await p.uncheck('.fb-pop input[value="redo"]');
+    assert.ok(await p.isHidden(fb("strike")), "unchecked buttons disappear");
+    assert.ok(await p.isHidden("#format-bar .fb-items > .sep >> nth=0"), "a separator with nothing before it goes too");
+    await until(async () => (await h.stored())?.settings?.format_bar_hidden, ["undo", "redo", "strike"], "remembered");
+    await p.reload();
+    await p.waitForSelector(fb("strong"));
+    assert.ok(await p.isHidden(fb("strike")), "still hidden after a restart");
+    assert.ok(await p.isVisible(fb("strong")), "the others stay");
+  });
+
+  ui("shell code is colored like bash, with command names and options", { seed: seed({ "": { 页: "```shell\n./adb shell sh /x/start.sh\nnpm run build --prod\n```" } }) }, async (h) => {
+    const { p } = h;
+    const colored = () => p.$$eval("#editor pre code [class*=hljs]", (els) => els.map((e) => [e.className, e.textContent]));
+    await until(colored, [
+      ["hljs-title function_", "./adb"],
+      ["hljs-title function_", "npm"],
+      ["hljs-attr", "--prod"],
+    ], "commands and options are colored");
   });
 });

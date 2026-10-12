@@ -48,6 +48,16 @@ function anyOverlay() {
   return dialogOpen() || ["#search", "#settings", "#books", "#ctx"].some((sel) => !$(sel).hidden);
 }
 
+// 顶栏的 Aa 按钮、格式栏右边的收起按钮:显示 / 收起格式栏,记在设置里
+async function toggleFormatBar() {
+  try {
+    await saveSettings({ ...state.settings, format_bar: state.settings.format_bar === false });
+  } catch (e) {
+    toast(String(e));
+  }
+  focusEditor();
+}
+
 async function hideWindow() {
   rememberView();
   await flushAll();
@@ -61,6 +71,11 @@ function bindUi() {
   $("#btn-search").addEventListener("click", openSearch);
   $("#btn-settings").addEventListener("click", openSettings);
   $("#btn-hide").addEventListener("click", hideWindow);
+  $("#btn-format").addEventListener("click", toggleFormatBar);
+  document.addEventListener("hide-format-bar", toggleFormatBar);
+  document.addEventListener("format-bar-items", (e) =>
+    saveSettings({ ...state.settings, format_bar_hidden: e.detail }).catch((err) => toast(String(err)))
+  );
   $("#btn-pin").addEventListener("click", async () => {
     try {
       await saveSettings({ ...state.settings, always_on_top: !state.settings.always_on_top });

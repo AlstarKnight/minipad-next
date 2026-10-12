@@ -40,6 +40,7 @@ export function openSettings() {
   $("#set-date-format").value = s.date_format;
   updateDatePreview();
   $("#set-code-lines").checked = s.code_line_numbers;
+  $("#set-format-bar").checked = s.format_bar !== false;
   $("#set-backup").checked = s.backup_enabled;
   $("#set-backup-keep").value = s.backup_keep;
   $("#set-backup-dir").value = s.backup_dir;
@@ -99,6 +100,7 @@ async function submitSettings() {
     notes_dir: $("#set-dir").value.trim(),
     date_format: $("#set-date-format").value.trim(),
     code_line_numbers: $("#set-code-lines").checked,
+    format_bar: $("#set-format-bar").checked,
     backup_enabled: $("#set-backup").checked,
     backup_keep: Math.min(365, Math.max(1, Math.round(Number($("#set-backup-keep").value)) || 14)),
     backup_dir: $("#set-backup-dir").value.trim(),

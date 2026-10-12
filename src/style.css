@@ -212,6 +212,47 @@ svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width:
 
 .spacer { flex: 1; min-width: 8px; align-self: stretch; }
 
+/* ---------- 格式栏 ---------- */
+#format-bar {
+  display: flex;
+  align-items: flex-start;
+  min-height: 34px;
+  padding: 4px 4px 4px 6px;
+  background: var(--tab-active);
+  border-bottom: 1px solid var(--code-border);
+  user-select: none;
+}
+#format-bar[hidden] { display: none; }
+#format-bar .fb-items {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  /* 窗口窄的时候放不下就换到第二行 */
+  flex-wrap: wrap;
+  gap: 1px;
+}
+#format-bar button {
+  flex-shrink: 0;
+  min-width: 26px;
+  height: 26px;
+  padding: 0 4px;
+  border-radius: 5px;
+  color: var(--text);
+  font-size: 12.5px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+#format-bar button:hover:not(:disabled) { background: var(--accent-soft); }
+#format-bar button.on { color: var(--accent); background: var(--accent-soft); }
+#format-bar button:disabled { opacity: 0.35; cursor: default; }
+#format-bar .sep { flex-shrink: 0; width: 1px; height: 16px; margin: 0 4px; background: var(--bar-border); }
+#format-bar .fb-block { gap: 2px; min-width: 62px; justify-content: space-between; padding: 0 4px 0 7px; }
+#format-bar .fb-block svg { width: 11px; height: 11px; stroke-width: 1.8; color: var(--muted); }
+#format-bar .fb-hide { color: var(--muted); margin-left: 2px; }
+#format-bar .fb-hide:hover { color: var(--text); }
+
 /* ---------- 内容 ---------- */
 #main { flex: 1; min-height: 0; position: relative; }
 
@@ -564,3 +605,23 @@ svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width:
   font-size: 12.5px;
   z-index: 30;
 }
+
+/* 背景颜色:深色主题里调淡,不然浅色的底配浅色的字看不清 */
+#editor span[data-bg] { background: var(--mark-bg); border-radius: 2px; padding: 0 1px; }
+[data-theme="dark"] #editor span[data-bg] { background: color-mix(in srgb, var(--mark-bg) 42%, transparent); }
+
+/* 格式栏:颜色按钮下面的色条,颜色板,自定义 */
+#format-bar .fb-color .swatch { stroke: none; fill: var(--muted); }
+#format-bar .fb-more { color: var(--muted); margin-left: 2px; }
+.fb-pop { padding: 6px; min-width: 0; }
+.fb-pop .fb-none { padding: 4px 8px; margin-bottom: 4px; }
+.fb-swatches { display: grid; grid-template-columns: repeat(7, 24px); gap: 4px; padding: 0 2px 2px; }
+.menu .fb-swatch {
+  width: 24px; height: 24px; padding: 0; border-radius: 5px; text-align: center;
+  font-weight: 600; font-size: 13px; color: var(--fg, var(--text));
+  background: var(--sw, transparent); border: 1px solid var(--code-border);
+}
+.menu .fb-swatch:hover { background: var(--sw, var(--accent-soft)); outline: 2px solid var(--accent-soft); }
+.menu .fb-swatch.on { outline: 2px solid var(--accent); }
+.fb-checks { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 10px; padding: 2px 6px 4px; font-size: 13px; }
+.fb-checks label { display: flex; align-items: center; gap: 4px; white-space: nowrap; cursor: pointer; }

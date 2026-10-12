@@ -18,6 +18,8 @@ const DEFAULT_SETTINGS = {
   line_numbers: false,
   date_format: DEFAULT_DATE_FORMAT,
   code_line_numbers: true,
+  format_bar: true,
+  format_bar_hidden: [],
   backup_enabled: true,
   backup_keep: 14,
   backup_dir: "",

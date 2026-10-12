@@ -34,6 +34,8 @@ import {
 import { $ } from "./dom.js";
 import { codeBlockWithTitle, codeBlockView, codeHighlight } from "./codeblock.js";
 import { toolbar } from "./toolbar.js";
+import { formatBar, setFormatBarHidden } from "./formatbar.js";
+import { colorSpans, colorHandlers, textColor, textBg } from "./colors.js";
 
 let editor = null;
 let view = null;
@@ -287,7 +289,8 @@ export async function createEditor(opts) {
     .config((c) => {
       c.set(rootCtx, $("#editor"));
       // 写回文件时:列表用 -,分隔线用 ---
-      c.update(remarkStringifyOptionsCtx, (o) => ({ ...o, bullet: "-", rule: "-" }));
+      // 字体颜色、背景颜色写成 <span style>(见 colors.js)
+      c.update(remarkStringifyOptionsCtx, (o) => ({ ...o, bullet: "-", rule: "-", handlers: { ...o.handlers, ...colorHandlers } }));
       c.set(linkAttr.key, () => ({ title: "Ctrl+点击打开链接" }));
     })
     // 自己的按键放在最前面,先于 Milkdown 自带的按键处理(Shift+Enter、Ctrl+B 等)
@@ -296,7 +299,8 @@ export async function createEditor(opts) {
     .use(gfm)
     .use(history)
     .use(clipboard)
-    .use([lineBreak, codeBlockWithTitle, codeBlockView, codeHighlight, changes, placeholder, afterRule, toolbar])
+    .use([colorSpans, textColor, textBg].flat())
+    .use([lineBreak, codeBlockWithTitle, codeBlockView, codeHighlight, changes, placeholder, afterRule, toolbar, formatBar])
     .create();
   editor.action((c) => {
     ctx = c;
@@ -443,4 +447,9 @@ export function insertText(text) {
 
 export function applyEditorSettings(s) {
   $("#editor").classList.toggle("code-lines", s.code_line_numbers !== false);
+  const bar = s.format_bar !== false;
+  $("#format-bar").hidden = !bar;
+  setFormatBarHidden(s.format_bar_hidden);
+  $("#btn-format").classList.toggle("on", bar);
+  $("#btn-format").setAttribute("aria-pressed", String(bar));
 }

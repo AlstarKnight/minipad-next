@@ -6,7 +6,7 @@ export * from "@milkdown/kit/preset/gfm";
 export { history } from "@milkdown/kit/plugin/history";
 export { clipboard } from "@milkdown/kit/plugin/clipboard";
 export { trailing } from "@milkdown/kit/plugin/trailing";
-export { $prose, $view, $shortcut, callCommand, getMarkdown } from "@milkdown/kit/utils";
+export { $prose, $view, $shortcut, $markSchema, $remark, callCommand, getMarkdown } from "@milkdown/kit/utils";
 export { Plugin, PluginKey, TextSelection, NodeSelection, EditorState, Selection } from "@milkdown/kit/prose/state";
 export { Decoration, DecorationSet } from "@milkdown/kit/prose/view";
 export { Fragment, Slice } from "@milkdown/kit/prose/model";

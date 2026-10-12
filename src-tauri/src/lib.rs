@@ -62,8 +62,12 @@ pub struct Settings {
     line_numbers: bool,
     /// 按 F5 插入的日期时间格式,写法和 Windows 一样,比如 H:mm yyyy/M/d
     date_format: String,
-    /// 阅读模式里代码块显示行号
+    /// 代码块显示行号
     code_line_numbers: bool,
+    /// 标签下面显示格式栏
+    format_bar: bool,
+    /// 格式栏里不显示的按钮
+    format_bar_hidden: Vec<String>,
     /// 每天第一次保存时把笔记文件夹打包备份
     backup_enabled: bool,
     /// 保留最近几份备份
@@ -87,6 +91,8 @@ impl Default for Settings {
             line_numbers: false,
             date_format: DEFAULT_DATE_FORMAT.into(),
             code_line_numbers: true,
+            format_bar: true,
+            format_bar_hidden: Vec::new(),
             backup_enabled: true,
             backup_keep: 14,
             backup_dir: String::new(),
@@ -283,6 +289,7 @@ const WELCOME: &str = r#"# 欢迎使用 Minipad Next
 - 把窗口拖到屏幕**上边、左边或右边**,鼠标移开后会自动贴边隐藏,鼠标碰到边缘再滑出来
 - 内容会自动保存,每个页面就是笔记文件夹里的一个 `.md` 文件
 - 看到的就是排好版的样子:行首打 `# ` 变标题,`- ` 变列表,`> ` 变引用,`**粗体**`、`` `代码` `` 打完就变样;选中文字会出来一排按钮
+- 标签下面的**格式栏**有标题、粗体、列表、表格、<span style="color: #df2a3f">字体颜色</span>和<span style="background-color: #fbe9a6">背景颜色</span>等按钮;右边的按钮可以选显示哪些,顶栏的 **Aa** 可以收起它
 - 在列表里按 **Enter** 接着写下一项,**Ctrl+Enter** 勾选任务,**F5** 插入当前日期时间
 - 打 ```` ``` ```` 再按 Enter 插入代码块;代码块顶栏的"添加标题"和语言点一下就能改,右边有"复制"按钮
 - 页面多了可以分**笔记本**:点标签栏最左边的笔记本名字(或按 **Ctrl+B**)新建和切换,每个笔记本就是笔记文件夹里的一个子文件夹
