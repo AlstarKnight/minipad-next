@@ -186,12 +186,18 @@ mod tests {
     #[test]
     fn optional_button_leaves_a_larger_click_target_on_all_edges() {
         let win = Rect::new(300, 0, 400, 500);
-        assert_eq!(hidden_position_with_strip(Edge::Top, win, SCREEN, BUTTON_STRIP),
-            (300, -500 + BUTTON_STRIP));
-        assert_eq!(hidden_position_with_strip(Edge::Left, win, SCREEN, BUTTON_STRIP),
-            (-400 + BUTTON_STRIP, 0));
-        assert_eq!(hidden_position_with_strip(Edge::Right, win, SCREEN, BUTTON_STRIP),
-            (1920 - BUTTON_STRIP, 0));
+        assert_eq!(
+            hidden_position_with_strip(Edge::Top, win, SCREEN, BUTTON_STRIP),
+            (300, -500 + BUTTON_STRIP)
+        );
+        assert_eq!(
+            hidden_position_with_strip(Edge::Left, win, SCREEN, BUTTON_STRIP),
+            (-400 + BUTTON_STRIP, 0)
+        );
+        assert_eq!(
+            hidden_position_with_strip(Edge::Right, win, SCREEN, BUTTON_STRIP),
+            (1920 - BUTTON_STRIP, 0)
+        );
     }
 
     #[test]
