@@ -144,7 +144,12 @@ function mergeBook(b, d) {
         tabs = true;
         if (n === before) content = true;
       }
-      n.reason = dn.reason || "未知错误";
+      const reason = dn.reason || "未知错误";
+      if (n.reason !== reason) {
+        n.reason = reason;
+        tabs = true;
+        if (n === before) content = true;
+      }
       // 本地内容及 disk 基准都保留，禁止将读取失败占位写入磁盘。
       continue;
     }
