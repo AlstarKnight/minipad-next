@@ -1259,7 +1259,10 @@ mod tests {
             fs::read_to_string(program.join("notes").join("previous.md")).unwrap(),
             "old"
         );
-        assert_eq!(fs::read_to_string(legacy.join("previous.md")).unwrap(), "old");
+        assert_eq!(
+            fs::read_to_string(legacy.join("previous.md")).unwrap(),
+            "old"
+        );
         fs::write(program.join("notes").join("new.md"), "new").unwrap();
         assert_eq!(
             preferred_storage_dir(&program, &legacy, "notes"),
@@ -1267,5 +1270,4 @@ mod tests {
         );
         fs::remove_dir_all(root).unwrap();
     }
-
 }
