@@ -53,7 +53,10 @@ pub struct Settings {
     hotkey: String,
     always_on_top: bool,
     edge_hide: bool,
-    edge_expand_button: bool,
+    /// 贴边隐藏后的样式:arrow 细线 + 箭头 / line 仅细边高亮 / hover 细边 + 悬浮按钮
+    edge_style: String,
+    /// 贴边标识的颜色,写法同 accent;空着跟随强调色
+    edge_color: String,
     show_in_taskbar: bool,
     autostart: bool,
     theme: String,
@@ -90,7 +93,8 @@ impl Default for Settings {
             hotkey: "Ctrl+M".into(),
             always_on_top: true,
             edge_hide: true,
-            edge_expand_button: true,
+            edge_style: "arrow".into(),
+            edge_color: String::new(),
             show_in_taskbar: false,
             autostart: false,
             theme: "system".into(),
@@ -130,6 +134,8 @@ struct LoadedState {
 #[derive(Default)]
 struct EdgeState {
     hidden: Option<Edge>,
+    /// 「细边 + 悬浮按钮」样式下,鼠标靠近后按钮已经浮出
+    peeking: bool,
     /// 隐藏时所在显示器的范围
     monitor: Rect,
     outside_ticks: u32,
@@ -382,21 +388,30 @@ fn persist_settings(app: &AppHandle) {
     }
 }
 
+const EDGE_STYLES: [&str; 3] = ["arrow", "line", "hover"];
+
+/// 颜色(强调色、贴边标识色)只是给界面用的一小段文字,太长或者有奇怪的字符就不要
+fn tidy_color(c: &mut String) {
+    *c = c.trim().to_string();
+    if c.len() > 160
+        || !c
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || " #(),-.".contains(ch))
+    {
+        c.clear();
+    }
+}
+
 /// 保存前整理前端传来的设置:去掉首尾空格,数字限制在合理范围
 fn tidy_settings(s: &mut Settings) {
     s.hotkey = s.hotkey.trim().to_string();
     s.notes_dir = s.notes_dir.trim().to_string();
     s.backup_dir = s.backup_dir.trim().to_string();
     s.backup_keep = s.backup_keep.clamp(1, 365);
-    // 强调色只是给界面用的一小段文字,太长或者有奇怪的字符就不要
-    s.accent = s.accent.trim().to_string();
-    if s.accent.len() > 160
-        || !s
-            .accent
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || " #(),-.".contains(c))
-    {
-        s.accent.clear();
+    tidy_color(&mut s.accent);
+    tidy_color(&mut s.edge_color);
+    if !EDGE_STYLES.contains(&s.edge_style.as_str()) {
+        s.edge_style = "arrow".into();
     }
     if !["line", "fill", "border"].contains(&s.tab_style.as_str()) {
         s.tab_style = "line".into();
@@ -753,7 +768,8 @@ fn save_settings(
         let _ = win.set_always_on_top(new.always_on_top);
         let _ = win.set_skip_taskbar(!new.show_in_taskbar);
     }
-    if !new.edge_hide {
+    // 关掉贴边隐藏或者换了样式(露出的宽度不同),先把窗口放出来
+    if !new.edge_hide || new.edge_style != old.edge_style {
         restore_from_edge(&app, false);
     }
     // 换了笔记文件夹或备份位置,今天就在新地方重新判断要不要备份
@@ -987,6 +1003,7 @@ fn restore_from_edge(app: &AppHandle, focus: bool) {
     {
         let mut e = st.edge.lock().unwrap();
         e.hidden = None;
+        e.peeking = false;
         e.outside_ticks = 0;
     }
     st.typing.store(false, Ordering::SeqCst);
@@ -1001,6 +1018,12 @@ fn restore_from_edge(app: &AppHandle, focus: bool) {
     if focus {
         let _ = win.set_focus();
     }
+}
+
+/// 露出的宽度按逻辑像素算,换成这块屏幕的物理像素(高分屏上不会变细)
+fn scaled_strip(win: &tauri::WebviewWindow, style: &str, peeking: bool) -> i32 {
+    let scale = win.scale_factor().unwrap_or(1.0);
+    (f64::from(edge::strip_for(style, peeking)) * scale).round() as i32
 }
 
 fn edge_tick(app: &AppHandle) {
@@ -1021,10 +1044,46 @@ fn edge_tick(app: &AppHandle) {
     };
     let (cx, cy) = (cur.x.round() as i32, cur.y.round() as i32);
 
-    if st.edge.lock().unwrap().hidden.is_some() {
-        // 鼠标碰到露出来的那条边就滑出来
-        if rect.contains_with_margin(cx, cy, 1) {
-            restore_from_edge(app, true);
+    let (hidden, peeking, mon) = {
+        let e = st.edge.lock().unwrap();
+        (e.hidden, e.peeking, e.monitor)
+    };
+    if let Some(edge) = hidden {
+        let inside = rect.contains_with_margin(cx, cy, 1);
+        if st.settings.lock().unwrap().edge_style != "hover" {
+            // 鼠标碰到露出来的那条边就滑出来
+            if inside {
+                restore_from_edge(app, true);
+            }
+            return;
+        }
+        // 悬浮按钮样式:靠近时只浮出按钮,点按钮才展开;离开约 0.45 秒后收回细边
+        let change = {
+            let mut e = st.edge.lock().unwrap();
+            if inside {
+                e.outside_ticks = 0;
+                (!peeking).then_some(true)
+            } else if peeking {
+                e.outside_ticks += 1;
+                (e.outside_ticks >= 3).then_some(false)
+            } else {
+                None
+            }
+        };
+        if let Some(peek) = change {
+            {
+                let mut e = st.edge.lock().unwrap();
+                e.peeking = peek;
+                e.outside_ticks = 0;
+            }
+            let (x, y) = edge::hidden_position_with_strip(
+                edge,
+                rect,
+                mon,
+                scaled_strip(&win, "hover", peek),
+            );
+            let _ = win.set_position(PhysicalPosition::new(x, y));
+            let _ = app.emit("edge-peek", peek);
         }
         return;
     }
@@ -1069,12 +1128,10 @@ fn edge_tick(app: &AppHandle) {
         }
     };
     if let Some((edge, mon)) = ready {
-        let show_button = st.settings.lock().unwrap().edge_expand_button;
-        let (x, y) = if show_button {
-            edge::hidden_position_with_strip(edge, rect, mon, edge::BUTTON_STRIP)
-        } else {
-            edge::hidden_position(edge, rect, mon)
-        };
+        let style = st.settings.lock().unwrap().edge_style.clone();
+        st.edge.lock().unwrap().peeking = false;
+        let (x, y) =
+            edge::hidden_position_with_strip(edge, rect, mon, scaled_strip(&win, &style, false));
         let _ = app.emit("flush", ());
         let _ = app.emit("edge-hidden", edge.name());
         let _ = win.set_position(PhysicalPosition::new(x, y));
@@ -1429,6 +1486,26 @@ mod tests {
             tidy_settings(&mut s);
             assert_eq!(s.tab_style, kept, "{given}");
         }
+    }
+
+    #[test]
+    fn tidy_settings_checks_edge_style_and_color() {
+        let mut s = Settings::default();
+        assert_eq!(s.edge_style, "arrow");
+        assert_eq!(s.edge_color, "");
+        for style in ["arrow", "line", "hover"] {
+            s.edge_style = style.into();
+            tidy_settings(&mut s);
+            assert_eq!(s.edge_style, style);
+        }
+        s.edge_style = "glow".into();
+        s.edge_color = " linear-gradient(135deg, #5fb4ff, #d66cf0) ".into();
+        tidy_settings(&mut s);
+        assert_eq!(s.edge_style, "arrow");
+        assert_eq!(s.edge_color, "linear-gradient(135deg, #5fb4ff, #d66cf0)");
+        s.edge_color = "url(javascript:x)".into();
+        tidy_settings(&mut s);
+        assert_eq!(s.edge_color, "");
     }
 
     #[test]

@@ -1429,25 +1429,52 @@ describe("theme and accent", () => {
     const mark = () => p.$eval("#edge-mark", (m) => { const r = m.getBoundingClientRect(); return getComputedStyle(m).display === "none" ? null : [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)]; });
     assert.equal(await mark(), null, "no marker while the window is out");
     await p.evaluate(() => window.__mockEmit("edge-hidden", "top"));
-    assert.deepEqual(await mark(), [0, 526, 440, 14], "default expand strip leaves a visible 14px edge");
+    assert.deepEqual(await mark(), [0, 520, 440, 20], "default style (line + arrow) leaves a 20px strip");
+    assert.equal(await p.isVisible("#edge-expand"), true, "the arrow strip can be clicked");
     await p.evaluate(() => window.__mockEmit("edge-hidden", "left"));
-    assert.deepEqual(await mark(), [426, 0, 14, 540], "left edge: clickable expand strip");
+    assert.deepEqual(await mark(), [420, 0, 20, 540], "left edge");
     await p.evaluate(() => window.__mockEmit("edge-hidden", "right"));
-    assert.deepEqual(await mark(), [0, 0, 14, 540], "right edge: clickable expand strip");
-    assert.equal(await p.isVisible("#edge-expand"), true, "expand button shown by default");
+    assert.deepEqual(await mark(), [0, 0, 20, 540], "right edge");
     await p.click("#edge-expand");
     assert.equal(await mark(), null, "clicking expand restores the window");
 
+    const edgeVars = () => p.evaluate(() => [getComputedStyle(document.querySelector("#edge-mark")).getPropertyValue("--ec").trim(), document.documentElement.style.getPropertyValue("--edge-grad")]);
     await p.click("#btn-settings");
-    assert.equal(await p.isChecked("#set-edge-button"), true, "on by default");
-    await p.uncheck("#set-edge-button");
+    assert.equal(await p.inputValue("#set-edge-style"), "arrow", "line + arrow by default");
+    assert.equal(await p.getAttribute("#set-edge-color button.on", "title"), "跟随强调色", "edge color follows the accent by default");
+    await p.uncheck("#set-edge");
+    assert.equal(await p.isDisabled("#set-edge-style"), true, "edge options are off while edge hiding is off");
+    await p.check("#set-edge");
+    // 仅细边 + 单独的渐变色
+    await p.selectOption("#set-edge-style", "line");
+    await p.click('#set-edge-color button[title="蓝紫渐变"]');
     await p.click("#set-save");
-    await until(() => h.stored().then((s) => s.settings.edge_expand_button), false);
+    await until(() => h.stored().then((s) => [s.settings.edge_style, s.settings.edge_color]), ["line", "linear-gradient(135deg, #5fb4ff, #d66cf0)"]);
     await p.evaluate(() => window.__mockEmit("edge-hidden", "top"));
-    assert.equal(await p.isVisible("#edge-expand"), false, "off hides the button");
-    assert.deepEqual(await mark(), [0, 532, 440, 8], "off keeps the original slim strip");
+    assert.deepEqual(await mark(), [0, 534, 440, 6], "line style keeps the slim 6px strip");
+    assert.equal(await p.$eval("#edge-expand", (b) => getComputedStyle(b, "::before").display), "none", "no arrow in line style");
+    assert.deepEqual(await edgeVars(), ["#5fb4ff", "linear-gradient(135deg, #5fb4ff, #d66cf0)"], "edge uses its own color");
     await p.evaluate(() => window.__mockEmit("edge-shown"));
-    assert.equal(await mark(), null, "gone when the window slides out");
+
+    // 细边 + 悬浮按钮:平时细边,靠近时多露出一点并浮出按钮
+    await p.click("#btn-settings");
+    await p.selectOption("#set-edge-style", "hover");
+    await p.click('#set-edge-color button[title="跟随强调色"]');
+    await p.click("#set-save");
+    await until(() => h.stored().then((s) => [s.settings.edge_style, s.settings.edge_color]), ["hover", ""]);
+    await p.evaluate(() => window.__mockEmit("edge-hidden", "left"));
+    assert.deepEqual(await mark(), [434, 0, 6, 540], "hover style starts as a slim edge");
+    assert.equal(await p.$eval("#edge-expand", (b) => getComputedStyle(b, "::before").display), "none", "no button until the mouse comes near");
+    assert.equal((await edgeVars())[1], "", "edge color follows the accent again");
+    await p.evaluate(() => window.__mockEmit("edge-peek", true));
+    assert.deepEqual(await mark(), [408, 0, 32, 540], "mouse near: the strip widens for the button");
+    const btn = await p.$eval("#edge-expand", (b) => { const r = b.getBoundingClientRect(); return [Math.round(r.width), Math.round(r.height)]; });
+    assert.deepEqual(btn, [23, 56], "floating button");
+    await p.evaluate(() => window.__mockEmit("edge-peek", false));
+    assert.deepEqual(await mark(), [434, 0, 6, 540], "mouse away: back to the slim edge");
+    await p.evaluate(() => window.__mockEmit("edge-peek", true));
+    await p.click("#edge-expand");
+    assert.equal(await mark(), null, "clicking the floating button restores the window");
   });
 
   ui("text can get a gradient color, saved as a background-clip span", { seed: seed({ "": { 页: "渐变" } }) }, async (h) => {

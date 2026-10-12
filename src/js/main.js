@@ -36,7 +36,16 @@ async function init() {
     document.documentElement.dataset.edge = e.payload;
     applyEdgeAppearance();
   });
-  api.listen("edge-shown", () => delete document.documentElement.dataset.edge);
+  // 「细边 + 悬浮按钮」样式:鼠标靠近时按钮浮出(窗口多露出一点),离开后收回
+  api.listen("edge-peek", (e) => {
+    if (e.payload) document.documentElement.dataset.edgePeek = "on";
+    else delete document.documentElement.dataset.edgePeek;
+    applyEdgeAppearance();
+  });
+  api.listen("edge-shown", () => {
+    delete document.documentElement.dataset.edge;
+    delete document.documentElement.dataset.edgePeek;
+  });
   api.listen("backup-error", (e) => toast("自动备份失败:" + e.payload, 5000));
 }
 
