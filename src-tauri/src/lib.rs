@@ -115,6 +115,7 @@ impl Default for Settings {
 #[derive(Serialize)]
 struct LoadedState {
     settings: Settings,
+    settings_error: Option<String>,
     notes_dir: String,
     /// 全部笔记本,「默认」(名字是空字符串)在最前
     books: Vec<Book>,
@@ -143,6 +144,9 @@ struct QuitState {
 #[derive(Default)]
 struct AppState {
     settings: Mutex<Settings>,
+    /// 配置文件不存在或成功读取时才可以写回。读失败/解析失败时保持原文件。
+    settings_write_allowed: AtomicBool,
+    settings_read_error: Mutex<Option<String>>,
     quit: Mutex<QuitState>,
     quit_sequence: AtomicU64,
     edge: Mutex<EdgeState>,
@@ -326,21 +330,55 @@ fn pin_default_storage(settings: &mut Settings, notes: &Path, backups: &Path) ->
     changed
 }
 
-fn load_settings(app: &AppHandle) -> Settings {
-    fs::read(config_path(app))
-        .ok()
-        .and_then(|b| serde_json::from_str(&notes::decode_text(&b)).ok())
-        .unwrap_or_default()
+/// 区分文件不存在与读取/解析失败；只有前两种可安全写回。
+/// 不可读取的配置本次运行使用默认值，但不得覆盖原有 settings.json。
+fn decode_settings_result(
+    result: std::io::Result<Vec<u8>>,
+) -> (Settings, bool, Option<String>) {
+    match result {
+        Ok(bytes) => match serde_json::from_str::<Settings>(&notes::decode_text(&bytes)) {
+            Ok(settings) => (settings, true, None),
+            Err(e) => (
+                Settings::default(),
+                false,
+                Some(format!("设置文件解析失败:{e}")),
+            ),
+        },
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            (Settings::default(), true, None)
+        }
+        Err(e) => (
+            Settings::default(),
+            false,
+            Some(format!("设置文件读取失败:{e}")),
+        ),
+    }
+}
+
+fn load_settings(app: &AppHandle) -> (Settings, bool, Option<String>) {
+    decode_settings_result(fs::read(config_path(app)))
+}
+
+fn write_settings_if_allowed(path: &Path, settings: &Settings, allowed: bool) -> Result<(), String> {
+    if !allowed {
+        // 保护原文件：即使后来暂时恢复可写，也不能用本次运行的默认值覆盖。
+        return Ok(());
+    }
+    let json = serde_json::to_string_pretty(settings).map_err(|e| e.to_string())?;
+    notes::write_atomic(path, &json)
 }
 
 fn persist_settings(app: &AppHandle) {
     let state = app.state::<AppState>();
+    if !state.settings_write_allowed.load(Ordering::SeqCst) {
+        return;
+    }
     let mut s = state.settings.lock().unwrap().clone();
     if let Some(g) = state.geom.lock().unwrap().clone() {
         s.window = Some(g);
     }
-    if let Ok(json) = serde_json::to_string_pretty(&s) {
-        let _ = notes::write_atomic(&config_path(app), &json);
+    if let Err(e) = write_settings_if_allowed(&config_path(app), &s, true) {
+        eprintln!("保存设置失败:{e}");
     }
 }
 
@@ -462,8 +500,10 @@ fn load_state(app: AppHandle) -> Result<LoadedState, String> {
         String::new()
     };
     let hotkey_error = st.hotkey_error.lock().unwrap().clone();
+    let settings_error = st.settings_read_error.lock().unwrap().clone();
     Ok(LoadedState {
         settings,
+        settings_error,
         notes_dir: dir.to_string_lossy().to_string(),
         books,
         book,
@@ -649,6 +689,13 @@ fn save_settings(
     migrate_notes: Option<bool>,
 ) -> Result<Settings, String> {
     let state = app.state::<AppState>();
+    if !state.settings_write_allowed.load(Ordering::SeqCst) {
+        let reason = state.settings_read_error.lock().unwrap().clone();
+        return Err(format!(
+            "启动时无法读取原设置文件，已禁止覆盖；请恢复原文件并重新启动。{}",
+            reason.unwrap_or_default()
+        ));
+    }
     let old = state.settings.lock().unwrap().clone();
     let mut new = settings;
     new.window = old.window.clone();
@@ -1110,21 +1157,24 @@ pub fn run() {
         .setup(|app| {
             let handle = app.handle().clone();
             migrate_old_data(&handle);
-            let mut settings = load_settings(&handle);
+            let (mut settings, write_allowed, read_error) = load_settings(&handle);
+            if let Some(e) = &read_error {
+                eprintln!("{e}；本次运行使用默认值，禁止自动覆盖 settings.json");
+            }
             // 首次解析默认目录时可能把旧数据安全复制到 EXE 同级。
-            // 把最终目录立即写入设置，重装到别处时仍然读取这份数据。
+            // 配置损坏/暂时不可读时，运行中可使用默认目录，但不得将其写回配置文件。
             let default_notes = notes_dir(&handle, &settings);
             let default_backups = backup_dir(&handle, &settings);
             let pinned = pin_default_storage(&mut settings, &default_notes, &default_backups);
             notes::cleanup_stale_temps(&notes_dir(&handle, &settings));
             {
                 let st = handle.state::<AppState>();
+                st.settings_write_allowed.store(write_allowed, Ordering::SeqCst);
+                *st.settings_read_error.lock().unwrap() = read_error;
                 *st.settings.lock().unwrap() = settings.clone();
                 *st.geom.lock().unwrap() = settings.window.clone();
-                if pinned {
-                    // 配置目录错误不应让程序空白启动，但必须明确记录写入失败。
-                    let json = serde_json::to_string_pretty(&settings).unwrap_or_default();
-                    if let Err(e) = notes::write_atomic(&config_path(&handle), &json) {
+                if pinned && write_allowed {
+                    if let Err(e) = write_settings_if_allowed(&config_path(&handle), &settings, true) {
                         eprintln!("无法记住迁移后的存储路径: {e}");
                     }
                 }
@@ -1234,6 +1284,68 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn settings_read_states_distinguish_missing_valid_corrupt_and_unreadable() {
+        let root = notes::temp_dir("settings-read-guard");
+        let path = root.join("settings.json");
+
+        let (missing, can_write, err) = decode_settings_result(fs::read(&path));
+        assert!(can_write);
+        assert!(err.is_none());
+        assert_eq!(missing.hotkey, "Ctrl+M");
+
+        let original = r#"{"hotkey":"Ctrl+Alt+M","notes_dir":"D:\\\\custom","theme":"dark"}"#;
+        fs::write(&path, original).unwrap();
+        let (loaded, can_write, err) = decode_settings_result(fs::read(&path));
+        assert!(can_write);
+        assert!(err.is_none());
+        assert_eq!(loaded.hotkey, "Ctrl+Alt+M");
+        assert_eq!(loaded.theme, "dark");
+
+        let corrupt = b"{\"hotkey\": ".to_vec();
+        fs::write(&path, &corrupt).unwrap();
+        let (fallback, can_write, err) = decode_settings_result(fs::read(&path));
+        assert!(!can_write);
+        assert!(err.unwrap().contains("解析失败"));
+        write_settings_if_allowed(&path, &fallback, can_write).unwrap();
+        assert_eq!(fs::read(&path).unwrap(), corrupt);
+
+        let (fallback, can_write, err) = decode_settings_result(Err(
+            std::io::Error::new(std::io::ErrorKind::PermissionDenied, "模拟杀毒软件占用"),
+        ));
+        assert!(!can_write);
+        assert!(err.unwrap().contains("读取失败"));
+        write_settings_if_allowed(&path, &fallback, can_write).unwrap();
+        assert_eq!(fs::read(&path).unwrap(), corrupt);
+
+        // 恢复为合法 JSON 后，下次启动可继续读取自定义位置。
+        fs::write(&path, original).unwrap();
+        let (recovered, can_write, err) = decode_settings_result(fs::read(&path));
+        assert!(can_write);
+        assert!(err.is_none());
+        assert_eq!(recovered.notes_dir, "D:\\\\custom");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn unreadable_settings_never_get_pinned_back_to_disk() {
+        let root = notes::temp_dir("settings-guarded-pin");
+        let path = root.join("settings.json");
+        let damaged = b"old settings must survive";
+        fs::write(&path, damaged).unwrap();
+        let (mut fallback, can_write, _) = decode_settings_result(fs::read(&path));
+        let pinned = pin_default_storage(
+            &mut fallback,
+            &root.join("installed").join("notes"),
+            &root.join("installed").join("backups"),
+        );
+        assert!(pinned);
+        assert!(!can_write);
+        write_settings_if_allowed(&path, &fallback, can_write).unwrap();
+        assert_eq!(fs::read(&path).unwrap(), damaged);
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn old_settings_get_the_new_defaults() {
