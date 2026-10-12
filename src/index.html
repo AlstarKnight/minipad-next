@@ -28,6 +28,9 @@
     <button id="btn-settings" class="icon" title="设置">
       <svg viewBox="0 0 16 16"><path d="M6.9 1.8h2.2l.4 1.7 1.2.6 1.6-.8 1.5 1.5-.8 1.6.5 1.2 1.7.4v2.2l-1.7.4-.5 1.2.8 1.6-1.5 1.5-1.6-.8-1.2.5-.4 1.7H6.9l-.4-1.7-1.2-.5-1.6.8-1.5-1.5.8-1.6-.5-1.2-1.7-.4V6.9l1.7-.4.5-1.2-.8-1.6 1.5-1.5 1.6.8 1.2-.6z"/><circle cx="8" cy="8" r="2.1"/></svg>
     </button>
+    <button id="btn-ball" class="icon" title="缩成悬浮图标" hidden>
+      <svg viewBox="0 0 16 16"><circle cx="11.5" cy="11.5" r="2.6"/><path d="M2.5 2.5 7.6 7.6M8.2 3.8v4.4H3.8"/></svg>
+    </button>
     <button id="btn-hide" class="icon" title="隐藏 (Esc)">
       <svg viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8"/></svg>
     </button>
@@ -82,6 +85,31 @@
           <input id="set-edge-from" type="color" value="#d9822b" title="颜色" />
           <label><input id="set-edge-grad" type="checkbox" /> 渐变到</label>
           <input id="set-edge-to" type="color" value="#f7c34b" title="渐变的另一端" />
+        </div>
+      </div>
+      <label class="row check"><input id="set-ball" type="checkbox" /> <span>悬浮图标(顶栏多一个按钮,点了窗口缩成一个可以拖动的小图标)</span></label>
+      <div class="row ball-option ball-settings">
+        <div id="set-ball-preview" class="ball-preview" title="预览"><img alt="" /><div class="tint" hidden></div></div>
+        <div class="col">
+          <label class="inline"><span>大小</span><input id="set-ball-size" type="range" min="32" max="96" step="4" /><span id="set-ball-size-val" class="muted"></span></label>
+          <label class="inline"><span>不透明</span><input id="set-ball-opacity" type="range" min="30" max="100" step="5" /><span id="set-ball-opacity-val" class="muted"></span></label>
+          <label class="inline"><span>打开方式</span><select id="set-ball-open"><option value="click">单击图标</option><option value="dblclick">双击图标</option></select></label>
+          <div class="inline">
+            <span>图标</span>
+            <label><input type="radio" name="set-ball-icon" value="app" /> 应用图标</label>
+            <label><input type="radio" name="set-ball-icon" value="custom" /> 自定义图片</label>
+            <button id="set-ball-pick" class="small">选择图片…</button>
+          </div>
+        </div>
+      </div>
+      <div class="row col ball-option">
+        <span>图标颜色(给图标上色,保留原来的明暗)</span>
+        <div id="set-ball-color" class="accent-swatches"></div>
+        <div class="accent-custom">
+          <span>自定义</span>
+          <input id="set-ball-from" type="color" value="#d9822b" title="颜色" />
+          <label><input id="set-ball-grad" type="checkbox" /> 渐变到</label>
+          <input id="set-ball-to" type="color" value="#f7c34b" title="渐变的另一端" />
         </div>
       </div>
       <label class="row check"><input id="set-taskbar" type="checkbox" /> <span>在任务栏显示</span></label>
