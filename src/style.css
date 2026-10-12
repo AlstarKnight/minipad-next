@@ -184,6 +184,24 @@ svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width:
   border-radius: 2px;
   background: var(--accent-grad);
 }
+/* 活跃标签的另外两种高亮(设置里选):整个标签染上强调色,或者一圈强调色的边框 */
+[data-tab-style="fill"] .tab.active,
+[data-tab-style="border"] .tab.active { border-color: transparent; isolation: isolate; }
+[data-tab-style="fill"] .tab.active::before,
+[data-tab-style="border"] .tab.active::before {
+  left: -1px; right: -1px; top: -1px; bottom: 0;
+  height: auto;
+  border-radius: 7px 7px 0 0;
+  z-index: -1;
+}
+[data-tab-style="fill"] .tab.active::before { opacity: 0.32; }
+/* 边框:渐变铺满,再用遮罩挖掉中间,只留上、左、右三条边(下边和编辑区连着) */
+[data-tab-style="border"] .tab.active::before {
+  padding: 2px 2px 0;
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+}
 .tab.drop-before { box-shadow: inset 2px 0 0 var(--accent); }
 .tab.drop-after { box-shadow: inset -2px 0 0 var(--accent); }
 .tab input {

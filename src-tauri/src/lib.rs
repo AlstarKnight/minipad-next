@@ -58,6 +58,8 @@ pub struct Settings {
     theme: String,
     /// 强调色:空着是默认的橙色,"#3b82f6" 是纯色,"linear-gradient(135deg, #a, #b)" 是渐变色
     accent: String,
+    /// 活跃标签的高亮:line 顶部线条、fill 整个标签、border 整圈边框
+    tab_style: String,
     font_size: u32,
     notes_dir: String,
     /// 编辑区显示行号
@@ -91,6 +93,7 @@ impl Default for Settings {
             autostart: false,
             theme: "system".into(),
             accent: String::new(),
+            tab_style: "line".into(),
             font_size: 14,
             notes_dir: String::new(),
             line_numbers: false,
@@ -257,6 +260,9 @@ fn tidy_settings(s: &mut Settings) {
             .all(|c| c.is_ascii_alphanumeric() || " #(),-.".contains(c))
     {
         s.accent.clear();
+    }
+    if !["line", "fill", "border"].contains(&s.tab_style.as_str()) {
+        s.tab_style = "line".into();
     }
     // 日期格式最多 64 个字(按字算,不按字节),空着就用默认的
     let format: String = s.date_format.trim().chars().take(64).collect();
@@ -1008,6 +1014,24 @@ mod tests {
         s.date_format = format!("{} H:mm", "年".repeat(63));
         tidy_settings(&mut s);
         assert_eq!(s.date_format, "年".repeat(63));
+    }
+
+    #[test]
+    fn tidy_settings_falls_back_to_the_top_line_for_unknown_tab_styles() {
+        for (given, kept) in [
+            ("line", "line"),
+            ("fill", "fill"),
+            ("border", "border"),
+            ("", "line"),
+            ("glow", "line"),
+        ] {
+            let mut s = Settings {
+                tab_style: given.into(),
+                ..Settings::default()
+            };
+            tidy_settings(&mut s);
+            assert_eq!(s.tab_style, kept, "{given}");
+        }
     }
 
     #[test]

@@ -1404,6 +1404,26 @@ describe("theme and accent", () => {
     assert.equal(await marker(), "none");
   });
 
+  ui("the active tab is highlighted with a top line, the whole tab or a border, as chosen in the settings", { seed: seed({ "": { 甲: "一", 乙: "二" } }) }, async (h) => {
+    const { p } = h;
+    const look = () => p.$eval(".tab.active", (t) => {
+      const b = getComputedStyle(t, "::before");
+      return { height: Math.round(parseFloat(b.height)), opacity: b.opacity, masked: (b.maskComposite || b.webkitMaskComposite || "") !== "" && b.maskImage !== "none" };
+    });
+    assert.deepEqual(await look(), { height: 3, opacity: "1", masked: false }, "a thin line on top by default");
+    for (const [style, check] of [
+      ["fill", (l) => l.height > 20 && l.opacity === "0.32" && !l.masked],
+      ["border", (l) => l.height > 20 && l.opacity === "1" && l.masked],
+      ["line", (l) => l.height === 3],
+    ]) {
+      await p.click("#btn-settings");
+      await p.selectOption("#set-tab-style", style);
+      await p.click("#set-save");
+      await until(async () => (await h.stored())?.settings?.tab_style, style, `${style} is saved`);
+      assert.ok(check(await look()), `${style}: ${JSON.stringify(await look())}`);
+    }
+  });
+
   ui("while the window is tucked into a screen edge a marker shows on the strip left on screen", { seed: seed({ "": { 页: "文字" } }) }, async (h) => {
     const { p } = h;
     const mark = () => p.$eval("#edge-mark", (m) => { const r = m.getBoundingClientRect(); return getComputedStyle(m).display === "none" ? null : [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)]; });

@@ -21,6 +21,7 @@ const DEFAULT_SETTINGS = {
   format_bar: true,
   format_bar_hidden: [],
   format_bar_order: [],
+  tab_style: "line",
   accent: "",
   backup_enabled: true,
   backup_keep: 14,
