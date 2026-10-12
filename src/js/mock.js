@@ -20,6 +20,7 @@ const DEFAULT_SETTINGS = {
   code_line_numbers: true,
   format_bar: true,
   format_bar_hidden: [],
+  format_bar_order: [],
   accent: "",
   backup_enabled: true,
   backup_keep: 14,
@@ -252,6 +253,9 @@ export function mockApi() {
   // 方便在浏览器控制台(和界面测试)里模拟"文件在别处被改了":直接改这两个对象,不要整个换掉
   window.__mockBooks = db.books;
   window.__mockFiles = db.books[""].files;
+  // 模拟后端发来的事件(比如贴边隐藏):window.__mockEmit("edge-hidden", "top")
+  const listeners = {};
+  window.__mockEmit = (ev, payload) => (listeners[ev] || []).forEach((cb) => cb({ event: ev, payload }));
   return {
     invoke: async (cmd, args = {}) => {
       try {
@@ -260,6 +264,9 @@ export function mockApi() {
         persist();
       }
     },
-    listen: async () => () => {},
+    listen: async (ev, cb) => {
+      (listeners[ev] ||= []).push(cb);
+      return () => (listeners[ev] = listeners[ev].filter((c) => c !== cb));
+    },
   };
 }

@@ -1,6 +1,6 @@
 // ---------- 标签下面的格式栏 ----------
-// 一排常用的格式按钮(像语雀的工具栏),跟着光标显示当前的格式;顶栏的 Aa 按钮可以把它收起来。
-// 右边的"自定义"可以选保留哪些按钮,选择记在设置的 format_bar_hidden 里
+// 一排常用的格式按钮(像语雀的工具栏),跟着光标显示当前的格式;顶栏的格式栏按钮可以把它收起来。
+// 右边的"自定义"可以选保留哪些按钮、拖动调整顺序,记在设置的 format_bar_hidden 和 format_bar_order 里
 import { $prose, Plugin, commandsCtx, undo, redo, liftListItem, TextSelection, wrapInOrderedListCommand, wrapInBulletListCommand, turnIntoTextCommand, wrapInHeadingCommand } from "../vendor/milkdown.js";
 import { BUTTONS, headingLevel } from "./toolbar.js";
 import { openMenu, closeMenu } from "./ui.js";
@@ -87,9 +87,9 @@ const byId = Object.fromEntries(BUTTONS.filter((b) => b.id).map((b) => [b.id, b]
 const ITEMS = [
   { id: "undo", label: ICON.undo, title: "撤销 (Ctrl+Z)", enabled: (s) => undo(s), run: (c, v) => undo(v.state, v.dispatch) },
   { id: "redo", label: ICON.redo, title: "重做 (Ctrl+Y)", enabled: (s) => redo(s), run: (c, v) => redo(v.state, v.dispatch) },
-  { sep: true },
+  { sep: true, id: "sep1", title: "竖线分隔" },
   { id: "block", block: true, title: "正文和标题" },
-  { sep: true },
+  { sep: true, id: "sep2", title: "竖线分隔" },
   { ...byId.strong, inline: true },
   { ...byId.em, inline: true },
   { ...byId.strike, inline: true },
@@ -97,16 +97,31 @@ const ITEMS = [
   { ...byId.link, inline: true },
   { id: "color", label: ICON.color, title: "字体颜色", inline: true, palette: { mark: "text_color", colors: TEXT_COLORS, gradients: TEXT_GRADIENTS, none: "默认颜色" } },
   { id: "bg", label: ICON.bg, title: "背景颜色", inline: true, palette: { mark: "text_bg", colors: BG_COLORS, none: "无背景" } },
-  { sep: true },
+  { sep: true, id: "sep3", title: "竖线分隔" },
   { ...byId.list, title: "列表", active: listActive("bullet_list"), run: toggleList("bullet_list", wrapInBulletListCommand) },
   { id: "ol", label: ICON.ol, title: "编号列表", active: listActive("ordered_list"), run: toggleList("ordered_list", wrapInOrderedListCommand) },
   { ...byId.task, active: (s) => listAt(s)?.item?.attrs.checked != null },
-  { sep: true },
+  { sep: true, id: "sep4", title: "竖线分隔" },
   { ...byId.quote, active: (s) => { const $f = s.selection.$from; for (let d = $f.depth; d > 0; d--) if ($f.node(d).type.name === "blockquote") return true; return false; } },
   { ...byId.codeblock, active: inCode },
   { id: "table", label: ICON.table, title: "表格", run: (c, v) => insertBlock(v, "table") },
   { id: "hr", label: ICON.hr, title: "分隔线", run: (c, v) => insertBlock(v, "hr") },
 ];
+
+// 默认的顺序
+const DEFAULT_ORDER = ITEMS.map((it) => it.id);
+
+// 按设置里记着的顺序排:不认识的去掉,新加的按钮(设置里还没有)按默认位置插回去
+function orderedItems(saved) {
+  const known = new Map(ITEMS.map((it) => [it.id, it]));
+  const ids = (Array.isArray(saved) ? saved : []).filter((id, i, a) => known.has(id) && a.indexOf(id) === i);
+  for (const [i, id] of DEFAULT_ORDER.entries()) {
+    if (ids.includes(id)) continue;
+    const before = DEFAULT_ORDER.slice(0, i).reverse().find((d) => ids.includes(d));
+    ids.splice(before ? ids.indexOf(before) + 1 : 0, 0, id);
+  }
+  return ids.map((id) => known.get(id));
+}
 
 class FormatBar {
   constructor(view, ctx) {
@@ -114,13 +129,15 @@ class FormatBar {
     this.ctx = ctx;
     this.el = document.getElementById("format-bar");
     this.buttons = [];
+    this.els = new Map();
     const row = document.createElement("div");
     row.className = "fb-items";
     for (const it of ITEMS) {
       if (it.sep) {
         const s = document.createElement("span");
         s.className = "sep";
-        row.appendChild(s);
+        s.dataset.cmd = it.id;
+        this.els.set(it.id, s);
         continue;
       }
       const btn = document.createElement("button");
@@ -144,18 +161,18 @@ class FormatBar {
       }
       // 按下鼠标时不让编辑器失去焦点,选区留着
       btn.addEventListener("mousedown", (e) => e.preventDefault());
-      row.appendChild(btn);
+      this.els.set(it.id, btn);
       this.buttons.push([btn, it]);
     }
     const hide = document.createElement("button");
     hide.className = "fb-hide";
-    hide.title = "收起格式栏(顶栏的 Aa 按钮可以再打开)";
+    hide.title = "收起格式栏(顶栏的格式栏按钮可以再打开)";
     hide.innerHTML = ICON.hide;
     hide.addEventListener("mousedown", (e) => e.preventDefault());
     hide.addEventListener("click", () => this.el.dispatchEvent(new CustomEvent("hide-format-bar", { bubbles: true })));
     const more = document.createElement("button");
     more.className = "fb-more";
-    more.title = "自定义格式栏:选择显示哪些按钮";
+    more.title = "自定义格式栏:选择显示哪些按钮,拖动调整顺序";
     more.innerHTML = ICON.more;
     more.addEventListener("mousedown", (e) => e.preventDefault());
     more.addEventListener("click", () => this.customize(more));
@@ -164,7 +181,8 @@ class FormatBar {
     this.pop = document.createElement("div");
     this.pop.className = "menu fb-pop";
     this.pop.hidden = true;
-    this.pop.addEventListener("mousedown", (e) => e.target.tagName !== "INPUT" && e.preventDefault());
+    // 输入框和自定义面板里可以拖动的行除外
+    this.pop.addEventListener("mousedown", (e) => e.target.tagName !== "INPUT" && !e.target.closest(".fb-check") && e.preventDefault());
     document.body.appendChild(this.pop);
     this.onDown = (e) => !this.pop.hidden && !this.pop.contains(e.target) && e.target.closest?.("button") !== this.popFor && this.closePop();
     this.onKey = (e) => {
@@ -176,7 +194,7 @@ class FormatBar {
     };
     document.addEventListener("mousedown", this.onDown, true);
     document.addEventListener("keydown", this.onKey, true);
-    this.setHidden(hiddenItems);
+    this.arrange(itemOrder);
     current = this;
     this.update(view);
   }
@@ -244,24 +262,86 @@ class FormatBar {
   customize(btn) {
     const title = document.createElement("div");
     title.className = "menu-title";
-    title.textContent = "格式栏显示这些按钮";
+    title.textContent = "勾选要显示的按钮,拖动调整顺序";
     const list = document.createElement("div");
     list.className = "fb-checks";
-    for (const [, it] of this.buttons) {
-      const label = document.createElement("label");
-      const box = document.createElement("input");
-      box.type = "checkbox";
-      box.value = it.id;
-      box.checked = !hiddenItems.includes(it.id);
-      box.addEventListener("change", () => {
-        const hidden = [...list.querySelectorAll("input")].filter((b) => !b.checked).map((b) => b.value);
-        this.setHidden(hidden);
-        this.el.dispatchEvent(new CustomEvent("format-bar-items", { bubbles: true, detail: hidden }));
-      });
-      label.append(box, document.createTextNode(" " + it.title.replace(/\s*\(.*\)$/, "")));
-      list.appendChild(label);
-    }
-    this.openPop(btn, [title, list]);
+    const save = () => {
+      const order = [...list.children].map((row) => row.dataset.id);
+      const hidden = [...list.querySelectorAll("input")].filter((b) => !b.checked).map((b) => b.value);
+      setFormatBarItems(hidden, order);
+      this.el.dispatchEvent(new CustomEvent("format-bar-items", { bubbles: true, detail: { format_bar_hidden: hidden, format_bar_order: order } }));
+    };
+    const fill = (items) => {
+      list.replaceChildren();
+      for (const it of items) {
+        const row = document.createElement("label");
+        row.className = "fb-check" + (it.sep ? " fb-check-sep" : "");
+        row.dataset.id = it.id;
+        row.draggable = true;
+        const grip = document.createElement("span");
+        grip.className = "fb-grip";
+        grip.innerHTML = '<svg viewBox="0 0 16 16"><path d="M6 3.5h.01M10 3.5h.01M6 8h.01M10 8h.01M6 12.5h.01M10 12.5h.01"/></svg>';
+        const box = document.createElement("input");
+        box.type = "checkbox";
+        box.value = it.id;
+        box.checked = !hiddenItems.includes(it.id);
+        box.addEventListener("change", save);
+        const icon = document.createElement("span");
+        icon.className = "fb-check-icon";
+        icon.innerHTML = it.sep ? '<span class="sep"></span>' : it.block ? "H" : it.label;
+        const name = document.createElement("span");
+        name.textContent = it.title.replace(/\s*\(.*\)$/, "");
+        row.append(grip, box, icon, name);
+        // 拖到别的行上:落在那一行的上半部分就放在它前面,下半部分放在后面
+        row.addEventListener("dragstart", (e) => {
+          this.dragging = row;
+          row.classList.add("dragging");
+          e.dataTransfer.effectAllowed = "move";
+          e.dataTransfer.setData("text/plain", it.id);
+        });
+        row.addEventListener("dragend", () => {
+          row.classList.remove("dragging");
+          for (const r of list.children) r.classList.remove("drop-before", "drop-after");
+          this.dragging = null;
+        });
+        row.addEventListener("dragover", (e) => {
+          if (!this.dragging || this.dragging === row) return;
+          e.preventDefault();
+          const r = row.getBoundingClientRect();
+          const after = e.clientY > r.top + r.height / 2;
+          row.classList.toggle("drop-after", after);
+          row.classList.toggle("drop-before", !after);
+        });
+        row.addEventListener("dragleave", () => row.classList.remove("drop-before", "drop-after"));
+        row.addEventListener("drop", (e) => {
+          const moved = this.dragging;
+          if (!moved || moved === row) return;
+          e.preventDefault();
+          const after = row.classList.contains("drop-after");
+          row.classList.remove("drop-before", "drop-after");
+          row.after(moved);
+          if (!after) row.before(moved);
+          save();
+        });
+        list.appendChild(row);
+      }
+    };
+    fill(orderedItems(itemOrder));
+    const reset = document.createElement("button");
+    reset.className = "fb-reset";
+    reset.textContent = "恢复默认";
+    reset.addEventListener("click", () => {
+      hiddenItems = [];
+      fill(ITEMS);
+      save();
+    });
+    this.openPop(btn, [title, list, reset]);
+  }
+
+  // 按顺序摆好按钮,再藏起不要的
+  arrange(order) {
+    this.row.replaceChildren(...orderedItems(order).map((it) => this.els.get(it.id)));
+    this.setHidden(hiddenItems);
   }
 
   // 藏起不要的按钮;分隔线两边都没有按钮时也藏起来
@@ -271,7 +351,8 @@ class FormatBar {
     let lastSep = null;
     for (const el of this.row.children) {
       if (el.classList.contains("sep")) {
-        el.hidden = !seen;
+        el.hidden = !seen || hidden.includes(el.dataset.cmd);
+        if (el.hidden) continue;
         if (seen) lastSep = el;
         seen = false;
       } else if (!el.hidden) seen = true;
@@ -321,12 +402,14 @@ class FormatBar {
   }
 }
 
-// 设置里记着的"不显示的按钮"
+// 设置里记着的"不显示的按钮"和按钮的顺序
 let hiddenItems = [];
+let itemOrder = [];
 let current = null;
-export function setFormatBarHidden(list) {
-  hiddenItems = Array.isArray(list) ? list : [];
-  current?.setHidden(hiddenItems);
+export function setFormatBarItems(hidden, order) {
+  hiddenItems = Array.isArray(hidden) ? hidden : [];
+  itemOrder = Array.isArray(order) ? order : [];
+  current?.arrange(itemOrder);
 }
 
 export const formatBar = $prose((ctx) => new Plugin({ view: (view) => new FormatBar(view, ctx) }));

@@ -13,7 +13,7 @@
     <button id="btn-new" class="icon" title="新建页面 (Ctrl+T)">+</button>
     <div class="spacer" data-tauri-drag-region></div>
     <button id="btn-format" class="icon" title="显示 / 收起格式栏" aria-pressed="true">
-      <svg viewBox="0 0 16 16"><path d="M1.8 12.5 5 3.5l3.2 9M2.9 9.5h4.2"/><path d="M13.8 8.2v4.3M13.8 9.6c0-1-.8-1.6-1.8-1.6s-1.9.7-1.9 2.3.9 2.3 1.9 2.3 1.8-.6 1.8-1.6"/></svg>
+      <svg viewBox="0 0 16 16"><rect x="1.8" y="2.3" width="12.4" height="11.4" rx="2"/><path d="M1.8 6.3h12.4"/><path d="M4.4 4.3h.01M6.7 4.3h.01M9 4.3h.01"/><path d="M4.4 9h7.2M4.4 11.2h4.4" opacity=".55"/></svg>
     </button>
     <button id="btn-search" class="icon" title="搜索全部页面 (Ctrl+F)">
       <svg viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14"/></svg>
@@ -100,7 +100,7 @@
         <button id="set-open-dir" class="link">打开笔记文件夹</button>
       </div>
       <h3>编辑器</h3>
-      <label class="row check"><input id="set-format-bar" type="checkbox" /> <span>标签下面显示格式栏(顶栏的 Aa 按钮也能切换)</span></label>
+      <label class="row check"><input id="set-format-bar" type="checkbox" /> <span>标签下面显示格式栏(顶栏的格式栏按钮也能切换)</span></label>
       <label class="row check"><input id="set-code-lines" type="checkbox" /> <span>代码块显示行号</span></label>
       <label class="row"><span>F5 插入的日期时间</span><input id="set-date-format" type="text" spellcheck="false" autocomplete="off" /></label>
       <div class="row col">
@@ -152,5 +152,7 @@
 
   <script src="vendor/highlight.js"></script>
   <script type="module" src="js/main.js"></script>
+  <!-- 贴边隐藏时露在屏幕边上的标识(见 style.css) -->
+  <div id="edge-mark" aria-hidden="true"><span></span></div>
 </body>
 </html>
