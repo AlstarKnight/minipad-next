@@ -1,13 +1,84 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
-  <defs><clipPath id="c"><rect x="64" y="64" width="896" height="896" rx="180"/></clipPath></defs>
-  <g clip-path="url(#c)">
-    <rect x="64" y="64" width="896" height="896" fill="#ffc43d"/>
-    <rect x="64" y="64" width="896" height="236" fill="#f08c1e"/>
-  </g>
-  <g fill="#78480a">
-    <rect x="200" y="420" width="624" height="48" rx="24"/>
-    <rect x="200" y="540" width="624" height="48" rx="24"/>
-    <rect x="200" y="660" width="624" height="48" rx="24"/>
-    <rect x="200" y="780" width="400" height="48" rx="24"/>
-  </g>
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="1024" height="1024" viewBox="224 216 805 805" role="img" aria-labelledby="title desc">
+  <title id="title">Minipad Next</title>
+  <desc id="desc">A cyan-to-magenta gradient floating notepad window with three text strokes and a folded corner; transparent background.</desc>
+  <defs>
+    <linearGradient id="frameGradient" x1="430" y1="265" x2="760" y2="1000" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#38f0ff"/>
+      <stop offset="0.27" stop-color="#43acff"/>
+      <stop offset="0.55" stop-color="#9c76ff"/>
+      <stop offset="0.78" stop-color="#ec51fb"/>
+      <stop offset="1" stop-color="#f409fa"/>
+    </linearGradient>
+    <linearGradient id="textGradient" x1="420" y1="475" x2="745" y2="827" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#54f2ff"/>
+      <stop offset="0.4" stop-color="#8ac5ff"/>
+      <stop offset="0.72" stop-color="#b99aff"/>
+      <stop offset="1" stop-color="#f16bfa"/>
+    </linearGradient>
+    <linearGradient id="foldGradient" x1="765" y1="725" x2="940" y2="927" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#49dfff"/>
+      <stop offset="0.45" stop-color="#99a1ff"/>
+      <stop offset="0.83" stop-color="#e978f9"/>
+      <stop offset="1" stop-color="#f257fc"/>
+    </linearGradient>
+    <filter id="softGlow" x="-25%" y="-25%" width="150%" height="150%" color-interpolation-filters="sRGB">
+      <feGaussianBlur stdDeviation="7"/>
+    </filter>
+    <mask id="topHoles" maskUnits="userSpaceOnUse" x="250" y="210" width="790" height="840">
+      <rect x="250" y="210" width="790" height="840" fill="#fff"/>
+      <circle cx="385" cy="373" r="31" fill="#000"/>
+      <circle cx="479" cy="358" r="31" fill="#000"/>
+    </mask>
+    <g id="iconMark">
+      <!-- Floating window, with its central opening knocked out to keep the SVG transparent. -->
+      <path fill="url(#frameGradient)" fill-rule="evenodd" d="
+        M 358,304
+        L 855,246
+        C 903,240 941,255 965,291
+        C 977,310 979,330 979,351
+        L 979,695
+        C 979,714 969,734 955,750
+        L 737,976
+        C 725,990 716,991 702,990
+        L 351,953
+        C 307,949 274,915 274,866
+        L 274,400
+        C 274,345 303,311 358,304 Z
+
+        M 396,440
+        L 847,386
+        C 889,381 914,407 914,447
+        L 914,679
+        C 914,703 908,714 889,715
+        L 811,719
+        C 760,720 727,753 727,806
+        L 727,916
+        C 727,927 719,932 709,931
+        L 382,895
+        C 354,892 337,877 337,846
+        L 337,495
+        C 337,468 356,445 396,440 Z
+        M 416,373 A 31,31 0 1 1 354,373 A 31,31 0 1 1 416,373 Z
+        M 510,358 A 31,31 0 1 1 448,358 A 31,31 0 1 1 510,358 Z"/>
+      <!-- The turned corner as a separate light-catching surface. -->
+      <path fill="url(#foldGradient)" d="
+        M 979,702
+        C 973,718 967,733 955,746
+        L 734,971
+        C 728,977 721,982 712,985
+        C 723,973 727,950 727,922
+        L 727,807
+        C 727,757 758,725 810,719
+        L 948,707
+        C 961,705 973,703 979,702 Z"/>
+      <!-- Three stylized writing strokes. -->
+      <path fill="url(#textGradient)" d="M 431,519 L 792,478 C 814,476 831,491 831,511 C 831,528 818,543 799,545 L 435,583 C 415,586 402,573 402,557 C 402,537 413,521 431,519 Z"/>
+      <path fill="url(#textGradient)" d="M 430,635 L 752,597 C 773,595 790,608 790,626 C 790,645 777,656 757,660 L 434,695 C 414,698 402,684 402,668 C 402,650 413,637 430,635 Z"/>
+      <path fill="url(#textGradient)" d="M 431,743 L 618,721 C 634,719 648,731 648,749 C 648,766 637,777 619,779 L 433,800 C 415,802 402,790 402,772 C 402,757 416,745 431,743 Z"/>
+    </g>
+  </defs>
+  <!-- A subtle glow makes the mark luminous on a dark background; the icon itself has no opaque background. -->
+  <use xlink:href="#iconMark" opacity="0.5" filter="url(#softGlow)"/>
+  <use xlink:href="#iconMark"/>
 </svg>

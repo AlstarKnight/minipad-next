@@ -1,5 +1,6 @@
 // ---------- 选中文字时的小工具栏 ----------
-// 选中一段文字,上方出现一排按钮:粗体、斜体、删除线、行内代码、链接、标题、列表、任务、引用、代码块
+// 选中一段文字,上方出现一排按钮:粗体、斜体、删除线、行内代码、链接、标题、列表、任务、引用、代码块。
+// 只在格式栏收起来的时候出现
 import {
   $prose,
   Plugin,
@@ -26,17 +27,17 @@ export function setTaskCommand(fn) {
   toggleTask = fn;
 }
 
-const markActive = (state, name) => {
+export const markActive = (state, name) => {
   const type = state.schema.marks[name];
   const { from, to } = state.selection;
   return !!type && state.doc.rangeHasMark(from, to, type);
 };
-const headingLevel = (state) => {
+export const headingLevel = (state) => {
   const p = state.selection.$from.parent;
   return p.type.name === "heading" ? p.attrs.level : 0;
 };
 
-const BUTTONS = [
+export const BUTTONS = [
   { id: "strong", label: "<b>B</b>", title: "粗体 (Ctrl+B)", active: (s) => markActive(s, "strong"), run: (c) => c.call(toggleStrongCommand.key) },
   { id: "em", label: "<i>I</i>", title: "斜体 (Ctrl+I)", active: (s) => markActive(s, "emphasis"), run: (c) => c.call(toggleEmphasisCommand.key) },
   { id: "strike", label: "<s>S</s>", title: "删除线", active: (s) => markActive(s, "strike_through"), run: (c) => c.call(toggleStrikethroughCommand.key) },
@@ -116,7 +117,9 @@ class Toolbar {
     this.view = view;
     const { state } = view;
     const sel = state.selection;
-    const show = !sel.empty && sel.$from.parent.inlineContent && !sel.$from.parent.type.spec.code && view.hasFocus() && view.editable;
+    // 格式栏开着时用不着它
+    const show = document.getElementById("format-bar")?.hidden !== false &&
+      !sel.empty && sel.$from.parent.inlineContent && !sel.$from.parent.type.spec.code && view.hasFocus() && view.editable;
     if (!show) {
       this.el.hidden = true;
       return;
@@ -128,9 +131,9 @@ class Toolbar {
     const w = this.el.offsetWidth;
     const h = this.el.offsetHeight;
     const left = Math.max(6, Math.min(window.innerWidth - w - 6, (start.left + end.left) / 2 - w / 2));
-    // 放在选区上面,上面放不下就放下面(顶栏有 34px 高)
+    // 放在选区上面,上面放不下(会挡住顶栏和格式栏)就放下面
     let top = start.top - h - 8;
-    if (top < 40) top = end.bottom + 8;
+    if (top < view.dom.parentElement.getBoundingClientRect().top + 4) top = end.bottom + 8;
     this.el.style.left = `${left}px`;
     this.el.style.top = `${top}px`;
   }
