@@ -714,3 +714,10 @@ html[data-edge="left"] #edge-mark { top: 0; bottom: 0; right: 0; width: 8px; }
 html[data-edge="right"] #edge-mark { top: 0; bottom: 0; left: 0; width: 8px; }
 html[data-edge="left"] #edge-mark span,
 html[data-edge="right"] #edge-mark span { top: 50%; height: 120px; margin-top: -60px; left: 0; right: 0; }
+
+/* 读取失败页面只显示告警，不提供编辑与格式操作。 */
+#read-error { position: absolute; inset: 0; z-index: 11; padding: 18px; background: var(--bg); color: var(--text); white-space: pre-wrap; overflow: auto; }
+#read-error[hidden] { display: none; }
+.tab.unreadable { opacity: .55; }
+.tab.unreadable .tab-warning { color: #ba772d; font-size: 12px; }
+html[data-unreadable] #format-bar, html[data-unreadable] #toolbar { pointer-events: none; opacity: .4; }
