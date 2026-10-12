@@ -80,8 +80,18 @@ export async function applyDisk(disk) {
   let tabsChanged = false;
   let currentChanged = false;
 
-  // 暂时无法读取的笔记本也可能不在磁盘结果中，不能据此认定已被删除。
-  const books = [...state.books];
+  // 缺失的笔记本有两种情况：目录已删除，或者仍存在但暂时读不了。
+  // 仅对确实不存在且没有本地未保存修改的笔记本执行删除同步。
+  const books = [];
+  for (const b of state.books) {
+    if (b.name === "" || onDisk.has(b.name) || b.notes.some(edited)) {
+      books.push(b);
+      continue;
+    }
+    const exists = await api.invoke("book_exists", { book: b.name }).catch(() => true);
+    if (exists) books.push(b);
+    else booksChanged = true;
+  }
 
   for (const b of books) {
     const d = onDisk.get(b.name);
