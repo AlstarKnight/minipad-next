@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
@@ -178,19 +178,31 @@ fn config_path(app: &AppHandle) -> PathBuf {
 
 /// 默认与可执行文件放在一起；旧版本已有的数据优先保留原位置。
 /// 安装目录不可写时继续使用用户数据目录，不影响在 Program Files 的安装。
+static DEFAULT_NOTES_PATH: OnceLock<PathBuf> = OnceLock::new();
+static DEFAULT_BACKUP_PATH: OnceLock<PathBuf> = OnceLock::new();
+
 fn default_storage_dir(app: &AppHandle, folder: &str) -> PathBuf {
-    let legacy = app
-        .path()
-        .app_data_dir()
-        .unwrap_or_else(|_| PathBuf::from("."))
-        .join(folder);
-    let Some(program_root) = std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(Path::to_path_buf))
-    else {
-        return legacy;
+    let cache = if folder == "notes" {
+        &DEFAULT_NOTES_PATH
+    } else {
+        &DEFAULT_BACKUP_PATH
     };
-    preferred_storage_dir(&program_root, &legacy, folder)
+    cache
+        .get_or_init(|| {
+            let legacy = app
+                .path()
+                .app_data_dir()
+                .unwrap_or_else(|_| PathBuf::from("."))
+                .join(folder);
+            let Some(program_root) = std::env::current_exe()
+                .ok()
+                .and_then(|p| p.parent().map(Path::to_path_buf))
+            else {
+                return legacy;
+            };
+            preferred_storage_dir(&program_root, &legacy, folder)
+        })
+        .clone()
 }
 
 fn contains_data(path: &Path) -> bool {
