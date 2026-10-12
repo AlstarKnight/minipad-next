@@ -9,6 +9,7 @@ import { updateCount } from "./page.js";
 let saveTimer = null;
 let metaTimer = null;
 let noteFlush = null;
+let inFlightNote = null;
 let metaFlush = null;
 const metaDirty = new Set();
 let bookDirty = false;
@@ -36,6 +37,12 @@ export function flushAll() {
   return noteFlush;
 }
 
+export function pendingNoteCount() {
+  let count = 0;
+  for (const b of state.books) for (const n of b.notes) if (n.dirty || n === inFlightNote) count++;
+  return count;
+}
+
 async function writeDirtyNotes() {
   while (true) {
     const dirty = [];
@@ -51,12 +58,15 @@ async function writeDirtyNotes() {
       // 写入中的新编辑会重新标脏；其他页面不因本页失败而停止保存。
       n.dirty = false;
       const content = n.content;
+      inFlightNote = n;
       try {
         await api.invoke("save_note", { book: b.name, name: n.name, content });
         n.disk = content;
       } catch (e) {
         n.dirty = true;
         firstError ??= e;
+      } finally {
+        if (inFlightNote === n) inFlightNote = null;
       }
     }
     if (firstError) {
