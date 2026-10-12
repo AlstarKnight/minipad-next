@@ -389,6 +389,16 @@ fn read_notes(app: AppHandle) -> Result<Vec<Book>, String> {
 }
 
 #[tauri::command]
+fn book_exists(app: AppHandle, book: String) -> Result<bool, String> {
+    let dir = notes::book_dir(&current_notes_dir(&app), &book)?;
+    match fs::metadata(dir) {
+        Ok(meta) => Ok(meta.is_dir()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(_) => Ok(true),
+    }
+}
+
+#[tauri::command]
 fn save_note(app: AppHandle, book: String, name: String, content: String) -> Result<(), String> {
     let path = notes::page_path(&current_notes_dir(&app), &book, &name)?;
     maybe_backup(&app);
@@ -902,6 +912,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             load_state,
             read_notes,
+            book_exists,
             save_note,
             create_note,
             rename_note,
