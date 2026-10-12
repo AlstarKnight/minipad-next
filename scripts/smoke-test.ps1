@@ -22,6 +22,15 @@ if (-not $env:CI -and -not $Force) {
     throw "This test deletes Minipad Next's settings and notes in %APPDATA%. Run it on a test machine with -Force."
 }
 $Exe = (Resolve-Path $Exe).Path
+# Run from an isolated executable directory: new installs keep notes and backups beside the exe.
+# Never touch notes that might exist beside a developer's regular build output.
+$TestInstall = Join-Path $env:TEMP "minipad-next-smoke-$PID"
+New-Item -ItemType Directory -Force -Path $TestInstall | Out-Null
+$TestExe = Join-Path $TestInstall ([IO.Path]::GetFileName($Exe))
+Copy-Item -LiteralPath $Exe -Destination $TestExe -Force
+$Exe = $TestExe
+$ProgramNotes = Join-Path $TestInstall "notes"
+$ProgramBackups = Join-Path $TestInstall "backups"
 $AppDir = Join-Path $env:APPDATA "io.github.alstarknight.minipadnext"
 $OldDir = Join-Path $env:APPDATA "com.minipadnext.app"
 $Title = "Minipad Next"
@@ -118,7 +127,7 @@ Remove-Item -LiteralPath $AppDir, $OldDir -Recurse -Force -ErrorAction SilentlyC
 # ---- first start ----
 Check "first start: the window appears and the frontend writes the welcome page" $true {
     $script:proc = Start-App
-    $notes = Join-Path $AppDir "notes"
+    $notes = $ProgramNotes
     $written = Wait-Until { @(Get-ChildItem -LiteralPath $notes -Filter *.md -ErrorAction SilentlyContinue).Count -gt 0 } 30
     if (-not $written) { throw "no page was written to $notes" }
 }
@@ -154,7 +163,7 @@ $proc = $null
 
 # ---- upgrade from 0.1.x ----
 Check "settings and notes from the 0.1.x folder are migrated" $true {
-    Remove-Item -LiteralPath $AppDir -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $AppDir, $ProgramNotes, $ProgramBackups -Recurse -Force -ErrorAction SilentlyContinue
     New-Item -ItemType Directory -Force -Path (Join-Path $OldDir "notes") | Out-Null
     Set-Content -LiteralPath (Join-Path $OldDir "notes\from-v01.md") -Value "hello from 0.1" -Encoding utf8
     Set-Content -LiteralPath (Join-Path $OldDir "settings.json") -Value '{"hotkey":"Ctrl+Alt+M","edge_hide":false}' -Encoding utf8
@@ -182,10 +191,10 @@ $proc = $null
 
 # ---- notebooks and daily backup ----
 Check "notebooks and daily backup" $true {
-    Remove-Item -LiteralPath $AppDir, $OldDir -Recurse -Force -ErrorAction SilentlyContinue
-    $notes = Join-Path $AppDir "notes"
+    Remove-Item -LiteralPath $AppDir, $OldDir, $ProgramNotes, $ProgramBackups -Recurse -Force -ErrorAction SilentlyContinue
+    $notes = $ProgramNotes
     $book = Join-Path $notes "Empty"
-    $backups = Join-Path $AppDir "backups"
+    $backups = $ProgramBackups
     if (Test-Path -LiteralPath $backups) { throw "could not clear the old backups in $backups" }
     # a page in the default notebook, an empty notebook, and the empty notebook remembered as the current one
     New-Item -ItemType Directory -Force -Path $book | Out-Null
