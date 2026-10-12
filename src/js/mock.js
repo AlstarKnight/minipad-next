@@ -259,6 +259,10 @@ export function mockApi() {
   window.__mockEmit = (ev, payload) => (listeners[ev] || []).forEach((cb) => cb({ event: ev, payload }));
   return {
     invoke: async (cmd, args = {}) => {
+      // 测试专用：在页面控制台可模拟慢磁盘与写入失败。
+      const test = window.__mockControl;
+      if (test?.delay?.[cmd]) await new Promise((resolve) => setTimeout(resolve, test.delay[cmd]));
+      if (test?.fail?.[cmd]) throw new Error(test.fail[cmd]);
       try {
         return cmds[cmd](args);
       } finally {
