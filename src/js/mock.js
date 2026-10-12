@@ -134,7 +134,7 @@ export function mockApi() {
       active: order.includes(meta.active) ? meta.active : (order[0] ?? ""),
     };
   };
-  const readBooks = () => ["", ...bookNames()].map(readBook);
+  const readBooks = () => ["", ...bookNames()].filter((name) => !window.__mockControl?.unreadableBook?.includes(name)).map(readBook);
 
   const cmds = {
     load_state: () => {
@@ -155,6 +155,7 @@ export function mockApi() {
       };
     },
     read_notes: () => readBooks(),
+    book_exists: ({ book }) => has(db.books, book),
     save_note: ({ book, name, content }) => {
       backup();
       bookOf(book).files[name] = content;
