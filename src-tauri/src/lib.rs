@@ -572,6 +572,62 @@ fn open_backup_dir(app: AppHandle) -> Result<(), String> {
     tauri_plugin_opener::open_path(dir, None::<&str>).map_err(|e| e.to_string())
 }
 
+/// 设置变更按热键、开机启动、文件复制的顺序提交；文件复制必须最后执行。
+/// 迁移失败时撤回已经成功的系统设置，并报告任何回滚失败。
+fn apply_settings_side_effects<H, A, M>(
+    hotkey_changed: bool,
+    autostart_changed: bool,
+    autostart_enabled: bool,
+    mut set_hotkey: H,
+    mut set_autostart: A,
+    copy_notes: M,
+) -> Result<(), String>
+where
+    H: FnMut(bool) -> Result<(), String>,
+    A: FnMut(bool) -> Result<(), String>,
+    M: FnOnce() -> Result<(), String>,
+{
+    if hotkey_changed {
+        if let Err(e) = set_hotkey(true) {
+            let rollback = set_hotkey(false).err();
+            return Err(append_rollback_error(e, rollback.into_iter().collect()));
+        }
+    }
+    if autostart_changed {
+        if let Err(e) = set_autostart(autostart_enabled) {
+            let rollback = if hotkey_changed {
+                set_hotkey(false).err()
+            } else {
+                None
+            };
+            return Err(append_rollback_error(e, rollback.into_iter().collect()));
+        }
+    }
+    if let Err(e) = copy_notes() {
+        let mut errors = Vec::new();
+        if autostart_changed {
+            if let Err(revert) = set_autostart(!autostart_enabled) {
+                errors.push(revert);
+            }
+        }
+        if hotkey_changed {
+            if let Err(revert) = set_hotkey(false) {
+                errors.push(revert);
+            }
+        }
+        return Err(append_rollback_error(e, errors));
+    }
+    Ok(())
+}
+
+fn append_rollback_error(original: String, rollback: Vec<String>) -> String {
+    if rollback.is_empty() {
+        original
+    } else {
+        format!("{original}（回滚失败：{}）", rollback.join("；"))
+    }
+}
+
 #[tauri::command]
 fn save_settings(
     app: AppHandle,
@@ -597,40 +653,40 @@ fn save_settings(
             return Err("备份位置不能放在笔记文件夹里面,请换一个文件夹".into());
         }
     }
-    // 优先验证备份目录，再复制笔记，避免常见的设置错误留下半途的迁移目标。
-    if copying_notes {
-        notes::copy_notes_for_switch(&old_notes, &new_notes)?;
-    }
-    // 先换热键(失败就恢复旧的),再改开机启动(失败就把热键也换回去),保证要么都生效要么都不变
+    // 先验证并更新全局热键和开机启动，最后才复制目录。
+    // 后续失败时回滚系统设置，避免产生“设置未切换、目标已有副本”的半途状态。
     let hotkey_changed = new.hotkey != old.hotkey;
     let retry_hotkey = state.hotkey_error.lock().unwrap().is_some();
-    if hotkey_changed || retry_hotkey {
-        state.hotkey_paused.store(false, Ordering::SeqCst);
-        if let Err(e) = register_hotkey(&app, &new.hotkey) {
-            if let Err(restore_error) = register_hotkey(&app, &old.hotkey) {
-                *state.hotkey_error.lock().unwrap() =
-                    Some(format!("{}:{restore_error}", old.hotkey));
+    let update_hotkey = hotkey_changed || retry_hotkey;
+    let update_autostart = new.autostart != old.autostart;
+    let autolaunch = app.autolaunch();
+    apply_settings_side_effects(
+        update_hotkey,
+        update_autostart,
+        new.autostart,
+        |use_new| {
+            state.hotkey_paused.store(false, Ordering::SeqCst);
+            let target = if use_new { &new.hotkey } else { &old.hotkey };
+            let result = register_hotkey(&app, target);
+            *state.hotkey_error.lock().unwrap() =
+                result.as_ref().err().map(|e| format!("{target}:{e}"));
+            result.map_err(|e| format!("热键 {target} 无法使用:{e}"))
+        },
+        |enable| {
+            let result = if enable {
+                autolaunch.enable()
+            } else {
+                autolaunch.disable()
+            };
+            result.map_err(|e| format!("开机启动设置失败:{e}"))
+        },
+        || {
+            if copying_notes {
+                notes::copy_notes_for_switch(&old_notes, &new_notes)?;
             }
-            return Err(format!("热键 {} 无法使用:{e}", new.hotkey));
-        }
-    }
-    if new.autostart != old.autostart {
-        let al = app.autolaunch();
-        let r = if new.autostart {
-            al.enable()
-        } else {
-            al.disable()
-        };
-        if let Err(e) = r {
-            if hotkey_changed {
-                let _ = register_hotkey(&app, &old.hotkey);
-            }
-            return Err(format!("开机启动设置失败:{e}"));
-        }
-    }
-    if hotkey_changed || retry_hotkey {
-        *state.hotkey_error.lock().unwrap() = None;
-    }
+            Ok(())
+        },
+    )?;
 
     if let Some(win) = main_window(&app) {
         let _ = win.set_always_on_top(new.always_on_top);
@@ -1268,6 +1324,102 @@ mod tests {
             assert_eq!(s.accent, "", "{bad}");
         }
     }
+    #[test]
+    fn hotkey_failure_prevents_folder_copy() {
+        use std::cell::{Cell, RefCell};
+        let events = RefCell::new(Vec::new());
+        let copied = Cell::new(false);
+        let error = apply_settings_side_effects(
+            true,
+            true,
+            true,
+            |new| {
+                events.borrow_mut().push(if new { "new-hotkey" } else { "old-hotkey" });
+                if new {
+                    Err("快捷键被占用".into())
+                } else {
+                    Ok(())
+                }
+            },
+            |enabled| {
+                events.borrow_mut().push(if enabled { "autostart-on" } else { "autostart-off" });
+                Ok(())
+            },
+            || {
+                copied.set(true);
+                Ok(())
+            },
+        )
+        .unwrap_err();
+        assert!(error.contains("快捷键被占用"));
+        assert_eq!(*events.borrow(), ["new-hotkey", "old-hotkey"]);
+        assert!(!copied.get());
+    }
+
+    #[test]
+    fn autostart_failure_does_not_copy_and_restores_hotkey() {
+        use std::cell::{Cell, RefCell};
+        let events = RefCell::new(Vec::new());
+        let copied = Cell::new(false);
+        let error = apply_settings_side_effects(
+            true,
+            true,
+            true,
+            |new| {
+                events.borrow_mut().push(if new { "new-hotkey" } else { "old-hotkey" });
+                Ok(())
+            },
+            |enabled| {
+                events.borrow_mut().push(if enabled { "autostart-on" } else { "autostart-off" });
+                Err("启动设置不可用".into())
+            },
+            || {
+                copied.set(true);
+                Ok(())
+            },
+        )
+        .unwrap_err();
+        assert!(error.contains("启动设置不可用"));
+        assert_eq!(*events.borrow(), ["new-hotkey", "autostart-on", "old-hotkey"]);
+        assert!(!copied.get());
+    }
+
+    #[test]
+    fn folder_copy_failure_reverts_autostart_and_hotkey() {
+        use std::cell::RefCell;
+        let events = RefCell::new(Vec::new());
+        let root = notes::temp_dir("settings-rollback");
+        let old_dir = root.join("old");
+        let dest = root.join("dest");
+        fs::create_dir_all(&old_dir).unwrap();
+        fs::write(old_dir.join("note.md"), "old").unwrap();
+        fs::create_dir_all(&dest).unwrap();
+        fs::write(dest.join("occupied.md"), "no overwrite").unwrap();
+        let err = apply_settings_side_effects(
+            true,
+            true,
+            true,
+            |new| {
+                events.borrow_mut().push(if new { "new-hotkey" } else { "old-hotkey" });
+                Ok(())
+            },
+            |enabled| {
+                events.borrow_mut().push(if enabled { "autostart-on" } else { "autostart-off" });
+                Ok(())
+            },
+            || notes::copy_notes_for_switch(&old_dir, &dest),
+        )
+        .unwrap_err();
+        assert!(err.contains("目标文件夹为空"));
+        assert_eq!(
+            *events.borrow(),
+            ["new-hotkey", "autostart-on", "autostart-off", "old-hotkey"]
+        );
+        assert_eq!(fs::read_to_string(dest.join("occupied.md")).unwrap(), "no overwrite");
+        assert_eq!(fs::read_to_string(old_dir.join("note.md")).unwrap(), "old");
+        fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn explicit_storage_paths_survive_install_location_changes() {
         let root = notes::temp_dir("sticky-path");
