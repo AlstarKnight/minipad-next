@@ -32,7 +32,7 @@ export function applyEdgeAppearance() {
   const on = state.settings?.edge_expand_button !== false;
   document.documentElement.dataset.edgeButton = on ? "on" : "off";
   const scale = window.devicePixelRatio || 1;
-  document.documentElement.style.setProperty("--edge-peek", Math.floor((on ? 34 : 6) / scale) + "px");
+  document.documentElement.style.setProperty("--edge-peek", Math.floor((on ? 14 : 6) / scale) + "px");
 }
 matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => state.settings && applySettings());
 

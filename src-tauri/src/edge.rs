@@ -3,7 +3,7 @@
 /// 贴边隐藏后露在屏幕内的宽度(前端在这一条上画标识)
 pub const STRIP: i32 = 6;
 /// 开启展开按钮时，屏幕内留出足够空间容纳可点击的按钮。
-pub const BUTTON_STRIP: i32 = 34;
+pub const BUTTON_STRIP: i32 = 14;
 /// 离屏幕边缘多近算"靠边"
 pub const SNAP: i32 = 8;
 

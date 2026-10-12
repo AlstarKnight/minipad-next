@@ -1429,11 +1429,11 @@ describe("theme and accent", () => {
     const mark = () => p.$eval("#edge-mark", (m) => { const r = m.getBoundingClientRect(); return getComputedStyle(m).display === "none" ? null : [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)]; });
     assert.equal(await mark(), null, "no marker while the window is out");
     await p.evaluate(() => window.__mockEmit("edge-hidden", "top"));
-    assert.deepEqual(await mark(), [0, 506, 440, 34], "default expand button leaves a visible 34px edge");
+    assert.deepEqual(await mark(), [0, 526, 440, 14], "default expand strip leaves a visible 14px edge");
     await p.evaluate(() => window.__mockEmit("edge-hidden", "left"));
-    assert.deepEqual(await mark(), [406, 0, 34, 540], "left edge: clickable expand button");
+    assert.deepEqual(await mark(), [426, 0, 14, 540], "left edge: clickable expand strip");
     await p.evaluate(() => window.__mockEmit("edge-hidden", "right"));
-    assert.deepEqual(await mark(), [0, 0, 34, 540], "right edge: clickable expand button");
+    assert.deepEqual(await mark(), [0, 0, 14, 540], "right edge: clickable expand strip");
     assert.equal(await p.isVisible("#edge-expand"), true, "expand button shown by default");
     await p.click("#edge-expand");
     assert.equal(await mark(), null, "clicking expand restores the window");
