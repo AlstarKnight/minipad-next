@@ -559,7 +559,11 @@ fn open_backup_dir(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn save_settings(app: AppHandle, settings: Settings, migrate_notes: Option<bool>) -> Result<Settings, String> {
+fn save_settings(
+    app: AppHandle,
+    settings: Settings,
+    migrate_notes: Option<bool>,
+) -> Result<Settings, String> {
     let state = app.state::<AppState>();
     let old = state.settings.lock().unwrap().clone();
     let mut new = settings;
@@ -932,8 +936,11 @@ fn edge_tick(app: &AppHandle) {
     };
     if let Some((edge, mon)) = ready {
         let show_button = st.settings.lock().unwrap().edge_expand_button;
-        let strip = if show_button { edge::BUTTON_STRIP } else { edge::STRIP };
-        let (x, y) = edge::hidden_position_with_strip(edge, rect, mon, strip);
+        let (x, y) = if show_button {
+            edge::hidden_position_with_strip(edge, rect, mon, edge::BUTTON_STRIP)
+        } else {
+            edge::hidden_position(edge, rect, mon)
+        };
         let _ = app.emit("flush", ());
         let _ = app.emit("edge-hidden", edge.name());
         let _ = win.set_position(PhysicalPosition::new(x, y));
@@ -1238,15 +1245,26 @@ mod tests {
         let program = root.join("program");
         let legacy = root.join("legacy-notes");
         fs::create_dir_all(&program).unwrap();
-        assert_eq!(preferred_storage_dir(&program, &legacy, "notes"), program.join("notes"));
+        assert_eq!(
+            preferred_storage_dir(&program, &legacy, "notes"),
+            program.join("notes")
+        );
         fs::create_dir_all(&legacy).unwrap();
         fs::write(legacy.join("previous.md"), "old").unwrap();
-        assert_eq!(preferred_storage_dir(&program, &legacy, "notes"), program.join("notes"));
-        assert_eq!(fs::read_to_string(program.join("notes").join("previous.md")).unwrap(), "old");
+        assert_eq!(
+            preferred_storage_dir(&program, &legacy, "notes"),
+            program.join("notes")
+        );
+        assert_eq!(
+            fs::read_to_string(program.join("notes").join("previous.md")).unwrap(),
+            "old"
+        );
         assert_eq!(fs::read_to_string(legacy.join("previous.md")).unwrap(), "old");
-        fs::create_dir_all(program.join("notes")).unwrap();
         fs::write(program.join("notes").join("new.md"), "new").unwrap();
-        assert_eq!(preferred_storage_dir(&program, &legacy, "notes"), program.join("notes"));
+        assert_eq!(
+            preferred_storage_dir(&program, &legacy, "notes"),
+            program.join("notes")
+        );
         fs::remove_dir_all(root).unwrap();
     }
 
