@@ -518,15 +518,14 @@ pub fn copy_notes_for_switch(source: &Path, destination: &Path) -> Result<(), St
     if dest_abs.starts_with(&source_abs) || source_abs.starts_with(&dest_abs) {
         return Err("新旧笔记文件夹不能互相包含".into());
     }
-    if destination.exists() {
-        if !destination.is_dir()
+    if destination.exists()
+        && (!destination.is_dir()
             || fs::read_dir(destination)
                 .map_err(|e| format!("无法检查目标目录:{e}"))?
                 .next()
-                .is_some()
-        {
-            return Err("迁移要求目标文件夹为空；如果要使用已有笔记文件夹，请取消勾选迁移".into());
-        }
+                .is_some())
+    {
+        return Err("迁移要求目标文件夹为空；如果要使用已有笔记文件夹，请取消勾选迁移".into());
     }
     let seq = TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
     let stage = parent.join(format!(".minipad-copy-{}-{seq}", std::process::id()));
