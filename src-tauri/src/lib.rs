@@ -210,20 +210,34 @@ fn contains_data(path: &Path) -> bool {
 }
 
 fn preferred_storage_dir(program_root: &Path, legacy: &Path, folder: &str) -> PathBuf {
+    preferred_storage_dir_with_probe(program_root, legacy, folder, |root| {
+        let probe = root.join(format!(".minipad-write-{}.tmp~", std::process::id()));
+        let writable = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&probe)
+            .is_ok();
+        if writable {
+            let _ = fs::remove_file(&probe);
+        }
+        writable
+    })
+}
+
+/// 测试可注入权限检查，Windows 的只读属性不能可靠模拟目录 ACL。
+fn preferred_storage_dir_with_probe(
+    program_root: &Path,
+    legacy: &Path,
+    folder: &str,
+    writable: impl FnOnce(&Path) -> bool,
+) -> PathBuf {
     let beside_exe = program_root.join(folder);
     // 若安装目录已有笔记，以那份数据为准；绝不覆盖已有目录。
     if contains_data(&beside_exe) {
         return beside_exe;
     }
     // 只在需要建目录或迁移旧数据时检测可写性，结果由 OnceLock 缓存。
-    let probe = program_root.join(format!(".minipad-write-{}.tmp~", std::process::id()));
-    let writable = fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&probe)
-        .is_ok();
-    if writable {
-        let _ = fs::remove_file(&probe);
+    if writable(program_root) {
         if contains_data(legacy) {
             // 旧版本的默认内容安全复制到 exe 旁边；原文件仍然保留。
             // 若目标不可写、发生冲突或复制失败，就继续读取旧位置。
@@ -1451,6 +1465,22 @@ mod tests {
             "最近更新"
         );
         assert!(!new_install.join("notes").exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn unwritable_install_folder_falls_back_even_with_empty_notes_directory() {
+        let root = notes::temp_dir("readonly-install");
+        let program = root.join("installed");
+        let legacy = root.join("appdata");
+        fs::create_dir_all(program.join("notes")).unwrap();
+        fs::create_dir_all(program.join("backups")).unwrap();
+        for folder in ["notes", "backups"] {
+            assert_eq!(
+                preferred_storage_dir_with_probe(&program, &legacy, folder, |_| false),
+                legacy
+            );
+        }
         fs::remove_dir_all(root).unwrap();
     }
 
