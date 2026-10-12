@@ -9,7 +9,7 @@ import { rememberView } from "./page.js";
 import { switchTo, newNote, deleteNote } from "./tabs.js";
 import { toggleBooks, closeBooks, bindBooks } from "./notebooks.js";
 import { openSearch, bindSearch } from "./search.js";
-import { openSettings, saveSettings, bindSettings } from "./settings.js";
+import { openSettings, saveSettings, applyEdgeAppearance, bindSettings } from "./settings.js";
 import { createEditor, editorDebug, insertText, toggleTask } from "./editor.js";
 import { setLinkPrompt, setTaskCommand } from "./toolbar.js";
 import { formatDate } from "./datetime.js";
@@ -32,7 +32,10 @@ async function init() {
     syncFromDisk();
   });
   // 贴边隐藏时,在露出来的那一条上显示标识
-  api.listen("edge-hidden", (e) => (document.documentElement.dataset.edge = e.payload));
+  api.listen("edge-hidden", (e) => {
+    document.documentElement.dataset.edge = e.payload;
+    applyEdgeAppearance();
+  });
   api.listen("edge-shown", () => delete document.documentElement.dataset.edge);
   api.listen("backup-error", (e) => toast("自动备份失败:" + e.payload, 5000));
 }
@@ -122,6 +125,7 @@ function bindUi() {
   $("#btn-search").addEventListener("click", openSearch);
   $("#btn-settings").addEventListener("click", openSettings);
   $("#btn-hide").addEventListener("click", hideWindow);
+  $("#edge-expand").addEventListener("click", () => api.invoke("expand_edge").catch((e) => toast(String(e))));
   $("#btn-format").addEventListener("click", toggleFormatBar);
   // 太阳 / 月亮按钮:在浅色和深色之间切换(设置里的"跟随系统"也会换成选中的这个)
   $("#btn-theme").addEventListener("click", async () => {
