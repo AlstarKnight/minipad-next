@@ -44,9 +44,10 @@ async function writeDirtyNotes() {
       setSaveStatus("saved");
       return;
     }
+    let firstError = null;
     for (const [b, n] of dirty) {
       if (!n.dirty || n.unreadable || !state.books.includes(b) || !b.notes.includes(n)) continue;
-      // 此时清除 dirty。写入进行中如有新编辑，markDirty 会再将它设为 true。
+      // 写入中的新编辑会重新标脏；其他页面不因本页失败而停止保存。
       n.dirty = false;
       const content = n.content;
       try {
@@ -54,11 +55,14 @@ async function writeDirtyNotes() {
         n.disk = content;
       } catch (e) {
         n.dirty = true;
-        setSaveStatus("err", String(e));
-        clearTimeout(saveTimer);
-        saveTimer = setTimeout(backgroundNotes, 3000);
-        throw e;
+        firstError ??= e;
       }
+    }
+    if (firstError) {
+      setSaveStatus("err", String(firstError));
+      clearTimeout(saveTimer);
+      saveTimer = setTimeout(backgroundNotes, 3000);
+      throw firstError;
     }
   }
 }
