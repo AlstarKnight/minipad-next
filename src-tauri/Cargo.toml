@@ -1,6 +1,6 @@
 [package]
 name = "minipad-next"
-version = "0.2.5"
+version = "0.2.6"
 description = "Minipad Next"
 authors = ["AlstarKnight"]
 repository = "https://github.com/AlstarKnight/minipad-next"

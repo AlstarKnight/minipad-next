@@ -72,6 +72,15 @@ function bindUi() {
   $("#btn-settings").addEventListener("click", openSettings);
   $("#btn-hide").addEventListener("click", hideWindow);
   $("#btn-format").addEventListener("click", toggleFormatBar);
+  // 太阳 / 月亮按钮:在浅色和深色之间切换(设置里的"跟随系统"也会换成选中的这个)
+  $("#btn-theme").addEventListener("click", async () => {
+    const dark = document.documentElement.dataset.theme === "dark";
+    try {
+      await saveSettings({ ...state.settings, theme: dark ? "light" : "dark" });
+    } catch (e) {
+      toast(String(e));
+    }
+  });
   document.addEventListener("hide-format-bar", toggleFormatBar);
   document.addEventListener("format-bar-items", (e) =>
     saveSettings({ ...state.settings, format_bar_hidden: e.detail }).catch((err) => toast(String(err)))

@@ -1312,3 +1312,61 @@ describe("format bar", () => {
     ], "commands and options are colored");
   });
 });
+
+// ---------- 明暗切换、强调色 ----------
+describe("theme and accent", () => {
+  ui("the sun / moon button switches between light and dark and remembers it", { seed: seed({ "": { 页: "文字" } }) }, async (h) => {
+    const { p } = h;
+    const theme = () => p.evaluate(() => document.documentElement.dataset.theme);
+    const start = await theme();
+    await p.click("#btn-theme");
+    await until(theme, start === "dark" ? "light" : "dark", "the theme flips");
+    await until(async () => (await h.stored())?.settings?.theme, start === "dark" ? "light" : "dark", "and is saved");
+    await p.click("#btn-theme");
+    await until(theme, start, "and flips back");
+    assert.equal(await p.getAttribute("#btn-settings", "title"), "设置");
+  });
+
+  ui("an accent color, also a gradient, is picked in the settings and colors the active tab", { seed: seed({ "": { 甲: "一", 乙: "二" } }) }, async (h) => {
+    const { p } = h;
+    const marker = () => p.$eval(".tab.active", (t) => getComputedStyle(t, "::before").backgroundImage);
+    assert.equal(await marker(), "none", "the default accent is a plain color");
+    await p.click("#btn-settings");
+    await p.locator("#settings").waitFor();
+    await p.click('#set-accent button[title="彩虹渐变"]');
+    assert.ok(await p.isChecked("#set-accent-grad"), "a gradient ticks 渐变到");
+    await p.click("#set-save");
+    await until(async () => (await h.stored())?.settings?.accent, "linear-gradient(135deg, #ff5f6d, #ffa94d, #f5d142, #51cf66, #4dabf7, #9775fa)", "saved");
+    assert.match(await marker(), /linear-gradient/, "the active tab's line is the gradient");
+    // 自定义的纯色
+    await p.click("#btn-settings");
+    assert.ok(await p.locator('#set-accent button.on[title="彩虹渐变"]').isVisible(), "the saved accent is marked");
+    await p.uncheck("#set-accent-grad");
+    await p.fill("#set-accent-from", "#123abc");
+    await p.click("#set-save");
+    await until(async () => (await h.stored())?.settings?.accent, "#123abc", "a custom color");
+    assert.equal(await p.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--accent").trim()), "#123abc");
+    await p.click("#btn-settings");
+    await p.click('#set-accent button[title="默认(橙色)"]');
+    await p.click("#set-save");
+    await until(async () => (await h.stored())?.settings?.accent, "", "back to the default");
+    assert.equal(await marker(), "none");
+  });
+
+  ui("text can get a gradient color, saved as a background-clip span", { seed: seed({ "": { 页: "渐变" } }) }, async (h) => {
+    const { p } = h;
+    await p.click("#editor .ProseMirror p");
+    await p.keyboard.press("End");
+    await p.keyboard.press("Shift+Home");
+    await until(h.selection, "渐变");
+    await p.click('#format-bar [data-cmd="color"]');
+    await p.click('.fb-pop .fb-gradients [title="彩虹渐变"]');
+    const md =
+      '<span style="color: #ff5f6d; background-image: linear-gradient(90deg, #ff5f6d, #ffa94d, #f5d142, #51cf66, #4dabf7, #9775fa); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent">渐变</span>';
+    assert.equal(await h.editor(), md);
+    await until(() => h.mockFile("", "页"), md, "saved");
+    await p.reload();
+    await p.locator('#editor span[data-color^="linear-gradient"]').waitFor();
+    assert.equal(await h.editor(), md, "read back the same after a restart");
+  });
+});

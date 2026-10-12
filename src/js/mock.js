@@ -20,6 +20,7 @@ const DEFAULT_SETTINGS = {
   code_line_numbers: true,
   format_bar: true,
   format_bar_hidden: [],
+  accent: "",
   backup_enabled: true,
   backup_keep: 14,
   backup_dir: "",
