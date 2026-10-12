@@ -496,10 +496,13 @@ fn save_settings(app: AppHandle, settings: Settings) -> Result<Settings, String>
         }
     }
     // 先换热键(失败就恢复旧的),再改开机启动(失败就把热键也换回去),保证要么都生效要么都不变
-    state.hotkey_paused.store(false, Ordering::SeqCst);
-    if let Err(e) = register_hotkey(&app, &new.hotkey) {
-        let _ = register_hotkey(&app, &old.hotkey);
-        return Err(format!("热键 {} 无法使用:{e}", new.hotkey));
+    let hotkey_changed = new.hotkey != old.hotkey;
+    if hotkey_changed {
+        state.hotkey_paused.store(false, Ordering::SeqCst);
+        if let Err(e) = register_hotkey(&app, &new.hotkey) {
+            let _ = register_hotkey(&app, &old.hotkey);
+            return Err(format!("热键 {} 无法使用:{e}", new.hotkey));
+        }
     }
     if new.autostart != old.autostart {
         let al = app.autolaunch();
@@ -509,7 +512,9 @@ fn save_settings(app: AppHandle, settings: Settings) -> Result<Settings, String>
             al.disable()
         };
         if let Err(e) = r {
-            let _ = register_hotkey(&app, &old.hotkey);
+            if hotkey_changed {
+                let _ = register_hotkey(&app, &old.hotkey);
+            }
             return Err(format!("开机启动设置失败:{e}"));
         }
     }
@@ -570,6 +575,11 @@ async fn pick_folder(app: AppHandle, title: Option<String>) -> Option<String> {
 #[tauri::command]
 fn hide_window(app: AppHandle) {
     hide_main(&app);
+}
+
+#[tauri::command]
+fn show_window(app: AppHandle) {
+    show_main(&app);
 }
 
 #[tauri::command]
@@ -828,6 +838,7 @@ pub fn run() {
             note_activity,
             pick_folder,
             hide_window,
+            show_window,
             open_notes_dir,
             open_link,
             quit_app
@@ -876,14 +887,8 @@ pub fn run() {
                         let _ = open_notes_dir(app.clone());
                     }
                     "quit" => {
-                        // 让页面先把没保存的内容写盘,再退出
+                        // 前端保存成功后通过 quit_app 确认退出
                         let _ = app.emit("before-quit", ());
-                        let app = app.clone();
-                        std::thread::spawn(move || {
-                            std::thread::sleep(Duration::from_millis(1500));
-                            persist_settings(&app);
-                            app.exit(0);
-                        });
                     }
                     _ => {}
                 })
