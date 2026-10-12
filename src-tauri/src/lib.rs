@@ -510,7 +510,8 @@ fn save_settings(app: AppHandle, settings: Settings) -> Result<Settings, String>
         state.hotkey_paused.store(false, Ordering::SeqCst);
         if let Err(e) = register_hotkey(&app, &new.hotkey) {
             if let Err(restore_error) = register_hotkey(&app, &old.hotkey) {
-                *state.hotkey_error.lock().unwrap() = Some(format!("{}:{restore_error}", old.hotkey));
+                *state.hotkey_error.lock().unwrap() =
+                    Some(format!("{}:{restore_error}", old.hotkey));
             }
             return Err(format!("热键 {} 无法使用:{e}", new.hotkey));
         }
