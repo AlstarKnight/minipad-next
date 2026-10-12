@@ -332,9 +332,7 @@ fn pin_default_storage(settings: &mut Settings, notes: &Path, backups: &Path) ->
 
 /// 区分文件不存在与读取/解析失败；只有前两种可安全写回。
 /// 不可读取的配置本次运行使用默认值，但不得覆盖原有 settings.json。
-fn decode_settings_result(
-    result: std::io::Result<Vec<u8>>,
-) -> (Settings, bool, Option<String>) {
+fn decode_settings_result(result: std::io::Result<Vec<u8>>) -> (Settings, bool, Option<String>) {
     match result {
         Ok(bytes) => match serde_json::from_str::<Settings>(&notes::decode_text(&bytes)) {
             Ok(settings) => (settings, true, None),
@@ -344,9 +342,7 @@ fn decode_settings_result(
                 Some(format!("设置文件解析失败:{e}")),
             ),
         },
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            (Settings::default(), true, None)
-        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => (Settings::default(), true, None),
         Err(e) => (
             Settings::default(),
             false,
@@ -359,7 +355,11 @@ fn load_settings(app: &AppHandle) -> (Settings, bool, Option<String>) {
     decode_settings_result(fs::read(config_path(app)))
 }
 
-fn write_settings_if_allowed(path: &Path, settings: &Settings, allowed: bool) -> Result<(), String> {
+fn write_settings_if_allowed(
+    path: &Path,
+    settings: &Settings,
+    allowed: bool,
+) -> Result<(), String> {
     if !allowed {
         // 保护原文件：即使后来暂时恢复可写，也不能用本次运行的默认值覆盖。
         return Ok(());
@@ -1169,12 +1169,15 @@ pub fn run() {
             notes::cleanup_stale_temps(&notes_dir(&handle, &settings));
             {
                 let st = handle.state::<AppState>();
-                st.settings_write_allowed.store(write_allowed, Ordering::SeqCst);
+                st.settings_write_allowed
+                    .store(write_allowed, Ordering::SeqCst);
                 *st.settings_read_error.lock().unwrap() = read_error;
                 *st.settings.lock().unwrap() = settings.clone();
                 *st.geom.lock().unwrap() = settings.window.clone();
                 if pinned && write_allowed {
-                    if let Err(e) = write_settings_if_allowed(&config_path(&handle), &settings, true) {
+                    if let Err(e) =
+                        write_settings_if_allowed(&config_path(&handle), &settings, true)
+                    {
                         eprintln!("无法记住迁移后的存储路径: {e}");
                     }
                 }
@@ -1311,9 +1314,10 @@ mod tests {
         write_settings_if_allowed(&path, &fallback, can_write).unwrap();
         assert_eq!(fs::read(&path).unwrap(), corrupt);
 
-        let (fallback, can_write, err) = decode_settings_result(Err(
-            std::io::Error::new(std::io::ErrorKind::PermissionDenied, "模拟杀毒软件占用"),
-        ));
+        let (fallback, can_write, err) = decode_settings_result(Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "模拟杀毒软件占用",
+        )));
         assert!(!can_write);
         assert!(err.unwrap().contains("读取失败"));
         write_settings_if_allowed(&path, &fallback, can_write).unwrap();
