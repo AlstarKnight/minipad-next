@@ -223,10 +223,10 @@ pub fn decode_text(bytes: &[u8]) -> String {
     text.replace("\r\n", "\n")
 }
 
-pub fn read_note(dir: &Path, name: &str) -> String {
+pub fn read_note(dir: &Path, name: &str) -> Result<String, String> {
     fs::read(note_path(dir, name))
         .map(|b| decode_text(&b))
-        .unwrap_or_default()
+        .map_err(|e| format!("无法读取笔记「{name}」: {e}"))
 }
 
 pub fn read_meta(dir: &Path) -> Meta {
@@ -266,18 +266,20 @@ pub fn load_book(root: &Path, book: &str) -> Result<Book, String> {
     } else {
         names.first().cloned().unwrap_or_default()
     };
-    let notes = names
+    let notes: Vec<Note> = names
         .into_iter()
-        .map(|name| Note {
-            content: read_note(&dir, &name),
-            mode: meta
-                .modes
-                .get(&name)
-                .cloned()
-                .unwrap_or_else(|| "edit".into()),
-            name,
+        .map(|name| {
+            Ok(Note {
+                content: read_note(&dir, &name)?,
+                mode: meta
+                    .modes
+                    .get(&name)
+                    .cloned()
+                    .unwrap_or_else(|| "edit".into()),
+                name,
+            })
         })
-        .collect();
+        .collect::<Result<_, String>>()?;
     Ok(Book {
         name: book.to_string(),
         notes,
@@ -289,9 +291,7 @@ pub fn load_book(root: &Path, book: &str) -> Result<Book, String> {
 pub fn load_books(root: &Path) -> Result<Vec<Book>, String> {
     let mut books = vec![load_book(root, "")?];
     for name in list_books(root)? {
-        if let Ok(book) = load_book(root, &name) {
-            books.push(book);
-        }
+        books.push(load_book(root, &name)?);
     }
     Ok(books)
 }
