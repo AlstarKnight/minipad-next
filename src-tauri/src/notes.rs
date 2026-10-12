@@ -519,9 +519,11 @@ pub fn copy_notes_for_switch(source: &Path, destination: &Path) -> Result<(), St
         return Err("新旧笔记文件夹不能互相包含".into());
     }
     if destination.exists() {
-        if !destination.is_dir() || fs::read_dir(destination)
-            .map_err(|e| format!("无法检查目标目录:{e}"))?
-            .next().is_some()
+        if !destination.is_dir()
+            || fs::read_dir(destination)
+                .map_err(|e| format!("无法检查目标目录:{e}"))?
+                .next()
+                .is_some()
         {
             return Err("迁移要求目标文件夹为空；如果要使用已有笔记文件夹，请取消勾选迁移".into());
         }
@@ -796,7 +798,10 @@ mod tests {
         fs::write(old.join(".trash").join("旧.md"), "回收站").unwrap();
         copy_notes_for_switch(&old, &next).unwrap();
         for path in ["我的.md", "项目/周报.md", ".trash/旧.md"] {
-            assert_eq!(fs::read(next.join(path)).unwrap(), fs::read(old.join(path)).unwrap());
+            assert_eq!(
+                fs::read(next.join(path)).unwrap(),
+                fs::read(old.join(path)).unwrap()
+            );
         }
         assert!(copy_notes_for_switch(&old, &next).is_err());
         assert!(copy_notes_for_switch(&old, &old.join("inside")).is_err());
