@@ -1348,7 +1348,9 @@ mod tests {
             true,
             true,
             |new| {
-                events.borrow_mut().push(if new { "new-hotkey" } else { "old-hotkey" });
+                events
+                    .borrow_mut()
+                    .push(if new { "new-hotkey" } else { "old-hotkey" });
                 if new {
                     Err("快捷键被占用".into())
                 } else {
@@ -1356,7 +1358,11 @@ mod tests {
                 }
             },
             |enabled| {
-                events.borrow_mut().push(if enabled { "autostart-on" } else { "autostart-off" });
+                events.borrow_mut().push(if enabled {
+                    "autostart-on"
+                } else {
+                    "autostart-off"
+                });
                 Ok(())
             },
             || {
@@ -1380,11 +1386,17 @@ mod tests {
             true,
             true,
             |new| {
-                events.borrow_mut().push(if new { "new-hotkey" } else { "old-hotkey" });
+                events
+                    .borrow_mut()
+                    .push(if new { "new-hotkey" } else { "old-hotkey" });
                 Ok(())
             },
             |enabled| {
-                events.borrow_mut().push(if enabled { "autostart-on" } else { "autostart-off" });
+                events.borrow_mut().push(if enabled {
+                    "autostart-on"
+                } else {
+                    "autostart-off"
+                });
                 Err("启动设置不可用".into())
             },
             || {
@@ -1394,7 +1406,10 @@ mod tests {
         )
         .unwrap_err();
         assert!(error.contains("启动设置不可用"));
-        assert_eq!(*events.borrow(), ["new-hotkey", "autostart-on", "old-hotkey"]);
+        assert_eq!(
+            *events.borrow(),
+            ["new-hotkey", "autostart-on", "old-hotkey"]
+        );
         assert!(!copied.get());
     }
 
@@ -1414,11 +1429,17 @@ mod tests {
             true,
             true,
             |new| {
-                events.borrow_mut().push(if new { "new-hotkey" } else { "old-hotkey" });
+                events
+                    .borrow_mut()
+                    .push(if new { "new-hotkey" } else { "old-hotkey" });
                 Ok(())
             },
             |enabled| {
-                events.borrow_mut().push(if enabled { "autostart-on" } else { "autostart-off" });
+                events.borrow_mut().push(if enabled {
+                    "autostart-on"
+                } else {
+                    "autostart-off"
+                });
                 Ok(())
             },
             || notes::copy_notes_for_switch(&old_dir, &dest),
@@ -1429,7 +1450,10 @@ mod tests {
             *events.borrow(),
             ["new-hotkey", "autostart-on", "autostart-off", "old-hotkey"]
         );
-        assert_eq!(fs::read_to_string(dest.join("occupied.md")).unwrap(), "no overwrite");
+        assert_eq!(
+            fs::read_to_string(dest.join("occupied.md")).unwrap(),
+            "no overwrite"
+        );
         assert_eq!(fs::read_to_string(old_dir.join("note.md")).unwrap(), "old");
         fs::remove_dir_all(root).unwrap();
     }
@@ -1459,10 +1483,14 @@ mod tests {
             &new_install.join("notes"),
             &new_install.join("backups"),
         ));
-        assert_eq!(PathBuf::from(&reloaded.notes_dir), original);
+        assert_eq!(PathBuf::from(reloaded.notes_dir.as_str()), original);
         assert_eq!(
-            fs::read_to_string(PathBuf::from(&reloaded.notes_dir).join("current.md")).unwrap(),
+            fs::read_to_string(PathBuf::from(reloaded.notes_dir.as_str()).join("current.md")).unwrap(),
             "最近更新"
+        );
+        assert_eq!(
+            reloaded.backup_dir,
+            old_install.join("backups").to_string_lossy()
         );
         assert!(!new_install.join("notes").exists());
         fs::remove_dir_all(root).unwrap();
