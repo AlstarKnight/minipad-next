@@ -23,9 +23,14 @@ async function init() {
   await reload();
   api.listen("flush", () => flushAll());
   api.listen("before-quit", async () => {
-    await flushAll();
-    await saveMeta();
-    api.invoke("quit_app");
+    try {
+      await flushAll();
+      await saveMeta();
+      await api.invoke("quit_app");
+    } catch (e) {
+      toast("保存失败，已取消退出：" + String(e), 7000);
+      await api.invoke("show_window").catch(() => {});
+    }
   });
   api.listen("shown", () => {
     focusEditor();
@@ -63,9 +68,13 @@ async function toggleFormatBar() {
 
 async function hideWindow() {
   rememberView();
-  await flushAll();
-  await saveMeta();
-  api.invoke("hide_window");
+  try {
+    await flushAll();
+    await saveMeta();
+    await api.invoke("hide_window");
+  } catch (e) {
+    toast("保存失败：" + String(e), 5000);
+  }
 }
 
 function bindUi() {
