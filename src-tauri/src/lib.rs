@@ -53,6 +53,7 @@ pub struct Settings {
     hotkey: String,
     always_on_top: bool,
     edge_hide: bool,
+    edge_expand_button: bool,
     show_in_taskbar: bool,
     autostart: bool,
     theme: String,
@@ -89,6 +90,7 @@ impl Default for Settings {
             hotkey: "Ctrl+M".into(),
             always_on_top: true,
             edge_hide: true,
+            edge_expand_button: true,
             show_in_taskbar: false,
             autostart: false,
             theme: "system".into(),
@@ -174,14 +176,56 @@ fn config_path(app: &AppHandle) -> PathBuf {
         .join("settings.json")
 }
 
+/// 默认与可执行文件放在一起；旧版本已有的数据优先保留原位置。
+/// 安装目录不可写时继续使用用户数据目录，不影响在 Program Files 的安装。
+fn default_storage_dir(app: &AppHandle, folder: &str) -> PathBuf {
+    let legacy = app
+        .path()
+        .app_data_dir()
+        .unwrap_or_else(|_| PathBuf::from("."))
+        .join(folder);
+    let Some(program_root) = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(Path::to_path_buf))
+    else {
+        return legacy;
+    };
+    preferred_storage_dir(&program_root, &legacy, folder)
+}
+
+fn contains_data(path: &Path) -> bool {
+    fs::read_dir(path).is_ok_and(|mut entries| entries.next().is_some())
+}
+
+fn preferred_storage_dir(program_root: &Path, legacy: &Path, folder: &str) -> PathBuf {
+    let beside_exe = program_root.join(folder);
+    // 旧用户升级后，绝不能因为默认目录改变就出现一个空白笔记本。
+    if contains_data(legacy) && !contains_data(&beside_exe) {
+        return legacy.to_path_buf();
+    }
+    if beside_exe.is_dir() {
+        return beside_exe;
+    }
+    // 创建目录前只检测可执行文件所在目录的可写性，不向安装目录落垃圾文件。
+    let probe = program_root.join(format!(".minipad-write-{}.tmp~", std::process::id()));
+    let writable = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&probe)
+        .is_ok();
+    if writable {
+        let _ = fs::remove_file(probe);
+        beside_exe
+    } else {
+        legacy.to_path_buf()
+    }
+}
+
 fn notes_dir(app: &AppHandle, settings: &Settings) -> PathBuf {
     if !settings.notes_dir.trim().is_empty() {
         return PathBuf::from(settings.notes_dir.trim());
     }
-    app.path()
-        .app_data_dir()
-        .unwrap_or_else(|_| PathBuf::from("."))
-        .join("notes")
+    default_storage_dir(app, "notes")
 }
 
 fn current_notes_dir(app: &AppHandle) -> PathBuf {
@@ -193,10 +237,7 @@ fn backup_dir(app: &AppHandle, settings: &Settings) -> PathBuf {
     if !settings.backup_dir.trim().is_empty() {
         return PathBuf::from(settings.backup_dir.trim());
     }
-    app.path()
-        .app_data_dir()
-        .unwrap_or_else(|_| PathBuf::from("."))
-        .join("backups")
+    default_storage_dir(app, "backups")
 }
 
 /// `inner` 是不是 `outer` 本身或者在它里面(两个文件夹都要已经存在)
@@ -496,14 +537,18 @@ fn open_backup_dir(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn save_settings(app: AppHandle, settings: Settings) -> Result<Settings, String> {
+fn save_settings(app: AppHandle, settings: Settings, migrate_notes: Option<bool>) -> Result<Settings, String> {
     let state = app.state::<AppState>();
     let old = state.settings.lock().unwrap().clone();
     let mut new = settings;
     new.window = old.window.clone();
     tidy_settings(&mut new);
 
-    if !new.notes_dir.is_empty() {
+    let old_notes = notes_dir(&app, &old);
+    let new_notes = notes_dir(&app, &new);
+    if old_notes != new_notes && migrate_notes.unwrap_or(false) {
+        notes::copy_notes_for_switch(&old_notes, &new_notes)?;
+    } else if !new.notes_dir.is_empty() {
         fs::create_dir_all(&new.notes_dir).map_err(|e| format!("无法使用这个文件夹:{e}"))?;
     }
     if new.backup_enabled {
@@ -604,6 +649,11 @@ fn hide_window(app: AppHandle) {
 #[tauri::command]
 fn show_window(app: AppHandle) {
     show_main(&app);
+}
+
+#[tauri::command]
+fn expand_edge(app: AppHandle) {
+    restore_from_edge(&app, true);
 }
 
 #[tauri::command]
@@ -859,7 +909,9 @@ fn edge_tick(app: &AppHandle) {
         }
     };
     if let Some((edge, mon)) = ready {
-        let (x, y) = edge::hidden_position(edge, rect, mon);
+        let show_button = st.settings.lock().unwrap().edge_expand_button;
+        let strip = if show_button { edge::BUTTON_STRIP } else { edge::STRIP };
+        let (x, y) = edge::hidden_position_with_strip(edge, rect, mon, strip);
         let _ = app.emit("flush", ());
         let _ = app.emit("edge-hidden", edge.name());
         let _ = win.set_position(PhysicalPosition::new(x, y));
@@ -932,6 +984,7 @@ pub fn run() {
             pick_folder,
             hide_window,
             show_window,
+            expand_edge,
             open_notes_dir,
             open_link,
             quit_app,
@@ -1157,4 +1210,20 @@ mod tests {
             assert_eq!(s.accent, "", "{bad}");
         }
     }
+    #[test]
+    fn default_storage_prefers_program_folder_without_losing_existing_legacy_data() {
+        let root = notes::temp_dir("default-path");
+        let program = root.join("program");
+        let legacy = root.join("legacy-notes");
+        fs::create_dir_all(&program).unwrap();
+        assert_eq!(preferred_storage_dir(&program, &legacy, "notes"), program.join("notes"));
+        fs::create_dir_all(&legacy).unwrap();
+        fs::write(legacy.join("previous.md"), "old").unwrap();
+        assert_eq!(preferred_storage_dir(&program, &legacy, "notes"), legacy);
+        fs::create_dir_all(program.join("notes")).unwrap();
+        fs::write(program.join("notes").join("new.md"), "new").unwrap();
+        assert_eq!(preferred_storage_dir(&program, &legacy, "notes"), program.join("notes"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
 }
