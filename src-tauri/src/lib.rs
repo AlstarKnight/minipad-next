@@ -572,9 +572,8 @@ fn save_settings(
 
     let old_notes = notes_dir(&app, &old);
     let new_notes = notes_dir(&app, &new);
-    if old_notes != new_notes && migrate_notes.unwrap_or(false) {
-        notes::copy_notes_for_switch(&old_notes, &new_notes)?;
-    } else if !new.notes_dir.is_empty() {
+    let copying_notes = old_notes != new_notes && migrate_notes.unwrap_or(false);
+    if !copying_notes && !new.notes_dir.is_empty() {
         fs::create_dir_all(&new.notes_dir).map_err(|e| format!("无法使用这个文件夹:{e}"))?;
     }
     if new.backup_enabled {
@@ -583,6 +582,10 @@ fn save_settings(
         if is_inside(&dest, &notes_dir(&app, &new)) {
             return Err("备份位置不能放在笔记文件夹里面,请换一个文件夹".into());
         }
+    }
+    // 优先验证备份目录，再复制笔记，避免常见的设置错误留下半途的迁移目标。
+    if copying_notes {
+        notes::copy_notes_for_switch(&old_notes, &new_notes)?;
     }
     // 先换热键(失败就恢复旧的),再改开机启动(失败就把热键也换回去),保证要么都生效要么都不变
     let hotkey_changed = new.hotkey != old.hotkey;
