@@ -1455,3 +1455,44 @@ describe("theme and accent", () => {
     assert.equal(await h.editor(), md, "read back the same after a restart");
   });
 });
+
+
+// ---------- P0：保存与退出安全 ----------
+describe("P0 persistence safety", () => {
+  ui("a failed note write retains dirty content and a later retry saves it", { seed: seed({ "": { 页: "原内容" } }) }, async (h) => {
+    const { p } = h;
+    await p.evaluate(() => {
+      window.__mockControl = { fail: { save_note: "模拟磁盘已满" } };
+      const note = window.__minipad.state.books[0].notes[0];
+      note.content = "尚未保存的内容";
+      note.dirty = true;
+    });
+    await p.keyboard.press("Control+s");
+    await until(() => p.textContent("#st-save"), "保存失败:Error: 模拟磁盘已满", "write failure displayed");
+    assert.equal(await h.mockFile("", "页"), "原内容", "failed save did not change disk");
+    assert.equal(await p.evaluate(() => window.__minipad.state.books[0].notes[0].dirty), true, "dirty flag survives failure");
+    await p.evaluate(() => delete window.__mockControl.fail.save_note);
+    await p.keyboard.press("Control+s");
+    await until(() => h.mockFile("", "页"), "尚未保存的内容", "retry persisted the content");
+    assert.equal(await p.evaluate(() => window.__minipad.state.books[0].notes[0].dirty), false);
+  });
+
+  ui("a slow write is followed by newer edits without losing the latest content", { seed: seed({ "": { 页: "旧内容" } }) }, async (h) => {
+    const { p } = h;
+    await p.evaluate(() => {
+      window.__mockControl = { delay: { save_note: 250 } };
+      const note = window.__minipad.state.books[0].notes[0];
+      note.content = "第一版";
+      note.dirty = true;
+    });
+    await p.keyboard.press("Control+s");
+    await p.evaluate(() => {
+      const note = window.__minipad.state.books[0].notes[0];
+      note.content = "第二版";
+      note.dirty = true;
+    });
+    await p.keyboard.press("Control+s");
+    await until(() => h.mockFile("", "页"), "第二版", "newer edit persisted after first write");
+    assert.equal(await p.evaluate(() => window.__minipad.state.books[0].notes[0].dirty), false);
+  });
+});
