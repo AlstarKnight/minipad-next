@@ -24,7 +24,15 @@ export function applySettings() {
   $("#btn-theme").title = theme === "dark" ? "切换到浅色" : "切换到深色";
   applyAccent(s.accent);
   document.documentElement.dataset.tabStyle = TAB_STYLES.includes(s.tab_style) ? s.tab_style : "line";
+  applyEdgeAppearance();
   applyEditorSettings(s);
+}
+// Rust 使用物理像素定位窗口；WebView CSS 以逻辑像素表示按钮面积。
+export function applyEdgeAppearance() {
+  const on = state.settings?.edge_expand_button !== false;
+  document.documentElement.dataset.edgeButton = on ? "on" : "off";
+  const scale = window.devicePixelRatio || 1;
+  document.documentElement.style.setProperty("--edge-peek", Math.floor((on ? 34 : 6) / scale) + "px");
 }
 matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => state.settings && applySettings());
 
@@ -37,6 +45,8 @@ export function openSettings() {
   $("#set-hotkey").value = s.hotkey;
   $("#set-top").checked = s.always_on_top;
   $("#set-edge").checked = s.edge_hide;
+  $("#set-edge-button").checked = s.edge_expand_button !== false;
+  $("#set-edge-button").disabled = !s.edge_hide;
   $("#set-taskbar").checked = s.show_in_taskbar;
   $("#set-autostart").checked = s.autostart;
   $("#set-theme").value = s.theme;
@@ -44,6 +54,8 @@ export function openSettings() {
   $("#set-tab-style").value = TAB_STYLES.includes(s.tab_style) ? s.tab_style : "line";
   $("#set-font").value = s.font_size;
   $("#set-dir").value = s.notes_dir;
+  $("#set-migrate-notes").checked = true;
+  updateMigration();
   $("#set-dir").placeholder = state.notesDir;
   $("#set-date-format").value = s.date_format;
   updateDatePreview();
@@ -117,7 +129,7 @@ function updateBackup() {
 // UI 操作可能在上一笔设置仍在保存时继续发生。按触发时的状态计算差异，
 // 串行合并到最新已保存的设置，避免旧快照将刚刚改变的选项覆盖。
 let settingsQueue = Promise.resolve();
-export function saveSettings(next) {
+export function saveSettings(next, { migrateNotes = false } = {}) {
   const baseline = state.settings;
   const changed = Object.fromEntries(Object.entries(next).filter(([key, value]) =>
     JSON.stringify(value) !== JSON.stringify(baseline[key])
@@ -130,7 +142,7 @@ export function saveSettings(next) {
       await flushAll();
       await saveMeta();
     }
-    state.settings = await api.invoke("save_settings", { settings: merged });
+    state.settings = await api.invoke("save_settings", { settings: merged, migrateNotes: dirChanged && migrateNotes });
     applySettings();
     if (dirChanged) await reload();
     return state.settings;
@@ -146,6 +158,7 @@ async function submitSettings() {
     hotkey: $("#set-hotkey").value || state.settings.hotkey,
     always_on_top: $("#set-top").checked,
     edge_hide: $("#set-edge").checked,
+    edge_expand_button: $("#set-edge-button").checked,
     show_in_taskbar: $("#set-taskbar").checked,
     autostart: $("#set-autostart").checked,
     theme: $("#set-theme").value,
@@ -161,7 +174,7 @@ async function submitSettings() {
     backup_dir: $("#set-backup-dir").value.trim(),
   };
   try {
-    await saveSettings(next);
+    await saveSettings(next, { migrateNotes: $("#set-migrate-notes").checked });
     closeOverlays();
     toast("设置已保存");
   } catch (e) {
@@ -174,7 +187,10 @@ async function submitSettings() {
 async function pickFolder(input, title) {
   try {
     const dir = await api.invoke("pick_folder", { title });
-    if (dir) $(input).value = dir;
+    if (dir) {
+      $(input).value = dir;
+      if (input === "#set-dir") updateMigration();
+    }
   } catch (e) {
     toast(String(e));
   }
@@ -194,6 +210,12 @@ function hotkeyFromEvent(e) {
   else key = c;
   if (!mods.length && !/^F\d{1,2}$/.test(key)) return null;
   return [...mods, key].join("+");
+}
+
+function updateMigration() {
+  const currentDir = state.settings?.notes_dir || "";
+  const changing = $("#set-dir").value.trim() !== currentDir;
+  $("#set-migrate-notes").disabled = !changing;
 }
 
 export function bindSettings() {
@@ -216,6 +238,8 @@ export function bindSettings() {
     if (combo) hk.value = combo;
   });
   $("#set-save").addEventListener("click", submitSettings);
+  $("#set-edge").addEventListener("change", () => ($("#set-edge-button").disabled = !$("#set-edge").checked));
+  $("#set-dir").addEventListener("input", updateMigration);
   $("#set-cancel").addEventListener("click", () => closeOverlays());
   for (const id of ["#set-accent-from", "#set-accent-to", "#set-accent-grad"]) $(id).addEventListener("input", customAccent);
   $("#set-pick-dir").addEventListener("click", () => pickFolder("#set-dir", "选择笔记文件夹"));
