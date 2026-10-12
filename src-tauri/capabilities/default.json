@@ -1,8 +1,8 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "主窗口权限",
-  "windows": ["main"],
+  "description": "主窗口和悬浮图标的权限",
+  "windows": ["main", "ball"],
   "permissions": [
     "core:default",
     "core:window:allow-start-dragging"

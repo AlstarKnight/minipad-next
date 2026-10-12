@@ -10,6 +10,7 @@ import { DEFAULT_DATE_FORMAT, formatDate } from "./datetime.js";
 // 活跃标签的高亮:顶部线条 / 整个标签 / 整圈边框(见 style.css)
 const TAB_STYLES = ["line", "fill", "border"];
 import { ACCENTS, applyAccent, parseAccent, tidyAccent, gradient, gradientOf } from "./accent.js";
+import { APP_ICON, paintBall } from "./ballicon.js";
 
 const REPO_URL = "https://github.com/AlstarKnight/minipad-next";
 
@@ -25,6 +26,7 @@ export function applySettings() {
   applyAccent(s.accent);
   document.documentElement.dataset.tabStyle = TAB_STYLES.includes(s.tab_style) ? s.tab_style : "line";
   applyEdgeAppearance();
+  $("#btn-ball").hidden = !s.ball_enabled;
   applyEditorSettings(s);
 }
 // 贴边隐藏的样式:露出的宽度和 Rust 里 edge::strip_for 一致(逻辑像素,Rust 按屏幕缩放换成物理像素)
@@ -66,6 +68,21 @@ export function openSettings() {
   $("#set-autostart").checked = s.autostart;
   $("#set-theme").value = s.theme;
   accentColor.show(s.accent || "");
+  $("#set-ball").checked = !!s.ball_enabled;
+  $("#set-ball-size").value = s.ball_size || 48;
+  $("#set-ball-opacity").value = s.ball_opacity || 100;
+  $("#set-ball-open").value = s.ball_open === "dblclick" ? "dblclick" : "click";
+  for (const r of document.querySelectorAll('input[name="set-ball-icon"]')) r.checked = r.value === (s.ball_icon || "app");
+  ballColor.show(s.ball_color || "");
+  api
+    .invoke("ball_info")
+    .then((b) => {
+      ballImage = b.image || null;
+      document.querySelector('input[name="set-ball-icon"][value="custom"]').checked = s.ball_icon === "custom" && !!ballImage;
+      document.querySelector('input[name="set-ball-icon"][value="app"]').checked = !(s.ball_icon === "custom" && ballImage);
+      updateBall();
+    })
+    .catch(() => updateBall());
   $("#set-tab-style").value = TAB_STYLES.includes(s.tab_style) ? s.tab_style : "line";
   $("#set-font").value = s.font_size;
   $("#set-dir").value = s.notes_dir;
@@ -97,7 +114,7 @@ export function openSettings() {
 
 // ---- 颜色选择:一排色块(纯色和渐变),下面是自定义的两个取色框 ----
 // 强调色和贴边标识的颜色共用。空字符串是第一个色块(默认橙色 / 跟随强调色)
-function colorPicker(prefix, box, options, firstSwatch) {
+function colorPicker(prefix, box, options, firstSwatch, onChange) {
   const picker = { value: "" };
   picker.show = (value) => {
     picker.value = tidyAccent(value);
@@ -119,6 +136,7 @@ function colorPicker(prefix, box, options, firstSwatch) {
     $(`#set-${prefix}-grad`).checked = !!a.to;
     if (a.to) $(`#set-${prefix}-to`).value = a.to;
     $(`#set-${prefix}-to`).disabled = !a.to;
+    onChange?.();
   };
   picker.custom = () => {
     const from = $(`#set-${prefix}-from`).value;
@@ -133,6 +151,49 @@ const edgeColor = colorPicker(
   [{ name: "跟随强调色", value: "" }, ...ACCENTS.filter((a) => a.value)],
   "var(--accent-grad)",
 );
+
+const ballColor = colorPicker(
+  "ball",
+  "#set-ball-color",
+  [{ name: "原色", value: "" }, ...ACCENTS.filter((a) => a.value)],
+  `url(${APP_ICON}) center / cover`,
+  () => updateBall(),
+);
+
+// ---- 悬浮图标:开关、大小、图标、颜色,左边实时预览 ----
+let ballImage = null; // 自定义图片(data: 网址)
+function ballIcon() {
+  return document.querySelector('input[name="set-ball-icon"]:checked')?.value || "app";
+}
+function updateBall() {
+  const off = !$("#set-ball").checked;
+  for (const el of document.querySelectorAll(".ball-option")) el.classList.toggle("off", off);
+  for (const el of document.querySelectorAll(".ball-option input, .ball-option button, .ball-option select")) el.disabled = off;
+  if (!off) $("#set-ball-to").disabled = !$("#set-ball-grad").checked;
+  // 还没选过图片时不能选"自定义图片"
+  const custom = document.querySelector('input[name="set-ball-icon"][value="custom"]');
+  if (!ballImage) {
+    custom.disabled = true;
+    if (custom.checked) document.querySelector('input[name="set-ball-icon"][value="app"]').checked = true;
+  }
+  const size = Number($("#set-ball-size").value) || 48;
+  const opacity = Number($("#set-ball-opacity").value) || 100;
+  $("#set-ball-size-val").textContent = size + " 像素";
+  $("#set-ball-opacity-val").textContent = opacity + "%";
+  paintBall($("#set-ball-preview"), { size, opacity, icon: ballIcon(), color: ballColor.value, image: ballImage });
+}
+async function pickBallIcon() {
+  try {
+    const img = await api.invoke("pick_ball_icon");
+    if (!img) return;
+    ballImage = img;
+    document.querySelector('input[name="set-ball-icon"][value="custom"]').disabled = false;
+    document.querySelector('input[name="set-ball-icon"][value="custom"]').checked = true;
+    updateBall();
+  } catch (e) {
+    toast(String(e), 5000);
+  }
+}
 
 // 贴边样式和颜色只在开着贴边隐藏时能改
 function updateEdgeOptions() {
@@ -193,6 +254,12 @@ async function submitSettings() {
     edge_hide: $("#set-edge").checked,
     edge_style: $("#set-edge-style").value,
     edge_color: edgeColor.value,
+    ball_enabled: $("#set-ball").checked,
+    ball_size: Number($("#set-ball-size").value) || 48,
+    ball_icon: ballIcon(),
+    ball_color: ballColor.value,
+    ball_opacity: Number($("#set-ball-opacity").value) || 100,
+    ball_open: $("#set-ball-open").value,
     show_in_taskbar: $("#set-taskbar").checked,
     autostart: $("#set-autostart").checked,
     theme: $("#set-theme").value,
@@ -277,6 +344,10 @@ export function bindSettings() {
   $("#set-cancel").addEventListener("click", () => closeOverlays());
   for (const id of ["#set-accent-from", "#set-accent-to", "#set-accent-grad"]) $(id).addEventListener("input", accentColor.custom);
   for (const id of ["#set-edge-from", "#set-edge-to", "#set-edge-grad"]) $(id).addEventListener("input", edgeColor.custom);
+  for (const id of ["#set-ball-from", "#set-ball-to", "#set-ball-grad"]) $(id).addEventListener("input", ballColor.custom);
+  for (const id of ["#set-ball", "#set-ball-size", "#set-ball-opacity"]) $(id).addEventListener("input", updateBall);
+  for (const r of document.querySelectorAll('input[name="set-ball-icon"]')) r.addEventListener("change", updateBall);
+  $("#set-ball-pick").addEventListener("click", pickBallIcon);
   $("#set-pick-dir").addEventListener("click", () => pickFolder("#set-dir", "选择笔记文件夹"));
   $("#set-open-dir").addEventListener("click", () => api.invoke("open_notes_dir").catch((e) => toast(String(e))));
   $("#set-date-format").placeholder = DEFAULT_DATE_FORMAT;

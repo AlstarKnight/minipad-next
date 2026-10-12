@@ -12,6 +12,13 @@ const DEFAULT_SETTINGS = {
   edge_hide: true,
   edge_style: "arrow",
   edge_color: "",
+  ball_enabled: false,
+  ball_size: 48,
+  ball_icon: "app",
+  ball_color: "",
+  ball_opacity: 100,
+  ball_open: "click",
+  ball_pos: null,
   show_in_taskbar: false,
   autostart: false,
   theme: "system",
@@ -256,6 +263,16 @@ export function mockApi() {
     },
     hide_window: () => toast("(预览)窗口会隐藏到托盘,按 Ctrl+M 再呼出"),
     expand_edge: () => window.__mockEmit?.("edge-shown"),
+    ball_info: () => {
+      const s = db.settings || DEFAULT_SETTINGS;
+      return { size: s.ball_size ?? 48, icon: s.ball_icon || "app", color: s.ball_color || "", opacity: s.ball_opacity ?? 100, open: s.ball_open || "click", image: window.__mockControl?.ballImage || null };
+    },
+    pick_ball_icon: () => window.__mockControl?.pickBallImage ?? null,
+    collapse_to_ball: () => {
+      if (window.__mockControl) window.__mockControl.collapsed = (window.__mockControl.collapsed || 0) + 1;
+      toast("(预览)窗口会缩成悬浮图标,点图标再放出来");
+    },
+    expand_from_ball: () => {},
     open_notes_dir: () => toast("(预览)会在资源管理器里打开笔记文件夹"),
     open_link: ({ url }) => void window.open(url, "_blank", "noopener"),
     quit_ack: () => true,

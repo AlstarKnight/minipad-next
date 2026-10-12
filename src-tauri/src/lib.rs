@@ -1,4 +1,5 @@
 mod backup;
+mod ball;
 mod edge;
 mod notes;
 
@@ -14,8 +15,8 @@ use std::time::Duration;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{
-    AppHandle, Emitter, Manager, Monitor, PhysicalPosition, PhysicalSize, WebviewWindow,
-    WindowEvent,
+    AppHandle, Emitter, LogicalSize, Manager, Monitor, PhysicalPosition, PhysicalSize, WebviewUrl,
+    WebviewWindow, WebviewWindowBuilder, WindowEvent,
 };
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
@@ -84,6 +85,20 @@ pub struct Settings {
     backup_keep: u32,
     /// 备份放在哪里,空着就用程序数据目录下的 backups
     backup_dir: String,
+    /// 悬浮图标:开着时顶栏有个按钮,点了窗口缩成一个可以拖动的小图标
+    ball_enabled: bool,
+    /// 悬浮图标的大小(逻辑像素)
+    ball_size: u32,
+    /// 悬浮图标用什么图:app 应用图标 / custom 自己选的图片
+    ball_icon: String,
+    /// 给悬浮图标上色,写法同 accent;空着是原色
+    ball_color: String,
+    /// 悬浮图标的不透明度(百分比)
+    ball_opacity: u32,
+    /// 怎样打开:click 单击 / dblclick 双击
+    ball_open: String,
+    /// 悬浮图标上次的位置(物理像素)
+    ball_pos: Option<[i32; 2]>,
     window: Option<Geom>,
 }
 
@@ -111,6 +126,13 @@ impl Default for Settings {
             backup_enabled: true,
             backup_keep: 14,
             backup_dir: String::new(),
+            ball_enabled: false,
+            ball_size: 48,
+            ball_icon: "app".into(),
+            ball_color: String::new(),
+            ball_opacity: 100,
+            ball_open: "click".into(),
+            ball_pos: None,
             window: None,
         }
     }
@@ -410,6 +432,15 @@ fn tidy_settings(s: &mut Settings) {
     s.backup_keep = s.backup_keep.clamp(1, 365);
     tidy_color(&mut s.accent);
     tidy_color(&mut s.edge_color);
+    tidy_color(&mut s.ball_color);
+    s.ball_size = s.ball_size.clamp(32, 96);
+    if !["app", "custom"].contains(&s.ball_icon.as_str()) {
+        s.ball_icon = "app".into();
+    }
+    s.ball_opacity = s.ball_opacity.clamp(30, 100);
+    if !["click", "dblclick"].contains(&s.ball_open.as_str()) {
+        s.ball_open = "click".into();
+    }
     if !EDGE_STYLES.contains(&s.edge_style.as_str()) {
         s.edge_style = "arrow".into();
     }
@@ -714,6 +745,7 @@ fn save_settings(
     let old = state.settings.lock().unwrap().clone();
     let mut new = settings;
     new.window = old.window.clone();
+    new.ball_pos = old.ball_pos;
     tidy_settings(&mut new);
 
     let old_notes = notes_dir(&app, &old);
@@ -781,6 +813,14 @@ fn save_settings(
     }
     *state.settings.lock().unwrap() = new.clone();
     persist_settings(&app);
+    // 关掉悬浮图标时如果正缩着,就把窗口放出来;改了大小、图标、颜色就让悬浮图标重画
+    if !new.ball_enabled && ball_visible(&app) {
+        show_main(&app);
+    } else if let Some(ball) = app.get_webview_window("ball") {
+        let side = f64::from(new.ball_size) + 2.0 * ball::PAD;
+        let _ = ball.set_size(LogicalSize::new(side, side));
+        let _ = app.emit_to("ball", "ball-update", ());
+    }
     Ok(new)
 }
 
@@ -926,6 +966,156 @@ fn request_tray_quit(app: &AppHandle) {
 
 // ---------- 窗口显示 / 隐藏 / 贴边 ----------
 
+// ---------- 悬浮图标 ----------
+
+fn ball_visible(app: &AppHandle) -> bool {
+    app.get_webview_window("ball")
+        .is_some_and(|b| b.is_visible().unwrap_or(false))
+}
+
+/// 自定义图标存在设置文件旁边,文件名 ball-icon.扩展名
+fn ball_image_path(app: &AppHandle) -> Option<PathBuf> {
+    let dir = config_path(app).parent()?.to_path_buf();
+    ball::IMAGE_EXTS
+        .iter()
+        .map(|ext| dir.join(format!("ball-icon.{ext}")))
+        .find(|p| p.is_file())
+}
+
+fn ball_image_data(app: &AppHandle) -> Option<String> {
+    let path = ball_image_path(app)?;
+    let mime = ball::mime_for(path.extension()?.to_str()?)?;
+    let bytes = fs::read(&path).ok()?;
+    Some(ball::data_url(mime, &bytes))
+}
+
+#[derive(Serialize)]
+struct BallInfo {
+    size: u32,
+    icon: String,
+    color: String,
+    opacity: u32,
+    open: String,
+    /// 自定义图片(data: 网址),没有就是空
+    image: Option<String>,
+}
+
+#[tauri::command]
+fn ball_info(app: AppHandle) -> BallInfo {
+    let s = app.state::<AppState>().settings.lock().unwrap().clone();
+    BallInfo {
+        size: s.ball_size,
+        icon: s.ball_icon,
+        color: s.ball_color,
+        opacity: s.ball_opacity,
+        open: s.ball_open,
+        image: ball_image_data(&app),
+    }
+}
+
+/// 选一张图片当悬浮图标,复制到设置文件旁边。返回图片(data: 网址),取消就是空
+#[tauri::command]
+async fn pick_ball_icon(app: AppHandle) -> Result<Option<String>, String> {
+    let mut dialog = app
+        .dialog()
+        .file()
+        .set_title("选择悬浮图标的图片")
+        .add_filter("图片", &ball::IMAGE_EXTS);
+    if let Some(win) = main_window(&app) {
+        dialog = dialog.set_parent(&win);
+    }
+    let Some(src) = dialog.blocking_pick_file().and_then(|p| p.into_path().ok()) else {
+        return Ok(None);
+    };
+    let ext = src
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(str::to_ascii_lowercase)
+        .filter(|e| ball::mime_for(e).is_some())
+        .ok_or("只支持 png、jpg、gif、webp、ico 图片")?;
+    let len = fs::metadata(&src).map_err(|e| e.to_string())?.len();
+    if len > ball::MAX_IMAGE {
+        return Err("图片太大了,请选 2 MB 以内的图片".into());
+    }
+    let bytes = fs::read(&src).map_err(|e| e.to_string())?;
+    let dir = config_path(&app)
+        .parent()
+        .map(Path::to_path_buf)
+        .ok_or("找不到设置文件夹")?;
+    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    // 先写新的再删旧的(扩展名可能不一样)
+    let dest = dir.join(format!("ball-icon.{ext}"));
+    fs::write(&dest, &bytes).map_err(|e| e.to_string())?;
+    for other in ball::IMAGE_EXTS.iter().filter(|e| **e != ext) {
+        let _ = fs::remove_file(dir.join(format!("ball-icon.{other}")));
+    }
+    let _ = app.emit_to("ball", "ball-update", ());
+    Ok(Some(ball::data_url(
+        ball::mime_for(&ext).unwrap_or("image/png"),
+        &bytes,
+    )))
+}
+
+fn ensure_ball(app: &AppHandle) -> Result<WebviewWindow, String> {
+    if let Some(ball) = app.get_webview_window("ball") {
+        return Ok(ball);
+    }
+    let side =
+        f64::from(app.state::<AppState>().settings.lock().unwrap().ball_size) + 2.0 * ball::PAD;
+    WebviewWindowBuilder::new(app, "ball", WebviewUrl::App("ball.html".into()))
+        .title("Minipad Next")
+        .inner_size(side, side)
+        .decorations(false)
+        .transparent(true)
+        .shadow(false)
+        .resizable(false)
+        .always_on_top(true)
+        .skip_taskbar(true)
+        .focused(false)
+        .visible(false)
+        .build()
+        .map_err(|e| e.to_string())
+}
+
+/// 主窗口缩成悬浮图标
+#[tauri::command]
+fn collapse_to_ball(app: AppHandle) -> Result<(), String> {
+    let Some(main) = main_window(&app) else {
+        return Ok(());
+    };
+    restore_from_edge(&app, false);
+    let ball_win = ensure_ball(&app)?;
+    let s = app.state::<AppState>().settings.lock().unwrap().clone();
+    let scale = main.scale_factor().unwrap_or(1.0);
+    let side = f64::from(s.ball_size) + 2.0 * ball::PAD;
+    let _ = ball_win.set_size(LogicalSize::new(side, side));
+    let main_rect = window_rect(&main).unwrap_or(Rect::new(0, 0, 440, 540));
+    let monitors: Vec<Rect> = main
+        .available_monitors()
+        .unwrap_or_default()
+        .iter()
+        .map(monitor_rect)
+        .collect();
+    let (x, y) = ball::position(
+        s.ball_pos,
+        (side * scale).round() as i32,
+        main_rect,
+        &monitors,
+    );
+    let _ = ball_win.set_position(PhysicalPosition::new(x, y));
+    let _ = app.emit_to("ball", "ball-update", ());
+    let _ = ball_win.show();
+    hide_main(&app);
+    Ok(())
+}
+
+/// 点悬浮图标:放出主窗口
+#[tauri::command]
+fn expand_from_ball(app: AppHandle) {
+    show_main(&app);
+    persist_settings(&app);
+}
+
 fn main_window(app: &AppHandle) -> Option<WebviewWindow> {
     app.get_webview_window("main")
 }
@@ -946,6 +1136,9 @@ fn monitor_rect(m: &Monitor) -> Rect {
 }
 
 fn show_main(app: &AppHandle) {
+    if let Some(ball) = app.get_webview_window("ball") {
+        let _ = ball.hide();
+    }
     if let Some(win) = main_window(app) {
         restore_from_edge(app, false);
         app.state::<AppState>()
@@ -1209,6 +1402,10 @@ pub fn run() {
             hide_window,
             show_window,
             expand_edge,
+            ball_info,
+            pick_ball_icon,
+            collapse_to_ball,
+            expand_from_ball,
             open_notes_dir,
             open_link,
             quit_app,
@@ -1305,6 +1502,17 @@ pub fn run() {
         .on_window_event(|window, event| {
             let app = window.app_handle();
             let st = app.state::<AppState>();
+            if window.label() == "ball" {
+                match event {
+                    // 悬浮图标关不掉,只记住拖到了哪里
+                    WindowEvent::CloseRequested { api, .. } => api.prevent_close(),
+                    WindowEvent::Moved(p) if window.is_visible().unwrap_or(false) => {
+                        st.settings.lock().unwrap().ball_pos = Some([p.x, p.y]);
+                    }
+                    _ => {}
+                }
+                return;
+            }
             match event {
                 WindowEvent::CloseRequested { api, .. } => {
                     // 关闭按钮只是隐藏到托盘
@@ -1490,6 +1698,45 @@ mod tests {
             tidy_settings(&mut s);
             assert_eq!(s.tab_style, kept, "{given}");
         }
+    }
+
+    #[test]
+    fn tidy_settings_keeps_floating_icon_options_in_range() {
+        let mut s = Settings::default();
+        assert!(!s.ball_enabled);
+        assert_eq!(
+            (
+                s.ball_size,
+                s.ball_icon.as_str(),
+                s.ball_opacity,
+                s.ball_open.as_str()
+            ),
+            (48, "app", 100, "click")
+        );
+        s.ball_size = 500;
+        s.ball_opacity = 5;
+        s.ball_icon = "rocket".into();
+        s.ball_open = "hover".into();
+        s.ball_color = "#8b5cf6".into();
+        tidy_settings(&mut s);
+        assert_eq!(
+            (
+                s.ball_size,
+                s.ball_icon.as_str(),
+                s.ball_opacity,
+                s.ball_open.as_str()
+            ),
+            (96, "app", 30, "click")
+        );
+        assert_eq!(s.ball_color, "#8b5cf6");
+        s.ball_size = 1;
+        s.ball_icon = "custom".into();
+        s.ball_open = "dblclick".into();
+        tidy_settings(&mut s);
+        assert_eq!(
+            (s.ball_size, s.ball_icon.as_str(), s.ball_open.as_str()),
+            (32, "custom", "dblclick")
+        );
     }
 
     #[test]
