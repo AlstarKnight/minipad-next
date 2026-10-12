@@ -1495,4 +1495,31 @@ describe("P0 persistence safety", () => {
     await until(() => h.mockFile("", "页"), "第二版", "newer edit persisted after first write");
     assert.equal(await p.evaluate(() => window.__minipad.state.books[0].notes[0].dirty), false);
   });
+  ui("the quit event never exits when note persistence fails", { seed: seed({ "": { 页: "原内容" } }) }, async (h) => {
+    const { p } = h;
+    await p.evaluate(() => {
+      window.__mockControl = { fail: { save_note: "模拟保存失败" }, calls: [] };
+      const note = window.__minipad.state.books[0].notes[0];
+      note.content = "未保存";
+      note.dirty = true;
+      window.__mockEmit("before-quit");
+    });
+    await until(() => p.textContent("#toast"), "保存失败，已取消退出：Error: 模拟保存失败", "quit aborts on failure");
+    assert.equal(await h.mockFile("", "页"), "原内容");
+    assert.equal(await p.evaluate(() => window.__mockControl.calls.includes("quit_app")), false, "quit command was never sent");
+  });
+
+  ui("rapid settings changes preserve independent fields", { seed: seed({ "": { 页: "文本" } }) }, async (h) => {
+    const { p } = h;
+    await p.evaluate(() => {
+      window.__mockControl = { delay: { save_settings: 150 } };
+      document.dispatchEvent(new CustomEvent("format-bar-items", { detail: { format_bar_hidden: ["undo"] } }));
+      document.dispatchEvent(new CustomEvent("format-bar-items", { detail: { format_bar_order: ["strong", "undo"] } }));
+    });
+    await until(async () => {
+      const s = (await h.stored())?.settings;
+      return [s?.format_bar_hidden, s?.format_bar_order];
+    }, [["undo"], ["strong", "undo"]], "both settings survive concurrent submissions");
+  });
+
 });
