@@ -9,7 +9,11 @@ use encoding_rs::{Encoding, GB18030};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 pub const NOTE_EXT: &str = "md";
 pub const TRASH_DIR: &str = ".trash";
@@ -48,9 +52,26 @@ pub fn write_atomic(path: &Path, data: &str) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
-    let tmp = path.with_extension("tmp~");
-    fs::write(&tmp, data).map_err(|e| e.to_string())?;
-    fs::rename(&tmp, path).map_err(|e| e.to_string())
+    // 同一文件可能由不同调用方同时写入；临时文件名必须唯一。
+    let seq = TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let mut file_name = path.file_name().ok_or("无效的文件路径")?.to_os_string();
+    file_name.push(format!(".{}.{}.tmp~", std::process::id(), seq));
+    let tmp = path.with_file_name(file_name);
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&tmp)
+        .map_err(|e| e.to_string())?;
+    let result = (|| {
+        file.write_all(data.as_bytes()).map_err(|e| e.to_string())?;
+        file.sync_all().map_err(|e| e.to_string())?;
+        drop(file);
+        fs::rename(&tmp, path).map_err(|e| e.to_string())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&tmp);
+    }
+    result
 }
 
 /// 把名字变成合法的 Windows 文件名,清理完是空的就用 `fallback`
