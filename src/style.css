@@ -273,6 +273,76 @@ svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width:
 #format-bar .fb-hide { color: var(--muted); margin-left: 2px; }
 #format-bar .fb-hide:hover { color: var(--text); }
 
+/* ---------- 查找栏(当前页面里查找和替换,见 js/findbar.js) ---------- */
+#find-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 4px 6px;
+  background: var(--tab-active);
+  border-bottom: 1px solid var(--code-border);
+  font-size: 12.5px;
+  user-select: none;
+}
+/* 设置里选了放在编辑区下方:排到编辑区后面、状态栏前面 */
+html[data-find-pos="bottom"] #find-bar { order: 1; border-bottom: none; border-top: 1px solid var(--code-border); }
+html[data-find-pos="bottom"] #status { order: 2; }
+.find-row { display: flex; align-items: center; gap: 2px; }
+/* 替换那一行和上面的输入框对齐(让出展开按钮的位置) */
+#find-replace { padding-left: 28px; }
+.find-field {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  height: 26px;
+  padding: 0 2px 0 8px;
+  border: 1px solid var(--bar-border);
+  border-radius: 6px;
+  background: var(--bg);
+}
+.find-field:focus-within { border-color: var(--accent); }
+/* 什么也没找到:输入框的边变成红色 */
+.find-field.none, .find-field.none:focus-within { border-color: color-mix(in srgb, var(--danger) 75%, transparent); }
+.find-field input { flex: 1; min-width: 48px; padding: 0; border: none; outline: none; background: transparent; color: var(--text); font: inherit; }
+.find-field input::placeholder { color: var(--muted); opacity: 0.8; }
+#find-count { flex-shrink: 0; padding: 0 6px 0 4px; color: var(--muted); font-size: 11.5px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+#find-count.error { color: var(--danger); }
+#find-bar button {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 26px;
+  height: 26px;
+  padding: 0 4px;
+  border-radius: 5px;
+  color: var(--muted);
+}
+#find-bar button:hover:not(:disabled) { background: var(--accent-soft); color: var(--text); }
+#find-bar button:disabled { opacity: 0.35; cursor: default; }
+#find-toggle svg { transition: rotate 0.12s; }
+#find-toggle[aria-expanded="true"] svg { rotate: 90deg; }
+/* 输入框里的三个开关:区分大小写、全字匹配、正则表达式 */
+#find-bar .opt { min-width: 22px; height: 20px; padding: 0 3px; border-radius: 4px; font-family: var(--mono); font-size: 11.5px; }
+#find-bar .opt .ww { text-decoration: underline; text-underline-offset: 2px; }
+#find-bar .opt[aria-pressed="true"] { color: var(--accent); background: var(--accent-soft); }
+.accent-gradient #find-bar .opt[aria-pressed="true"] {
+  background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 18%, transparent), color-mix(in srgb, var(--accent-end) 18%, transparent));
+}
+/* 替换、全部替换 */
+#find-bar .text { height: 26px; padding: 0 10px; border: 1px solid var(--bar-border); border-radius: 6px; color: var(--text); white-space: nowrap; }
+#find-bar .text:hover:not(:disabled) { border-color: var(--accent); background: none; }
+
+/* 编辑区里找到的地方:淡的是所有匹配,深一点的是当前这个(设置里的预览也用)。
+   颜色在设置里改(--find-soft / --find-strong,见 findbar.js 的 findColors),默认跟随强调色 */
+.find-hit {
+  background: var(--find-soft, color-mix(in srgb, var(--accent) 30%, transparent));
+  border-radius: 2px;
+}
+.find-hit.find-current { background: var(--find-strong, color-mix(in srgb, var(--accent) 62%, transparent)); }
+
 /* ---------- 内容 ---------- */
 #main { flex: 1; min-height: 0; position: relative; }
 
@@ -796,6 +866,18 @@ html[data-edge-style="hover"][data-edge-peek][data-edge="right"] #edge-expand { 
 .ball-preview .tint[hidden] { display: none; }
 .edge-option { padding-left: 18px; }
 .edge-option.off { opacity: .5; }
+/* 设置里查找高亮颜色的预览:和编辑区一样的底色和字 */
+.find-preview { padding: 6px 10px; border: 1px solid var(--code-border); border-radius: 6px; background: var(--bg); color: var(--text); font-size: 13px; line-height: 1.8; }
+.form .row .grow { flex: 1; min-width: 0; font-size: 12px; }
+
+/* ---------- 从 minipad2 导入 ---------- */
+/* 盖在设置上面(从设置里打开时) */
+#import { z-index: 12; }
+.import-intro { margin: 0 0 4px; font-size: 12.5px; }
+#import-summary { margin: 10px 0 4px; font-size: 13px; line-height: 1.6; }
+#import-result { font-size: 13px; line-height: 1.7; }
+#import-result p { margin: 4px 0; }
+.import-warnings { margin: 8px 0 0; padding: 6px 10px 6px 26px; max-height: 120px; overflow-y: auto; border: 1px solid var(--code-border); border-radius: 6px; color: var(--muted); font-size: 12px; line-height: 1.6; }
 
 /* 读取失败页面只显示告警，不提供编辑与格式操作。 */
 #read-error { position: absolute; inset: 0; z-index: 11; padding: 18px; background: var(--bg); color: var(--text); white-space: pre-wrap; overflow: auto; }

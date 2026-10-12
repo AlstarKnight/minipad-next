@@ -3,7 +3,7 @@ import { api } from "./api.js";
 import { tabsEl } from "./dom.js";
 import { state, book, current, makeNote, bookFromDisk, sortBooks } from "./state.js";
 import { toast } from "./ui.js";
-import { scheduleMeta, scheduleBooks } from "./save.js";
+import { scheduleMeta, scheduleBooks, scheduleSave } from "./save.js";
 import { showNote, refreshCurrent } from "./page.js";
 import { renderTabs, ensurePage } from "./tabs.js";
 import { renderBook } from "./notebooks.js";
@@ -179,6 +179,12 @@ function mergeBook(b, d) {
       n.content = text;
       if (n === before) content = true;
     } else if (text !== n.content) {
+      if (state.settings?.conflict_mode !== "overwrite") {
+        // 两边都改过:disk 不更新,马上存一次。保存时后端发现文件和 disk 不一样,
+        // 先把别处的版本另存成冲突副本(见 addConflictCopy),这里的内容照常保存
+        scheduleSave(n);
+        continue;
+      }
       toast(`「${n.name}」在别处也被修改了,这里保留了你正在编辑的内容`, 4000);
     }
     n.disk = text;
@@ -197,4 +203,20 @@ function mergeBook(b, d) {
     b.active = idx >= 0 ? idx : Math.max(0, Math.min(b.active, kept.length - 1));
   }
   return { tabs, content };
+}
+
+// 保存时发现页面在别处也被改过,别处的版本已经另存成同一个笔记本里的冲突副本(save.js 发来的 conflict-copy):
+// 把副本放到原来那页后面,当前页面不变
+export function addConflictCopy({ book: b, note, copy }) {
+  toast(`「${note.name}」在别处也被修改了,别处的版本另存成了「${copy.name}」`, 6000);
+  return mutate(async () => {
+    if (!state.books.includes(b) || b.notes.some((x) => x.name === copy.name)) return;
+    const active = b.notes[b.active];
+    const at = b.notes.indexOf(note);
+    b.notes.splice(at >= 0 ? at + 1 : b.notes.length, 0, makeNote(copy.name, copy.content));
+    b.active = Math.max(0, b.notes.indexOf(active));
+    if (b === book()) renderTabs();
+    renderBook();
+    scheduleMeta(b);
+  });
 }

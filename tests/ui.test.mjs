@@ -273,8 +273,8 @@ describe("0.2.0 checks", () => {
   );
 
   ui(
-    "sync: on a conflict the unsaved local edit is kept, warned about and then saved",
-    { seed: seed({ "": { 待办: "外部改过的内容", 同步来的: "来自网盘" } }) },
+    "sync: set to overwrite, on a conflict the unsaved local edit is kept, warned about and then saved",
+    { seed: { ...seed({ "": { 待办: "外部改过的内容", 同步来的: "来自网盘" } }), settings: { ...SETTINGS, conflict_mode: "overwrite" } } },
     async (h) => {
       const { p } = h;
       await p.click("#editor");
@@ -288,6 +288,7 @@ describe("0.2.0 checks", () => {
       assert.equal(await h.editor(), "外部改过的内容!", "local unsaved edit kept on conflict");
       assert.ok((await h.toast()).includes("别处也被修改"), "conflict toast shown");
       await until(() => h.mockFile("", "待办"), "外部改过的内容!", "local edit saved after conflict");
+      assert.deepEqual(await h.tabs(), ["待办", "同步来的"], "no conflict copy");
     },
   );
 
@@ -330,7 +331,7 @@ describe("0.2.0 checks", () => {
     const { p } = h;
     await p.evaluate(() => (window.__mockFiles["同步来的"] = "来自网盘"));
     await syncUntil(h, h.tabs, ["待办", "同步来的"], "synced page shows up");
-    await p.keyboard.press("Control+f");
+    await p.keyboard.press("Control+Shift+KeyF");
     await p.keyboard.type("网盘");
     await until(() => p.locator("#search-results .result").count(), 1, "search finds synced content");
     // 只有一个笔记本时结果前面不写笔记本名
@@ -630,7 +631,7 @@ describe("notebooks", () => {
     async (h) => {
       const { p } = h;
       const where = () => p.$$eval("#search-results .result .where", (els) => els.map((e) => e.textContent.trim()));
-      await p.keyboard.press("Control+f");
+      await p.keyboard.press("Control+Shift+KeyF");
       await p.locator("#search-input").waitFor();
       await p.keyboard.type("关键字");
       await until(where, ["工作 › 周报 · 第 2 行"], "the result shows the notebook label");
@@ -639,7 +640,7 @@ describe("notebooks", () => {
       await until(h.activeTab, "周报");
       await until(h.selection, "关键字", "the match is selected");
 
-      await p.keyboard.press("Control+f");
+      await p.keyboard.press("Control+Shift+KeyF");
       await p.fill("#search-input", "周报");
       await until(where, ["页面标题 · 工作"], "a title match shows the notebook");
       await p.keyboard.press("Escape");
@@ -1028,7 +1029,7 @@ describe("editor", () => {
     await until(() => h.mockFile("", "日记"), today, "saved");
 
     // 搜索框开着时 F5 什么也不做
-    await p.keyboard.press("Control+f");
+    await p.keyboard.press("Control+Shift+KeyF");
     await p.locator("#search").waitFor();
     await p.keyboard.press("F5");
     await p.keyboard.press("Escape");
@@ -1204,7 +1205,9 @@ describe("code blocks", () => {
 // ---------- 格式栏 ----------
 describe("format bar", () => {
   const fb = (cmd) => `#format-bar [data-cmd="${cmd}"]`;
-  const DEFAULT_BAR = "undo redo sep1 block sep2 strong em strike code link color bg sep3 list ol task sep4 quote codeblock table hr".split(" ");
+  // 0.2.9 的按钮;0.3.0 在最后加了竖线和查找
+  const OLD_BAR = "undo redo sep1 block sep2 strong em strike code link color bg sep3 list ol task sep4 quote codeblock table hr".split(" ");
+  const DEFAULT_BAR = [...OLD_BAR, "sep5", "find"];
 
   ui("the format bar formats text, follows the cursor and can be hidden", { seed: seed({ "": { 页: "一段文字\n\n第二段" } }) }, async (h) => {
     const { p } = h;
@@ -1334,11 +1337,12 @@ describe("format bar", () => {
     await until(async () => (await h.stored())?.settings?.format_bar_hidden, [], "nothing hidden");
   });
 
-  ui("a button the saved order does not know yet (added in a newer version) goes back to its default place", { seed: { ...seed({ "": { 页: "文字" } }), settings: { ...SETTINGS, format_bar_order: [...DEFAULT_BAR].reverse().filter((id) => id !== "table").concat(["nope", "strong"]) } } }, async (h) => {
+  ui("a button the saved order does not know yet (added in a newer version) goes back to its default place", { seed: { ...seed({ "": { 页: "文字" } }), settings: { ...SETTINGS, format_bar_order: [...OLD_BAR].reverse().filter((id) => id !== "table").concat(["nope", "strong"]) } } }, async (h) => {
     const { p } = h;
     const bar = await p.$$eval("#format-bar .fb-items > [data-cmd]", (els) => els.map((e) => e.dataset.cmd));
     assert.equal(bar[0], "hr", "the saved order is used");
     assert.equal(bar.indexOf("table"), bar.indexOf("codeblock") + 1, "the new button sits after the one it follows by default");
+    assert.deepEqual(bar.slice(1, 3), ["sep5", "find"], "so do the find button and its divider from 0.3.0");
     assert.equal(bar.filter((id) => id === "strong").length, 1, "no duplicates");
     assert.ok(!bar.includes("nope"), "unknown names are dropped");
     assert.equal(bar.length, DEFAULT_BAR.length);
@@ -1711,4 +1715,355 @@ describe("P0 persistence safety", () => {
     }, [["undo"], ["strong", "undo"]], "both settings survive concurrent submissions");
   });
 
+});
+
+// ---------- 0.3.0:查找替换、冲突副本、从 minipad2 导入 ----------
+const FIND_PAGE = { "": { 水果: "苹果 apple Apple 香蕉 apple\n\n第二段 apple_pie applesauce", 别的: "这页也有 apple" } };
+const findCount = (p) => p.textContent("#find-count");
+// 编辑区里高亮的匹配,当前这个后面加 *
+const findHits = (p) => p.$$eval("#editor .find-hit", (els) => els.map((e) => e.textContent + (e.classList.contains("find-current") ? "*" : "")));
+
+describe("0.3.0: find and replace", () => {
+  ui("Ctrl+F finds in the page while typing; Enter, Shift+Enter and F3 step through; Esc closes it and leaves the match selected", { seed: seed(FIND_PAGE) }, async (h) => {
+    const { p } = h;
+    await p.click("#editor");
+    await p.keyboard.press("Control+Home");
+    await p.keyboard.press("Control+f");
+    await p.locator("#find-bar").waitFor();
+    assert.equal(await p.evaluate(() => document.activeElement.id), "find-input", "the find box gets the focus");
+    assert.ok(await p.isHidden("#search"), "not the search over all pages");
+    await p.keyboard.type("apple");
+    await until(() => findCount(p), "1/5", "counts every match, not matching case");
+    assert.deepEqual(await findHits(p), ["apple*", "Apple", "apple", "apple", "apple"], "all matches are highlighted, the current one darker");
+    await p.keyboard.press("Enter");
+    await until(() => findCount(p), "2/5", "Enter goes to the next");
+    await p.keyboard.press("Shift+Enter");
+    await p.keyboard.press("Shift+Enter");
+    await until(() => findCount(p), "5/5", "Shift+Enter goes back, around the end");
+    await p.keyboard.press("F3");
+    await until(() => findCount(p), "1/5", "F3 goes on from the start");
+    // 区分大小写、全字匹配
+    await p.keyboard.press("Alt+c");
+    await until(() => findCount(p), "1/4", "Alt+C matches case");
+    assert.equal(await p.getAttribute('#find-bar [data-opt="caseSensitive"]', "aria-pressed"), "true");
+    await p.keyboard.press("Alt+w");
+    await until(() => findCount(p), "1/2", "Alt+W: whole words only, apple_pie and applesauce are not");
+    await p.keyboard.press("Alt+c");
+    await p.keyboard.press("Alt+w");
+    await p.keyboard.type("x");
+    await until(() => findCount(p), "无结果");
+    assert.ok(await p.locator(".find-field.none").isVisible(), "the box turns red");
+    assert.ok(await p.isDisabled("#find-next"), "nothing to go to");
+    await p.keyboard.press("Backspace");
+    await until(() => findCount(p), "1/5");
+    await p.keyboard.press("Enter");
+    await until(() => findCount(p), "2/5");
+    await p.keyboard.press("Escape");
+    await until(() => p.isHidden("#find-bar"), true, "Esc closes the find bar");
+    assert.ok(await h.editorFocused(), "the cursor goes back to the editor");
+    assert.equal(await h.selection(), "Apple", "with the last match selected");
+    assert.equal(await p.locator("#editor .find-hit").count(), 0, "no highlights left");
+    assert.equal(await h.toast(), "", "the window stays");
+    await p.keyboard.press("Escape");
+    await until(async () => (await h.toast()).includes("隐藏"), true, "the next Esc hides the window");
+  });
+
+  ui("Ctrl+H replaces one at a time or all at once (one undo step), also with regex groups", { seed: seed({ "": { 日程: "2024-01-05 会议\n2025-12-31 跨年" } }) }, async (h) => {
+    const { p } = h;
+    await p.click("#editor");
+    await p.keyboard.press("Control+Home");
+    await p.keyboard.press("Control+h");
+    await p.locator("#find-replace").waitFor();
+    assert.equal(await p.getAttribute("#find-toggle", "aria-expanded"), "true");
+    assert.equal(await p.evaluate(() => document.activeElement.id), "find-input", "nothing to find yet: the find box gets the focus");
+    await p.keyboard.press("Alt+r");
+    await p.keyboard.type("(\\d{4})-(\\d\\d)-(\\d\\d)");
+    await until(() => findCount(p), "1/2", "a regular expression");
+    await p.fill("#replace-input", "$3/$2/$1");
+    await p.press("#replace-input", "Enter");
+    await until(h.editor, "05/01/2024 会议\n2025-12-31 跨年", "Enter replaces the current match");
+    await until(() => findCount(p), "1/1", "and goes to the next");
+    await p.fill("#find-input", "会议|跨年");
+    await until(() => findCount(p), "2/2");
+    await p.fill("#replace-input", "[$&]");
+    await p.press("#replace-input", "Control+Enter");
+    await until(h.editor, "05/01/2024 \\[会议]\n2025-12-31 \\[跨年]", "Ctrl+Enter replaces them all");
+    assert.equal(await h.toast(), "替换了 2 处(Ctrl+Z 可以撤销)");
+    await until(() => h.mockFile("", "日程"), "05/01/2024 \\[会议]\n2025-12-31 \\[跨年]", "and it is saved");
+    await p.keyboard.press("Escape");
+    await p.keyboard.press("Control+z");
+    assert.equal(await h.editor(), "05/01/2024 会议\n2025-12-31 跨年", "one Ctrl+Z takes back the whole replace-all");
+    await p.keyboard.press("Control+z");
+    assert.equal(await h.editor(), "2024-01-05 会议\n2025-12-31 跨年", "the next one the single replace");
+  });
+
+  ui("a regex replacement understands $& $1 $<name> $$ and \\n \\t; a plain one is taken as it is", async (h) => {
+    const out = await h.p.evaluate(async () => {
+      const { expandReplacement } = await import("./js/find.js");
+      const m = /(?<y>\d{4})-(\d\d)/.exec("x 2024-05 y");
+      return [
+        expandReplacement("$2/$1", m, true),
+        expandReplacement("[$&]", m, true),
+        expandReplacement("$<y>年", m, true),
+        expandReplacement("$$1 $9 $<nope>", m, true),
+        expandReplacement("$10", m, true),
+        expandReplacement("a\\nb\\tc\\\\n", m, true),
+        expandReplacement("$1\\n", m, false),
+      ];
+    });
+    assert.deepEqual(out, ["05/2024", "[2024-05]", "2024年", "$1 $9 $<nope>", "20240", "a\nb\tc\\n", "$1\\n"]);
+  });
+
+  ui("the find bar stays open across pages: every page is searched, and typing updates the matches", { seed: seed(FIND_PAGE) }, async (h) => {
+    const { p } = h;
+    await p.click("#editor");
+    await p.keyboard.press("Control+f");
+    await p.keyboard.type("apple");
+    await until(() => findCount(p), "1/5");
+    await h.tab("别的").click();
+    await until(() => findHits(p), ["apple"], "the other page is highlighted too");
+    assert.equal(await findCount(p), "1 个", "no current match there yet");
+    await p.keyboard.press("F3");
+    await until(() => findCount(p), "1/1", "F3 goes to it");
+    await p.keyboard.press("Control+End");
+    await p.keyboard.type(" Apple");
+    await until(async () => (await findHits(p)).length, 2, "a match typed in is found at once");
+    assert.match(await findCount(p), /^(1\/2|2 个)$/);
+    await h.tab("水果").click();
+    await until(() => findCount(p), "1/5", "back on the first page");
+  });
+
+  ui("settings: Ctrl+F can search all pages instead, the find bar can sit below the editor, and its highlight color is chosen", { seed: seed({ "": { 页: "找一找 看看" } }) }, async (h) => {
+    const { p } = h;
+    assert.equal(await p.getAttribute("#btn-search", "title"), "搜索全部页面 (Ctrl+Shift+F)");
+    await p.click("#btn-settings");
+    assert.equal(await p.inputValue("#set-ctrl-f"), "page");
+    assert.equal(await p.inputValue("#set-find-pos"), "top");
+    assert.ok(await p.locator('#set-find-color button.on[data-color=""]').isVisible(), "the highlight follows the accent color by default");
+    await p.selectOption("#set-ctrl-f", "all");
+    await p.selectOption("#set-find-pos", "bottom");
+    await p.click('#set-find-color button[title="蓝色"]');
+    assert.match(await p.$eval("#set-find-preview", (el) => el.style.getPropertyValue("--find-soft")), /#3b82f6 30%/, "the preview shows the color");
+    await p.click("#set-save");
+    await until(() => p.isHidden("#settings"), true);
+    await until(
+      async () => {
+        const s = (await h.stored())?.settings;
+        return [s?.ctrl_f, s?.find_bar_pos, s?.find_color];
+      },
+      ["all", "bottom", "#3b82f6"],
+      "saved",
+    );
+    assert.equal(await p.getAttribute("#btn-search", "title"), "搜索全部页面 (Ctrl+F)");
+    await p.click("#editor");
+    await p.keyboard.press("Control+f");
+    await p.locator("#search").waitFor();
+    assert.ok(await p.isHidden("#find-bar"), "Ctrl+F now searches all pages");
+    await p.keyboard.press("Escape");
+    await p.keyboard.press("Control+Shift+KeyF");
+    await p.locator("#find-bar").waitFor();
+    await p.keyboard.type("找");
+    await until(() => findCount(p), "1/2");
+    const top = (sel) => p.$eval(sel, (el) => el.getBoundingClientRect().top);
+    assert.ok((await top("#find-bar")) > (await top("#editor")), "the bar sits below the editor");
+    assert.ok((await top("#find-bar")) < (await top("#status")), "and above the status bar");
+    assert.match(await p.$eval("html", (el) => el.style.getPropertyValue("--find-strong")), /#3b82f6 62%/, "the highlight uses the chosen color");
+  });
+
+  ui("the find button on the format bar opens the find bar with the selected text", { seed: seed({ "": { 页: "一段文字 文字" } }) }, async (h) => {
+    const { p } = h;
+    await p.click("#editor .ProseMirror p");
+    await p.keyboard.press("End");
+    await p.keyboard.press("Shift+ArrowLeft");
+    await p.keyboard.press("Shift+ArrowLeft");
+    await until(h.selection, "文字");
+    await p.click('#format-bar [data-cmd="find"]');
+    await p.locator("#find-bar").waitFor();
+    assert.equal(await p.inputValue("#find-input"), "文字", "the selection is what is looked for");
+    assert.equal(await p.evaluate(() => document.activeElement.id), "find-input");
+    await until(() => findCount(p), "2/2", "starting from the selection");
+  });
+});
+
+describe("0.3.0: conflict copies", () => {
+  const isCopy = (name) => /^周报 \(冲突 \d{4}-\d\d-\d\d \d\d\.\d\d\)$/.test(name);
+
+  ui("a page changed both here and elsewhere keeps both: the other version becomes a conflict copy right after it", { seed: seed({ "": { 周报: "原来的", 别的: "x" } }) }, async (h) => {
+    const { p } = h;
+    await p.click("#editor");
+    await p.keyboard.press("Control+End");
+    await p.keyboard.type("我改的");
+    await until(() => h.mockFile("", "周报"), "原来的我改的", "saved");
+    // 网盘把别处的修改同步过来了,这里还没读到就又打了字
+    await p.evaluate(() => (window.__mockFiles["周报"] = "别处改的"));
+    await p.keyboard.type("再改");
+    await until(async () => (await h.tabs()).length, 3, "a conflict copy shows up");
+    const tabs = await h.tabs();
+    assert.equal(tabs[0], "周报");
+    assert.ok(isCopy(tabs[1]), `named after the page and the time: ${tabs[1]}`);
+    assert.equal(tabs[2], "别的", "the copy sits right after the page");
+    assert.equal(await h.activeTab(), "周报", "the current page stays");
+    assert.equal(await h.mockFile("", tabs[1]), "别处改的", "the copy holds the other version");
+    assert.equal(await h.mockFile("", "周报"), "原来的我改的再改", "the page keeps what was typed here");
+    assert.equal(await h.editor(), "原来的我改的再改");
+    assert.match(await h.toast(), /^「周报」在别处也被修改了,别处的版本另存成了「周报 \(冲突 .+\)」$/);
+    await until(async () => (await h.stored())?.books[""].meta.order, ["周报", tabs[1], "别的"], "the order is saved");
+    await h.tab(tabs[1]).click();
+    await until(h.editor, "别处改的", "the copy opens like any page");
+  });
+
+  ui("a sync that finds the page changed elsewhere while it is being edited here also keeps a copy", { seed: seed({ "": { 周报: "原来的" } }) }, async (h) => {
+    const { p } = h;
+    await p.click("#editor");
+    await p.keyboard.press("Control+End");
+    await p.keyboard.type("!");
+    // 本地的修改 500 ms 后才保存,在那之前文件在别处改了,而且先被同步读到
+    await p.evaluate(() => {
+      window.__mockFiles["周报"] = "别处改的";
+      return window.__minipad.sync();
+    });
+    assert.equal(await h.editor(), "原来的!", "the edit here stays");
+    await until(async () => (await h.tabs()).length, 2, "a conflict copy shows up");
+    const copy = (await h.tabs())[1];
+    assert.ok(isCopy(copy), copy);
+    assert.equal(await h.mockFile("", copy), "别处改的");
+    await until(() => h.mockFile("", "周报"), "原来的!", "the edit here is saved");
+  });
+
+  ui("settings: conflict copies are on by default and can be switched to overwriting", { seed: seed({ "": { 周报: "原来的" } }) }, async (h) => {
+    const { p } = h;
+    await p.click("#btn-settings");
+    assert.equal(await p.inputValue("#set-conflict"), "copy");
+    await p.selectOption("#set-conflict", "overwrite");
+    await p.click("#set-save");
+    await until(async () => (await h.stored())?.settings?.conflict_mode, "overwrite", "saved");
+    await p.click("#editor");
+    await p.keyboard.press("Control+End");
+    await p.keyboard.type("!");
+    await until(() => h.mockFile("", "周报"), "原来的!");
+    await p.evaluate(() => (window.__mockFiles["周报"] = "别处改的"));
+    await p.keyboard.type("?");
+    await until(() => h.mockFile("", "周报"), "原来的!?", "the page is simply overwritten");
+    assert.deepEqual(await h.tabs(), ["周报"], "no copy");
+  });
+});
+
+// minipad2 导入时纯文字转成的 Markdown:和 src-tauri/src/minipad2.rs 测试里的 ESCAPES 是同一张表,改的时候两边一起改。
+// 编辑器打开以后显示的必须正是原来的文字,改过再保存、重新打开也还是
+const MINIPAD2_ESCAPES = [
+  ["# 标题", "\\# 标题"],
+  ["> 引用", "\\> 引用"],
+  ["- 列表", "\\- 列表"],
+  ["+ 加号", "\\+ 加号"],
+  ["* 星号", "\\* 星号"],
+  ["1. 第一", "1\\. 第一"],
+  ["2) 第二", "2\\) 第二"],
+  ["3.14 和 2020年", "3.14 和 2020年"],
+  ["===", "\\==="],
+  ["___", "\\_\\_\\_"],
+  ["a*b*c", "a\\*b\\*c"],
+  ["snake_case 和 _斜体_", "snake_case 和 \\_斜体\\_"],
+  ["`代码` ~~删除~~", "\\`代码\\` \\~\\~删除\\~\\~"],
+  ["[链接](x) ![图](y)", "\\[链接](x) !\\[图](y)"],
+  ["<b>粗</b> <不是标签>", "\\<b>粗\\</b> \\<不是标签>"],
+  ["a | b", "a \\| b"],
+  ["&amp; & &#123;", "\\&amp; & \\&#123;"],
+  ["C:\\temp\\", "C:\\temp\\\\"],
+  ["\\_x", "\\\\\\_x"],
+  ["    缩进四格", "&#x20;   缩进四格"],
+  ["\t制表符", "&#x9;制表符"],
+  ["　　全角空格", "　　全角空格"],
+  ["看 https://a.com/x_y?q=1&r=2。好", "看 <https://a.com/x_y?q=1&r=2>。好"],
+  ["www.a.com/b_c*d 和 www.。", "www.a.com/b_c*d 和 www.。"],
+];
+
+describe("0.3.0: import from minipad2", () => {
+  const MP2 = {
+    pickFolder: "D:\\Tools\\minipad2",
+    minipad2: {
+      path: "D:\\Tools\\minipad2",
+      preview: { version: "3.2.1", groups: 2, pages: 9, empty: 1, lists: 3, clips: 12, recycled: 0, highlights: true, warnings: ["第 12 行看不懂,跳过了"] },
+      books: [
+        { name: "旧笔记", pages: [["随手记", "第一行"]] },
+        { name: "工作", pages: [["周报", "本周"], ["计划", "下周"]] },
+      ],
+      skipped: 1,
+    },
+  };
+
+  ui("import from the notebooks menu: pick the folder, see what is in it, choose, and land in the new notebook", { seed: seed({ "": { 首页: "hello" }, 工作: { 旧的: "保留" } }) }, async (h) => {
+    const { p } = h;
+    await p.evaluate((c) => (window.__mockControl = c), MP2);
+    await h.openBooks();
+    await p.click("#books-import");
+    await p.locator("#import-found").waitFor();
+    assert.equal(await p.inputValue("#import-path"), "D:\\Tools\\minipad2", "the picked folder");
+    assert.equal(await p.textContent("#import-summary"), "找到了 minipad2 3.2.1 的数据:2 个分组、9 个笔记页面。");
+    assert.ok(await p.isHidden("#import-recycle-row"), "nothing in the recycle bin, so no option for it");
+    assert.equal(await p.textContent("#import-clips-text"), "剪贴文字(12 条),放进一页");
+    assert.ok(!(await p.isChecked("#import-clips")), "clips are off by default");
+    assert.ok(await p.isChecked("#import-skip-empty"), "empty pages are skipped by default");
+    assert.deepEqual(await p.$$eval("#import-warnings li", (els) => els.map((e) => e.textContent)), ["第 12 行看不懂,跳过了"]);
+    assert.equal(await p.textContent("#import-base-label"), "分组外的页面放进");
+    await p.selectOption("#import-layout", "single");
+    assert.equal(await p.textContent("#import-base-label"), "导入到笔记本");
+    await p.fill("#import-base", "旧笔记");
+    await p.check("#import-clips");
+    await p.uncheck("#import-highlights");
+    await p.click("#import-ok");
+    await p.locator("#import-result").waitFor();
+    assert.deepEqual(
+      await p.evaluate(() => window.__mockControl.minipad2.options),
+      { layout: "single", base: "旧笔记", skip_empty: true, lists: true, clips: true, recycle: false, highlights: false },
+      "the choices go to the import",
+    );
+    assert.equal(await p.textContent("#import-result p >> nth=0"), "导入了 3 页,新建了 2 个笔记本:「旧笔记」、「工作 (2)」。");
+    assert.equal(await p.textContent("#import-result p >> nth=2"), "跳过了 1 个空白的页面。");
+    await until(h.bookName, "旧笔记", "the first new notebook opens");
+    assert.deepEqual(await h.tabs(), ["随手记"]);
+    assert.equal(await p.textContent("#import-ok"), "完成");
+    await p.click("#import-ok");
+    await until(() => p.isHidden("#import"), true);
+    const books = await h.listBooks();
+    assert.deepEqual(books.map((b) => [b.name, b.count]), [["默认", 1], ["工作", 1], ["工作 (2)", 2], ["旧笔记", 1]], "new notebooks next to the old ones");
+    assert.equal(await h.mockFile("工作", "旧的"), "保留", "existing notes are untouched");
+  });
+
+  ui("import from the settings: a folder without minipad2 data says so; Esc closes only the import window", { seed: seed({ "": { 首页: "hello" } }) }, async (h) => {
+    const { p } = h;
+    await p.evaluate((c) => (window.__mockControl = { ...c, pickFolder: "D:\\Downloads" }), MP2);
+    await p.click("#btn-settings");
+    await p.click("#set-import");
+    await until(
+      () => p.textContent("#import-error"),
+      "「D:\\Downloads」里没有找到 minipad2 的数据。请选 minipad2 的程序文件夹(里面有 data 文件夹),或者它的 data 文件夹",
+      "the folder has no data",
+    );
+    assert.ok(await p.isDisabled("#import-ok"), "nothing to import");
+    await p.fill("#import-path", "D:\\Tools\\minipad2");
+    await p.press("#import-path", "Enter");
+    await p.locator("#import-found").waitFor();
+    assert.ok(await p.isHidden("#import-error"));
+    assert.ok(await p.isEnabled("#import-ok"));
+    await p.keyboard.press("Escape");
+    await until(() => p.isHidden("#import"), true, "Esc closes the import window");
+    assert.ok(await p.isVisible("#settings"), "the settings stay open underneath");
+    assert.equal(await p.evaluate(() => document.activeElement.id), "set-import");
+    await p.keyboard.press("Escape");
+    await until(() => p.isHidden("#settings"), true);
+  });
+
+  ui("text imported from minipad2 shows exactly as it was written there, also after the editor saves it again", { seed: seed({ "": { 页: "" } }) }, async (h) => {
+    const { p } = h;
+    const text = () => p.evaluate(() => window.__minipad.editor().text());
+    const open = (md) => p.evaluate((m) => (window.__mockFiles["页"] = m), md);
+    for (const [plain, md] of MINIPAD2_ESCAPES) {
+      await open(md);
+      await syncUntil(h, text, plain, `${JSON.stringify(md)} shows as ${JSON.stringify(plain)}`);
+      // 编辑器保存时有自己的写法(比如多转义一个括号、网址写成链接),重新打开还是原来的文字
+      const saved = await h.editor();
+      await open(saved);
+      await syncUntil(h, text, plain, `and so does ${JSON.stringify(saved)}, as the editor saves it`);
+    }
+  });
 });

@@ -11,6 +11,8 @@ import { DEFAULT_DATE_FORMAT, formatDate } from "./datetime.js";
 const TAB_STYLES = ["line", "fill", "border"];
 import { ACCENTS, applyAccent, parseAccent, tidyAccent, gradient, gradientOf } from "./accent.js";
 import { APP_ICON, paintBall } from "./ballicon.js";
+import { applyFindAppearance, findColors } from "./findbar.js";
+import { openImport } from "./importer.js";
 
 const REPO_URL = "https://github.com/AlstarKnight/minipad-next";
 
@@ -27,6 +29,8 @@ export function applySettings() {
   document.documentElement.dataset.tabStyle = TAB_STYLES.includes(s.tab_style) ? s.tab_style : "line";
   applyEdgeAppearance();
   $("#btn-ball").hidden = !s.ball_enabled;
+  applyFindAppearance(s);
+  $("#btn-search").title = s.ctrl_f === "all" ? "搜索全部页面 (Ctrl+F)" : "搜索全部页面 (Ctrl+Shift+F)";
   applyEditorSettings(s);
 }
 // 贴边隐藏的样式:露出的宽度和 Rust 里 edge::strip_for 一致(逻辑像素,Rust 按屏幕缩放换成物理像素)
@@ -93,6 +97,10 @@ export function openSettings() {
   updateDatePreview();
   $("#set-code-lines").checked = s.code_line_numbers;
   $("#set-format-bar").checked = s.format_bar !== false;
+  $("#set-ctrl-f").value = s.ctrl_f === "all" ? "all" : "page";
+  $("#set-find-pos").value = s.find_bar_pos === "bottom" ? "bottom" : "top";
+  findColor.show(s.find_color || "");
+  $("#set-conflict").value = s.conflict_mode === "overwrite" ? "overwrite" : "copy";
   $("#set-backup").checked = s.backup_enabled;
   $("#set-backup-keep").value = s.backup_keep;
   $("#set-backup-dir").value = s.backup_dir;
@@ -144,13 +152,26 @@ function colorPicker(prefix, box, options, firstSwatch, onChange) {
   };
   return picker;
 }
-const accentColor = colorPicker("accent", "#set-accent", ACCENTS, "#d9822b");
+const accentColor = colorPicker("accent", "#set-accent", ACCENTS, "#d9822b", () => updateFindPreview());
 const edgeColor = colorPicker(
   "edge",
   "#set-edge-color",
   [{ name: "跟随强调色", value: "" }, ...ACCENTS.filter((a) => a.value)],
   "var(--accent-grad)",
 );
+
+// 查找高亮的颜色,上面那句话是预览
+const findColor = colorPicker(
+  "find",
+  "#set-find-color",
+  [{ name: "跟随强调色", value: "" }, ...ACCENTS.filter((a) => a.value)],
+  "var(--accent-grad)",
+  () => updateFindPreview(),
+);
+// 跟随强调色时,预览用这里正在选的强调色
+function updateFindPreview() {
+  findColors($("#set-find-preview"), findColor.value || accentColor.value);
+}
 
 const ballColor = colorPicker(
   "ball",
@@ -270,6 +291,10 @@ async function submitSettings() {
     date_format: $("#set-date-format").value.trim(),
     code_line_numbers: $("#set-code-lines").checked,
     format_bar: $("#set-format-bar").checked,
+    ctrl_f: $("#set-ctrl-f").value,
+    find_bar_pos: $("#set-find-pos").value,
+    find_color: findColor.value,
+    conflict_mode: $("#set-conflict").value,
     backup_enabled: $("#set-backup").checked,
     backup_keep: Math.min(365, Math.max(1, Math.round(Number($("#set-backup-keep").value)) || 14)),
     backup_dir: $("#set-backup-dir").value.trim(),
@@ -345,6 +370,8 @@ export function bindSettings() {
   for (const id of ["#set-accent-from", "#set-accent-to", "#set-accent-grad"]) $(id).addEventListener("input", accentColor.custom);
   for (const id of ["#set-edge-from", "#set-edge-to", "#set-edge-grad"]) $(id).addEventListener("input", edgeColor.custom);
   for (const id of ["#set-ball-from", "#set-ball-to", "#set-ball-grad"]) $(id).addEventListener("input", ballColor.custom);
+  for (const id of ["#set-find-from", "#set-find-to", "#set-find-grad"]) $(id).addEventListener("input", findColor.custom);
+  $("#set-import").addEventListener("click", openImport);
   for (const id of ["#set-ball", "#set-ball-size", "#set-ball-opacity"]) $(id).addEventListener("input", updateBall);
   for (const r of document.querySelectorAll('input[name="set-ball-icon"]')) r.addEventListener("change", updateBall);
   $("#set-ball-pick").addEventListener("click", pickBallIcon);

@@ -4,11 +4,13 @@ import { $, tabsEl } from "./dom.js";
 import { state, book, current } from "./state.js";
 import { toast, dialogOpen, closeDialog, closeMenu, closeOverlays, focusEditor, ask, askText } from "./ui.js";
 import { markDirty, flushAll, saveMeta, pendingNoteCount, resetActivity } from "./save.js";
-import { reload, syncFromDisk } from "./sync.js";
+import { reload, syncFromDisk, addConflictCopy } from "./sync.js";
 import { rememberView } from "./page.js";
 import { switchTo, newNote, deleteNote } from "./tabs.js";
 import { toggleBooks, closeBooks, bindBooks } from "./notebooks.js";
 import { openSearch, bindSearch } from "./search.js";
+import { openFind, closeFind, findAgain, bindFind } from "./findbar.js";
+import { bindImport, closeImport } from "./importer.js";
 import { openSettings, saveSettings, applyEdgeAppearance, bindSettings } from "./settings.js";
 import { createEditor, editorDebug, insertText, toggleTask } from "./editor.js";
 import { setLinkPrompt, setTaskCommand } from "./toolbar.js";
@@ -104,7 +106,7 @@ function openLink(href) {
 
 // 有没有开着的弹层、菜单或对话框
 function anyOverlay() {
-  return dialogOpen() || ["#search", "#settings", "#books", "#ctx"].some((sel) => !$(sel).hidden);
+  return dialogOpen() || ["#search", "#settings", "#import", "#books", "#ctx"].some((sel) => !$(sel).hidden);
 }
 
 // 顶栏的 Aa 按钮、格式栏右边的收起按钮:显示 / 收起格式栏,记在设置里
@@ -161,7 +163,13 @@ function bindUi() {
 
   bindBooks();
   bindSearch();
+  bindFind();
   bindSettings();
+  bindImport();
+  // 保存时发现这一页在别处也改过:那边的版本已经另存成冲突副本,放到这一页后面
+  document.addEventListener("conflict-copy", (e) => addConflictCopy(e.detail));
+  // 格式栏上的查找按钮
+  document.addEventListener("open-find", () => openFind());
 
   $("#dialog-ok").addEventListener("click", () => closeDialog(true));
   $("#dialog-cancel").addEventListener("click", () => closeDialog(false));
@@ -169,8 +177,9 @@ function bindUi() {
   document.querySelectorAll(".overlay").forEach((o) =>
     o.addEventListener("mousedown", (e) => {
       if (e.target !== o) return;
-      // 点对话框外面只取消对话框,底下的笔记本列表留着
+      // 点对话框外面只取消对话框,底下的笔记本列表留着;导入窗口也只关它自己,底下的设置留着
       if (o.id === "dialog") closeDialog(false);
+      else if (o.id === "import") closeImport();
       else closeOverlays();
     })
   );
@@ -204,6 +213,12 @@ function bindUi() {
       }
       return;
     }
+    // F3 / Shift+F3:在当前页面里找下一个 / 上一个(查找栏没开时先打开)
+    if (e.key === "F3") {
+      e.preventDefault();
+      if (!ctrl && !e.altKey && !anyOverlay() && current()) findAgain(e.shiftKey ? -1 : 1);
+      return;
+    }
     // 正式版里屏蔽浏览器自带的刷新和打印,免得误按
     if (!state.debug && ctrl && (k === "r" || k === "p")) {
       e.preventDefault();
@@ -219,16 +234,21 @@ function bindUi() {
     }
     if (e.key === "Escape") {
       e.preventDefault();
-      // 一次关一层:先关右键菜单,再关弹层,都没有才隐藏窗口
+      // 一次关一层:先关右键菜单,再关弹层,然后是查找栏,都没有才隐藏窗口
       if (!$("#ctx").hidden) closeMenu();
-      else if (!closeOverlays()) hideWindow();
+      else if (!closeImport() && !closeOverlays() && !closeFind()) hideWindow();
       return;
     }
     // 编辑器自己处理过的快捷键(Ctrl+Z、Ctrl+B 加粗……)不再算窗口的
     if (!ctrl || e.defaultPrevented) return;
     if (k === "b") (e.preventDefault(), toggleBooks());
     else if (k === "t" || k === "n") (e.preventDefault(), newNote());
-    else if (k === "f") (e.preventDefault(), openSearch());
+    else if (k === "f") {
+      // Ctrl+F 在当前页面里查找还是搜索全部页面,设置里选;Ctrl+Shift+F 是另一个
+      e.preventDefault();
+      if ((state.settings?.ctrl_f !== "all") !== e.shiftKey) openFind();
+      else openSearch();
+    } else if (k === "h") (e.preventDefault(), openFind({ replace: true }));
     else if (k === "s") (e.preventDefault(), void flushAll().catch(() => {}));
     else if (k === "w") (e.preventDefault(), deleteNote(current()));
     else if (e.key === "Tab") {

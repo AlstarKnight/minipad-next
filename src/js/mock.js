@@ -35,6 +35,10 @@ const DEFAULT_SETTINGS = {
   backup_enabled: true,
   backup_keep: 14,
   backup_dir: "",
+  ctrl_f: "page",
+  find_bar_pos: "top",
+  find_color: "",
+  conflict_mode: "copy",
 };
 
 const has = (obj, key) => Object.prototype.hasOwnProperty.call(obj, key);
@@ -87,6 +91,17 @@ function firstFree(base, taken) {
 
 // 统一成小写、反斜杠,用来比较路径
 const normPath = (p) => p.toLowerCase().replace(/\//g, "\\").replace(/\\+$/, "");
+
+// 只能是几个选项之一的设置:不认识的值换成第一个(和后端的 pick_one 一样)
+const pickOne = (value, options) => (options.includes(value) ? value : options[0]);
+
+// 冲突副本的名字,比如「周报 (冲突 2026-10-12 18.30)」;和后端的 notes::conflict_name 一样
+function conflictName(name) {
+  const d = new Date();
+  const pad = (n) => String(n).padStart(2, "0");
+  const suffix = ` (冲突 ${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}.${pad(d.getMinutes())})`;
+  return [...name].slice(0, 80 - [...suffix].length).join("").trimEnd() + suffix;
+}
 
 // 和后端一样整理 F5 的日期格式:去掉首尾空格,最多 64 个字(按字算),空着就用默认的
 const tidyDateFormat = (f) => [...String(f ?? "").trim()].slice(0, 64).join("").trimEnd() || DEFAULT_DATE_FORMAT;
@@ -166,9 +181,20 @@ export function mockApi() {
     },
     read_notes: () => readBooks(),
     book_exists: ({ book }) => has(db.books, book),
-    save_note: ({ book, name, content }) => {
+    // 和后端一样:文件在别处被改过(既不是上次读到的 expected,也不是要写的内容),
+    // 先把别处的版本另存成冲突副本(设置里选了直接覆盖就不留)
+    save_note: ({ book, name, content, expected }) => {
       backup();
-      bookOf(book).files[name] = content;
+      const b = bookOf(book);
+      const now = has(b.files, name) ? b.files[name] : null;
+      let conflict = null;
+      if (db.settings.conflict_mode !== "overwrite" && expected != null && now != null && now !== expected && now !== content) {
+        const copy = uniqPage(b, conflictName(name));
+        b.files[copy] = now;
+        conflict = { name: copy, content: now };
+      }
+      b.files[name] = content;
+      return { conflict };
     },
     create_note: ({ book, name }) => {
       backup();
@@ -246,6 +272,9 @@ export function mockApi() {
         backup_dir: String(settings.backup_dir ?? "").trim(),
         backup_keep: Math.min(365, Math.max(1, Math.round(Number(settings.backup_keep)) || 1)),
         date_format: tidyDateFormat(settings.date_format),
+        ctrl_f: pickOne(settings.ctrl_f, ["page", "all"]),
+        find_bar_pos: pickOne(settings.find_bar_pos, ["top", "bottom"]),
+        conflict_mode: pickOne(settings.conflict_mode, ["copy", "overwrite"]),
       };
       const notes = normPath(s.notes_dir);
       const dest = normPath(s.backup_dir);
@@ -257,9 +286,41 @@ export function mockApi() {
     pause_hotkey: () => {},
     resume_hotkey: () => {},
     note_activity: () => {},
+    // 测试可以用 __mockControl.pickFolder 指定"选中"的文件夹
     pick_folder: ({ title }) => {
+      if (window.__mockControl && has(window.__mockControl, "pickFolder")) return window.__mockControl.pickFolder;
       toast(`(预览)会弹出「${title || "选择文件夹"}」对话框`);
       return null;
+    },
+    // 从 minipad2 导入:浏览器里读不了文件,测试用 __mockControl.minipad2 = { path, preview, books, skipped, warnings } 模拟
+    minipad2_preview: ({ path }) => {
+      const m = window.__mockControl?.minipad2;
+      if (!m || normPath(path) !== normPath(m.path)) {
+        throw `「${path}」里没有找到 minipad2 的数据。请选 minipad2 的程序文件夹(里面有 data 文件夹),或者它的 data 文件夹`;
+      }
+      return { folder: m.path, warnings: [], ...m.preview };
+    },
+    minipad2_import: ({ path, options }) => {
+      const m = window.__mockControl?.minipad2;
+      if (!m || normPath(path) !== normPath(m.path)) throw `「${path}」里没有找到 minipad2 的数据`;
+      m.options = options;
+      backup();
+      const books = [];
+      let pages = 0;
+      for (const plan of m.books) {
+        if (!plan.pages.length) continue;
+        const name = uniqBook(plan.name);
+        const b = (db.books[name] = fixBook({}));
+        for (const [page, content] of plan.pages) {
+          const n = uniqPage(b, page);
+          b.files[n] = content;
+          b.meta.order.push(n);
+          pages++;
+        }
+        b.meta.active = b.meta.order[0];
+        books.push(name);
+      }
+      return { books, pages, skipped: m.skipped ?? 0, warnings: m.importWarnings ?? [] };
     },
     hide_window: () => toast("(预览)窗口会隐藏到托盘,按 Ctrl+M 再呼出"),
     expand_edge: () => window.__mockEmit?.("edge-shown"),

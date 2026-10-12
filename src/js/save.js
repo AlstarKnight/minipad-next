@@ -28,6 +28,15 @@ export function markDirty(n = current()) {
   saveTimer = setTimeout(backgroundNotes, 500);
 }
 
+// 不是用户在打字、但这一页需要再存一次(比如在别处也被改过,要留下冲突副本):半秒后保存
+export function scheduleSave(n) {
+  if (!n || n.unreadable) return;
+  n.dirty = true;
+  setSaveStatus("dirty");
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(backgroundNotes, 500);
+}
+
 // 同一时刻只允许一个保存循环；写入期间的新修改也会在返回前保存。
 export function flushAll() {
   clearTimeout(saveTimer);
@@ -60,8 +69,10 @@ async function writeDirtyNotes() {
       const content = n.content;
       inFlightNote = n;
       try {
-        await api.invoke("save_note", { book: b.name, name: n.name, content });
+        // expected:上次读到(或写进去)的内容。文件在别处被改过时,后端先把那边的版本另存成冲突副本
+        const r = await api.invoke("save_note", { book: b.name, name: n.name, content, expected: n.disk });
         n.disk = content;
+        if (r?.conflict) document.dispatchEvent(new CustomEvent("conflict-copy", { detail: { book: b, note: n, copy: r.conflict } }));
       } catch (e) {
         n.dirty = true;
         firstError ??= e;

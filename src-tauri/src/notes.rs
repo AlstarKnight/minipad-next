@@ -278,6 +278,37 @@ pub fn decode_text(bytes: &[u8]) -> String {
     text.replace("\r\n", "\n")
 }
 
+/// 冲突副本的名字,比如「周报 (冲突 2026-10-12 18.30)」;原名太长时截短,保证后缀完整
+pub fn conflict_name(name: &str, stamp: &str) -> String {
+    let suffix = format!(" (冲突 {stamp})");
+    let room = 80usize.saturating_sub(suffix.chars().count());
+    let base: String = name.chars().take(room).collect();
+    format!("{}{suffix}", base.trim_end())
+}
+
+/// 保存前检查页面文件有没有在别处被改过:现在的内容既不是上次读到的 `expected`,也不是要写的 `content`,
+/// 就把现在的内容另存成同一个笔记本里的冲突副本,返回副本的名字和内容。
+/// 文件不在了(或者读不出来)就没什么可留的,返回 None,照常保存。
+pub fn save_conflict_copy(
+    dir: &Path,
+    name: &str,
+    expected: &str,
+    content: &str,
+    stamp: &str,
+) -> Result<Option<(String, String)>, String> {
+    let Ok(bytes) = fs::read(note_path(dir, name)) else {
+        return Ok(None);
+    };
+    let current = decode_text(&bytes);
+    if current == expected || current == content {
+        return Ok(None);
+    }
+    let copy = unique_name(dir, &conflict_name(name, stamp), None);
+    write_atomic(&note_path(dir, &copy), &current)
+        .map_err(|e| format!("「{name}」在别处也被修改了,但另存那边的版本失败:{e}"))?;
+    Ok(Some((copy, current)))
+}
+
 pub fn read_note(dir: &Path, name: &str) -> Result<String, String> {
     fs::read(note_path(dir, name))
         .map(|b| decode_text(&b))
@@ -629,6 +660,62 @@ mod tests {
         // "中文笔记" 的 GBK 编码
         let gbk = [0xD6, 0xD0, 0xCE, 0xC4, 0xB1, 0xCA, 0xBC, 0xC7];
         assert_eq!(decode_text(&gbk), "中文笔记");
+    }
+
+    #[test]
+    fn conflict_copy_keeps_the_other_version() {
+        let dir = temp_dir("conflict");
+        let stamp = "2026-10-12 18.30";
+        // 没被别处改过:不留副本
+        fs::write(note_path(&dir, "周报"), "原来的").unwrap();
+        assert_eq!(
+            save_conflict_copy(&dir, "周报", "原来的", "我改的", stamp).unwrap(),
+            None
+        );
+        // 别处写进去的正好是要保存的内容(比如同步回来的自己的修改):也不算冲突
+        fs::write(note_path(&dir, "周报"), "我改的").unwrap();
+        assert_eq!(
+            save_conflict_copy(&dir, "周报", "原来的", "我改的", stamp).unwrap(),
+            None
+        );
+        // 只是换行符不同不算改过
+        fs::write(note_path(&dir, "周报"), "第一行\r\n第二行").unwrap();
+        assert_eq!(
+            save_conflict_copy(&dir, "周报", "第一行\n第二行", "我改的", stamp).unwrap(),
+            None
+        );
+        // 别处改成了别的内容:那边的版本另存一份,文件本身不动(由调用方接着写)
+        fs::write(note_path(&dir, "周报"), "别处改的\r\n").unwrap();
+        let (copy, text) = save_conflict_copy(&dir, "周报", "原来的", "我改的", stamp)
+            .unwrap()
+            .unwrap();
+        assert_eq!(copy, "周报 (冲突 2026-10-12 18.30)");
+        assert_eq!(text, "别处改的\n");
+        assert_eq!(read_note(&dir, &copy).unwrap(), "别处改的\n");
+        assert_eq!(read_note(&dir, "周报").unwrap(), "别处改的\n");
+        // 同一分钟里又冲突一次,副本自动加编号
+        let (again, _) = save_conflict_copy(&dir, "周报", "原来的", "我改的", stamp)
+            .unwrap()
+            .unwrap();
+        assert_eq!(again, "周报 (冲突 2026-10-12 18.30) (2)");
+        // 文件在别处被删了:没什么可留的
+        assert_eq!(
+            save_conflict_copy(&dir, "没有这页", "原来的", "我改的", stamp).unwrap(),
+            None
+        );
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn conflict_names_keep_the_suffix() {
+        assert_eq!(
+            conflict_name("周报", "2026-10-12 18.30"),
+            "周报 (冲突 2026-10-12 18.30)"
+        );
+        let long = conflict_name(&"长".repeat(100), "2026-10-12 18.30");
+        assert!(long.ends_with(" (冲突 2026-10-12 18.30)"));
+        assert_eq!(long.chars().count(), 80);
+        assert_eq!(sanitize_name(&long), long);
     }
 
     #[test]
