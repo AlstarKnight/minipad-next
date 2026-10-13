@@ -3047,7 +3047,15 @@ describe("0.3.2: tab groups", () => {
 
 describe("v0.3.4 group gradient direction", () => {
   ui("group underline keeps a horizontal gradient and custom stop positions", {
-    seed: books({ tab_groups: true }, { groups: [{ id: "g1", name: "组", color: "linear-gradient(45deg, #112233 0%, #445566 25%, #778899 100%)", collapsed: false }], note_groups: { b: "g1" } }),
+    seed: (() => {
+      const db = seed({ "": { a: "a", b: "b" } });
+      db.settings.tab_groups = true;
+      Object.assign(db.books[""].meta, {
+        groups: [{ id: "g1", name: "组", color: "linear-gradient(45deg, #112233 0%, #445566 25%, #778899 100%)", collapsed: false }],
+        note_groups: { b: "g1" },
+      });
+      return db;
+    })(),
   }, async ({ p }) => {
     assert.equal(await p.$eval(".tab-group", (el) => el.style.getPropertyValue("--g-grad")),
       "linear-gradient(90deg, #112233 0%, #445566 25%, #778899 100%)");
