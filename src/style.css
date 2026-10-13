@@ -883,10 +883,31 @@ html[data-find-pos="bottom"] #status { order: 2; }
 .bm-icon-grid svg { width: 20px; height: 20px; }
 .bm-icon-grid button:hover, .bm-icon-grid button[aria-checked="true"] { border-color: var(--accent); background: var(--accent-soft); }
 .bm-colors { grid-template-columns: repeat(6, minmax(0, 1fr)); }
-.bm-colors button { height: 26px; border-radius: 7px; background: var(--book-swatch); border: 2px solid var(--bar-border); color: white; }
-.bm-colors button[aria-checked="true"] { outline: 2px solid var(--text); outline-offset: 1px; }
-.bm-custom-color { display: flex; align-items: center; gap: 10px; font-size: 12px; margin-top: 12px; }
-.bm-custom-color input { width: 54px; height: 28px; padding: 2px; background: transparent; border: 1px solid var(--bar-border); border-radius: 6px; }
+.bm-colors button { height: 26px; border-radius: 7px; background: var(--book-swatch); border: 1px solid var(--bar-border); color: white; }
+.bm-colors button:hover { border-color: color-mix(in srgb, var(--accent) 70%, var(--bar-border)); }
+.bm-colors button[aria-checked="true"] {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 13%, transparent);
+}
+.bm-colors button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.bm-custom-color { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 12px; margin-top: 9px; }
+.bm-custom-color label { display: inline-flex; align-items: center; gap: 5px; }
+.bm-custom-color input[type="color"] { width: 38px; height: 26px; padding: 2px; background: transparent; border: 1px solid var(--bar-border); border-radius: 6px; }
+.bm-custom-color input[type="checkbox"] { accent-color: var(--accent); }
+#bm-gradient-to-label[hidden] { display: none; }
+.bm-preset-head { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin: 12px 0 7px; }
+.bm-preset-head .bm-field-title { margin: 0; }
+.bm-saved-colors { min-height: 24px; }
+.bm-saved-item { position: relative; min-width: 0; }
+.bm-colors .bm-saved-item > button[role="radio"] { display: block; width: 100%; padding: 0; }
+.bm-colors .bm-saved-item > button.bm-remove-color {
+  position: absolute; top: -5px; right: -5px; z-index: 1;
+  width: 15px; height: 15px; padding: 0; border-radius: 50%;
+  border: 1px solid var(--bar-border); background: var(--bg); color: var(--muted);
+  font-size: 12px; line-height: 12px;
+}
+.bm-colors .bm-saved-item > button.bm-remove-color:hover { color: var(--danger); border-color: var(--danger); }
 .bm-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 18px; }
 .bm-actions .danger { color: var(--danger); }
 #bm-error { margin-top: 12px; }
