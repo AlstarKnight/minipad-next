@@ -51,7 +51,7 @@ export function outlineVars(el, { width, opacity, color }) {
   const c = parseAccent(color);
   if (c) {
     el.style.setProperty("--ol-c", c.from);
-    el.style.setProperty("--ol-grad", c.to ? gradientOf(c.stops, c.deg) : c.from);
+    el.style.setProperty("--ol-grad", c.to ? gradientOf(c.stops, c.deg, c.positions) : c.from);
   } else {
     el.style.removeProperty("--ol-c");
     el.style.removeProperty("--ol-grad");
