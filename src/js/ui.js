@@ -1,7 +1,7 @@
 // ---------- 提示、对话框、右键菜单 ----------
 import { $ } from "./dom.js";
 import { current } from "./state.js";
-import { closeBooks } from "./notebooks.js";
+import { closeBooks, closeBookManager } from "./notebooks.js";
 import { focusEditorView } from "./editor.js";
 import { closeTabPopups } from "./tabbar.js";
 import { closeGroupEditor } from "./groups.js";
@@ -97,14 +97,17 @@ export function closeMenu() {
 
 // 关掉弹层,返回原来有没有开着的(Esc 先关弹层,没有弹层才隐藏窗口)
 export function closeOverlays(keepBooks = false) {
-  const overlays = ["#search", "#settings", "#import"];
+  const overlays = ["#search", "#settings", "#import", ...(keepBooks ? [] : ["#book-manager"])];
   let wasOpen = overlays.some((sel) => !$(sel).hidden) || (!keepBooks && !$("#books").hidden);
   if (closeGroupEditor()) wasOpen = true;
   if (closeTabPopups()) wasOpen = true;
   closeDialog(false);
   for (const sel of overlays) $(sel).hidden = true;
   $("#set-hotkey").classList.remove("recording");
-  if (!keepBooks) closeBooks();
+  if (!keepBooks) {
+    closeBooks();
+    closeBookManager();
+  }
   closeMenu();
   if (wasOpen) focusEditor();
   return wasOpen;
