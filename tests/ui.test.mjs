@@ -1526,7 +1526,7 @@ describe("theme and accent", () => {
       [s.settings.edge_style, s.settings.edge_line_width, s.settings.edge_line_length, s.settings.edge_line_glow]),
       ["line", 7, 45, true], "the settings persist");
     await p.evaluate(() => window.__mockEmit("edge-hidden", "top"));
-    assert.deepEqual(await mark(), [0, 530, 440, 10], "glow reserves enough visible space");
+    assert.deepEqual(await mark(), [0, 525, 440, 15], "glow reserves room beyond the 7px line");
     const line = await p.$eval("#edge-mark > span", (x) => {
       const r = x.getBoundingClientRect();
       return [Math.round(r.width), Math.round(r.height), getComputedStyle(x).boxShadow];
@@ -1554,7 +1554,7 @@ describe("theme and accent", () => {
     await p.click("#set-save");
     await until(() => h.stored().then((s) => s.settings.edge_style), "hover");
     await p.evaluate(() => window.__mockEmit("edge-hidden", "left"));
-    assert.deepEqual(await mark(), [430, 0, 10, 540], "hover mode has enough room for line glow");
+    assert.deepEqual(await mark(), [425, 0, 15, 540], "hover mode has enough room for line glow");
     await p.evaluate(() => window.__mockEmit("edge-peek", true));
     const glow = await p.$eval("#edge-expand", (b) => getComputedStyle(b).boxShadow);
     assert.match(glow, /rgba?\(/, "hover reveal button has a glow");
