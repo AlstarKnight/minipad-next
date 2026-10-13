@@ -7,6 +7,7 @@ import { state, book } from "./state.js";
 import { scheduleMeta } from "./save.js";
 import { renderTabs, newNote } from "./tabs.js";
 import { GRADIENTS, gradient, gradientOf, parseAccent, tidyAccent } from "./accent.js";
+import { makeSharedColorTools } from "./sharedcolors.js";
 
 // 分组的颜色,和 Edge 的差不多
 export const GROUP_COLORS = [
@@ -279,7 +280,11 @@ function paintColors() {
   to.addEventListener("input", apply);
   grad.addEventListener("change", apply);
   custom.append(label, from, gradBox, to);
-  $("#ge-colors").replaceChildren(solid, title, grads, custom);
+  const shared = makeSharedColorTools({
+    getValue: () => editing?.color || "#d9822b",
+    onApply: (value) => setColor(value),
+  });
+  $("#ge-colors").replaceChildren(solid, title, grads, custom, shared.root);
 }
 
 function setColor(c, repaint = true) {
