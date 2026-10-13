@@ -7,16 +7,28 @@ import { flushAll, saveMeta, scheduleMeta, scheduleBooks } from "./save.js";
 import { mutate } from "./sync.js";
 import { rememberView, showNote } from "./page.js";
 import { renderTabs, ensurePage, removeNote } from "./tabs.js";
+import { BOOK_ICONS, bookIcon, iconColor } from "./bookicons.js";
 
 // 为了"移到笔记本…"打开列表时是要移动的页面,平时是 null
 let moving = null;
+let selectedBook = null;
+let appearanceBusy = false;
+const BOOK_COLORS = ["", "#d9822b", "#e76f51", "#e0b348", "#5fb4ff", "#9384df", "#67ad87", "#db75a8", "#a5a5ad"];
 // 列表里的按钮 -> 笔记本
 const itemBook = new WeakMap();
 
 // 更新按钮上的名字和列表
 export function renderBook() {
-  $("#book-name").textContent = bookLabel(book());
+  const currentBook = book();
+  const label = bookLabel(currentBook);
+  const btn = $("#btn-book");
+  $("#book-name").textContent = label;
+  btn.title = label;
+  btn.setAttribute("aria-label", `当前笔记本：${label}，点击切换`);
+  $("#book-icon").innerHTML = bookIcon(currentBook?.icon);
+  $("#book-icon").style.color = iconColor(currentBook);
   renderList();
+  if (!$("#book-manager").hidden) renderManager();
 }
 
 function renderList() {
@@ -29,13 +41,17 @@ function renderList() {
     item.dataset.book = b.name;
     item.title = bookLabel(b);
     item.disabled = !!moving && b === book();
+    const icon = document.createElement("span");
+    icon.className = "book-item-icon";
+    icon.innerHTML = bookIcon(b.icon);
+    icon.style.color = iconColor(b);
     const name = document.createElement("span");
     name.className = "name";
     name.textContent = bookLabel(b);
     const count = document.createElement("span");
     count.className = "count";
     count.textContent = b.notes.length;
-    item.append(name, count);
+    item.append(icon, name, count);
     item.addEventListener("click", () => pick(b));
     item.addEventListener("contextmenu", (e) => {
       e.preventDefault();
@@ -222,6 +238,104 @@ export async function moveNoteTo(n, target) {
   renderBook();
 }
 
+// 单独的笔记本管理页。只更改图标元信息，不切换当前笔记或编辑状态。
+export function openBookManager() {
+  closeOverlays();
+  selectedBook = state.books.includes(selectedBook) ? selectedBook : book();
+  $("#book-manager").hidden = false;
+  renderManager();
+  $("#bm-close").focus();
+}
+
+export function closeBookManager() {
+  if ($("#book-manager").hidden) return false;
+  $("#book-manager").hidden = true;
+  selectedBook = null;
+  return true;
+}
+
+function renderManager() {
+  if ($("#book-manager").hidden) return;
+  if (!state.books.includes(selectedBook)) selectedBook = book();
+  const list = $("#bm-list");
+  list.replaceChildren();
+  for (const b of state.books) {
+    const button = document.createElement("button");
+    button.className = "bm-list-item" + (b === selectedBook ? " selected" : "");
+    button.dataset.book = b.name;
+    button.title = bookLabel(b);
+    button.setAttribute("aria-pressed", String(b === selectedBook));
+    const icon = document.createElement("span");
+    icon.innerHTML = bookIcon(b.icon);
+    icon.style.color = iconColor(b);
+    const name = document.createElement("span");
+    name.textContent = bookLabel(b);
+    name.className = "bm-list-name";
+    const count = document.createElement("span");
+    count.textContent = String(b.notes.length);
+    count.className = "bm-list-count";
+    button.append(icon, name, count);
+    button.addEventListener("click", () => {
+      selectedBook = b;
+      renderManager();
+    });
+    list.append(button);
+  }
+  const b = selectedBook;
+  if (!b) return;
+  $("#bm-selected").textContent = bookLabel(b);
+  $("#bm-rename").disabled = !b.name;
+  $("#bm-delete").disabled = !b.name;
+  const icons = $("#bm-icons");
+  icons.replaceChildren();
+  for (const [id, label] of BOOK_ICONS) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.title = label;
+    button.setAttribute("role", "radio");
+    button.setAttribute("aria-checked", String((b.icon || "book") === id));
+    button.dataset.icon = id;
+    button.innerHTML = bookIcon(id);
+    button.addEventListener("click", () => void saveAppearance(b, id, b.icon_color || ""));
+    icons.append(button);
+  }
+  const colors = $("#bm-colors");
+  colors.replaceChildren();
+  for (const color of BOOK_COLORS) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.title = color || "跟随强调色";
+    button.dataset.color = color;
+    button.setAttribute("role", "radio");
+    button.setAttribute("aria-checked", String((b.icon_color || "") === color));
+    button.style.setProperty("--book-swatch", color || "var(--accent)");
+    if (!color) button.textContent = "A";
+    button.addEventListener("click", () => void saveAppearance(b, b.icon || "book", color));
+    colors.append(button);
+  }
+  $("#bm-custom-color").value = /^#[0-9a-f]{6}$/i.test(b.icon_color) ? b.icon_color : "#d9822b";
+}
+
+async function saveAppearance(b, icon, color) {
+  if (appearanceBusy || !state.books.includes(b)) return;
+  if ((b.icon || "book") === icon && (b.icon_color || "") === color) return;
+  appearanceBusy = true;
+  $("#bm-error").hidden = true;
+  try {
+    await mutate(async () => {
+      await api.invoke("set_book_appearance", { book: b.name, icon, color });
+      b.icon = icon === "book" ? "" : icon;
+      b.icon_color = color.toLowerCase();
+    });
+    renderBook();
+  } catch (e) {
+    $("#bm-error").textContent = "保存图标失败：" + e;
+    $("#bm-error").hidden = false;
+  } finally {
+    appearanceBusy = false;
+  }
+}
+
 // 列表里的键盘操作:上下键、Home、End 换项,回车、空格选中(按钮自带),F2 改名,Delete 删除
 function onKey(e) {
   if (e.ctrlKey || e.altKey || e.metaKey) return;
@@ -248,6 +362,18 @@ function onKey(e) {
 
 export function bindBooks() {
   $("#books-new").addEventListener("click", () => createBook());
+  $("#books-manage").addEventListener("click", openBookManager);
+  $("#bm-close").addEventListener("click", () => { closeBookManager(); focusEditor(); });
+  $("#bm-new").addEventListener("click", async () => {
+    await createBook();
+    if (!$("#book-manager").hidden) selectedBook = book();
+    renderManager();
+  });
+  $("#bm-rename").addEventListener("click", () => { if (selectedBook) void renameBook(selectedBook); });
+  $("#bm-delete").addEventListener("click", () => { if (selectedBook) void deleteBook(selectedBook); });
+  $("#bm-custom-color").addEventListener("change", (e) => {
+    if (selectedBook) void saveAppearance(selectedBook, selectedBook.icon || "book", e.target.value);
+  });
   $("#books").addEventListener("keydown", onKey);
   // 焦点跟着鼠标走,免得键盘选中的和鼠标指着的是两项
   $("#books").addEventListener("mousemove", (e) => {
