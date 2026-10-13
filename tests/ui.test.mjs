@@ -402,10 +402,10 @@ describe("notebook manager and window movement", () => {
     await p.click('#bm-list [data-book="旅行"]');
     await p.click('#bm-icons [data-icon="heart"]');
     await until(() => h.stored().then((db) => db.books["旅行"].meta.icon), "heart");
-    await p.$eval("#bm-custom-color", (el) => {
-      el.value = "#1122aa";
-      el.dispatchEvent(new Event("change", { bubbles: true }));
-    });
+    const customEditor = p.locator("#bm-details .shared-colors");
+    await customEditor.locator(".uc-actions button").first().click();
+    await customEditor.locator('input[aria-label="节点 1 颜色"]').fill("#1122aa");
+    await customEditor.locator(".uc-editor .uc-actions button").last().click();
     await until(() => h.stored().then((db) => db.books["旅行"].meta.icon_color), "#1122aa");
     await p.click("#bm-rename");
     await h.answer("旅途");
@@ -432,16 +432,16 @@ describe("notebook manager and window movement", () => {
     }));
     assert.equal(strokes.gradient, 2, "gradient icon has actual SVG color stops");
     assert.match(strokes.stroke, /url\(#book-icon-gradient-/, "icon uses SVG gradient stroke");
-    await p.click("#bm-save-preset");
+    await p.click("#bm-details .shared-colors > .uc-actions button >> nth=1");
     await until(() => h.stored().then((db) => db.settings.color_presets), [gradient]);
     await p.click('#bm-list [data-book="生活"]');
-    await p.click('#bm-saved-colors [role="radio"]');
+    await p.click('#bm-details .uc-presets .uc-swatch');
     await until(() => h.stored().then((db) => db.books["生活"].meta.icon_color), gradient);
     await p.reload();
     await h.openBooks();
     await p.click("#books-manage");
-    assert.equal(await p.locator("#bm-saved-colors .bm-saved-item").count(), 1, "custom presets survive restart");
-    await p.click("#bm-saved-colors .bm-remove-color");
+    assert.equal(await p.locator("#bm-details .uc-preset").count(), 1, "custom presets survive restart");
+    await p.click("#bm-details .uc-preset .uc-delete");
     await until(() => h.stored().then((db) => db.settings.color_presets), []);
     assert.equal(await h.stored().then((db) => db.books["工作"].meta.icon_color), gradient, "removing preset keeps existing book colors");
     assert.equal(await h.mockFile("工作", "文档"), "work", "no note files changed");
@@ -462,18 +462,16 @@ describe("notebook manager and window movement", () => {
     });
     assert.equal(outline.outline, "1px", "thin selection outline");
     assert.equal(outline.border, "1px", "thin swatch border");
-    await p.check("#bm-gradient-enabled");
-    await until(() => h.stored().then((db) => db.books["设计"].meta.icon_color),
-      "linear-gradient(135deg, #5fb4ff, #d66cf0)");
-    await p.$eval("#bm-gradient-to", (el) => {
-      el.value = "#abcdef";
-      el.dispatchEvent(new Event("change", { bubbles: true }));
-    });
-    const custom = "linear-gradient(135deg, #5fb4ff, #abcdef)";
+    const editor = p.locator("#bm-details .shared-colors");
+    await editor.locator(".uc-actions button").first().click();
+    await editor.locator("select").selectOption("gradient");
+    await editor.locator('input[aria-label="节点 2 颜色"]').fill("#abcdef");
+    await editor.locator(".uc-editor .uc-actions button").last().click();
+    const custom = "linear-gradient(135deg, #5fb4ff 0%, #abcdef 100%)";
     await until(() => h.stored().then((db) => db.books["设计"].meta.icon_color), custom);
-    await p.click("#bm-save-preset");
+    await editor.locator("> .uc-actions button").nth(1).click();
     await until(() => h.stored().then((db) => db.settings.color_presets), [custom]);
-    await p.click("#bm-save-preset");
+    await editor.locator("> .uc-actions button").nth(1).click();
     assert.deepEqual(await h.stored().then((db) => db.settings.color_presets), [custom], "duplicate presets are ignored");
   });
 
@@ -1563,6 +1561,50 @@ describe("shared colors and positioned gradients", () => {
   });
 });
 
+describe("v0.3.4 picker regressions", () => {
+  ui("positioned accents keep CSS gradient positions and a subtle selected swatch", {
+    seed: { ...seed({ "": { 页: "文字" } }), settings: { ...SETTINGS, accent: "linear-gradient(90deg, #112233 0%, #445566 21%, #778899 100%)" } },
+  }, async ({ p }) => {
+    assert.equal(await p.evaluate(() => document.documentElement.style.getPropertyValue("--accent-grad")), "linear-gradient(90deg, #112233 0%, #445566 21%, #778899 100%)");
+    assert.deepEqual(await p.$eval("#accent-svg-grad stop", (nodes) => nodes.map((x) => x.getAttribute("offset"))), ["0%", "21%", "100%"]);
+    await p.click("#btn-settings");
+    await settingsPage(p, "look");
+    assert.equal(await p.locator("#settings .accent-custom").count(), 0);
+    await p.click('#set-accent button[title="蓝色"]');
+    assert.equal(await p.$eval("#set-accent .on", (el) => getComputedStyle(el).outlineWidth), "1px");
+  });
+
+  ui("shared swatches and small delete buttons fit inside group and format popup menus", {
+    seed: { ...seed({ "": { a: "文字", b: "文本" } }), settings: { ...SETTINGS, tab_groups: true, color_presets: ["#123abc"] } },
+  }, async ({ p }) => {
+    const check = async (sel) => {
+      const size = await p.$eval(sel, (el) => {
+        const a = el.querySelector(".uc-swatch").getBoundingClientRect(), b = el.querySelector(".uc-delete").getBoundingClientRect();
+        return [Math.round(a.width), Math.round(a.height), Math.round(b.width), Math.round(b.height)];
+      });
+      assert.deepEqual(size, [27, 25, 15, 15]);
+    };
+    await p.click("#tabs .tab:nth-child(1)", { button: "right" });
+    await p.click('#ctx button[data-act="group-new"]');
+    await check("#ge-colors .uc-preset");
+    assert.equal(await p.locator("#ge-colors .ge-custom").count(), 0);
+    await p.keyboard.press("Escape");
+    await p.click('#format-bar [data-cmd="bg"]');
+    await check(".fb-pop .uc-preset");
+  });
+
+  ui("fixed px length keeps the numeric input wide enough", async ({ p }) => {
+    await p.click("#btn-settings");
+    await settingsPage(p, "window");
+    await p.selectOption("#set-edge-length-unit", "px");
+    await p.fill("#set-edge-length-number", "600");
+    await p.locator("#set-edge-length-number").dispatchEvent("change");
+    assert.equal(await p.inputValue("#set-edge-length-number"), "600");
+    assert.ok(await p.$eval("#set-edge-length-number", (el) => el.getBoundingClientRect().width >= 80));
+    assert.equal(await p.locator("#settings .accent-custom").count(), 0);
+  });
+});
+
 describe("theme and accent", () => {
   ui("the sun / moon button switches between light and dark and remembers it", { seed: seed({ "": { 页: "文字" } }) }, async (h) => {
     const { p } = h;
@@ -1584,7 +1626,7 @@ describe("theme and accent", () => {
     await settingsPage(p, "look");
     await p.locator("#settings").waitFor();
     await p.click('#set-accent button[title="彩虹渐变"]');
-    assert.ok(await p.isChecked("#set-accent-grad"), "a gradient ticks 渐变到");
+    assert.equal(await p.locator("#set-accent").locator("..").locator(".accent-custom").count(), 0, "no duplicate legacy custom picker");
     await p.click("#set-save");
     await until(async () => (await h.stored())?.settings?.accent, "linear-gradient(135deg, #ff5f6d, #ffa94d, #f5d142, #51cf66, #4dabf7, #9775fa)", "saved");
     assert.match(await marker(), /linear-gradient/, "the active tab's line is the gradient");
@@ -1601,8 +1643,11 @@ describe("theme and accent", () => {
     await p.click("#btn-settings");
     await settingsPage(p, "look");
     assert.ok(await p.locator('#set-accent button.on[title="彩虹渐变"]').isVisible(), "the saved accent is marked");
-    await p.uncheck("#set-accent-grad");
-    await p.fill("#set-accent-from", "#123abc");
+    const picker = p.locator("#set-accent").locator("..").locator(".shared-colors");
+    await picker.locator("> .uc-actions button").first().click();
+    await picker.locator("select").selectOption("solid");
+    await picker.locator('input[aria-label="节点 1 颜色"]').fill("#123abc");
+    await picker.locator(".uc-editor .uc-actions button").last().click();
     await p.click("#set-save");
     await until(async () => (await h.stored())?.settings?.accent, "#123abc", "a custom color");
     assert.equal(await p.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--accent").trim()), "#123abc");
@@ -3024,9 +3069,15 @@ describe("0.3.2: floating format buttons on a selection", () => {
     await p.click('#ge-colors .ge-color[title="蓝紫渐变"]');
     await until(async () => (await h.stored())?.books?.[""]?.meta?.groups?.[0]?.color, "linear-gradient(135deg, #5fb4ff, #d66cf0)", "a preset gradient");
     assert.match(await p.$eval(".tab-group", (c) => c.style.getPropertyValue("--g-grad")), /#5fb4ff, #d66cf0/);
-    await p.check(".ge-custom input[type=checkbox]");
-    await until(async () => (await h.stored())?.books?.[""]?.meta?.groups?.[0]?.color?.startsWith("linear-gradient"), true, "a custom gradient");
-    await p.uncheck(".ge-custom input[type=checkbox]");
+    const editor = p.locator("#ge-colors .shared-colors");
+    assert.equal(await p.locator("#ge-colors .ge-custom").count(), 0, "no duplicate old custom picker");
+    await editor.locator("> .uc-actions button").first().click();
+    await editor.locator("select").selectOption("gradient");
+    await editor.locator(".uc-editor .uc-actions button").last().click();
+    await until(async () => (await h.stored())?.books?.[""]?.meta?.groups?.[0]?.color?.includes(" 0%"), true, "a custom gradient");
+    await editor.locator("> .uc-actions button").first().click();
+    await editor.locator("select").selectOption("solid");
+    await editor.locator(".uc-editor .uc-actions button").last().click();
     await until(async () => /^#[0-9a-f]{6}$/.test((await h.stored())?.books?.[""]?.meta?.groups?.[0]?.color), true, "or a single colour");
   });
 });
