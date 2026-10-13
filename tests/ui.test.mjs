@@ -1470,7 +1470,7 @@ describe("theme and accent", () => {
     await p.click("#set-save");
     await until(() => h.stored().then((s) => [s.settings.edge_style, s.settings.edge_color]), ["line", "linear-gradient(135deg, #5fb4ff, #d66cf0)"]);
     await p.evaluate(() => window.__mockEmit("edge-hidden", "top"));
-    assert.deepEqual(await mark(), [0, 537, 440, 3], "line style: the strip is just a 3px line");
+    assert.deepEqual(await mark(), [0, 538, 440, 2], "line style defaults to a 2px strip");
     assert.equal(await p.$eval("#edge-expand", (b) => getComputedStyle(b, "::before").display), "none", "no arrow in line style");
     assert.deepEqual(await edgeVars(), ["#5fb4ff", "linear-gradient(135deg, #5fb4ff, #d66cf0)"], "edge uses its own color");
     await p.evaluate(() => window.__mockEmit("edge-shown"));
@@ -1483,7 +1483,7 @@ describe("theme and accent", () => {
     await p.click("#set-save");
     await until(() => h.stored().then((s) => [s.settings.edge_style, s.settings.edge_color]), ["hover", ""]);
     await p.evaluate(() => window.__mockEmit("edge-hidden", "left"));
-    assert.deepEqual(await mark(), [437, 0, 3, 540], "hover style starts as a slim edge");
+    assert.deepEqual(await mark(), [438, 0, 2, 540], "hover style starts as a 2px edge");
     assert.equal(await p.$eval("#edge-expand", (b) => getComputedStyle(b, "::before").display), "none", "no button until the mouse comes near");
     assert.equal((await edgeVars())[1], "", "edge color follows the accent again");
     await p.evaluate(() => window.__mockEmit("edge-peek", true));
@@ -1491,10 +1491,68 @@ describe("theme and accent", () => {
     const btn = await p.$eval("#edge-expand", (b) => { const r = b.getBoundingClientRect(); return [Math.round(r.width), Math.round(r.height)]; });
     assert.deepEqual(btn, [20, 56], "floating button");
     await p.evaluate(() => window.__mockEmit("edge-peek", false));
-    assert.deepEqual(await mark(), [437, 0, 3, 540], "mouse away: back to the slim edge");
+    assert.deepEqual(await mark(), [438, 0, 2, 540], "mouse away: back to the slim edge");
     await p.evaluate(() => window.__mockEmit("edge-peek", true));
     await p.click("#edge-expand");
     assert.equal(await mark(), null, "clicking the floating button restores the window");
+  });
+
+  ui("edge line width, length and universal glow settings work across all modes", { seed: seed({ "": { 页: "文字" } }) }, async (h) => {
+    const { p } = h;
+    const mark = () => p.$eval("#edge-mark", (m) => {
+      const r = m.getBoundingClientRect();
+      return [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)];
+    });
+    await p.click("#btn-settings");
+    await settingsPage(p, "window");
+    assert.equal(await p.inputValue("#set-edge-line-width"), "2", "existing users default to 2px");
+    assert.equal(await p.inputValue("#set-edge-line-length"), "100");
+    assert.equal(await p.isChecked("#set-edge-glow"), false);
+    await p.selectOption("#set-edge-style", "line");
+    await p.locator("#set-edge-line-width").fill("7");
+    await p.locator("#set-edge-line-length").fill("45");
+    await p.check("#set-edge-glow");
+    assert.equal(await p.textContent("#set-edge-line-width-val"), "7 像素");
+    assert.equal(await p.textContent("#set-edge-line-length-val"), "45%");
+    assert.equal(await p.$eval("#set-edge-line-preview", (x) => x.classList.contains("glow")), true);
+    await p.click("#set-save");
+    await until(() => h.stored().then((s) =>
+      [s.settings.edge_style, s.settings.edge_line_width, s.settings.edge_line_length, s.settings.edge_line_glow]),
+      ["line", 7, 45, true], "the settings persist");
+    await p.evaluate(() => window.__mockEmit("edge-hidden", "top"));
+    assert.deepEqual(await mark(), [0, 530, 440, 10], "glow reserves enough visible space");
+    const line = await p.$eval("#edge-mark > span", (x) => {
+      const r = x.getBoundingClientRect();
+      return [Math.round(r.width), Math.round(r.height), getComputedStyle(x).boxShadow];
+    });
+    assert.equal(line[0], 198, "line covers 45% of 440px");
+    assert.equal(line[1], 7, "line remains 7px thick despite glow visibility");
+    assert.match(line[2], /rgba?\(/, "line has a glow shadow");
+    await p.evaluate(() => window.__mockEmit("edge-shown"));
+    await p.click("#btn-settings");
+    await settingsPage(p, "window");
+    await p.selectOption("#set-edge-style", "arrow-only");
+    assert.equal(await p.isVisible(".edge-line-option"), false, "arrow-only hides line-only controls");
+    assert.equal(await p.isDisabled("#set-edge-glow"), false, "glow also applies to arrow-only");
+    await p.click("#set-save");
+    await until(() => h.stored().then((s) => s.settings.edge_style), "arrow-only");
+    await p.evaluate(() => window.__mockEmit("edge-hidden", "right"));
+    assert.deepEqual(await mark(), [0, 0, 18, 540]);
+    assert.equal(await p.$eval("#edge-mark > span", (x) => getComputedStyle(x).display), "none", "arrow-only draws no line");
+    const arrow = await p.$eval("#edge-expand", (b) => getComputedStyle(b, "::before").filter);
+    assert.match(arrow, /drop-shadow/, "arrow-only has glow enabled");
+    await p.evaluate(() => window.__mockEmit("edge-shown"));
+    await p.click("#btn-settings");
+    await settingsPage(p, "window");
+    await p.selectOption("#set-edge-style", "hover");
+    await p.click("#set-save");
+    await until(() => h.stored().then((s) => s.settings.edge_style), "hover");
+    await p.evaluate(() => window.__mockEmit("edge-hidden", "left"));
+    assert.deepEqual(await mark(), [430, 0, 10, 540], "hover mode has enough room for line glow");
+    await p.evaluate(() => window.__mockEmit("edge-peek", true));
+    const glow = await p.$eval("#edge-expand", (b) => getComputedStyle(b).boxShadow);
+    assert.match(glow, /rgba?\(/, "hover reveal button has a glow");
+    await p.evaluate(() => window.__mockEmit("edge-shown"));
   });
 
   ui("the floating icon is off by default; when on, the top bar gets a button that collapses the window", { seed: seed({ "": { 页: "文字" } }) }, async (h) => {
