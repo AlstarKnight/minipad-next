@@ -35,6 +35,7 @@ const DEFAULT_SETTINGS = {
   format_bar_order: [],
   tab_style: "line",
   accent: "",
+  book_color_presets: [],
   backup_enabled: true,
   backup_keep: 14,
   backup_dir: "",
@@ -324,6 +325,11 @@ export function mockApi() {
         find_bar_pos: pickOne(settings.find_bar_pos, ["top", "bottom"]),
         conflict_mode: pickOne(settings.conflict_mode, ["copy", "overwrite"]),
         settings_nav: pickOne(settings.settings_nav, ["left", "top"]),
+        book_color_presets: Array.isArray(settings.book_color_presets)
+          ? [...new Set(settings.book_color_presets
+              .filter((v) => typeof v === "string" && (/^#[0-9a-f]{6}$/i.test(v) || /^linear-gradient\(\d{1,3}deg,\s*#[0-9a-f]{6}(?:,\s*#[0-9a-f]{6}){1,6}\)$/i.test(v)))
+              .map((v) => v.toLowerCase()))].slice(0, 20)
+          : [],
         outline_mode: pickOne(settings.outline_mode, ["hover", "pinned"]),
         outline_side: pickOne(settings.outline_side, ["right", "left"]),
         outline_depth: Math.min(6, Math.max(1, Math.round(Number(settings.outline_depth)) || 3)),
