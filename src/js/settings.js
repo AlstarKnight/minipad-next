@@ -42,17 +42,21 @@ export function applySettings() {
   renderTabs();
 }
 // 贴边隐藏的样式:露出的宽度和 Rust 里 edge::strip_for 一致(逻辑像素,Rust 按屏幕缩放换成物理像素)
-const EDGE_STYLES = ["arrow", "line", "hover"];
-const EDGE_STRIP = { arrow: 18, line: 3, hover: 3 };
+const EDGE_STYLES = ["arrow", "line", "hover", "arrow-only"];
 const EDGE_PEEK_STRIP = 32;
+const EDGE_ARROW_STRIP = 18;
+const edgeWidth = (s) => Math.min(12, Math.max(1, Number(s.edge_line_width) || 3));
+const edgeLength = (s) => Math.min(100, Math.max(10, Number(s.edge_line_length) || 100));
 export function applyEdgeAppearance() {
   const s = state.settings || {};
   const root = document.documentElement;
   const style = EDGE_STYLES.includes(s.edge_style) ? s.edge_style : "arrow";
   root.dataset.edgeStyle = style;
   const peeking = style === "hover" && root.dataset.edgePeek === "on";
-  const strip = peeking ? EDGE_PEEK_STRIP : EDGE_STRIP[style];
+  const strip = peeking ? EDGE_PEEK_STRIP : style === "arrow" || style === "arrow-only" ? EDGE_ARROW_STRIP : edgeWidth(s);
   root.style.setProperty("--edge-peek", strip + "px");
+  root.style.setProperty("--edge-line-width", edgeWidth(s) + "px");
+  root.style.setProperty("--edge-line-length", edgeLength(s) + "%");
   // 空着跟随强调色(CSS 里退回 --accent / --accent-grad)
   const c = parseAccent(s.edge_color);
   if (c) {
@@ -118,6 +122,8 @@ export function openSettings() {
   $("#set-top").checked = s.always_on_top;
   $("#set-edge").checked = s.edge_hide;
   $("#set-edge-style").value = EDGE_STYLES.includes(s.edge_style) ? s.edge_style : "arrow";
+  $("#set-edge-line-width").value = edgeWidth(s);
+  $("#set-edge-line-length").value = edgeLength(s);
   edgeColor.show(s.edge_color || "");
   $("#set-taskbar").checked = s.show_in_taskbar;
   $("#set-autostart").checked = s.autostart;
@@ -362,12 +368,31 @@ async function pickBallIcon() {
   }
 }
 
-// 贴边样式和颜色只在开着贴边隐藏时能改
+// 箭头独立模式不显示细线控制；其余三种模式都能调细线长度、粗细。
 function updateEdgeOptions() {
   const off = !$("#set-edge").checked;
+  const onlyArrow = $("#set-edge-style").value === "arrow-only";
   for (const el of document.querySelectorAll(".edge-option")) el.classList.toggle("off", off);
   for (const el of document.querySelectorAll(".edge-option select, .edge-option input, .edge-option button")) el.disabled = off;
+  for (const el of document.querySelectorAll(".edge-line-option")) {
+    el.hidden = onlyArrow;
+    for (const input of el.querySelectorAll("input")) input.disabled = off || onlyArrow;
+  }
   if (!off) $("#set-edge-to").disabled = !$("#set-edge-grad").checked;
+  updateEdgeLinePreview();
+}
+
+function updateEdgeLinePreview() {
+  const width = Math.min(12, Math.max(1, Number($("#set-edge-line-width").value) || 3));
+  const length = Math.min(100, Math.max(10, Number($("#set-edge-line-length").value) || 100));
+  $("#set-edge-line-width-val").textContent = width + " 像素";
+  $("#set-edge-line-length-val").textContent = length + "%";
+  const preview = $("#set-edge-line-preview");
+  preview.style.setProperty("--edge-line-width", width + "px");
+  preview.style.setProperty("--edge-line-length", length + "%");
+  const picked = edgeColor.value || accentColor.value;
+  const col = parseAccent(picked);
+  preview.style.setProperty("--preview-edge-color", col ? (col.to ? gradientOf(col.stops, col.deg) : col.from) : "var(--accent-grad)");
 }
 
 // 现在按 F5 会插入什么,跟着输入框实时变;空着就是默认格式
@@ -420,6 +445,8 @@ async function submitSettings() {
     always_on_top: $("#set-top").checked,
     edge_hide: $("#set-edge").checked,
     edge_style: $("#set-edge-style").value,
+    edge_line_width: Number($("#set-edge-line-width").value) || 3,
+    edge_line_length: Number($("#set-edge-line-length").value) || 100,
     edge_color: edgeColor.value,
     ball_enabled: $("#set-ball").checked,
     ball_size: Number($("#set-ball-size").value) || 48,
@@ -562,6 +589,8 @@ export function bindSettings() {
   );
   $("#set-nav-pos").addEventListener("change", () => applyNavPos($("#set-nav-pos").value));
   $("#set-edge").addEventListener("change", updateEdgeOptions);
+  $("#set-edge-style").addEventListener("change", updateEdgeOptions);
+  for (const id of ["#set-edge-line-width", "#set-edge-line-length"]) $(id).addEventListener("input", updateEdgeLinePreview);
   $("#set-dir").addEventListener("input", updateMigration);
   $("#set-cancel").addEventListener("click", () => closeOverlays());
   for (const id of ["#set-accent-from", "#set-accent-to", "#set-accent-grad"]) $(id).addEventListener("input", accentColor.custom);
