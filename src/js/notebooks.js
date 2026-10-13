@@ -323,6 +323,8 @@ async function saveAppearance(b, icon, color) {
   $("#bm-error").hidden = true;
   try {
     await mutate(async () => {
+      // 与正常的页面顺序/分组元信息保存串行，避免并发改写 .minipad.json。
+      await saveMeta();
       await api.invoke("set_book_appearance", { book: b.name, icon, color });
       b.icon = icon === "book" ? "" : icon;
       b.icon_color = color.toLowerCase();
