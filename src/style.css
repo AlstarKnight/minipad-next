@@ -1011,7 +1011,7 @@ html[data-edge="right"] #edge-mark > span {
   right: 0; top: 50%; transform: translateY(-50%);
 }
 html[data-edge-style="arrow-only"] #edge-mark > span { display: none; }
-/* 微光只绘制在细线上，不使用动画或定时器。 */
+/* 微光轻量且静态：细线、普通箭头和悬浮展开按钮都支持。 */
 html[data-edge-glow="on"] #edge-mark > span {
   box-shadow: 0 0 4px 1px color-mix(in srgb, var(--ec) 38%, transparent),
               0 0 8px 1px color-mix(in srgb, var(--ec) 16%, transparent);
@@ -1040,6 +1040,10 @@ html[data-edge-glow="on"] #edge-mark > span {
   filter: drop-shadow(0 0 1px #000a) drop-shadow(0 0 3px color-mix(in srgb, var(--ec) 70%, transparent));
   transition: transform .15s;
 }
+html[data-edge-glow="on"] #edge-expand::before {
+  filter: drop-shadow(0 0 2px color-mix(in srgb, var(--ec) 60%, transparent))
+          drop-shadow(0 0 4px color-mix(in srgb, var(--ec) 34%, transparent));
+}
 html[data-edge="left"] #edge-expand::before { rotate: -90deg; }
 html[data-edge="right"] #edge-expand::before { rotate: 90deg; }
 html[data-edge="top"] #edge-expand { top: 3px; }
@@ -1057,6 +1061,13 @@ html[data-edge-style="hover"][data-edge-peek] #edge-expand {
   box-shadow: 0 2px 10px #0005, 0 0 8px color-mix(in srgb, var(--ec) 60%, transparent);
 }
 html[data-edge-style="hover"][data-edge-peek] #edge-expand::before { background: #fff; filter: none; }
+html[data-edge-style="hover"][data-edge-peek][data-edge-glow="on"] #edge-expand {
+  box-shadow: 0 2px 10px #0005,
+              0 0 9px 2px color-mix(in srgb, var(--ec) 42%, transparent);
+}
+html[data-edge-style="hover"][data-edge-peek][data-edge-glow="on"] #edge-expand::before {
+  filter: drop-shadow(0 0 3px color-mix(in srgb, var(--ec) 55%, transparent));
+}
 html[data-edge-style="hover"][data-edge-peek][data-edge="top"] #edge-expand {
   left: 50%; translate: -50% 0; top: 8px; width: 56px; height: calc(100% - 12px);
 }
