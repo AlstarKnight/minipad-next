@@ -2,6 +2,7 @@
 // 数据存在 localStorage 里,命令和真正的后端一一对应
 import { toast } from "./ui.js";
 import { DEFAULT_DATE_FORMAT } from "./datetime.js";
+import { parseAccent, tidyAccent } from "./accent.js";
 
 const KEY = "minipad-next-demo";
 const WELCOME =
@@ -295,11 +296,11 @@ export function mockApi() {
     },
     set_book_appearance: ({ book, icon, color }) => {
       if (!["book", "folder", "briefcase", "heart", "star", "lightbulb", "code", "bookmark"].includes(icon)) throw "不支持的笔记本图标";
-      if (color && !/^#[0-9a-f]{6}$/i.test(color)) throw "图标颜色必须是 #RRGGBB";
+      if (color && !parseAccent(color)) throw "图标颜色格式无效";
       if (!has(db.books, book)) throw "笔记本不存在";
       const meta = bookOf(book).meta;
       meta.icon = icon === "book" ? "" : icon;
-      meta.icon_color = color.toLowerCase();
+      meta.icon_color = tidyAccent(color);
     },
     delete_book: ({ name }) => {
       backup();
