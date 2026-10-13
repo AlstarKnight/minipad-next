@@ -3356,6 +3356,7 @@ describe("0.3.2: floating format buttons on a selection", () => {
     await editor.locator("select").selectOption("gradient");
     await editor.locator(".uc-editor .uc-actions .primary").click();
     await until(async () => (await h.stored())?.books?.[""]?.meta?.groups?.[0]?.color?.includes(" 0%"), true, "a custom gradient");
+    await expandLibrary(p, "#ge-colors .shared-colors");
     await editor.locator(":scope > .uc-actions button").first().click();
     await editor.locator("select").selectOption("solid");
     await editor.locator(".uc-editor .uc-actions .primary").click();
