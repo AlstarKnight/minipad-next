@@ -53,7 +53,7 @@ export function applyEdgeAppearance() {
   const style = EDGE_STYLES.includes(s.edge_style) ? s.edge_style : "arrow";
   root.dataset.edgeStyle = style;
   const peeking = style === "hover" && root.dataset.edgePeek === "on";
-  const lineStrip = s.edge_line_glow ? Math.max(10, edgeWidth(s)) : edgeWidth(s);
+  const lineStrip = s.edge_line_glow ? edgeWidth(s) + 8 : edgeWidth(s);
   const strip = peeking ? EDGE_PEEK_STRIP : style === "arrow" || style === "arrow-only" ? EDGE_ARROW_STRIP : lineStrip;
   root.style.setProperty("--edge-peek", strip + "px");
   root.style.setProperty("--edge-line-width", edgeWidth(s) + "px");
