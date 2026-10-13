@@ -70,6 +70,8 @@ pub struct Settings {
     theme: String,
     /// 强调色:空着是默认的橙色,"#3b82f6" 是纯色,"linear-gradient(135deg, #a, #b)" 是渐变色
     accent: String,
+    /// 笔记本管理里保存的自定义纯色/渐变预设，最多 20 项。
+    book_color_presets: Vec<String>,
     /// 活跃标签的高亮:line 顶部线条、fill 整个标签、border 整圈边框
     tab_style: String,
     font_size: u32,
@@ -174,6 +176,7 @@ impl Default for Settings {
             autostart: false,
             theme: "system".into(),
             accent: String::new(),
+            book_color_presets: Vec::new(),
             tab_style: "line".into(),
             font_size: 14,
             notes_dir: String::new(),
@@ -529,6 +532,14 @@ fn tidy_settings(s: &mut Settings) {
     s.backup_dir = s.backup_dir.trim().to_string();
     s.backup_keep = s.backup_keep.clamp(1, 365);
     tidy_color(&mut s.accent);
+    let mut seen_colors = std::collections::HashSet::new();
+    s.book_color_presets = s
+        .book_color_presets
+        .iter()
+        .filter_map(|v| notes::normalized_book_color(v))
+        .filter(|v| seen_colors.insert(v.clone()))
+        .take(20)
+        .collect();
     tidy_color(&mut s.edge_color);
     tidy_color(&mut s.ball_color);
     tidy_color(&mut s.find_color);
@@ -2241,6 +2252,36 @@ mod tests {
         s.edge_color = "url(javascript:x)".into();
         tidy_settings(&mut s);
         assert_eq!(s.edge_color, "");
+    }
+
+    #[test]
+    fn notebook_user_color_presets_are_safe_unique_and_bounded() {
+        let mut s = Settings {
+            book_color_presets: vec![
+                "#ABCDEF".into(),
+                "#abcdef".into(),
+                "linear-gradient(135deg, #FF0000, #00FF00)".into(),
+                "javascript:alert(1)".into(),
+            ],
+            ..Settings::default()
+        };
+        tidy_settings(&mut s);
+        assert_eq!(
+            s.book_color_presets,
+            vec![
+                "#abcdef",
+                "linear-gradient(135deg, #ff0000, #00ff00)"
+            ]
+        );
+        s.book_color_presets = (0..40)
+            .map(|i| format!("#{:06x}", i))
+            .collect();
+        tidy_settings(&mut s);
+        assert_eq!(s.book_color_presets.len(), 20);
+        assert!(serde_json::from_str::<Settings>(r#"{"theme":"dark"}"#)
+            .unwrap()
+            .book_color_presets
+            .is_empty());
     }
 
     #[test]
