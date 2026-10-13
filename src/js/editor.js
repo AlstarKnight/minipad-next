@@ -33,8 +33,7 @@ import {
 } from "../vendor/milkdown.js";
 import { $ } from "./dom.js";
 import { codeBlockWithTitle, codeBlockView, codeHighlight } from "./codeblock.js";
-import { toolbar } from "./toolbar.js";
-import { formatBar, setFormatBarItems } from "./formatbar.js";
+import { formatBar, selectionBar, setFormatBarItems, setSelectionBar } from "./formatbar.js";
 import { colorSpans, colorHandlers, textColor, textBg } from "./colors.js";
 import { findPlugin, reapplyFind } from "./find.js";
 import { outlinePlugin } from "./outline.js";
@@ -313,7 +312,7 @@ export async function createEditor(opts) {
     .use(history)
     .use(clipboard)
     .use([colorSpans, textColor, textBg].flat())
-    .use([lineBreak, codeBlockWithTitle, codeBlockView, codeHighlight, changes, placeholder, afterRule, findPlugin, outlinePlugin, toolbar, formatBar])
+    .use([lineBreak, codeBlockWithTitle, codeBlockView, codeHighlight, changes, placeholder, afterRule, findPlugin, outlinePlugin, selectionBar, formatBar])
     .create();
   editor.action((c) => {
     ctx = c;
@@ -473,6 +472,7 @@ export function applyEditorSettings(s) {
   const bar = s.format_bar !== false;
   $("#format-bar").hidden = !bar;
   setFormatBarItems(s.format_bar_hidden, s.format_bar_order);
+  setSelectionBar(s);
   $("#btn-format").classList.toggle("on", bar);
   $("#btn-format").setAttribute("aria-pressed", String(bar));
 }

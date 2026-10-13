@@ -1,7 +1,7 @@
 // ---------- 读取笔记,和磁盘同步(别处改过的文件) ----------
 import { api } from "./api.js";
 import { tabsEl } from "./dom.js";
-import { state, book, current, makeNote, bookFromDisk, sortBooks } from "./state.js";
+import { state, book, current, makeNote, noteFromDisk, bookFromDisk, sortBooks } from "./state.js";
 import { toast } from "./ui.js";
 import { scheduleMeta, scheduleBooks, scheduleSave } from "./save.js";
 import { showNote, refreshCurrent } from "./page.js";
@@ -193,8 +193,12 @@ function mergeBook(b, d) {
   const known = new Set(kept.map((n) => n.name));
   for (const dn of d.notes) {
     if (known.has(dn.name)) continue;
-    kept.push(makeNote(dn.name, dn.content, dn.mode, !!dn.unreadable, dn.reason ?? null));
+    kept.push(noteFromDisk(dn));
     tabs = true;
+  }
+  // 别处新建的分组(这里已有的分组以这里的为准)
+  for (const g of d.groups || []) {
+    if (!b.groups.some((x) => x.id === g.id)) b.groups.push({ ...g });
   }
 
   if (tabs) {
@@ -213,7 +217,8 @@ export function addConflictCopy({ book: b, note, copy }) {
     if (!state.books.includes(b) || b.notes.some((x) => x.name === copy.name)) return;
     const active = b.notes[b.active];
     const at = b.notes.indexOf(note);
-    b.notes.splice(at >= 0 ? at + 1 : b.notes.length, 0, makeNote(copy.name, copy.content));
+    // 副本和原来那页在同一个分组里
+    b.notes.splice(at >= 0 ? at + 1 : b.notes.length, 0, makeNote(copy.name, copy.content, "edit", false, null, note.group || ""));
     b.active = Math.max(0, b.notes.indexOf(active));
     if (b === book()) renderTabs();
     renderBook();

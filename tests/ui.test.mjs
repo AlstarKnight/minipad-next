@@ -220,7 +220,8 @@ function ui(name, ...args) {
       const h = helpers(page);
       h.dialogs = dialogs;
       await page.goto(`${base}/index.html`);
-      await page.waitForSelector("#tabs .tab");
+      // 标签收进侧拉列表时看不见,只等它们画出来
+      await page.waitForSelector("#tabs .tab", { state: "attached" });
       await fn(h);
       // 等防抖的保存(500 ms)和 save_meta(300 ms)跑完,它们出的错也要算上
       await page.waitForTimeout(600);
@@ -754,7 +755,7 @@ describe("settings and dialogs", () => {
     const fields = ["#set-backup-keep", "#set-backup-dir", "#set-pick-backup"];
 
     await p.click("#btn-settings");
-    await settingsPage(p, "backup");
+    await settingsPage(p, "data");
     await p.locator("#settings").waitFor();
     assert.equal(await p.isChecked("#set-backup"), true, "backup is on by default");
     assert.equal(await p.inputValue("#set-backup-keep"), "14", "keeps 14 by default");
@@ -775,7 +776,7 @@ describe("settings and dialogs", () => {
     await until(saved, [true, 365, "D:\\笔记备份"], "keep is clamped to 365, the folder trimmed");
 
     await p.click("#btn-settings");
-    await settingsPage(p, "backup");
+    await settingsPage(p, "data");
     await p.locator("#settings").waitFor();
     assert.equal(await p.inputValue("#set-backup-keep"), "365");
     assert.equal(await p.inputValue("#set-backup-dir"), "D:\\笔记备份");
@@ -785,7 +786,7 @@ describe("settings and dialogs", () => {
     await until(saved, [false, 1, "D:\\笔记备份"], "keep is clamped to 1, backup off");
 
     await p.click("#btn-settings");
-    await settingsPage(p, "backup");
+    await settingsPage(p, "data");
     await p.locator("#settings").waitFor();
     assert.equal(await p.isChecked("#set-backup"), false, "backup stays off");
     assert.equal(await p.inputValue("#set-backup-keep"), "1");
@@ -1014,7 +1015,7 @@ describe("editor", () => {
     assert.match(await h.editor(), /^今天\d{1,2}:\d{2} \d{4}\/\d{1,2}\/\d{1,2}$/, "the default format is Notepad's H:mm yyyy/M/d");
 
     await p.click("#btn-settings");
-    await settingsPage(p, "editor");
+    await settingsPage(p, "edit");
     await p.locator("#settings").waitFor();
     assert.equal(await p.inputValue("#set-date-format"), "H:mm yyyy/M/d", "the settings show the default format");
     await p.fill("#set-date-format", " yyyy-MM-dd ");
@@ -1044,7 +1045,7 @@ describe("editor", () => {
     assert.equal(await p.evaluate(() => window.__notReloaded), true, "F5 never reloads the page");
   });
 
-  ui("with the format bar hidden a toolbar formats selected text; Ctrl+B bolds a selection and opens the notebooks without one", { seed: seed({ "": { 页: "一段文字" } }) }, async (h) => {
+  ui("set to show only with the format bar hidden, a toolbar formats selected text; Ctrl+B bolds a selection and opens the notebooks without one", { seed: { ...seed({ "": { 页: "一段文字" } }), settings: { ...SETTINGS, sel_bar: "nobar" } } }, async (h) => {
     const { p } = h;
     await p.click("#editor .ProseMirror p");
     await p.keyboard.press("Shift+Home");
@@ -1194,7 +1195,7 @@ describe("code blocks", () => {
     const numbered = () => p.$eval("#editor .cb-gutter", (e) => getComputedStyle(e).display !== "none");
     assert.equal(await numbered(), true, "on by default");
     await p.click("#btn-settings");
-    await settingsPage(p, "editor");
+    await settingsPage(p, "edit");
     await p.locator("#settings").waitFor();
     assert.equal(await p.isChecked("#set-code-lines"), true);
     await p.uncheck("#set-code-lines");
@@ -1202,7 +1203,7 @@ describe("code blocks", () => {
     await until(numbered, false, "line numbers hidden");
     await until(async () => (await h.stored())?.settings?.code_line_numbers, false, "the setting is saved");
     await p.click("#btn-settings");
-    await settingsPage(p, "editor");
+    await settingsPage(p, "edit");
     await p.locator("#settings").waitFor();
     assert.equal(await p.isChecked("#set-code-lines"), false, "the checkbox remembers it");
     await p.check("#set-code-lines");
@@ -1457,7 +1458,7 @@ describe("theme and accent", () => {
 
     const edgeVars = () => p.evaluate(() => [getComputedStyle(document.querySelector("#edge-mark")).getPropertyValue("--ec").trim(), document.documentElement.style.getPropertyValue("--edge-grad")]);
     await p.click("#btn-settings");
-    await settingsPage(p, "edge");
+    await settingsPage(p, "window");
     assert.equal(await p.inputValue("#set-edge-style"), "arrow", "line + arrow by default");
     assert.equal(await p.getAttribute("#set-edge-color button.on", "title"), "跟随强调色", "edge color follows the accent by default");
     await p.uncheck("#set-edge");
@@ -1476,7 +1477,7 @@ describe("theme and accent", () => {
 
     // 细边 + 悬浮按钮:平时细边,靠近时多露出一点并浮出按钮
     await p.click("#btn-settings");
-    await settingsPage(p, "edge");
+    await settingsPage(p, "window");
     await p.selectOption("#set-edge-style", "hover");
     await p.click('#set-edge-color button[title="跟随强调色"]');
     await p.click("#set-save");
@@ -1500,7 +1501,7 @@ describe("theme and accent", () => {
     const { p } = h;
     assert.equal(await p.isVisible("#btn-ball"), false, "no collapse button by default");
     await p.click("#btn-settings");
-    await settingsPage(p, "ball");
+    await settingsPage(p, "window");
     assert.equal(await p.isChecked("#set-ball"), false, "off by default");
     assert.equal(await p.isDisabled("#set-ball-size"), true, "options are off while the icon is off");
     await p.check("#set-ball");
@@ -1529,7 +1530,7 @@ describe("theme and accent", () => {
     await until(() => p.evaluate(() => window.__mockControl.collapsed), 1, "clicking it collapses the window to the icon");
 
     await p.click("#btn-settings");
-    await settingsPage(p, "ball");
+    await settingsPage(p, "window");
     await p.uncheck("#set-ball");
     await p.click("#set-save");
     await until(() => h.stored().then((s) => s.settings.ball_enabled), false);
@@ -1693,7 +1694,7 @@ describe("P0 persistence safety", () => {
     const { p } = h;
     await p.evaluate(() => { window.__mockControl = {}; });
     await p.click("#btn-settings");
-    await settingsPage(p, "storage");
+    await settingsPage(p, "data");
     assert.equal(await p.isChecked("#set-migrate-notes"), true);
     assert.equal(await p.isDisabled("#set-migrate-notes"), true);
     await p.fill("#set-dir", "D:\\NewNotes");
@@ -1702,7 +1703,7 @@ describe("P0 persistence safety", () => {
     await until(() => p.evaluate(() => window.__mockControl.migrationRequested), true);
     assert.equal(await h.mockFile("", "页"), "原内容", "existing notes still available after folder change");
     await p.click("#btn-settings");
-    await settingsPage(p, "storage");
+    await settingsPage(p, "data");
     await p.fill("#set-dir", "D:\\OtherNotes");
     await p.uncheck("#set-migrate-notes");
     await p.click("#set-save");
@@ -1714,7 +1715,7 @@ describe("P0 persistence safety", () => {
     const { p } = h;
     await p.evaluate(() => { window.__mockControl = { migrationError: "目标文件夹不为空" }; });
     await p.click("#btn-settings");
-    await settingsPage(p, "storage");
+    await settingsPage(p, "data");
     await p.fill("#set-dir", "D:\\Occupied");
     await p.click("#set-save");
     await until(() => p.textContent("#set-error"), "Error: 目标文件夹不为空");
@@ -1857,7 +1858,7 @@ describe("0.3.0: find and replace", () => {
     const { p } = h;
     assert.equal(await p.getAttribute("#btn-search", "title"), "搜索全部页面 (Ctrl+Shift+F)");
     await p.click("#btn-settings");
-    await settingsPage(p, "find");
+    await settingsPage(p, "edit");
     assert.equal(await p.inputValue("#set-ctrl-f"), "page");
     assert.equal(await p.inputValue("#set-find-pos"), "top");
     assert.ok(await p.locator('#set-find-color button.on[data-color=""]').isVisible(), "the highlight follows the accent color by default");
@@ -1954,7 +1955,7 @@ describe("0.3.0: conflict copies", () => {
   ui("settings: conflict copies are on by default and can be switched to overwriting", { seed: seed({ "": { 周报: "原来的" } }) }, async (h) => {
     const { p } = h;
     await p.click("#btn-settings");
-    await settingsPage(p, "storage");
+    await settingsPage(p, "data");
     assert.equal(await p.inputValue("#set-conflict"), "copy");
     await p.selectOption("#set-conflict", "overwrite");
     await p.click("#set-save");
@@ -2055,7 +2056,7 @@ describe("0.3.0: import from minipad2", () => {
     const { p } = h;
     await p.evaluate((c) => (window.__mockControl = { ...c, pickFolder: "D:\\Downloads" }), MP2);
     await p.click("#btn-settings");
-    await settingsPage(p, "import");
+    await settingsPage(p, "data");
     await p.click("#set-import");
     await until(
       () => p.textContent("#import-error"),
@@ -2092,7 +2093,7 @@ describe("0.3.0: import from minipad2", () => {
 });
 
 // ---------- 0.3.1:设置分类 ----------
-describe("0.3.1: settings in categories", () => {
+describe("0.3.2: settings in five categories", () => {
   const shown = (p) => p.$$eval(".set-page", (els) => els.filter((e) => !e.hidden).map((e) => e.dataset.page));
   const focused = (p) => p.evaluate(() => document.activeElement?.dataset?.page ?? null);
   const navDirection = (p) => p.$eval("#set-nav", (n) => getComputedStyle(n).flexDirection);
@@ -2102,7 +2103,7 @@ describe("0.3.1: settings in categories", () => {
     await p.click("#btn-settings");
     assert.deepEqual(
       await p.$$eval("#set-nav [role=tab]", (els) => els.map((e) => e.textContent.trim())),
-      ["常规", "外观", "贴边隐藏", "悬浮图标", "编辑器", "目录", "查找替换", "存储", "备份", "导入"],
+      ["常规", "外观", "窗口", "编辑", "数据"],
     );
     assert.deepEqual(await shown(p), ["general"], "常规 comes first");
     assert.deepEqual(await p.$$eval('#set-nav [aria-selected="true"]', (els) => els.map((e) => e.dataset.page)), ["general"]);
@@ -2110,18 +2111,25 @@ describe("0.3.1: settings in categories", () => {
     assert.ok(await p.isVisible("#set-hotkey"));
     assert.ok(await p.isHidden("#set-theme"), "other categories are hidden");
 
-    await settingsPage(p, "find");
-    assert.deepEqual(await shown(p), ["find"]);
-    assert.ok(await p.isVisible("#set-ctrl-f"));
+    await settingsPage(p, "edit");
+    assert.deepEqual(await shown(p), ["edit"]);
+    assert.ok(await p.isVisible("#set-ctrl-f"), "编辑 holds the editor, outline and find settings");
+    assert.ok(await p.isVisible("#set-outline"));
+    assert.ok(await p.isVisible("#set-code-lines"));
     assert.ok(await p.isHidden("#set-hotkey"));
+    assert.deepEqual(
+      await p.$$eval('.set-page[data-page="edit"] h3', (els) => els.map((e) => e.textContent)),
+      ["编辑器", "悬浮工具栏", "悬浮目录", "查找替换"],
+      "with a small heading for each part",
+    );
     await p.keyboard.press("ArrowDown");
-    assert.deepEqual(await shown(p), ["storage"], "↓ goes to the next category");
-    assert.equal(await focused(p), "storage");
+    assert.deepEqual(await shown(p), ["data"], "↓ goes to the next category");
+    assert.equal(await focused(p), "data");
     await p.keyboard.press("ArrowUp");
     await p.keyboard.press("ArrowUp");
-    assert.deepEqual(await shown(p), ["outline"], "↑ goes back");
+    assert.deepEqual(await shown(p), ["window"], "↑ goes back");
     await p.keyboard.press("End");
-    assert.deepEqual(await shown(p), ["import"]);
+    assert.deepEqual(await shown(p), ["data"]);
     await p.keyboard.press("ArrowDown");
     assert.deepEqual(await shown(p), ["general"], "and wraps around");
     await p.keyboard.press("End");
@@ -2129,7 +2137,7 @@ describe("0.3.1: settings in categories", () => {
     assert.deepEqual(await shown(p), ["general"]);
 
     // 内容再多,保存和取消也一直在窗口里
-    await settingsPage(p, "ball");
+    await settingsPage(p, "window");
     const box = await p.locator("#set-save").boundingBox();
     assert.ok(box && box.y + box.height <= 540, `save stays in view: ${JSON.stringify(box)}`);
 
@@ -2140,7 +2148,7 @@ describe("0.3.1: settings in categories", () => {
 
     // 换了分类,前面改的也一起保存
     await p.selectOption("#set-theme", "dark");
-    await settingsPage(p, "editor");
+    await settingsPage(p, "edit");
     await p.uncheck("#set-code-lines");
     await p.click("#set-save");
     await until(
@@ -2154,7 +2162,7 @@ describe("0.3.1: settings in categories", () => {
     await p.reload();
     await p.waitForSelector("#tabs .tab");
     await p.click("#btn-settings");
-    assert.deepEqual(await shown(p), ["editor"], "still remembered after a restart");
+    assert.deepEqual(await shown(p), ["edit"], "still remembered after a restart");
   });
 
   ui("settings: the categories can sit on top instead of on the left, and a narrow window puts them on top", async (h) => {
@@ -2183,7 +2191,7 @@ describe("0.3.1: settings in categories", () => {
     assert.equal(await p.inputValue("#set-nav-pos"), "top");
     assert.equal(await focused(p), "look");
     await p.keyboard.press("ArrowRight");
-    assert.deepEqual(await shown(p), ["edge"], "→ goes to the next category when they are on top");
+    assert.deepEqual(await shown(p), ["window"], "→ goes to the next category when they are on top");
     await p.keyboard.press("ArrowLeft");
     assert.deepEqual(await shown(p), ["look"]);
     await p.click("#set-cancel");
@@ -2195,15 +2203,26 @@ describe("0.3.1: settings in categories", () => {
       window.__mockControl = { migrationError: "目标文件夹不为空" };
     });
     await p.click("#btn-settings");
-    await settingsPage(p, "storage");
+    await settingsPage(p, "data");
     await p.fill("#set-dir", "D:\\Occupied");
     await settingsPage(p, "general");
     await p.click("#set-save");
     await until(() => p.textContent("#set-error"), "Error: 目标文件夹不为空");
     assert.ok(await p.isVisible("#set-error"));
-    assert.deepEqual(await shown(p), ["storage"], "shows the notes folder setting");
+    assert.deepEqual(await shown(p), ["data"], "shows the notes folder setting");
     assert.ok(await p.isVisible("#settings"), "the settings stay open");
     assert.equal(await p.evaluate(() => window.__minipad.state.settings.notes_dir), "");
+  });
+
+  ui("settings: a category remembered from 0.3.1 opens the category it was merged into", async (h) => {
+    const { p } = h;
+    await p.evaluate(() => localStorage.setItem("minipad-next-settings-page", "backup"));
+    await p.reload();
+    await p.waitForSelector("#tabs .tab");
+    await p.click("#btn-settings");
+    assert.deepEqual(await shown(p), ["data"]);
+    assert.ok(await p.isVisible("#set-backup"));
+    await p.click("#set-cancel");
   });
 });
 
@@ -2223,7 +2242,7 @@ describe("0.3.1: floating outline", () => {
     const { p } = h;
     assert.ok(await p.isHidden("#outline"), "off by default");
     await p.click("#btn-settings");
-    await settingsPage(p, "outline");
+    await settingsPage(p, "edit");
     assert.equal(await p.isChecked("#set-outline"), false);
     assert.ok(await p.isDisabled("#set-outline-mode"), "the options are off while the outline is off");
     await p.check("#set-outline");
@@ -2301,7 +2320,7 @@ describe("0.3.1: floating outline", () => {
     await until(() => p.isVisible("#outline .ol-empty"), true, "open: says the page has no headings");
     assert.deepEqual(await items(p), []);
     await p.click("#btn-settings");
-    await settingsPage(p, "outline");
+    await settingsPage(p, "edit");
     await p.selectOption("#set-outline-mode", "hover");
     await p.click("#set-save");
     await until(() => p.isHidden("#outline"), true, "folded: nothing shows on a page without headings");
@@ -2328,7 +2347,7 @@ describe("0.3.1: floating outline", () => {
     const { p } = h;
     const vars = (sel) => p.$eval(sel, (e) => ["--ol-width", "--ol-alpha", "--ol-c"].map((v) => e.style.getPropertyValue(v)));
     await p.click("#btn-settings");
-    await settingsPage(p, "outline");
+    await settingsPage(p, "edit");
     assert.deepEqual(await vars("#set-outline-preview"), ["200px", "100%", ""], "the preview starts with the saved look");
     await p.$eval("#set-outline-width", (e) => {
       e.value = "260";
@@ -2359,5 +2378,342 @@ describe("0.3.1: floating outline", () => {
     await until(() => panelShown(p), true);
     assert.equal(await p.$eval("#outline .ol-panel", (e) => Math.round(e.getBoundingClientRect().width)), 260);
     assert.equal(await p.$eval("#outline .ol-item.on", (e) => getComputedStyle(e).color), "rgb(59, 130, 246)", "the current heading in the chosen color");
+  });
+});
+
+describe("0.3.2: when the tabs don't fit", () => {
+  const PAGES = ["Memo", "Prompt", "Temp", "Chrome", "Account", "读书笔记", "待办", "一个名字特别长特别长的页面"];
+  const many = (settings = {}) => {
+    const db = seed({ "": Object.fromEntries(PAGES.map((n) => [n, `# ${n}`])) });
+    Object.assign(db.settings, settings);
+    return db;
+  };
+  const activeName = (p) => p.evaluate(() => window.__minipad.state.books[0].notes[window.__minipad.state.books[0].active].name);
+  const truncated = (p) =>
+    p.$$eval("#tabs .tab span", (els) => els.filter((s) => s.scrollWidth > s.clientWidth + 1).map((s) => s.textContent));
+
+  ui("tabs: one row that scrolls, names in full, the hidden end fades out, and the list button opens every page", { seed: many() }, async (h) => {
+    const { p } = h;
+    assert.deepEqual(await truncated(p), [], "no tab name is cut short");
+    assert.equal(await p.$eval("#tabs", (t) => t.scrollWidth > t.clientWidth), true, "the tabs don't fit in 440px");
+    assert.deepEqual(await p.$eval("#tabs", (t) => [t.classList.contains("fade-l"), t.classList.contains("fade-r")]), [false, true]);
+    await p.$eval("#tabs", (t) => (t.scrollLeft = 60));
+    await until(() => p.$eval("#tabs", (t) => t.classList.contains("fade-l")), true, "the start fades once scrolled");
+
+    assert.ok(await p.isVisible("#btn-all"));
+    assert.equal(await p.textContent("#all-count"), String(PAGES.length));
+    await p.click("#btn-all");
+    assert.ok(await p.isVisible("#pages-menu"));
+    assert.deepEqual(await p.$$eval("#pm-list button", (els) => els.map((e) => e.textContent)), PAGES);
+    assert.equal(await p.evaluate(() => document.activeElement.id), "pm-filter");
+    await p.keyboard.type("长");
+    assert.deepEqual(await p.$$eval("#pm-list button", (els) => els.map((e) => e.textContent)), ["一个名字特别长特别长的页面"]);
+    await p.keyboard.press("Enter");
+    assert.ok(await p.isHidden("#pages-menu"));
+    assert.equal(await activeName(p), "一个名字特别长特别长的页面");
+    // 这个标签比 440 像素窗口里的标签栏还宽:露出开头,剩下的滚过去看
+    const box = await p.locator("#tabs .tab.active").boundingBox();
+    const bar = await p.locator("#tabs").boundingBox();
+    assert.ok(Math.abs(box.x - bar.x) <= 1, `the chosen tab is scrolled into view: ${box.x} vs ${bar.x}`);
+    await p.click("#btn-all");
+    await p.click('#pm-list button:has-text("Temp")');
+    const temp = await p.locator("#tabs .tab.active").boundingBox();
+    const bar2 = await p.locator("#tabs").boundingBox();
+    assert.ok(temp.x >= bar2.x - 1 && temp.x + temp.width <= bar2.x + bar2.width + 1, "a shorter one is shown whole");
+
+    await p.click("#btn-all");
+    await p.keyboard.press("Escape");
+    assert.ok(await p.isHidden("#pages-menu"), "Esc closes the list");
+    assert.ok(await p.isVisible("#bar"), "and only the list");
+  });
+
+  ui("tabs: the fade and the list button can be turned off", { seed: many({ tab_fade: false, tab_list_button: false }) }, async (h) => {
+    const { p } = h;
+    assert.ok(await p.isHidden("#btn-all"));
+    assert.deepEqual(await p.$eval("#tabs", (t) => t.className), "");
+  });
+
+  ui("tabs: in rows, the button spreads every tab out below the bar and picking one folds them back", { seed: many({ tab_overflow: "wrap" }) }, async (h) => {
+    const { p } = h;
+    assert.ok(await p.isVisible("#btn-all"));
+    await p.click("#btn-all");
+    assert.equal(await p.getAttribute("#bar", "data-expanded"), "true");
+    assert.equal(await p.getAttribute("#btn-all", "aria-expanded"), "true");
+    const boxes = await p.$$eval("#tabs .tab", (els) => els.map((e) => e.getBoundingClientRect()).map((r) => [r.left, r.right, r.top]));
+    assert.ok(boxes.every(([l, r]) => l >= 0 && r <= 440), `every tab is in the window: ${JSON.stringify(boxes)}`);
+    assert.ok(new Set(boxes.map((b) => Math.round(b[2]))).size > 1, "in more than one row");
+    assert.deepEqual(await truncated(p), []);
+    await p.click("#tabs .tab:nth-child(7)");
+    assert.equal(await activeName(p), "待办");
+    assert.equal(await p.getAttribute("#bar", "data-expanded"), null, "folds back after picking a page");
+
+    await p.click("#btn-all");
+    await p.keyboard.press("Escape");
+    assert.equal(await p.getAttribute("#bar", "data-expanded"), null, "Esc folds them");
+    await p.click("#btn-all");
+    await p.mouse.click(200, 400);
+    assert.equal(await p.getAttribute("#bar", "data-expanded"), null, "so does a click elsewhere");
+  });
+
+  ui("tabs: in the side list, the bar shows the page name and the list slides out, filters, and can be pinned", { seed: many({ tab_overflow: "drawer" }) }, async (h) => {
+    const { p } = h;
+    assert.ok(await p.isVisible("#btn-pages"));
+    assert.equal(await p.textContent("#cur-page"), "Memo");
+    assert.ok(await p.isHidden("#btn-all"));
+    assert.equal(await p.$eval("#tabs", (t) => t.parentElement.id), "dr-list", "the tabs live in the list");
+    assert.equal(await p.$eval("#drawer", (d) => getComputedStyle(d).visibility), "hidden");
+
+    await p.click("#btn-pages");
+    await until(() => p.$eval("#drawer", (d) => d.getBoundingClientRect().left), 0, "slides out from the left");
+    assert.deepEqual(await truncated(p), []);
+    await p.fill("#dr-filter", "Chr");
+    assert.deepEqual(await p.$$eval("#tabs .tab:not(.filtered)", (els) => els.map((e) => e.textContent)), ["Chrome"]);
+    await p.click("#tabs .tab:not(.filtered)");
+    assert.equal(await activeName(p), "Chrome");
+    assert.equal(await p.textContent("#cur-page"), "Chrome");
+    await until(() => p.$eval("#drawer", (d) => d.classList.contains("open")), false, "closes after picking a page");
+    assert.equal(await p.inputValue("#dr-filter"), "", "and clears the filter");
+
+    await p.click("#btn-pages");
+    await p.click("#dr-pin");
+    await until(async () => (await h.stored())?.settings?.tab_drawer_pinned, true, "pinning is saved");
+    assert.equal(await p.evaluate(() => document.documentElement.dataset.drawer), "pinned");
+    assert.equal(await p.$eval("#main", (m) => getComputedStyle(m).marginLeft), "200px", "the editor moves aside");
+    await p.click("#tabs .tab:nth-child(2)");
+    assert.equal(await activeName(p), "Prompt");
+    assert.equal(await p.evaluate(() => document.documentElement.dataset.drawer), "pinned", "stays open when pinned");
+    await p.setViewportSize({ width: 400, height: 540 });
+    await until(() => p.evaluate(() => document.documentElement.dataset.drawer), "closed", "too narrow: slides away again");
+    assert.equal(await p.$eval("#main", (m) => getComputedStyle(m).marginLeft), "0px");
+  });
+
+  ui("tabs: the side list can come from the right and open when the mouse reaches that edge", { seed: many({ tab_overflow: "drawer", tab_drawer_side: "right", tab_drawer_hover: true, tab_drawer_width: 240 }) }, async (h) => {
+    const { p } = h;
+    await p.mouse.move(437, 300);
+    await until(() => p.$eval("#drawer", (d) => Math.round(d.getBoundingClientRect().left)), 440 - 240, "slides out from the right edge");
+    await p.mouse.move(300, 300);
+    await p.mouse.move(100, 300);
+    await until(() => p.$eval("#drawer", (d) => d.classList.contains("open")), false, "and back when the mouse leaves");
+  });
+
+  ui("tabs: the settings show the options of the chosen way, with a preview, and save them", async (h) => {
+    const { p } = h;
+    await p.click("#btn-settings");
+    await settingsPage(p, "look");
+    assert.equal(await p.inputValue("#set-tab-overflow"), "scroll");
+    assert.ok(await p.isVisible("#set-tab-fade"));
+    assert.ok(await p.isHidden("#set-tab-rows"));
+    assert.equal(await p.getAttribute("#set-tabs-preview", "data-mode"), "scroll");
+    await p.selectOption("#set-tab-overflow", "wrap");
+    assert.ok(await p.isVisible("#set-tab-rows"));
+    assert.ok(await p.isHidden("#set-tab-fade"));
+    assert.equal(await p.getAttribute("#set-tabs-preview", "data-mode"), "wrap");
+    await p.selectOption("#set-tab-overflow", "drawer");
+    assert.ok(await p.isVisible("#set-drawer-side"));
+    await p.selectOption("#set-drawer-side", "right");
+    await p.$eval("#set-drawer-width", (el) => {
+      el.value = "260";
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    assert.equal(await p.textContent("#set-drawer-width-val"), "260 像素");
+    await p.click("#set-save");
+    await until(
+      async () => {
+        const s = (await h.stored())?.settings;
+        return [s?.tab_overflow, s?.tab_drawer_side, s?.tab_drawer_width];
+      },
+      ["drawer", "right", 260],
+      "saved",
+    );
+    assert.ok(await p.isVisible("#btn-pages"), "applied right away");
+  });
+});
+
+describe("0.3.2: tab groups", () => {
+  const PAGES = ["a", "b", "c", "d", "e"];
+  const books = (settings = {}, meta = null) => {
+    const db = seed({ "": Object.fromEntries(PAGES.map((n) => [n, n])) });
+    Object.assign(db.settings, settings);
+    if (meta) Object.assign(db.books[""].meta, meta);
+    return db;
+  };
+  const strip = (p) =>
+    p.$$eval("#tabs > *", (els) =>
+      els.map((e) => (e.classList.contains("tab-group") ? `[${e.textContent}]` : e.classList.contains("folded") ? `(${e.textContent})` : e.textContent)),
+    );
+  const menu = (p) => p.$$eval("#ctx button", (els) => els.map((e) => e.textContent));
+  const stored = async (h) => {
+    const m = (await h.stored())?.books?.[""]?.meta;
+    return { order: m?.order, groups: (m?.groups || []).map((g) => [g.name, g.color, g.collapsed]), note_groups: m?.note_groups };
+  };
+
+  ui("groups: off by default, so the tab menu has no group items", { seed: books() }, async (h) => {
+    const { p } = h;
+    await p.click("#tabs .tab:nth-child(2)", { button: "right" });
+    assert.deepEqual(await menu(p), ["重命名", "移到笔记本…", "删除页面"]);
+  });
+
+  ui("groups: a tab goes into a new group, which gets a name and colour, folds, and is saved with the notebook", { seed: books({ tab_groups: true }) }, async (h) => {
+    const { p } = h;
+    await p.click("#tabs .tab:nth-child(2)", { button: "right" });
+    assert.deepEqual(await menu(p), ["重命名", "移到笔记本…", "添加到新分组", "删除页面"]);
+    await p.click('#ctx button[data-act="group-new"]');
+    assert.ok(await p.isVisible("#group-edit"), "the group settings open");
+    assert.equal(await p.evaluate(() => document.activeElement.id), "ge-name");
+    await p.keyboard.type("工作");
+    await p.click('#ge-colors .ge-color[title="紫色"]');
+    await p.keyboard.press("Escape");
+    assert.ok(await p.isHidden("#group-edit"));
+    assert.deepEqual(await strip(p), ["a", "[工作]", "b", "c", "d", "e"]);
+
+    // 移到分组:放到组里最后一页后面
+    await p.click("#tabs .tab:nth-child(6)", { button: "right" });
+    assert.ok((await menu(p)).includes("移到分组「工作」"));
+    await p.click('#ctx button:has-text("移到分组「工作」")');
+    assert.deepEqual(await strip(p), ["a", "[工作]", "b", "e", "c", "d"]);
+    // 分组的 id 是随机的,只比较哪些页面在分组里
+    await until(
+      async () => {
+        const s = await stored(h);
+        return [s.order, s.groups, Object.keys(s.note_groups || {}).sort()];
+      },
+      [["a", "b", "e", "c", "d"], [["工作", "#8e6bf0", false]], ["b", "e"]],
+      "saved with the notebook",
+    );
+
+    // 点分组的名字折叠:只剩当前页面以外的标签都收起来
+    await p.click(".tab-group");
+    assert.deepEqual(await strip(p), ["a", "[工作2]", "(b)", "(e)", "c", "d"]);
+    await until(async () => (await stored(h)).groups, [["工作", "#8e6bf0", true]], "folding is saved");
+    // 换到折叠起来的组里的页面时自动展开
+    await p.keyboard.press("Control+Tab");
+    assert.deepEqual(await strip(p), ["a", "[工作]", "b", "e", "c", "d"]);
+
+    await p.reload();
+    await p.waitForSelector("#tabs .tab");
+    assert.deepEqual(await strip(p), ["a", "[工作]", "b", "e", "c", "d"], "still there after a restart");
+    assert.equal(await p.$eval(".tab-group", (c) => c.style.getPropertyValue("--g")), "#8e6bf0");
+  });
+
+  ui("groups: dragging a tab next to a grouped tab joins the group; 移出分组 and 取消分组 take tabs out", { seed: books({ tab_groups: true }, { groups: [{ id: "g1", name: "组", color: "#4c8bf5", collapsed: false }], note_groups: { b: "g1", c: "g1" } }) }, async (h) => {
+    const { p } = h;
+    assert.deepEqual(await strip(p), ["a", "[组]", "b", "c", "d", "e"]);
+    await p.dragAndDrop("#tabs .tab:nth-child(6)", "#tabs .tab:nth-child(3)", { targetPosition: { x: 30, y: 10 } });
+    assert.deepEqual(await strip(p), ["a", "[组]", "b", "e", "c", "d"], "e joined the group");
+    await p.click("#tabs .tab:nth-child(3)", { button: "right" });
+    await p.click('#ctx button[data-act="group-leave"]');
+    assert.deepEqual(await strip(p), ["a", "[组]", "e", "c", "b", "d"], "b leaves and goes after the group");
+    // 新建页面跟着当前页面进同一个组
+    await p.click("#tabs .tab:nth-child(3)");
+    await p.keyboard.press("Control+t");
+    await p.keyboard.press("Enter");
+    assert.deepEqual(await strip(p), ["a", "[组]", "e", "新页面", "c", "b", "d"]);
+    await p.click(".tab-group", { button: "right" });
+    await p.click("#ge-ungroup");
+    assert.deepEqual(await strip(p), ["a", "e", "新页面", "c", "b", "d"]);
+    await until(async () => (await stored(h)).groups, [], "the empty group is gone");
+  });
+
+  ui("groups: turning them off hides the groups but keeps them for later", { seed: books({ tab_groups: true, tab_group_style: "tint" }, { groups: [{ id: "g1", name: "组", color: "#4c8bf5", collapsed: true }], note_groups: { b: "g1", c: "g1" } }) }, async (h) => {
+    const { p } = h;
+    assert.equal(await p.evaluate(() => document.documentElement.dataset.groupStyle), "tint");
+    assert.deepEqual(await strip(p), ["a", "[组2]", "(b)", "(c)", "d", "e"]);
+    await p.click("#btn-settings");
+    await settingsPage(p, "look");
+    assert.ok(await p.isChecked("#set-tab-groups"));
+    await p.uncheck("#set-tab-groups");
+    assert.ok(await p.isDisabled("#set-group-style"));
+    await p.click("#set-save");
+    await until(() => strip(p), ["a", "b", "c", "d", "e"], "no groups shown");
+    await p.click("#tabs .tab:nth-child(2)", { button: "right" });
+    assert.deepEqual(await menu(p), ["重命名", "移到笔记本…", "删除页面"]);
+    await p.keyboard.press("Escape");
+    await p.waitForTimeout(500);
+    assert.equal((await stored(h)).groups.length, 1, "the group is still saved");
+    await p.click("#btn-settings");
+    await p.check("#set-tab-groups");
+    await p.click("#set-save");
+    await until(() => strip(p), ["a", "[组2]", "(b)", "(c)", "d", "e"], "and back when turned on");
+  });
+
+  ui("groups: in the side list the group names head their pages, and the list shows the group colours", { seed: books({ tab_groups: true, tab_overflow: "drawer" }, { groups: [{ id: "g1", name: "组", color: "#4c8bf5", collapsed: false }], note_groups: { b: "g1", c: "g1" } }) }, async (h) => {
+    const { p } = h;
+    await p.click("#btn-pages");
+    assert.deepEqual(await strip(p), ["a", "[组]", "b", "c", "d", "e"]);
+    await p.fill("#dr-filter", "d");
+    assert.deepEqual(await p.$$eval("#tabs > :not(.filtered)", (els) => els.map((e) => e.textContent)), ["d"], "a group with no match hides its name too");
+  });
+});
+
+describe("0.3.2: floating format buttons on a selection", () => {
+  const select = async (p) => {
+    await p.click("#editor .ProseMirror p >> nth=-1");
+    await p.keyboard.press("End");
+    await p.keyboard.press("Shift+ArrowLeft");
+    await p.keyboard.press("Shift+ArrowLeft");
+  };
+  const buttons = (p) => p.$$eval("#toolbar > *", (els) => els.map((e) => (e.classList.contains("sep") ? "|" : e.dataset.cmd)));
+
+  ui("selection bar: shows common formats even with the format bar open, including colours", { seed: seed({ "": { 页: "第一段\n\n第二段\n\n一段文字" } }) }, async (h) => {
+    const { p } = h;
+    assert.ok(await p.isVisible("#format-bar"));
+    await p.click("#editor .ProseMirror p >> nth=-1");
+    assert.ok(await p.isHidden("#toolbar"), "nothing without a selection");
+    await select(p);
+    await p.locator("#toolbar").waitFor();
+    assert.deepEqual(await buttons(p), ["block", "strong", "em", "strike", "code", "link", "|", "color", "bg"]);
+    const bar = await p.locator("#toolbar").boundingBox();
+    const sel = await p.evaluate(() => window.getSelection().getRangeAt(0).getBoundingClientRect().top);
+    assert.ok(bar.y + bar.height <= sel, "above the selection");
+    await p.click('#toolbar [data-cmd="strong"]');
+    assert.equal(await h.editor(), "第一段\n\n第二段\n\n一段**文字**");
+    await p.click('#toolbar [data-cmd="color"]');
+    await p.locator(".fb-pop:not([hidden])").waitFor();
+    await p.click('.fb-pop:not([hidden]) .fb-gradients .fb-swatch >> nth=0');
+    await until(async () => (await h.editor()).includes("linear-gradient"), true, "a gradient colour from the floating buttons");
+    assert.ok(await p.isVisible("#toolbar"), "the buttons stay for the selection");
+  });
+
+  ui("selection bar: the buttons, their order, the position, and turning it off are in the settings", { seed: seed({ "": { 页: "一段文字" } }) }, async (h) => {
+    const { p } = h;
+    await p.click("#btn-settings");
+    await settingsPage(p, "edit");
+    assert.equal(await p.inputValue("#set-sel-bar"), "always");
+    await p.uncheck('#set-sel-items input[value="block"]');
+    await p.uncheck('#set-sel-items input[value="link"]');
+    await p.check('#set-sel-items input[value="ol"]');
+    assert.equal(await p.$eval("#set-sel-preview", (el) => el.querySelectorAll(".b").length), 7, "the preview follows");
+    await p.selectOption("#set-sel-pos", "below");
+    await p.click("#set-save");
+    await until(async () => (await h.stored())?.settings?.sel_bar_items, ["strong", "em", "strike", "code", "sep3", "color", "bg", "ol"], "saved in order");
+    await select(p);
+    await p.locator("#toolbar").waitFor();
+    assert.deepEqual(await buttons(p), ["strong", "em", "strike", "code", "|", "color", "bg", "ol"]);
+    const bar = await p.locator("#toolbar").boundingBox();
+    const sel = await p.evaluate(() => window.getSelection().getRangeAt(0).getBoundingClientRect().bottom);
+    assert.ok(bar.y >= sel, "below the selection");
+
+    await p.click("#btn-settings");
+    await settingsPage(p, "edit");
+    await p.selectOption("#set-sel-bar", "off");
+    assert.ok(await p.isDisabled("#set-sel-pos"));
+    await p.click("#set-save");
+    await until(async () => (await h.stored())?.settings?.sel_bar, "off", "saved");
+    await select(p);
+    await sleep(200);
+    assert.ok(await p.isHidden("#toolbar"), "no floating buttons when turned off");
+  });
+
+  ui("groups: a group can be a gradient, from the presets or a custom one", { seed: { ...seed({ "": { a: "a", b: "b" } }), settings: { ...SETTINGS, tab_groups: true } } }, async (h) => {
+    const { p } = h;
+    await p.click("#tabs .tab:nth-child(1)", { button: "right" });
+    await p.click('#ctx button[data-act="group-new"]');
+    await p.click('#ge-colors .ge-color[title="蓝紫渐变"]');
+    await until(async () => (await h.stored())?.books?.[""]?.meta?.groups?.[0]?.color, "linear-gradient(135deg, #5fb4ff, #d66cf0)", "a preset gradient");
+    assert.match(await p.$eval(".tab-group", (c) => c.style.getPropertyValue("--g-grad")), /#5fb4ff, #d66cf0/);
+    await p.check(".ge-custom input[type=checkbox]");
+    await until(async () => (await h.stored())?.books?.[""]?.meta?.groups?.[0]?.color?.startsWith("linear-gradient"), true, "a custom gradient");
+    await p.uncheck(".ge-custom input[type=checkbox]");
+    await until(async () => /^#[0-9a-f]{6}$/.test((await h.stored())?.books?.[""]?.meta?.groups?.[0]?.color), true, "or a single colour");
   });
 });

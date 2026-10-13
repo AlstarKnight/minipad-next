@@ -47,6 +47,19 @@ const DEFAULT_SETTINGS = {
   outline_width: 200,
   outline_opacity: 100,
   outline_color: "",
+  tab_overflow: "scroll",
+  tab_fade: true,
+  tab_list_button: true,
+  tab_rows: 4,
+  tab_drawer_side: "left",
+  tab_drawer_width: 200,
+  tab_drawer_hover: false,
+  tab_drawer_pinned: false,
+  tab_groups: false,
+  tab_group_style: "line",
+  sel_bar: "always",
+  sel_bar_items: ["block", "strong", "em", "strike", "code", "link", "sep3", "color", "bg"],
+  sel_bar_pos: "above",
 };
 
 const has = (obj, key) => Object.prototype.hasOwnProperty.call(obj, key);
@@ -161,9 +174,12 @@ export function mockApi() {
       name,
       notes: order.map((n) => {
         const reason = window.__mockControl?.unreadable?.[name]?.[n] || null;
-        return { name: n, content: reason ? "" : files[n], mode: meta.modes[n] || "edit", unreadable: !!reason, reason };
+        const g = meta.note_groups?.[n];
+        const group = g && (meta.groups || []).some((x) => x.id === g) ? g : "";
+        return { name: n, content: reason ? "" : files[n], mode: meta.modes[n] || "edit", unreadable: !!reason, reason, group };
       }),
       active: order.includes(meta.active) ? meta.active : (order[0] ?? ""),
+      groups: (meta.groups || []).filter((x) => order.some((n) => meta.note_groups?.[n] === x.id)),
     };
   };
   const readBooks = () => ["", ...bookNames()].filter((name) => !window.__mockControl?.unreadableBook?.includes(name)).map(readBook);
@@ -238,8 +254,19 @@ export function mockApi() {
       return n;
     },
     // 笔记本已经不在了就不写,免得把删掉的笔记本又建出来
-    save_meta: ({ book, order, active, modes }) => {
-      if (has(db.books, book)) db.books[book].meta = { order, active, modes };
+    // 带了 groups 才改分组(和 Rust 一样只记还有页面的分组)
+    save_meta: ({ book, order, active, modes, groups, note_groups }) => {
+      if (!has(db.books, book)) return;
+      const old = db.books[book].meta || {};
+      const meta = { order, active, modes, groups: old.groups || [], note_groups: old.note_groups || {} };
+      if (groups) {
+        const ng = Object.fromEntries(
+          Object.entries(note_groups || {}).filter(([n, id]) => id && order.includes(n) && groups.some((g) => g.id === id)),
+        );
+        meta.groups = groups.filter((g) => g.id && Object.values(ng).includes(g.id));
+        meta.note_groups = ng;
+      }
+      db.books[book].meta = meta;
     },
     create_book: ({ name }) => {
       backup();
@@ -289,6 +316,16 @@ export function mockApi() {
         outline_depth: Math.min(6, Math.max(1, Math.round(Number(settings.outline_depth)) || 3)),
         outline_width: Math.min(360, Math.max(140, Math.round(Number(settings.outline_width)) || 200)),
         outline_opacity: Math.min(100, Math.max(40, Math.round(Number(settings.outline_opacity)) || 100)),
+        tab_overflow: pickOne(settings.tab_overflow, ["scroll", "wrap", "drawer"]),
+        tab_drawer_side: pickOne(settings.tab_drawer_side, ["left", "right"]),
+        tab_group_style: pickOne(settings.tab_group_style, ["line", "tint"]),
+        sel_bar: pickOne(settings.sel_bar, ["always", "nobar", "off"]),
+        sel_bar_pos: pickOne(settings.sel_bar_pos, ["above", "below"]),
+        sel_bar_items: Array.isArray(settings.sel_bar_items)
+          ? settings.sel_bar_items.filter((id, i, a) => typeof id === "string" && id && id.length <= 32 && a.indexOf(id) === i).slice(0, 64)
+          : DEFAULT_SETTINGS.sel_bar_items,
+        tab_rows: Math.min(8, Math.max(2, Math.round(Number(settings.tab_rows)) || 4)),
+        tab_drawer_width: Math.min(360, Math.max(140, Math.round(Number(settings.tab_drawer_width)) || 200)),
       };
       const notes = normPath(s.notes_dir);
       const dest = normPath(s.backup_dir);

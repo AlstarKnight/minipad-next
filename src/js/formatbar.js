@@ -127,68 +127,89 @@ function orderedItems(saved) {
   return ids.map((id) => known.get(id));
 }
 
-class FormatBar {
+// 选中文字时的悬浮工具栏默认有的按钮(设置的"编辑 → 悬浮工具栏"里可以改)
+export const DEFAULT_SEL_ITEMS = ["block", "strong", "em", "strike", "code", "link", "sep3", "color", "bg"];
+
+// 勾选要显示的按钮、拖动调整顺序的列表(格式栏的"自定义"和设置里的悬浮工具栏共用)。
+// 改了就调用 onSave(全部按钮按现在的顺序, 不显示的按钮)
+export function itemChecklist(order, hidden, onSave) {
+  const list = document.createElement("div");
+  list.className = "fb-checks";
+  let dragging = null;
+  const save = () => {
+    const ids = [...list.children].map((row) => row.dataset.id);
+    const off = [...list.querySelectorAll("input")].filter((b) => !b.checked).map((b) => b.value);
+    onSave(ids, off);
+  };
+  for (const it of orderedItems(order)) {
+    const row = document.createElement("label");
+    row.className = "fb-check" + (it.sep ? " fb-check-sep" : "");
+    row.dataset.id = it.id;
+    row.draggable = true;
+    const grip = document.createElement("span");
+    grip.className = "fb-grip";
+    grip.innerHTML = '<svg viewBox="0 0 16 16"><path d="M6 3.5h.01M10 3.5h.01M6 8h.01M10 8h.01M6 12.5h.01M10 12.5h.01"/></svg>';
+    const box = document.createElement("input");
+    box.type = "checkbox";
+    box.value = it.id;
+    box.checked = !hidden.includes(it.id);
+    box.addEventListener("change", save);
+    const icon = document.createElement("span");
+    icon.className = "fb-check-icon";
+    icon.innerHTML = it.sep ? '<span class="sep"></span>' : it.block ? "H" : it.label;
+    const name = document.createElement("span");
+    name.textContent = it.title.replace(/\s*\(.*\)$/, "");
+    row.append(grip, box, icon, name);
+    // 拖到别的行上:落在那一行的上半部分就放在它前面,下半部分放在后面
+    row.addEventListener("dragstart", (e) => {
+      dragging = row;
+      row.classList.add("dragging");
+      e.dataTransfer.effectAllowed = "move";
+      e.dataTransfer.setData("text/plain", it.id);
+    });
+    row.addEventListener("dragend", () => {
+      row.classList.remove("dragging");
+      for (const r of list.children) r.classList.remove("drop-before", "drop-after");
+      dragging = null;
+    });
+    row.addEventListener("dragover", (e) => {
+      if (!dragging || dragging === row) return;
+      e.preventDefault();
+      const r = row.getBoundingClientRect();
+      const after = e.clientY > r.top + r.height / 2;
+      row.classList.toggle("drop-after", after);
+      row.classList.toggle("drop-before", !after);
+    });
+    row.addEventListener("dragleave", () => row.classList.remove("drop-before", "drop-after"));
+    row.addEventListener("drop", (e) => {
+      const moved = dragging;
+      if (!moved || moved === row) return;
+      e.preventDefault();
+      const after = row.classList.contains("drop-after");
+      row.classList.remove("drop-before", "drop-after");
+      row.after(moved);
+      if (!after) row.before(moved);
+      save();
+    });
+    list.appendChild(row);
+  }
+  return list;
+}
+
+// 格式栏和悬浮工具栏共用:做按钮、颜色和标题的弹出菜单、跟着光标亮起按钮
+class Bar {
   constructor(view, ctx) {
     this.view = view;
     this.ctx = ctx;
-    this.el = document.getElementById("format-bar");
     this.buttons = [];
     this.els = new Map();
-    const row = document.createElement("div");
-    row.className = "fb-items";
-    for (const it of ITEMS) {
-      if (it.sep) {
-        const s = document.createElement("span");
-        s.className = "sep";
-        s.dataset.cmd = it.id;
-        this.els.set(it.id, s);
-        continue;
-      }
-      const btn = document.createElement("button");
-      btn.dataset.cmd = it.id;
-      btn.title = it.title;
-      if (it.block) {
-        btn.className = "fb-block";
-        btn.innerHTML = '<span>正文</span><svg viewBox="0 0 16 16"><path d="M4.5 6.5 8 10l3.5-3.5"/></svg>';
-        btn.addEventListener("click", () => this.blockMenu(btn));
-      } else if (it.palette) {
-        btn.innerHTML = it.label;
-        btn.addEventListener("click", () => this.paletteMenu(btn, it.palette));
-      } else {
-        btn.innerHTML = it.label;
-        btn.addEventListener("click", async () => {
-          const v = this.view;
-          await it.run(this.ctx.get(commandsCtx), v);
-          if (it.keepFocus) return;
-          v.focus();
-          this.update(v);
-        });
-      }
-      // 按下鼠标时不让编辑器失去焦点,选区留着
-      btn.addEventListener("mousedown", (e) => e.preventDefault());
-      this.els.set(it.id, btn);
-      this.buttons.push([btn, it]);
-    }
-    const hide = document.createElement("button");
-    hide.className = "fb-hide";
-    hide.title = "收起格式栏(顶栏的格式栏按钮可以再打开)";
-    hide.innerHTML = ICON.hide;
-    hide.addEventListener("mousedown", (e) => e.preventDefault());
-    hide.addEventListener("click", () => this.el.dispatchEvent(new CustomEvent("hide-format-bar", { bubbles: true })));
-    const more = document.createElement("button");
-    more.className = "fb-more";
-    more.title = "自定义格式栏:选择显示哪些按钮,拖动调整顺序";
-    more.innerHTML = ICON.more;
-    more.addEventListener("mousedown", (e) => e.preventDefault());
-    more.addEventListener("click", () => this.customize(more));
-    this.row = row;
-    this.el.replaceChildren(row, more, hide);
+    for (const it of ITEMS) this.els.set(it.id, this.makeItem(it));
+    // 弹出菜单第一次用到时才放进页面
     this.pop = document.createElement("div");
     this.pop.className = "menu fb-pop";
     this.pop.hidden = true;
     // 输入框和自定义面板里可以拖动的行除外
     this.pop.addEventListener("mousedown", (e) => e.target.tagName !== "INPUT" && !e.target.closest(".fb-check") && e.preventDefault());
-    document.body.appendChild(this.pop);
     this.onDown = (e) => !this.pop.hidden && !this.pop.contains(e.target) && e.target.closest?.("button") !== this.popFor && this.closePop();
     this.onKey = (e) => {
       if (e.key !== "Escape" || this.pop.hidden) return;
@@ -199,16 +220,45 @@ class FormatBar {
     };
     document.addEventListener("mousedown", this.onDown, true);
     document.addEventListener("keydown", this.onKey, true);
-    this.arrange(itemOrder);
-    current = this;
-    this.update(view);
+  }
+
+  makeItem(it) {
+    if (it.sep) {
+      const s = document.createElement("span");
+      s.className = "sep";
+      s.dataset.cmd = it.id;
+      return s;
+    }
+    const btn = document.createElement("button");
+    btn.dataset.cmd = it.id;
+    btn.title = it.title;
+    if (it.block) {
+      btn.className = "fb-block";
+      btn.innerHTML = '<span>正文</span><svg viewBox="0 0 16 16"><path d="M4.5 6.5 8 10l3.5-3.5"/></svg>';
+      btn.addEventListener("click", () => this.blockMenu(btn));
+    } else if (it.palette) {
+      btn.innerHTML = it.label;
+      btn.addEventListener("click", () => this.paletteMenu(btn, it.palette));
+    } else {
+      btn.innerHTML = it.label;
+      btn.addEventListener("click", async () => {
+        const v = this.view;
+        await it.run(this.ctx.get(commandsCtx), v);
+        if (it.keepFocus) return;
+        v.focus();
+        this.update(v);
+      });
+    }
+    // 按下鼠标时不让编辑器失去焦点,选区留着
+    btn.addEventListener("mousedown", (e) => e.preventDefault());
+    this.buttons.push([btn, it]);
+    return btn;
   }
 
   destroy() {
     document.removeEventListener("mousedown", this.onDown, true);
     document.removeEventListener("keydown", this.onKey, true);
     this.pop.remove();
-    if (current === this) current = null;
   }
 
   openPop(btn, children) {
@@ -216,11 +266,13 @@ class FormatBar {
     // 同一个按钮再点一下就关上
     if (!this.pop.hidden && this.popFor === btn) return this.closePop();
     this.popFor = btn;
+    if (!this.pop.isConnected) document.body.appendChild(this.pop);
     this.pop.replaceChildren(...children);
     this.pop.hidden = false;
     const r = btn.getBoundingClientRect();
     this.pop.style.left = Math.max(4, Math.min(r.left, window.innerWidth - this.pop.offsetWidth - 4)) + "px";
-    this.pop.style.top = r.bottom + 2 + "px";
+    const below = r.bottom + 2;
+    this.pop.style.top = (below + this.pop.offsetHeight > window.innerHeight - 4 ? Math.max(4, r.top - this.pop.offsetHeight - 2) : below) + "px";
   }
 
   closePop() {
@@ -264,107 +316,6 @@ class FormatBar {
     this.openPop(btn, parts);
   }
 
-  customize(btn) {
-    const title = document.createElement("div");
-    title.className = "menu-title";
-    title.textContent = "勾选要显示的按钮,拖动调整顺序";
-    const list = document.createElement("div");
-    list.className = "fb-checks";
-    const save = () => {
-      const order = [...list.children].map((row) => row.dataset.id);
-      const hidden = [...list.querySelectorAll("input")].filter((b) => !b.checked).map((b) => b.value);
-      setFormatBarItems(hidden, order);
-      this.el.dispatchEvent(new CustomEvent("format-bar-items", { bubbles: true, detail: { format_bar_hidden: hidden, format_bar_order: order } }));
-    };
-    const fill = (items) => {
-      list.replaceChildren();
-      for (const it of items) {
-        const row = document.createElement("label");
-        row.className = "fb-check" + (it.sep ? " fb-check-sep" : "");
-        row.dataset.id = it.id;
-        row.draggable = true;
-        const grip = document.createElement("span");
-        grip.className = "fb-grip";
-        grip.innerHTML = '<svg viewBox="0 0 16 16"><path d="M6 3.5h.01M10 3.5h.01M6 8h.01M10 8h.01M6 12.5h.01M10 12.5h.01"/></svg>';
-        const box = document.createElement("input");
-        box.type = "checkbox";
-        box.value = it.id;
-        box.checked = !hiddenItems.includes(it.id);
-        box.addEventListener("change", save);
-        const icon = document.createElement("span");
-        icon.className = "fb-check-icon";
-        icon.innerHTML = it.sep ? '<span class="sep"></span>' : it.block ? "H" : it.label;
-        const name = document.createElement("span");
-        name.textContent = it.title.replace(/\s*\(.*\)$/, "");
-        row.append(grip, box, icon, name);
-        // 拖到别的行上:落在那一行的上半部分就放在它前面,下半部分放在后面
-        row.addEventListener("dragstart", (e) => {
-          this.dragging = row;
-          row.classList.add("dragging");
-          e.dataTransfer.effectAllowed = "move";
-          e.dataTransfer.setData("text/plain", it.id);
-        });
-        row.addEventListener("dragend", () => {
-          row.classList.remove("dragging");
-          for (const r of list.children) r.classList.remove("drop-before", "drop-after");
-          this.dragging = null;
-        });
-        row.addEventListener("dragover", (e) => {
-          if (!this.dragging || this.dragging === row) return;
-          e.preventDefault();
-          const r = row.getBoundingClientRect();
-          const after = e.clientY > r.top + r.height / 2;
-          row.classList.toggle("drop-after", after);
-          row.classList.toggle("drop-before", !after);
-        });
-        row.addEventListener("dragleave", () => row.classList.remove("drop-before", "drop-after"));
-        row.addEventListener("drop", (e) => {
-          const moved = this.dragging;
-          if (!moved || moved === row) return;
-          e.preventDefault();
-          const after = row.classList.contains("drop-after");
-          row.classList.remove("drop-before", "drop-after");
-          row.after(moved);
-          if (!after) row.before(moved);
-          save();
-        });
-        list.appendChild(row);
-      }
-    };
-    fill(orderedItems(itemOrder));
-    const reset = document.createElement("button");
-    reset.className = "fb-reset";
-    reset.textContent = "恢复默认";
-    reset.addEventListener("click", () => {
-      hiddenItems = [];
-      fill(ITEMS);
-      save();
-    });
-    this.openPop(btn, [title, list, reset]);
-  }
-
-  // 按顺序摆好按钮,再藏起不要的
-  arrange(order) {
-    this.row.replaceChildren(...orderedItems(order).map((it) => this.els.get(it.id)));
-    this.setHidden(hiddenItems);
-  }
-
-  // 藏起不要的按钮;分隔线两边都没有按钮时也藏起来
-  setHidden(hidden) {
-    for (const [btn, it] of this.buttons) btn.hidden = hidden.includes(it.id);
-    let seen = false;
-    let lastSep = null;
-    for (const el of this.row.children) {
-      if (el.classList.contains("sep")) {
-        el.hidden = !seen || hidden.includes(el.dataset.cmd);
-        if (el.hidden) continue;
-        if (seen) lastSep = el;
-        seen = false;
-      } else if (!el.hidden) seen = true;
-    }
-    if (!seen && lastSep) lastSep.hidden = true;
-  }
-
   blockMenu(btn) {
     const v = this.view;
     const c = this.ctx.get(commandsCtx);
@@ -373,7 +324,7 @@ class FormatBar {
     openMenu(
       BLOCKS.map((b) => ({
         id: `h${b.level}`,
-        label: (b.level === now ? "✓ " : " ") + b.label,
+        label: (b.level === now ? "✓ " : " ") + b.label,
         disabled: inCode(v.state),
         act: () => {
           c.call(b.level ? wrapInHeadingCommand.key : turnIntoTextCommand.key, b.level || undefined);
@@ -383,6 +334,18 @@ class FormatBar {
       r.left,
       r.bottom + 2
     );
+  }
+
+  // 悬浮工具栏:只放要的按钮;分隔线两边都没有按钮时也不放
+  arrange(row, items) {
+    const els = [];
+    for (const it of items) {
+      const el = this.els.get(it.id);
+      if (it.sep && (!els.length || els.at(-1).classList.contains("sep"))) continue;
+      els.push(el);
+    }
+    while (els.length && els.at(-1).classList.contains("sep")) els.pop();
+    row.replaceChildren(...els);
   }
 
   update(view) {
@@ -407,6 +370,141 @@ class FormatBar {
   }
 }
 
+class FormatBar extends Bar {
+  constructor(view, ctx) {
+    super(view, ctx);
+    this.el = document.getElementById("format-bar");
+    const row = document.createElement("div");
+    row.className = "fb-items";
+    const hide = document.createElement("button");
+    hide.className = "fb-hide";
+    hide.title = "收起格式栏(顶栏的格式栏按钮可以再打开)";
+    hide.innerHTML = ICON.hide;
+    hide.addEventListener("mousedown", (e) => e.preventDefault());
+    hide.addEventListener("click", () => this.el.dispatchEvent(new CustomEvent("hide-format-bar", { bubbles: true })));
+    const more = document.createElement("button");
+    more.className = "fb-more";
+    more.title = "自定义格式栏:选择显示哪些按钮,拖动调整顺序";
+    more.innerHTML = ICON.more;
+    more.addEventListener("mousedown", (e) => e.preventDefault());
+    more.addEventListener("click", () => this.customize(more));
+    this.row = row;
+    this.el.replaceChildren(row, more, hide);
+    this.layout();
+    current = this;
+    this.update(view);
+  }
+
+  destroy() {
+    super.destroy();
+    if (current === this) current = null;
+  }
+
+  customize(btn) {
+    const title = document.createElement("div");
+    title.className = "menu-title";
+    title.textContent = "勾选要显示的按钮,拖动调整顺序";
+    const save = (order, hidden) => {
+      setFormatBarItems(hidden, order);
+      this.el.dispatchEvent(new CustomEvent("format-bar-items", { bubbles: true, detail: { format_bar_hidden: hidden, format_bar_order: order } }));
+    };
+    const box = document.createElement("div");
+    box.appendChild(itemChecklist(itemOrder, hiddenItems, save));
+    const reset = document.createElement("button");
+    reset.className = "fb-reset";
+    reset.textContent = "恢复默认";
+    reset.addEventListener("click", () => {
+      save(DEFAULT_ORDER, []);
+      box.replaceChildren(itemChecklist(DEFAULT_ORDER, [], save));
+    });
+    this.openPop(btn, [title, box, reset]);
+  }
+
+  // 按顺序摆好全部按钮,再藏起不要的;分隔线两边都没有按钮时也藏起来
+  layout() {
+    this.row.replaceChildren(...orderedItems(itemOrder).map((it) => this.els.get(it.id)));
+    for (const [btn, it] of this.buttons) btn.hidden = hiddenItems.includes(it.id);
+    let seen = false;
+    let lastSep = null;
+    for (const el of this.row.children) {
+      if (el.classList.contains("sep")) {
+        el.hidden = !seen || hiddenItems.includes(el.dataset.cmd);
+        if (el.hidden) continue;
+        if (seen) lastSep = el;
+        seen = false;
+      } else if (!el.hidden) seen = true;
+    }
+    if (!seen && lastSep) lastSep.hidden = true;
+  }
+}
+
+// ---- 选中文字时的悬浮工具栏 ----
+// 选中一段文字,上方(或下方,设置里选)出现一排常用的格式按钮,按钮和顺序在设置里挑。
+// 什么时候出现也在设置里选:总是 / 只在格式栏收起时 / 不出现
+class SelectionBar extends Bar {
+  constructor(view, ctx) {
+    super(view, ctx);
+    this.el = document.createElement("div");
+    this.el.id = "toolbar";
+    this.el.hidden = true;
+    this.el.setAttribute("role", "toolbar");
+    this.el.setAttribute("aria-label", "常用格式");
+    document.body.appendChild(this.el);
+    this.layout();
+    // 颜色菜单开着时编辑器没有焦点也留着
+    this.onBlur = () => setTimeout(() => !this.view.hasFocus() && this.pop.hidden && (this.el.hidden = true), 0);
+    view.dom.addEventListener("blur", this.onBlur);
+    selBar = this;
+    this.update(view);
+  }
+
+  destroy() {
+    super.destroy();
+    this.view.dom.removeEventListener("blur", this.onBlur);
+    this.el.remove();
+    if (selBar === this) selBar = null;
+  }
+
+  layout() {
+    const items = selItems.map((id) => ITEMS.find((it) => it.id === id)).filter(Boolean);
+    this.arrange(this.el, items);
+  }
+
+  closePop() {
+    super.closePop();
+    if (this.view && !this.view.hasFocus()) this.el.hidden = true;
+  }
+
+  update(view) {
+    this.view = view;
+    const { state } = view;
+    const sel = state.selection;
+    const wanted = selMode === "always" || (selMode === "nobar" && document.getElementById("format-bar")?.hidden !== false);
+    const show =
+      wanted && this.el.childElementCount > 0 && !sel.empty && sel.$from.parent.inlineContent && !sel.$from.parent.type.spec.code && (view.hasFocus() || !this.pop.hidden) && view.editable;
+    if (!show) {
+      this.el.hidden = true;
+      if (!this.pop.hidden && sel.empty) this.closePop();
+      return;
+    }
+    super.update(view);
+    this.el.hidden = false;
+    const start = view.coordsAtPos(sel.from);
+    const end = view.coordsAtPos(sel.to);
+    const w = this.el.offsetWidth;
+    const h = this.el.offsetHeight;
+    const left = Math.max(6, Math.min(window.innerWidth - w - 6, (start.left + end.left) / 2 - w / 2));
+    // 默认放在选区上面,上面放不下(会挡住顶栏和格式栏)就放下面;设置成下面时反过来
+    const top0 = view.dom.parentElement.getBoundingClientRect().top + 4;
+    const above = start.top - h - 8;
+    const below = end.bottom + 8;
+    let top = selPos === "below" ? below : above;
+    if (selPos === "below" ? top + h > window.innerHeight - 4 : top < top0) top = selPos === "below" ? above : below;
+    this.el.style.left = `${left}px`;
+    this.el.style.top = `${top}px`;
+  }
+}
+
 // 设置里记着的"不显示的按钮"和按钮的顺序
 let hiddenItems = [];
 let itemOrder = [];
@@ -414,7 +512,27 @@ let current = null;
 export function setFormatBarItems(hidden, order) {
   hiddenItems = Array.isArray(hidden) ? hidden : [];
   itemOrder = Array.isArray(order) ? order : [];
-  current?.arrange(itemOrder);
+  current?.layout();
 }
 
+// 悬浮工具栏:什么时候出现(always / nobar 只在格式栏收起时 / off)、按钮、在选区上面还是下面
+let selMode = "always";
+let selItems = DEFAULT_SEL_ITEMS;
+let selPos = "above";
+let selBar = null;
+export function setSelectionBar(s) {
+  selMode = ["always", "nobar", "off"].includes(s.sel_bar) ? s.sel_bar : "always";
+  selItems = Array.isArray(s.sel_bar_items) ? s.sel_bar_items : DEFAULT_SEL_ITEMS;
+  selPos = s.sel_bar_pos === "below" ? "below" : "above";
+  if (selBar) {
+    selBar.layout();
+    selBar.update(selBar.view);
+  }
+}
+
+// 设置里列出全部按钮用
+export const ALL_ITEMS = ITEMS;
+export { orderedItems };
+
 export const formatBar = $prose((ctx) => new Plugin({ view: (view) => new FormatBar(view, ctx) }));
+export const selectionBar = $prose((ctx) => new Plugin({ view: (view) => new SelectionBar(view, ctx) }));
