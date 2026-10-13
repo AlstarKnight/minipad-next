@@ -997,7 +997,11 @@ fn save_settings(
         let _ = win.set_skip_taskbar(!new.show_in_taskbar);
     }
     // 关掉贴边隐藏或者换了样式(露出的宽度不同),先把窗口放出来
-    if !new.edge_hide || new.edge_style != old.edge_style || new.edge_line_width != old.edge_line_width {
+    if !new.edge_hide
+        || new.edge_style != old.edge_style
+        || new.edge_line_width != old.edge_line_width
+        || new.edge_line_glow != old.edge_line_glow
+    {
         restore_from_edge(&app, false);
     }
     // 换了笔记文件夹或备份位置,今天就在新地方重新判断要不要备份
@@ -1412,9 +1416,15 @@ fn restore_from_edge(app: &AppHandle, focus: bool) {
 }
 
 /// 露出的宽度按逻辑像素算,换成这块屏幕的物理像素(高分屏上不会变细)
-fn scaled_strip(win: &tauri::WebviewWindow, style: &str, peeking: bool, line_width: u32) -> i32 {
+fn scaled_strip(
+    win: &tauri::WebviewWindow,
+    style: &str,
+    peeking: bool,
+    line_width: u32,
+    glow: bool,
+) -> i32 {
     let scale = win.scale_factor().unwrap_or(1.0);
-    (f64::from(edge::strip_for(style, peeking, line_width)) * scale).round() as i32
+    (f64::from(edge::strip_for(style, peeking, line_width, glow)) * scale).round() as i32
 }
 
 fn edge_tick(app: &AppHandle) {
@@ -1471,7 +1481,16 @@ fn edge_tick(app: &AppHandle) {
                 edge,
                 rect,
                 mon,
-                scaled_strip(&win, "hover", peek, st.settings.lock().unwrap().edge_line_width),
+                {
+                    let settings = st.settings.lock().unwrap();
+                    scaled_strip(
+                        &win,
+                        "hover",
+                        peek,
+                        settings.edge_line_width,
+                        settings.edge_line_glow,
+                    )
+                },
             );
             let _ = win.set_position(PhysicalPosition::new(x, y));
             let _ = app.emit("edge-peek", peek);
@@ -1519,16 +1538,20 @@ fn edge_tick(app: &AppHandle) {
         }
     };
     if let Some((edge, mon)) = ready {
-        let (style, line_width) = {
+        let (style, line_width, glow) = {
             let settings = st.settings.lock().unwrap();
-            (settings.edge_style.clone(), settings.edge_line_width)
+            (
+                settings.edge_style.clone(),
+                settings.edge_line_width,
+                settings.edge_line_glow,
+            )
         };
         st.edge.lock().unwrap().peeking = false;
         let (x, y) = edge::hidden_position_with_strip(
             edge,
             rect,
             mon,
-            scaled_strip(&win, &style, false, line_width),
+            scaled_strip(&win, &style, false, line_width, glow),
         );
         let _ = app.emit("flush", ());
         let _ = app.emit("edge-hidden", edge.name());
