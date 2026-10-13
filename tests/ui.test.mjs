@@ -1591,11 +1591,12 @@ describe("v0.3.5 remaining color UX details", () => {
     await p.click("#btn-settings");
     await settingsPage(p, "look");
     const library = p.locator("#set-accent + .shared-colors");
-    await expandLibrary(p, "#set-accent + .shared-colors");
     assert.equal(await library.locator(".uc-modify").count(), 0, "the pencil no longer overlaps tiny swatches");
     const color = library.locator('.uc-swatch[data-color="#123abc"]');
     await color.focus();
     await p.keyboard.press("F2");
+    assert.equal(await library.locator(".uc-more").getAttribute("aria-expanded"), "true",
+      "F2 expands a quick swatch directly");
     assert.ok(await library.locator(".uc-editor").isVisible(), "F2 opens the existing editor");
     await library.locator(":scope > .uc-actions button").first().click();
     assert.ok(await library.locator(".uc-editor").isHidden());
