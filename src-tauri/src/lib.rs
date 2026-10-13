@@ -520,7 +520,7 @@ fn tidy_color(c: &mut String) {
     if c.len() > 160
         || !c
             .chars()
-            .all(|ch| ch.is_ascii_alphanumeric() || " #(),-.".contains(ch))
+            .all(|ch| ch.is_ascii_alphanumeric() || " #(),-.%".contains(ch))
     {
         c.clear();
     }
