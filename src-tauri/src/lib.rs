@@ -825,6 +825,15 @@ fn delete_book(app: AppHandle, name: String) -> Result<(), String> {
     notes::delete_book(&current_notes_dir(&app), &name)
 }
 
+/// 从窗口内容区（Alt+左键）触发原生 Windows 拖动。
+#[tauri::command]
+fn start_window_drag(app: AppHandle) -> Result<(), String> {
+    main_window(&app)
+        .ok_or("找不到主窗口")?
+        .start_dragging()
+        .map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 fn set_book_appearance(
     app: AppHandle,
@@ -1637,6 +1646,7 @@ pub fn run() {
             rename_book,
             delete_book,
             set_book_appearance,
+            start_window_drag,
             set_current_book,
             backup_info,
             open_backup_dir,
