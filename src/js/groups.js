@@ -9,23 +9,12 @@ import { renderTabs, newNote } from "./tabs.js";
 import { gradientOf, parseAccent, tidyAccent } from "./accent.js";
 import { makeSharedColorTools } from "./sharedcolors.js";
 
-// 分组的颜色,和 Edge 的差不多
-export const GROUP_COLORS = [
-  ["灰色", "#8a8f98"],
-  ["蓝色", "#4c8bf5"],
-  ["红色", "#e5534b"],
-  ["黄色", "#d4a72c"],
-  ["绿色", "#3fa66b"],
-  ["粉色", "#e0609e"],
-  ["紫色", "#8e6bf0"],
-  ["青色", "#2fa8b8"],
-  ["橙色", "#e8833a"],
-];
+const DEFAULT_GROUP_COLOR = "#8a8f98";
 
 // 分组的颜色放到元素上:--g 是纯色(渐变取起点),--g-grad 是整条颜色(纯色或渐变),
 // --g-soft / --g-soft2 / --g-tint 是淡一些的同样的颜色(分组名字的底色、鼠标移上去、整个标签染色)
 export function groupVars(el, color) {
-  const a = parseAccent(color) || parseAccent(GROUP_COLORS[0][1]);
+  const a = parseAccent(color) || parseAccent(DEFAULT_GROUP_COLOR);
   const stops = a.to ? a.stops : [a.from, a.from];
   const angle = a.deg ?? 90;
   const fade = (p) => gradientOf(stops.map((c) => `color-mix(in srgb, ${c} ${p}%, transparent)`), angle, a.positions);

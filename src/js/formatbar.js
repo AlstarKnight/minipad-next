@@ -296,6 +296,7 @@ class Bar {
     const shared = makeSharedColorTools({
       getValue: () => colorAt(this.view.state, mark) || btn.dataset.last || "#d9822b",
       onApply: (value) => pick(value),
+      preview: mark === "text_color" ? "text" : "background",
     });
     parts.push(shared.root);
     this.openPop(btn, parts);

@@ -320,14 +320,11 @@ function renderManager() {
   colors.replaceChildren();
   // “跟随强调色”保留，其余颜色统一来自可编辑的颜色库。
   addColorButton(colors, "", "跟随强调色");
-  const gradients = $("#bm-gradients");
-  gradients.replaceChildren();
-
   if (!notebookColorEditor) notebookColorEditor = makeSharedColorTools({
     getValue: () => selectedBook?.icon_color || state.settings?.accent || "#d9822b",
     onApply: (value) => selectedBook && saveAppearance(selectedBook, selectedBook.icon || "book", value),
   });
-  $("#bm-gradients").after(notebookColorEditor.root);
+  $("#bm-colors").after(notebookColorEditor.root);
   notebookColorEditor.sync();
   for (const control of notebookColorEditor.root.querySelectorAll("button, input, select")) control.disabled = appearanceBusy;
 }
