@@ -433,7 +433,7 @@ describe("notebook manager and window movement", () => {
     assert.equal(strokes.gradient, 2, "gradient icon has actual SVG color stops");
     assert.match(strokes.stroke, /url\(#book-icon-gradient-/, "icon uses SVG gradient stroke");
     await p.click("#bm-save-preset");
-    await until(() => h.stored().then((db) => db.settings.book_color_presets), [gradient]);
+    await until(() => h.stored().then((db) => db.settings.color_presets), [gradient]);
     await p.click('#bm-list [data-book="生活"]');
     await p.click('#bm-saved-colors [role="radio"]');
     await until(() => h.stored().then((db) => db.books["生活"].meta.icon_color), gradient);
@@ -442,7 +442,7 @@ describe("notebook manager and window movement", () => {
     await p.click("#books-manage");
     assert.equal(await p.locator("#bm-saved-colors .bm-saved-item").count(), 1, "custom presets survive restart");
     await p.click("#bm-saved-colors .bm-remove-color");
-    await until(() => h.stored().then((db) => db.settings.book_color_presets), []);
+    await until(() => h.stored().then((db) => db.settings.color_presets), []);
     assert.equal(await h.stored().then((db) => db.books["工作"].meta.icon_color), gradient, "removing preset keeps existing book colors");
     assert.equal(await h.mockFile("工作", "文档"), "work", "no note files changed");
   });
@@ -472,9 +472,9 @@ describe("notebook manager and window movement", () => {
     const custom = "linear-gradient(135deg, #5fb4ff, #abcdef)";
     await until(() => h.stored().then((db) => db.books["设计"].meta.icon_color), custom);
     await p.click("#bm-save-preset");
-    await until(() => h.stored().then((db) => db.settings.book_color_presets), [custom]);
+    await until(() => h.stored().then((db) => db.settings.color_presets), [custom]);
     await p.click("#bm-save-preset");
-    assert.deepEqual(await h.stored().then((db) => db.settings.book_color_presets), [custom], "duplicate presets are ignored");
+    assert.deepEqual(await h.stored().then((db) => db.settings.color_presets), [custom], "duplicate presets are ignored");
   });
 
   ui("manager refuses invalid native save and does not change local icon", {
@@ -1522,6 +1522,47 @@ describe("format bar", () => {
 });
 
 // ---------- 明暗切换、强调色 ----------
+describe("shared colors and positioned gradients", () => {
+  ui("save once in accent and reuse from edge, notebook and text palettes", { seed: seed({ "": { 页: "笔记" }, 工作: { 文件: "内容" } }) }, async (h) => {
+    const { p } = h;
+    await p.click("#btn-settings");
+    await settingsPage(p, "look");
+    const accent = p.locator("#set-accent").locator("..").locator(".shared-colors");
+    await accent.locator(".uc-actions button").last().click();
+    await until(() => h.stored().then((db) => db.settings.color_presets), ["#d9822b"]);
+    await settingsPage(p, "window");
+    assert.equal(await p.locator("#set-edge-color").locator("..").locator(".uc-presets .uc-swatch").count(), 1);
+    await p.locator("#set-edge-color").locator("..").locator(".uc-presets .uc-swatch").click();
+    await p.click("#set-save");
+    await until(() => h.stored().then((db) => db.settings.edge_color), "#d9822b");
+    await h.openBooks();
+    await p.click("#books-manage");
+    await p.click('#bm-list [data-book="工作"]');
+    assert.equal(await p.locator("#bm-saved-colors .bm-saved-item").count(), 1);
+    await p.click('#bm-saved-colors [data-color="#d9822b"]');
+    await until(() => h.stored().then((db) => db.books["工作"].meta.icon_color), "#d9822b");
+  });
+
+  ui("multistop custom gradient stores angles, positions and can delete stops", { seed: seed({ "": { 页: "内容" } }) }, async (h) => {
+    const { p } = h;
+    await p.click("#btn-settings");
+    await settingsPage(p, "look");
+    const tool = p.locator("#set-accent").locator("..").locator(".shared-colors");
+    await tool.locator(".uc-actions button").first().click();
+    await tool.locator("select").selectOption("gradient");
+    await tool.locator(".uc-actions button").last().filter({ hasText: "添加节点" }).click();
+    assert.equal(await tool.locator(".uc-stop").count(), 3);
+    await tool.locator('input[aria-label="渐变角度"]').fill("90");
+    await tool.locator('input[aria-label="渐变角度"]').dispatchEvent("change");
+    await tool.locator('input[aria-label="节点 2 位置"]').fill("38");
+    await tool.locator('input[aria-label="节点 2 位置"]').dispatchEvent("change");
+    await tool.locator(".uc-editor .uc-actions button").last().click();
+    await p.click("#set-save");
+    await until(() => h.stored().then((db) => db.settings.accent),
+      "linear-gradient(90deg, #d9822b 0%, #d9822b 38%, #d66cf0 100%)");
+  });
+});
+
 describe("theme and accent", () => {
   ui("the sun / moon button switches between light and dark and remembers it", { seed: seed({ "": { 页: "文字" } }) }, async (h) => {
     const { p } = h;
@@ -1735,6 +1776,38 @@ describe("theme and accent", () => {
     const arrowHit = await p.$eval("#edge-expand", (b) => Math.round(b.getBoundingClientRect().width));
     assert.equal(arrowHit, 198, "only the drawn 45% span is clickable");
     await p.evaluate(() => window.__mockEmit("edge-shown"));
+  });
+
+  ui("fixed pixel edge length keeps its px size and remembers previous percent", { seed: seed({ "": { 页: "内容" } }) }, async (h) => {
+    const { p } = h;
+    await p.click("#btn-settings");
+    await settingsPage(p, "window");
+    assert.equal(await p.inputValue("#set-edge-length-unit"), "percent", "old settings still use percent");
+    await p.$eval("#set-edge-line-length", (el) => {
+      el.value = "45";
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await p.selectOption("#set-edge-length-unit", "px");
+    assert.equal(await p.inputValue("#set-edge-line-length"), "120", "fixed mode starts at 120px");
+    await p.fill("#set-edge-length-number", "100");
+    await p.locator("#set-edge-length-number").dispatchEvent("change");
+    assert.equal(await p.textContent("#set-edge-line-length-val"), "100px");
+    await p.selectOption("#set-edge-length-unit", "percent");
+    assert.equal(await p.inputValue("#set-edge-line-length"), "45", "percent value survives mode switch");
+    await p.selectOption("#set-edge-length-unit", "px");
+    await p.click("#set-save");
+    await until(() => h.stored().then((s) => [
+      s.settings.edge_line_length_unit, s.settings.edge_line_length_px, s.settings.edge_line_length
+    ]), ["px", 100, 45]);
+    await p.evaluate(() => window.__mockEmit("edge-hidden", "top"));
+    const size = await p.$eval("#edge-mark > span", (el) => Math.round(el.getBoundingClientRect().width));
+    assert.equal(size, 100, "line keeps a fixed 100px length inside the 440px floating window");
+    await p.evaluate(() => window.__mockEmit("edge-shown"));
+    await p.reload();
+    await p.click("#btn-settings");
+    await settingsPage(p, "window");
+    assert.equal(await p.inputValue("#set-edge-length-unit"), "px");
+    assert.equal(await p.inputValue("#set-edge-line-length"), "100");
   });
 
   ui("the floating icon is off by default; when on, the top bar gets a button that collapses the window", { seed: seed({ "": { 页: "文字" } }) }, async (h) => {
