@@ -1178,7 +1178,7 @@ html[data-edge-style="hover"][data-edge-peek][data-edge="right"] #edge-expand { 
   display: block; width: 27px; height: 25px;
   border: 1px solid var(--bar-border); border-radius: 6px;
 }
-.uc-swatch:hover, .uc-swatch:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
+.uc-swatch:hover, .uc-swatch:focus-visible, .uc-swatch.on { outline: 1px solid var(--accent); outline-offset: 1px; }
 .uc-delete {
   position: absolute; right: -4px; top: -5px; width: 15px; height: 15px;
   padding: 0; border: 1px solid var(--bar-border); border-radius: 50%;
