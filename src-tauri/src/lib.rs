@@ -2268,14 +2268,9 @@ mod tests {
         tidy_settings(&mut s);
         assert_eq!(
             s.book_color_presets,
-            vec![
-                "#abcdef",
-                "linear-gradient(135deg, #ff0000, #00ff00)"
-            ]
+            vec!["#abcdef", "linear-gradient(135deg, #ff0000, #00ff00)"]
         );
-        s.book_color_presets = (0..40)
-            .map(|i| format!("#{:06x}", i))
-            .collect();
+        s.book_color_presets = (0..40).map(|i| format!("#{:06x}", i)).collect();
         tidy_settings(&mut s);
         assert_eq!(s.book_color_presets.len(), 20);
         assert!(serde_json::from_str::<Settings>(r#"{"theme":"dark"}"#)
