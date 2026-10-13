@@ -8,14 +8,13 @@ import { mutate } from "./sync.js";
 import { rememberView, showNote } from "./page.js";
 import { renderTabs, ensurePage, removeNote } from "./tabs.js";
 import { BOOK_ICONS, bookIcon, iconColor } from "./bookicons.js";
-import { GRADIENTS, gradient, gradientOf, parseAccent, tidyAccent } from "./accent.js";
-import { makeSharedColorTools, sharedColorPresets, changeSharedPreset } from "./sharedcolors.js";
+import { GRADIENTS, gradientOf, tidyAccent } from "./accent.js";
+import { makeSharedColorTools } from "./sharedcolors.js";
 
 // 为了"移到笔记本…"打开列表时是要移动的页面,平时是 null
 let moving = null;
 let selectedBook = null;
 let appearanceBusy = false;
-let presetBusy = false;
 let notebookColorEditor = null;
 const BOOK_COLORS = ["", "#d9822b", "#e76f51", "#e0b348", "#5fb4ff", "#9384df", "#67ad87", "#db75a8", "#a5a5ad"];
 const BOOK_GRADIENTS = GRADIENTS.map((g) => ({ name: g.name + "渐变", value: gradientOf(g.stops) }));
@@ -325,82 +324,13 @@ function renderManager() {
   const gradients = $("#bm-gradients");
   gradients.replaceChildren();
   for (const g of BOOK_GRADIENTS) addColorButton(gradients, g.value, g.name);
-  const parsed = parseAccent(b.icon_color);
-  $("#bm-custom-color").value = parsed?.from || "#d9822b";
-  $("#bm-custom-color").disabled = appearanceBusy;
-  $("#bm-gradient-enabled").checked = !!parsed?.to;
-  $("#bm-gradient-enabled").disabled = appearanceBusy;
-  $("#bm-gradient-to").value = parsed?.to || "#d66cf0";
-  $("#bm-gradient-to").disabled = appearanceBusy;
-  $("#bm-gradient-to-label").hidden = !parsed?.to;
-
-  const saved = $("#bm-saved-colors");
-  saved.replaceChildren();
-  for (const value of sharedColorPresets()) {
-    if (!parseAccent(value)) continue;
-    const item = document.createElement("div");
-    item.className = "bm-saved-item";
-    const apply = addColorButton(item, value, "应用保存的颜色");
-    apply.setAttribute("aria-label", "应用保存的颜色 " + value);
-    const remove = document.createElement("button");
-    remove.type = "button";
-    remove.className = "bm-remove-color";
-    remove.textContent = "×";
-    remove.title = "删除此颜色预设";
-    remove.setAttribute("aria-label", "删除保存的颜色 " + value);
-    remove.disabled = presetBusy;
-    remove.addEventListener("click", () => void deleteColorPreset(value));
-    item.append(remove);
-    saved.append(item);
-  }
-  $("#bm-save-preset").disabled = appearanceBusy || presetBusy;
   if (!notebookColorEditor) notebookColorEditor = makeSharedColorTools({
     getValue: () => selectedBook?.icon_color || state.settings?.accent || "#d9822b",
     onApply: (value) => selectedBook && saveAppearance(selectedBook, selectedBook.icon || "book", value),
-    showPresets: false,
   });
-  $("#bm-saved-colors").after(notebookColorEditor.root);
-}
-
-function customColor() {
-  const from = $("#bm-custom-color").value;
-  return $("#bm-gradient-enabled").checked
-    ? gradient(from, $("#bm-gradient-to").value)
-    : from;
-}
-
-async function saveColorPreset() {
-  if (presetBusy || appearanceBusy || !selectedBook || !state.settings) return;
-  const color = tidyAccent(selectedBook.icon_color || state.settings.accent || "#d9822b");
-  if (!color) return;
-  presetBusy = true;
-  renderManager();
-  try {
-    await changeSharedPreset(color);
-    toast("颜色预设已保存");
-  } catch (e) {
-    $("#bm-error").textContent = "保存颜色预设失败：" + e;
-    $("#bm-error").hidden = false;
-  } finally {
-    presetBusy = false;
-    renderManager();
-  }
-}
-
-async function deleteColorPreset(color) {
-  if (presetBusy || appearanceBusy || !state.settings) return;
-  presetBusy = true;
-  renderManager();
-  try {
-    await changeSharedPreset(color, true);
-    toast("颜色预设已删除");
-  } catch (e) {
-    $("#bm-error").textContent = "删除颜色预设失败：" + e;
-    $("#bm-error").hidden = false;
-  } finally {
-    presetBusy = false;
-    renderManager();
-  }
+  $("#bm-gradients").after(notebookColorEditor.root);
+  notebookColorEditor.sync();
+  for (const control of notebookColorEditor.root.querySelectorAll("button, input, select")) control.disabled = appearanceBusy;
 }
 
 async function saveAppearance(b, icon, color) {
@@ -462,13 +392,6 @@ export function bindBooks() {
   });
   $("#bm-rename").addEventListener("click", () => { if (selectedBook) void renameBook(selectedBook); });
   $("#bm-delete").addEventListener("click", () => { if (selectedBook) void deleteBook(selectedBook); });
-  const applyCustom = () => {
-    if (selectedBook) void saveAppearance(selectedBook, selectedBook.icon || "book", customColor());
-  };
-  $("#bm-custom-color").addEventListener("change", applyCustom);
-  $("#bm-gradient-to").addEventListener("change", applyCustom);
-  $("#bm-gradient-enabled").addEventListener("change", applyCustom);
-  $("#bm-save-preset").addEventListener("click", () => void saveColorPreset());
   $("#books").addEventListener("keydown", onKey);
   // 焦点跟着鼠标走,免得键盘选中的和鼠标指着的是两项
   $("#books").addEventListener("mousemove", (e) => {

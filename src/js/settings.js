@@ -9,7 +9,7 @@ import { applyEditorSettings } from "./editor.js";
 import { DEFAULT_DATE_FORMAT, formatDate } from "./datetime.js";
 // 活跃标签的高亮:顶部线条 / 整个标签 / 整圈边框(见 style.css)
 const TAB_STYLES = ["line", "fill", "border"];
-import { ACCENTS, applyAccent, parseAccent, tidyAccent, gradient, gradientOf } from "./accent.js";
+import { ACCENTS, applyAccent, parseAccent, tidyAccent, gradientOf } from "./accent.js";
 import { APP_ICON, paintBall } from "./ballicon.js";
 import { applyFindAppearance, findColors } from "./findbar.js";
 import { openImport } from "./importer.js";
@@ -213,7 +213,7 @@ export function openSettings() {
     .catch(() => {});
 }
 
-// ---- 颜色选择:一排色块(纯色和渐变),下面是自定义的两个取色框 ----
+// ---- 颜色选择:预设色块 + 共用的单一多节点自定义编辑器 ----
 // 强调色和贴边标识的颜色共用。空字符串是第一个色块(默认橙色 / 跟随强调色)
 function colorPicker(prefix, box, options, firstSwatch, onChange) {
   const picker = { value: "" };
@@ -224,9 +224,7 @@ function colorPicker(prefix, box, options, firstSwatch, onChange) {
       getValue: () => picker.value || state.settings?.accent || "#d9822b",
       onApply: (value) => picker.show(value),
     });
-    const row = $(box).parentElement;
-    const custom = row.querySelector(".accent-custom");
-    (custom || $(box)).after(sharedTool.root);
+    $(box).after(sharedTool.root);
   };
   picker.show = (value) => {
     picker.value = tidyAccent(value);
@@ -243,17 +241,8 @@ function colorPicker(prefix, box, options, firstSwatch, onChange) {
       }
     }
     for (const b of el.children) b.classList.toggle("on", b.dataset.color === picker.value);
-    const a = parseAccent(picker.value) || { from: "#d9822b", to: "" };
-    $(`#set-${prefix}-from`).value = a.from;
-    $(`#set-${prefix}-grad`).checked = !!a.to;
-    if (a.to) $(`#set-${prefix}-to`).value = a.to;
-    $(`#set-${prefix}-to`).disabled = !a.to;
     onChange?.();
     sharedTool?.sync();
-  };
-  picker.custom = () => {
-    const from = $(`#set-${prefix}-from`).value;
-    picker.show($(`#set-${prefix}-grad`).checked ? gradient(from, $(`#set-${prefix}-to`).value) : from);
   };
   return picker;
 }
@@ -295,7 +284,6 @@ function updateOutline() {
   const off = !$("#set-outline").checked;
   for (const el of document.querySelectorAll(".outline-option")) el.classList.toggle("off", off);
   for (const el of document.querySelectorAll(".outline-option input, .outline-option select, .outline-option button")) el.disabled = off;
-  if (!off) $("#set-outline-to").disabled = !$("#set-outline-grad").checked;
   const width = Number($("#set-outline-width").value) || 200;
   const opacity = Number($("#set-outline-opacity").value) || 100;
   $("#set-outline-width-val").textContent = width + " 像素";
@@ -368,7 +356,6 @@ function updateBall() {
   const off = !$("#set-ball").checked;
   for (const el of document.querySelectorAll(".ball-option")) el.classList.toggle("off", off);
   for (const el of document.querySelectorAll(".ball-option input, .ball-option button, .ball-option select")) el.disabled = off;
-  if (!off) $("#set-ball-to").disabled = !$("#set-ball-grad").checked;
   // 还没选过图片时不能选"自定义图片"
   const custom = document.querySelector('input[name="set-ball-icon"][value="custom"]');
   if (!ballImage) {
@@ -651,11 +638,6 @@ export function bindSettings() {
   });
   $("#set-dir").addEventListener("input", updateMigration);
   $("#set-cancel").addEventListener("click", () => closeOverlays());
-  for (const id of ["#set-accent-from", "#set-accent-to", "#set-accent-grad"]) $(id).addEventListener("input", accentColor.custom);
-  for (const id of ["#set-edge-from", "#set-edge-to", "#set-edge-grad"]) $(id).addEventListener("input", edgeColor.custom);
-  for (const id of ["#set-ball-from", "#set-ball-to", "#set-ball-grad"]) $(id).addEventListener("input", ballColor.custom);
-  for (const id of ["#set-find-from", "#set-find-to", "#set-find-grad"]) $(id).addEventListener("input", findColor.custom);
-  for (const id of ["#set-outline-from", "#set-outline-to", "#set-outline-grad"]) $(id).addEventListener("input", outlineColor.custom);
   for (const id of ["#set-outline", "#set-outline-width", "#set-outline-opacity"]) $(id).addEventListener("input", updateOutline);
   for (const id of ["#set-tab-overflow", "#set-tab-fade", "#set-tab-list", "#set-drawer-side", "#set-drawer-width", "#set-tab-groups"]) $(id).addEventListener("input", updateTabOptions);
   $("#set-sel-bar").addEventListener("input", updateSelOptions);

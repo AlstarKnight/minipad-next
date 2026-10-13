@@ -74,7 +74,7 @@ export function applyAccent(value) {
   }
   root.setProperty("--accent", a.from);
   root.setProperty("--accent-end", a.to || a.from);
-  root.setProperty("--accent-grad", a.to ? gradientOf(a.stops, a.deg) : a.from);
+  root.setProperty("--accent-grad", a.to ? gradientOf(a.stops, a.deg, a.positions) : a.from);
   root.setProperty("--accent-soft", `color-mix(in srgb, ${a.from} 16%, transparent)`);
   document.documentElement.classList.toggle("accent-gradient", !!a.to);
   if (a.to) svgGradient(a.stops, a.positions);
