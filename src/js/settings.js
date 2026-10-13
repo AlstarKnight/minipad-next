@@ -17,6 +17,7 @@ import { applyOutlineSettings, outlineVars } from "./outline.js";
 import { applyTabBarSettings } from "./tabbar.js";
 import { ALL_ITEMS, DEFAULT_SEL_ITEMS, itemChecklist, orderedItems } from "./formatbar.js";
 import { renderTabs } from "./tabs.js";
+import { makeSharedColorTools } from "./sharedcolors.js";
 
 const REPO_URL = "https://github.com/AlstarKnight/minipad-next";
 
@@ -216,6 +217,17 @@ export function openSettings() {
 // 强调色和贴边标识的颜色共用。空字符串是第一个色块(默认橙色 / 跟随强调色)
 function colorPicker(prefix, box, options, firstSwatch, onChange) {
   const picker = { value: "" };
+  let sharedTool = null;
+  picker.install = () => {
+    if (sharedTool) return;
+    sharedTool = makeSharedColorTools({
+      getValue: () => picker.value || state.settings?.accent || "#d9822b",
+      onApply: (value) => picker.show(value),
+    });
+    const row = $(box).parentElement;
+    const custom = row.querySelector(".accent-custom");
+    (custom || $(box)).after(sharedTool.root);
+  };
   picker.show = (value) => {
     picker.value = tidyAccent(value);
     const el = $(box);
@@ -237,6 +249,7 @@ function colorPicker(prefix, box, options, firstSwatch, onChange) {
     if (a.to) $(`#set-${prefix}-to`).value = a.to;
     $(`#set-${prefix}-to`).disabled = !a.to;
     onChange?.();
+    sharedTool?.sync();
   };
   picker.custom = () => {
     const from = $(`#set-${prefix}-from`).value;
@@ -577,6 +590,7 @@ function updateMigration() {
 }
 
 export function bindSettings() {
+  for (const picker of [accentColor, edgeColor, findColor, outlineColor, ballColor]) picker.install();
   // 录热键时先停用全局热键,不然按下现在的热键会把窗口藏起来
   const hk = $("#set-hotkey");
   hk.addEventListener("focus", () => {
