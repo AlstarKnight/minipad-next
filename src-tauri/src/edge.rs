@@ -244,7 +244,12 @@ mod tests {
             (-392, 0)
         );
         assert_eq!(
-            hidden_position_with_strip(Edge::Right, win, SCREEN, strip_for("line", false, 8, false)),
+            hidden_position_with_strip(
+                Edge::Right,
+                win,
+                SCREEN,
+                strip_for("line", false, 8, false)
+            ),
             (1912, 0)
         );
     }
