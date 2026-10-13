@@ -14,16 +14,22 @@ export function refreshSharedColors() {
     else live.delete(tool);
   }
 }
-export async function changeSharedPreset(value, remove = false) {
-  const normalized = tidyAccent(value);
-  if (!normalized) throw new Error("颜色格式无效");
-  const old = sharedColorPresets();
-  if (!remove && old.includes(normalized)) return;
-  if (!remove && old.length >= 20) throw new Error("最多保存 20 个颜色预设");
-  const next = remove ? old.filter((c) => c !== normalized) : [...old, normalized];
-  const { saveSettings } = await import("./settings.js");
-  await saveSettings({ ...state.settings, color_presets: next });
-  refreshSharedColors();
+let presetQueue = Promise.resolve();
+export function changeSharedPreset(value, remove = false) {
+  // 在最新保存结果上操作，连续点多个“保存颜色”也不会覆盖之前的预设。
+  const task = presetQueue.then(async () => {
+    const normalized = tidyAccent(value);
+    if (!normalized) throw new Error("颜色格式无效");
+    const old = sharedColorPresets();
+    if (!remove && old.includes(normalized)) return;
+    if (!remove && old.length >= 20) throw new Error("最多保存 20 个颜色预设");
+    const next = remove ? old.filter((c) => c !== normalized) : [...old, normalized];
+    const { saveSettings } = await import("./settings.js");
+    await saveSettings({ ...state.settings, color_presets: next });
+    refreshSharedColors();
+  });
+  presetQueue = task.catch(() => {});
+  return task;
 }
 const make = (tag, cls = "", label = "") => {
   const node = document.createElement(tag);
@@ -181,6 +187,7 @@ export function makeSharedColorTools({ getValue, onApply, defaultColor = "#d9822
   apply.addEventListener("click", () =>
     void Promise.resolve(onApply(value())).then(() => { editor.hidden = true; edit.setAttribute("aria-expanded", "false"); }).catch((e) => toast(String(e))));
   const tool = { root, refreshPresets, sync: () => { if (!editor.hidden) startEditing(); refreshPresets(); } };
+  for (const stale of live) if (!stale.root.isConnected) live.delete(stale);
   live.add(tool);
   refreshPresets();
   return tool;
