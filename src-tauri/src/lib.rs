@@ -55,8 +55,12 @@ pub struct Settings {
     hotkey: String,
     always_on_top: bool,
     edge_hide: bool,
-    /// 贴边隐藏后的样式:arrow 细线 + 箭头 / line 仅细边高亮 / hover 细边 + 悬浮按钮
+    /// arrow 细线+箭头 / arrow-only 只有箭头 / line 仅细线 / hover 悬浮按钮
     edge_style: String,
+    /// 细线粗细，逻辑像素，1..=12
+    edge_line_width: u32,
+    /// 细线占所在窗口边长的百分比，10..=100
+    edge_line_length: u32,
     /// 贴边标识的颜色,写法同 accent;空着跟随强调色
     edge_color: String,
     show_in_taskbar: bool,
@@ -160,6 +164,8 @@ impl Default for Settings {
             always_on_top: true,
             edge_hide: true,
             edge_style: "arrow".into(),
+            edge_line_width: 3,
+            edge_line_length: 100,
             edge_color: String::new(),
             show_in_taskbar: false,
             autostart: false,
@@ -490,7 +496,7 @@ fn persist_settings(app: &AppHandle) {
     }
 }
 
-const EDGE_STYLES: [&str; 3] = ["arrow", "line", "hover"];
+const EDGE_STYLES: [&str; 4] = ["arrow", "line", "hover", "arrow-only"];
 
 /// 颜色(强调色、贴边标识色)只是给界面用的一小段文字,太长或者有奇怪的字符就不要
 fn tidy_color(c: &mut String) {
@@ -553,6 +559,8 @@ fn tidy_settings(s: &mut Settings) {
     if !EDGE_STYLES.contains(&s.edge_style.as_str()) {
         s.edge_style = "arrow".into();
     }
+    s.edge_line_width = s.edge_line_width.clamp(1, 12);
+    s.edge_line_length = s.edge_line_length.clamp(10, 100);
     if !["line", "fill", "border"].contains(&s.tab_style.as_str()) {
         s.tab_style = "line".into();
     }
@@ -986,7 +994,7 @@ fn save_settings(
         let _ = win.set_skip_taskbar(!new.show_in_taskbar);
     }
     // 关掉贴边隐藏或者换了样式(露出的宽度不同),先把窗口放出来
-    if !new.edge_hide || new.edge_style != old.edge_style {
+    if !new.edge_hide || new.edge_style != old.edge_style || new.edge_line_width != old.edge_line_width {
         restore_from_edge(&app, false);
     }
     // 换了笔记文件夹或备份位置,今天就在新地方重新判断要不要备份
@@ -1401,9 +1409,9 @@ fn restore_from_edge(app: &AppHandle, focus: bool) {
 }
 
 /// 露出的宽度按逻辑像素算,换成这块屏幕的物理像素(高分屏上不会变细)
-fn scaled_strip(win: &tauri::WebviewWindow, style: &str, peeking: bool) -> i32 {
+fn scaled_strip(win: &tauri::WebviewWindow, style: &str, peeking: bool, line_width: u32) -> i32 {
     let scale = win.scale_factor().unwrap_or(1.0);
-    (f64::from(edge::strip_for(style, peeking)) * scale).round() as i32
+    (f64::from(edge::strip_for(style, peeking, line_width)) * scale).round() as i32
 }
 
 fn edge_tick(app: &AppHandle) {
@@ -1460,7 +1468,7 @@ fn edge_tick(app: &AppHandle) {
                 edge,
                 rect,
                 mon,
-                scaled_strip(&win, "hover", peek),
+                scaled_strip(&win, "hover", peek, st.settings.lock().unwrap().edge_line_width),
             );
             let _ = win.set_position(PhysicalPosition::new(x, y));
             let _ = app.emit("edge-peek", peek);
@@ -1508,10 +1516,17 @@ fn edge_tick(app: &AppHandle) {
         }
     };
     if let Some((edge, mon)) = ready {
-        let style = st.settings.lock().unwrap().edge_style.clone();
+        let (style, line_width) = {
+            let settings = st.settings.lock().unwrap();
+            (settings.edge_style.clone(), settings.edge_line_width)
+        };
         st.edge.lock().unwrap().peeking = false;
-        let (x, y) =
-            edge::hidden_position_with_strip(edge, rect, mon, scaled_strip(&win, &style, false));
+        let (x, y) = edge::hidden_position_with_strip(
+            edge,
+            rect,
+            mon,
+            scaled_strip(&win, &style, false, line_width),
+        );
         let _ = app.emit("flush", ());
         let _ = app.emit("edge-hidden", edge.name());
         // Windows 给无边框窗口加的阴影会从露出的细边上投到桌面和别的窗口上,缩进去时先关掉
@@ -2117,6 +2132,30 @@ mod tests {
         let old: Settings = serde_json::from_str(r#"{"hotkey":"Ctrl+M"}"#).unwrap();
         assert!(!old.outline_enabled);
         assert_eq!((old.outline_depth, old.outline_width), (3, 200));
+    }
+
+    #[test]
+    fn edge_line_dimensions_are_backward_compatible_and_bounded() {
+        let old: Settings = serde_json::from_str(r#"{"edge_style":"line"}"#).unwrap();
+        assert_eq!(old.edge_line_width, 3);
+        assert_eq!(old.edge_line_length, 100);
+
+        let mut s = Settings {
+            edge_style: "arrow-only".into(),
+            edge_line_width: 0,
+            edge_line_length: 0,
+            ..Settings::default()
+        };
+        tidy_settings(&mut s);
+        assert_eq!(s.edge_style, "arrow-only");
+        assert_eq!(s.edge_line_width, 1);
+        assert_eq!(s.edge_line_length, 10);
+
+        s.edge_line_width = 200;
+        s.edge_line_length = 200;
+        tidy_settings(&mut s);
+        assert_eq!(s.edge_line_width, 12);
+        assert_eq!(s.edge_line_length, 100);
     }
 
     #[test]
