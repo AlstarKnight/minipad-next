@@ -117,7 +117,7 @@ export function findColors(el, value) {
   const tint = (color, p) => `color-mix(in srgb, ${color} ${p}%, transparent)`;
   const mix = (p) => {
     if (!c) return gradientOf([tint("var(--accent)", p), tint("var(--accent-end, var(--accent))", p)]);
-    return c.to ? gradientOf(c.stops.map((x) => tint(x, p)), c.deg) : tint(c.from, p);
+    return c.to ? gradientOf(c.stops.map((x) => tint(x, p)), c.deg, c.positions) : tint(c.from, p);
   };
   el.style.setProperty("--find-soft", mix(30));
   el.style.setProperty("--find-strong", mix(62));
