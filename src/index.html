@@ -8,7 +8,7 @@
 </head>
 <body>
   <header id="bar" data-tauri-drag-region>
-    <button id="btn-book" title="切换笔记本 (Ctrl+B)" aria-haspopup="true" aria-expanded="false"><span id="book-name">默认</span><svg viewBox="0 0 16 16"><path d="M4.5 6.5 8 10l3.5-3.5"/></svg></button>
+    <button id="btn-book" title="默认" aria-label="当前笔记本：默认，点击切换" aria-haspopup="true" aria-expanded="false"><span id="book-icon" aria-hidden="true"></span><span id="book-name" class="visually-hidden">默认</span></button>
     <!-- 标签收进侧拉列表时(设置里选):顶栏只显示当前页的名字,点了拉出页面列表 -->
     <button id="btn-pages" title="页面列表" aria-expanded="false" aria-controls="drawer" hidden>
       <svg viewBox="0 0 16 16"><rect x="2" y="2.5" width="12" height="11" rx="2"/><path d="M6 2.5v11M3.6 5.5h1M3.6 7.8h1"/></svg>
@@ -93,7 +93,7 @@
     <div id="read-error" role="alert" hidden></div>
   </main>
 
-  <footer id="status">
+  <footer id="status" data-tauri-drag-region title="拖动状态栏可移动窗口">
     <span id="st-count"></span>
     <span class="spacer"></span>
     <span id="st-save"></span>
@@ -507,7 +507,36 @@
     <hr />
     <button id="books-new">新建笔记本…</button>
     <button id="books-import">从 minipad2 导入…</button>
-    <div id="books-hint" class="menu-hint">右键笔记本可以改名或删除</div>
+    <button id="books-manage">管理笔记本…</button>
+    <div id="books-hint" class="menu-hint">管理页面可修改笔记本图标和颜色</div>
+  </div>
+
+  <!-- 独立的笔记本管理页面：常用的切换仍在顶栏小菜单里。 -->
+  <div id="book-manager" class="overlay center" hidden>
+    <div class="panel form book-manager-panel" role="dialog" aria-modal="true" aria-labelledby="bm-title">
+      <div class="bm-head">
+        <h2 id="bm-title">笔记本管理</h2>
+        <span class="spacer"></span>
+        <button id="bm-new" class="small">新建笔记本</button>
+        <button id="bm-close" class="icon" aria-label="关闭笔记本管理">×</button>
+      </div>
+      <div class="bm-body">
+        <nav id="bm-list" aria-label="笔记本"></nav>
+        <section id="bm-details" aria-label="笔记本外观">
+          <h3 id="bm-selected">默认</h3>
+          <div class="bm-field-title">选择图标</div>
+          <div id="bm-icons" class="bm-icon-grid" role="radiogroup" aria-label="笔记本图标"></div>
+          <div class="bm-field-title">图标颜色</div>
+          <div id="bm-colors" class="bm-colors" role="radiogroup" aria-label="笔记本图标颜色"></div>
+          <label class="bm-custom-color">自定义 <input id="bm-custom-color" type="color" value="#d9822b" /></label>
+          <div class="bm-actions">
+            <button id="bm-rename" class="small">重命名</button>
+            <button id="bm-delete" class="small danger">删除笔记本</button>
+          </div>
+          <p id="bm-error" class="error" role="alert" hidden></p>
+        </section>
+      </div>
+    </div>
   </div>
 
   <!-- 侧拉的页面列表(标签放不下时选"收进侧拉的页面列表"):标签由 js/tabbar.js 搬进来 -->
