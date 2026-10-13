@@ -1572,11 +1572,14 @@ describe("v0.3.4 picker regressions", () => {
     await settingsPage(p, "look");
     assert.equal(await p.locator("#settings .accent-custom").count(), 0);
     const layout = await p.$eval("#set-accent + .shared-colors", (el) => {
-      const top = (node) => Math.round(node.getBoundingClientRect().top);
-      return [getComputedStyle(el).display, top(el.querySelector(".uc-title")), top(el.querySelector(".uc-presets")), top(el.querySelector(".uc-actions"))];
+      const center = (node) => {
+        const r = node.getBoundingClientRect();
+        return Math.round(r.top + r.height / 2);
+      };
+      return [getComputedStyle(el).display, center(el.querySelector(".uc-title")), center(el.querySelector(".uc-presets")), center(el.querySelector(".uc-actions"))];
     });
     assert.equal(layout[0], "grid", "settings palettes are compact");
-    assert.ok(Math.max(...layout.slice(1)) - Math.min(...layout.slice(1)) < 10, "presets and actions share one row");
+    assert.ok(Math.max(...layout.slice(1)) - Math.min(...layout.slice(1)) < 3, "presets and actions share one row");
     await p.click('#set-accent button[title="蓝色"]');
     assert.equal(await p.$eval("#set-accent .on", (el) => getComputedStyle(el).outlineWidth), "1px");
   });
