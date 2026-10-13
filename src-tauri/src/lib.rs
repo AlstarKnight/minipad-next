@@ -61,6 +61,9 @@ pub struct Settings {
     edge_line_width: u32,
     /// 细线占所在窗口边长的百分比，10..=100
     edge_line_length: u32,
+    /// percent 沿用旧值；px 为固定的逻辑像素长度。
+    edge_line_length_unit: String,
+    edge_line_length_px: u32,
     /// 细线微光效果（默认关闭）
     edge_line_glow: bool,
     /// 贴边标识的颜色,写法同 accent;空着跟随强调色
@@ -170,6 +173,8 @@ impl Default for Settings {
             edge_style: "arrow".into(),
             edge_line_width: edge::LINE_STRIP as u32,
             edge_line_length: 100,
+            edge_line_length_unit: "percent".into(),
+            edge_line_length_px: 120,
             edge_line_glow: false,
             edge_color: String::new(),
             show_in_taskbar: false,
@@ -577,6 +582,10 @@ fn tidy_settings(s: &mut Settings) {
     }
     s.edge_line_width = s.edge_line_width.clamp(1, 12);
     s.edge_line_length = s.edge_line_length.clamp(10, 100);
+    if !["percent", "px"].contains(&s.edge_line_length_unit.as_str()) {
+        s.edge_line_length_unit = "percent".into();
+    }
+    s.edge_line_length_px = s.edge_line_length_px.clamp(24, 600);
     if !["line", "fill", "border"].contains(&s.tab_style.as_str()) {
         s.tab_style = "line".into();
     }
@@ -1489,9 +1498,14 @@ fn edge_tick(app: &AppHandle) {
         (e.hidden, e.peeking, e.monitor)
     };
     if let Some(edge) = hidden {
-        let (style, length) = {
+        let (style, length, unit, fixed_px) = {
             let settings = st.settings.lock().unwrap();
-            (settings.edge_style.clone(), settings.edge_line_length)
+            (
+                settings.edge_style.clone(),
+                settings.edge_line_length,
+                settings.edge_line_length_unit.clone(),
+                settings.edge_line_length_px,
+            )
         };
         let inside = edge::IndicatorHotzone {
             edge,
@@ -1499,6 +1513,8 @@ fn edge_tick(app: &AppHandle) {
             mon,
             style: &style,
             length_percent: length,
+            length_unit: &unit,
+            length_px: fixed_px,
             peeking,
             scale: win.scale_factor().unwrap_or(1.0),
         }
@@ -2214,24 +2230,34 @@ mod tests {
         let old: Settings = serde_json::from_str(r#"{"edge_style":"line"}"#).unwrap();
         assert_eq!(old.edge_line_width, 2);
         assert_eq!(old.edge_line_length, 100);
+        assert_eq!(old.edge_line_length_unit, "percent");
+        assert_eq!(old.edge_line_length_px, 120);
         assert!(!old.edge_line_glow);
 
         let mut s = Settings {
             edge_style: "arrow-only".into(),
             edge_line_width: 0,
             edge_line_length: 0,
+            edge_line_length_unit: "other".into(),
+            edge_line_length_px: 0,
             ..Settings::default()
         };
         tidy_settings(&mut s);
         assert_eq!(s.edge_style, "arrow-only");
         assert_eq!(s.edge_line_width, 1);
         assert_eq!(s.edge_line_length, 10);
+        assert_eq!(s.edge_line_length_unit, "percent");
+        assert_eq!(s.edge_line_length_px, 24);
 
         s.edge_line_width = 200;
         s.edge_line_length = 200;
+        s.edge_line_length_px = 2000;
+        s.edge_line_length_unit = "px".into();
         tidy_settings(&mut s);
         assert_eq!(s.edge_line_width, 12);
         assert_eq!(s.edge_line_length, 100);
+        assert_eq!(s.edge_line_length_px, 600);
+        assert_eq!(s.edge_line_length_unit, "px");
     }
 
     #[test]
