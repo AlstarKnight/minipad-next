@@ -68,7 +68,7 @@ export function applyEdgeAppearance() {
   const c = parseAccent(s.edge_color);
   if (c) {
     root.style.setProperty("--edge-c", c.from);
-    root.style.setProperty("--edge-grad", c.to ? gradientOf(c.stops, c.deg) : c.from);
+    root.style.setProperty("--edge-grad", c.to ? gradientOf(c.stops, c.deg, c.positions) : c.from);
   } else {
     root.style.removeProperty("--edge-c");
     root.style.removeProperty("--edge-grad");
@@ -438,7 +438,7 @@ function updateEdgeLinePreview() {
   preview.classList.toggle("glow", $("#set-edge-glow").checked);
   const picked = edgeColor.value || accentColor.value;
   const col = parseAccent(picked);
-  preview.style.setProperty("--preview-edge-color", col ? (col.to ? gradientOf(col.stops, col.deg) : col.from) : "var(--accent-grad)");
+  preview.style.setProperty("--preview-edge-color", col ? (col.to ? gradientOf(col.stops, col.deg, col.positions) : col.from) : "var(--accent-grad)");
   preview.style.setProperty("--preview-glow-color", col?.from || "var(--accent)");
 }
 
