@@ -1562,6 +1562,67 @@ describe("shared colors and positioned gradients", () => {
   });
 });
 
+describe("v0.3.5 editable color library", () => {
+  ui("built-in solid and gradient colors can be edited without changing colors already in use", {
+    seed: { ...seed({ "": { 页: "正文" } }), settings: { ...SETTINGS, accent: "#3b82f6", color_presets: ["#123abc"] } },
+  }, async (h) => {
+    const { p } = h;
+    await p.click("#btn-settings");
+    await settingsPage(p, "look");
+    const palette = p.locator("#set-accent + .shared-colors");
+    assert.ok(await palette.locator('.uc-swatch[data-color="#123abc"]').isVisible(), "previously saved colors were migrated");
+    const solid = palette.locator('.uc-swatch[data-color="#3b82f6"]');
+    await solid.locator("..").locator(".uc-modify").click();
+    await palette.locator('input[aria-label="节点 1 颜色"]').fill("#abcdef");
+    await palette.locator(".uc-editor .primary").click();
+    await until(async () => (await h.stored())?.settings?.color_library?.includes("#abcdef"), true, "edited solid is persisted");
+    assert.equal(await palette.locator('.uc-swatch[data-color="#3b82f6"]').count(), 0, "old solid preset has gone");
+    assert.equal((await h.stored()).settings.accent, "#3b82f6", "editing the library does not recolor the existing accent");
+
+    const oldGradient = "linear-gradient(135deg, #5fb4ff, #d66cf0)";
+    await palette.locator('.uc-swatch[data-color="' + oldGradient + '"]').locator("..").locator(".uc-modify").click();
+    await palette.locator('input[aria-label="渐变角度"]').fill("210");
+    await palette.locator('input[aria-label="渐变角度"]').dispatchEvent("change");
+    await palette.locator(".uc-editor .uc-actions button").first().click();
+    await palette.locator('input[aria-label="节点 2 颜色"]').fill("#123abc");
+    await palette.locator('input[aria-label="节点 2 位置"]').fill("35");
+    await palette.locator('input[aria-label="节点 2 位置"]').dispatchEvent("change");
+    await palette.locator(".uc-editor .primary").click();
+    const edited = "linear-gradient(210deg, #5fb4ff 0%, #123abc 35%, #d66cf0 100%)";
+    await until(async () => (await h.stored())?.settings?.color_library?.includes(edited), true, "gradient direction and stops are persisted");
+    assert.equal(await palette.locator('.uc-swatch[data-color="' + oldGradient + '"]').count(), 0);
+    await p.reload();
+    await p.click("#btn-settings");
+    await settingsPage(p, "look");
+    assert.ok(await p.locator('#set-accent + .shared-colors .uc-swatch[data-color="' + edited + '"]').isVisible());
+    assert.ok(await p.locator('#set-accent + .shared-colors .uc-swatch[data-color="#123abc"]').isVisible(), "old saved colors remain after migration");
+  });
+
+  ui("deleting the last color survives restart and restoring defaults requires confirmation", {
+    seed: { ...seed({ "": { 页: "正文" } }), settings: { ...SETTINGS, accent: "#123abc", color_library: ["#123abc"] } },
+  }, async (h) => {
+    const { p } = h;
+    await p.click("#btn-settings");
+    await settingsPage(p, "look");
+    const palette = p.locator("#set-accent + .shared-colors");
+    await palette.locator('.uc-swatch[data-color="#123abc"]').locator("..").locator(".uc-delete").click();
+    await until(async () => (await h.stored())?.settings?.color_library, [], "the library can be fully cleared");
+    assert.equal(await palette.locator(".uc-swatch").count(), 0);
+    assert.equal((await h.stored()).settings.accent, "#123abc", "deleting a preset does not change the applied color");
+    await p.reload();
+    await p.click("#btn-settings");
+    await settingsPage(p, "look");
+    const reopened = p.locator("#set-accent + .shared-colors");
+    assert.equal(await reopened.locator(".uc-swatch").count(), 0, "empty custom library does not restore built-ins");
+    await reopened.locator(":scope > .uc-actions button").first().click();
+    await reopened.locator(".uc-reset").click();
+    assert.ok(await p.isVisible("#dialog"), "reset needs confirmation");
+    await p.click("#dialog-ok");
+    await until(async () => (await h.stored())?.settings?.color_library?.length > 10, true, "default color library restored");
+    assert.ok(await reopened.locator('.uc-swatch[data-color="#3b82f6"]').isVisible());
+  });
+});
+
 describe("v0.3.4 picker regressions", () => {
   ui("positioned accents keep CSS gradient positions and a subtle selected swatch", {
     seed: { ...seed({ "": { 页: "文字" } }), settings: { ...SETTINGS, accent: "linear-gradient(90deg, #112233 0%, #445566 21%, #778899 100%)" } },
