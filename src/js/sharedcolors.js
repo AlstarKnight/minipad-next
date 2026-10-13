@@ -291,15 +291,20 @@ export function makeSharedColorTools({ getValue, onApply, defaultColor = "#d9822
           .catch((err) => toast(String(err)));
       });
       swatch.title += "；双击或右键编辑，F2 键也可编辑";
-      swatch.addEventListener("dblclick", () => openEditor(color, color));
+      const editColor = () => {
+        if (!buttons.classList.contains("expanded")) expand(true);
+        openEditor(color, color);
+      };
+      swatch.addEventListener("dblclick", editColor);
       swatch.addEventListener("contextmenu", (e) => {
         e.preventDefault();
-        if (buttons.classList.contains("expanded")) openEditor(color, color);
+        e.stopPropagation();
+        editColor();
       });
       swatch.addEventListener("keydown", (e) => {
-        if (e.key === "F2" && buttons.classList.contains("expanded")) {
+        if (e.key === "F2") {
           e.preventDefault();
-          openEditor(color, color);
+          editColor();
         }
       });
       const remove = make("button", "uc-delete", "×");
