@@ -1533,7 +1533,7 @@ describe("theme and accent", () => {
     });
     assert.equal(line[0], 198, "line covers 45% of 440px");
     assert.equal(line[1], 7, "line remains 7px thick despite glow visibility");
-    assert.match(line[2], /rgba?\(/, "line has a glow shadow");
+    assert.match(line[2], /(?:rgba?\(|color\(srgb)/, "line has a glow shadow");
     await p.evaluate(() => window.__mockEmit("edge-shown"));
     await p.click("#btn-settings");
     await settingsPage(p, "window");
@@ -1557,7 +1557,7 @@ describe("theme and accent", () => {
     assert.deepEqual(await mark(), [425, 0, 15, 540], "hover mode has enough room for line glow");
     await p.evaluate(() => window.__mockEmit("edge-peek", true));
     const glow = await p.$eval("#edge-expand", (b) => getComputedStyle(b).boxShadow);
-    assert.match(glow, /rgba?\(/, "hover reveal button has a glow");
+    assert.match(glow, /(?:rgba?\(|color\(srgb)/, "hover reveal button has a glow");
     await p.evaluate(() => window.__mockEmit("edge-shown"));
   });
 
