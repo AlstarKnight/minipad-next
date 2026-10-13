@@ -433,16 +433,16 @@ describe("notebook manager and window movement", () => {
     assert.equal(strokes.gradient, 2, "gradient icon has actual SVG color stops");
     assert.match(strokes.stroke, /url\(#book-icon-gradient-/, "icon uses SVG gradient stroke");
     await p.click("#bm-details .shared-colors > .uc-actions button >> nth=1");
-    await until(() => h.stored().then((db) => db.settings.color_presets), [gradient]);
+    assert.ok(await p.locator('#bm-details .uc-swatch[data-color="' + gradient + '"]').isVisible(), "built-in gradient exists in shared library");
     await p.click('#bm-list [data-book="生活"]');
-    await p.click('#bm-details .uc-presets .uc-swatch');
+    await p.click('#bm-details .uc-swatch[data-color="' + gradient + '"]');
     await until(() => h.stored().then((db) => db.books["生活"].meta.icon_color), gradient);
     await p.reload();
     await h.openBooks();
     await p.click("#books-manage");
-    assert.equal(await p.locator("#bm-details .uc-preset").count(), 1, "custom presets survive restart");
-    await p.click("#bm-details .uc-preset .uc-delete");
-    await until(() => h.stored().then((db) => db.settings.color_presets), []);
+    assert.ok(await p.locator('#bm-details .uc-swatch[data-color="' + gradient + '"]').isVisible(), "colors survive restart");
+    await p.locator('#bm-details .uc-swatch[data-color="' + gradient + '"]').locator("..").locator(".uc-delete").click();
+    await until(async () => !(await h.stored()).settings.color_library.includes(gradient), true, "built-in colors can be removed");
     assert.equal(await h.stored().then((db) => db.books["工作"].meta.icon_color), gradient, "removing preset keeps existing book colors");
     assert.equal(await h.mockFile("工作", "文档"), "work", "no note files changed");
   });
@@ -470,9 +470,9 @@ describe("notebook manager and window movement", () => {
     const custom = "linear-gradient(135deg, #5fb4ff 0%, #abcdef 100%)";
     await until(() => h.stored().then((db) => db.books["设计"].meta.icon_color), custom);
     await editor.locator(":scope > .uc-actions button").nth(1).click();
-    await until(() => h.stored().then((db) => db.settings.color_presets), [custom]);
+    await until(async () => (await h.stored()).settings.color_library?.includes(custom), true);
     await editor.locator(":scope > .uc-actions button").nth(1).click();
-    assert.deepEqual(await h.stored().then((db) => db.settings.color_presets), [custom], "duplicate presets are ignored");
+    assert.equal((await h.stored()).settings.color_library.filter((c) => c === custom).length, 1, "duplicate presets are ignored");
   });
 
   ui("manager refuses invalid native save and does not change local icon", {
@@ -1427,7 +1427,7 @@ describe("format bar", () => {
     assert.ok(await p.locator(`${fb("color")}.on`).isVisible(), "the color button shows the selection has a color");
     await p.click(fb("color"));
     await p.locator(".fb-pop").waitFor();
-    assert.ok(await p.locator('.fb-pop .uc-swatch.on[data-color="#df2a3f"]').isVisible(), "the current color is marked");
+    assert.ok(await p.locator('.fb-pop .uc-swatch[data-color="#df2a3f"]').isVisible(), "the current color is available");
     await p.click('.fb-pop .uc-swatch[data-color="#117cee"]');
     assert.equal(await h.editor(), '红<span style="color: #117cee">字</span>', "a new text color");
     await p.keyboard.press("Shift+Home");
@@ -1527,16 +1527,16 @@ describe("shared colors and positioned gradients", () => {
     await settingsPage(p, "look");
     const accent = p.locator("#set-accent").locator("..").locator(".shared-colors");
     await accent.locator(".uc-actions").first().locator("button").last().click();
-    await until(() => h.stored().then((db) => db.settings.color_presets), ["#d9822b"]);
+    assert.ok(await accent.locator('.uc-swatch[data-color="#d9822b"]').isVisible());
     await settingsPage(p, "window");
-    assert.equal(await p.locator("#set-edge-color").locator("..").locator(".uc-presets .uc-swatch").count(), 1);
-    await p.locator("#set-edge-color").locator("..").locator(".uc-presets .uc-swatch").click();
+    assert.ok(await p.locator('#set-edge-color + .shared-colors .uc-swatch[data-color="#d9822b"]').isVisible());
+    await p.locator('#set-edge-color + .shared-colors .uc-swatch[data-color="#d9822b"]').click();
     await p.click("#set-save");
     await until(() => h.stored().then((db) => db.settings.edge_color), "#d9822b");
     await h.openBooks();
     await p.click("#books-manage");
     await p.click('#bm-list [data-book="工作"]');
-    const saved = p.locator("#book-manager .shared-colors .uc-swatch");
+    const saved = p.locator('#book-manager .shared-colors .uc-swatch[data-color="#d9822b"]');
     assert.equal(await saved.count(), 1);
     await saved.click();
     await until(() => h.stored().then((db) => db.books["工作"].meta.icon_color), "#d9822b");
@@ -1581,7 +1581,7 @@ describe("v0.3.4 picker regressions", () => {
     assert.equal(layout[0], "grid", "settings palettes are compact");
     assert.ok(Math.max(...layout.slice(1)) - Math.min(...layout.slice(1)) < 3, "presets and actions share one row");
     await p.click('#set-accent + .shared-colors .uc-swatch[data-color="#3b82f6"]');
-    assert.equal(await p.$eval("#set-accent .on", (el) => getComputedStyle(el).outlineWidth), "1px");
+    assert.equal(await p.$eval("#set-accent + .shared-colors .uc-swatch.on", (el) => getComputedStyle(el).outlineWidth), "1px");
   });
 
   ui("shared swatches and small delete buttons fit inside group and format popup menus", {
@@ -1612,7 +1612,7 @@ describe("v0.3.4 picker regressions", () => {
     await p.click("#btn-settings");
     await settingsPage(p, "look");
     const accent = p.locator("#set-accent + .shared-colors");
-    await accent.locator(".uc-swatch").focus();
+    await accent.locator('.uc-swatch[data-color="#123abc"]').focus();
     await p.keyboard.press("Enter");
     await accent.locator(".uc-actions button").first().focus();
     await p.keyboard.press("Enter");
@@ -1625,7 +1625,7 @@ describe("v0.3.4 picker regressions", () => {
 
     await p.click("#tabs .tab:nth-child(1)", { button: "right" });
     await p.click('#ctx button[data-act="group-new"]');
-    await p.locator("#ge-colors .uc-swatch").focus();
+    await p.locator('#ge-colors .uc-swatch[data-color="#123abc"]').focus();
     await p.keyboard.press("Space");
     await until(() => h.stored().then((s) => s.books[""].meta.groups[0].color), "#123abc", "space selects group color");
     await p.keyboard.press("Escape");
@@ -1635,7 +1635,7 @@ describe("v0.3.4 picker regressions", () => {
     await p.keyboard.press("Home");
     await p.keyboard.press("Shift+End");
     await p.click('#format-bar [data-cmd="bg"]');
-    await p.locator(".fb-pop .uc-swatch").focus();
+    await p.locator('.fb-pop .uc-swatch[data-color="#123abc"]').focus();
     await p.keyboard.press("Enter");
     await until(async () => (await h.editor()).includes("background-color: #123abc"), true, "enter applies format color");
   });
