@@ -53,7 +53,8 @@ export function applyEdgeAppearance() {
   const style = EDGE_STYLES.includes(s.edge_style) ? s.edge_style : "arrow";
   root.dataset.edgeStyle = style;
   const peeking = style === "hover" && root.dataset.edgePeek === "on";
-  const strip = peeking ? EDGE_PEEK_STRIP : style === "arrow" || style === "arrow-only" ? EDGE_ARROW_STRIP : edgeWidth(s);
+  const lineStrip = s.edge_line_glow ? Math.max(10, edgeWidth(s)) : edgeWidth(s);
+  const strip = peeking ? EDGE_PEEK_STRIP : style === "arrow" || style === "arrow-only" ? EDGE_ARROW_STRIP : lineStrip;
   root.style.setProperty("--edge-peek", strip + "px");
   root.style.setProperty("--edge-line-width", edgeWidth(s) + "px");
   root.style.setProperty("--edge-line-length", edgeLength(s) + "%");
@@ -125,7 +126,7 @@ export function openSettings() {
   $("#set-edge-style").value = EDGE_STYLES.includes(s.edge_style) ? s.edge_style : "arrow";
   $("#set-edge-line-width").value = edgeWidth(s);
   $("#set-edge-line-length").value = edgeLength(s);
-  $("#set-edge-line-glow").checked = !!s.edge_line_glow;
+  $("#set-edge-glow").checked = !!s.edge_line_glow;
   edgeColor.show(s.edge_color || "");
   $("#set-taskbar").checked = s.show_in_taskbar;
   $("#set-autostart").checked = s.autostart;
@@ -393,7 +394,7 @@ function updateEdgeLinePreview() {
   const preview = $("#set-edge-line-preview");
   preview.style.setProperty("--edge-line-width", width + "px");
   preview.style.setProperty("--edge-line-length", length + "%");
-  preview.classList.toggle("glow", $("#set-edge-line-glow").checked);
+  preview.classList.toggle("glow", $("#set-edge-glow").checked);
   const picked = edgeColor.value || accentColor.value;
   const col = parseAccent(picked);
   preview.style.setProperty("--preview-edge-color", col ? (col.to ? gradientOf(col.stops, col.deg) : col.from) : "var(--accent-grad)");
@@ -451,7 +452,7 @@ async function submitSettings() {
     edge_style: $("#set-edge-style").value,
     edge_line_width: Number($("#set-edge-line-width").value) || 2,
     edge_line_length: Number($("#set-edge-line-length").value) || 100,
-    edge_line_glow: $("#set-edge-line-glow").checked,
+    edge_line_glow: $("#set-edge-glow").checked,
     edge_color: edgeColor.value,
     ball_enabled: $("#set-ball").checked,
     ball_size: Number($("#set-ball-size").value) || 48,
@@ -595,7 +596,7 @@ export function bindSettings() {
   $("#set-nav-pos").addEventListener("change", () => applyNavPos($("#set-nav-pos").value));
   $("#set-edge").addEventListener("change", updateEdgeOptions);
   $("#set-edge-style").addEventListener("change", updateEdgeOptions);
-  for (const id of ["#set-edge-line-width", "#set-edge-line-length", "#set-edge-line-glow"]) $(id).addEventListener("input", updateEdgeLinePreview);
+  for (const id of ["#set-edge-line-width", "#set-edge-line-length", "#set-edge-glow"]) $(id).addEventListener("input", updateEdgeLinePreview);
   $("#set-dir").addEventListener("input", updateMigration);
   $("#set-cancel").addEventListener("click", () => closeOverlays());
   for (const id of ["#set-accent-from", "#set-accent-to", "#set-accent-grad"]) $(id).addEventListener("input", accentColor.custom);
