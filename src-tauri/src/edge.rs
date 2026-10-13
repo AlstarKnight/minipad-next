@@ -6,14 +6,16 @@ pub const ARROW_STRIP: i32 = 18;
 pub const LINE_STRIP: i32 = 2;
 /// 鼠标靠近时展开悬浮按钮所需的宽度。
 pub const PEEK_STRIP: i32 = 32;
+/// 开启微光时至少露出 10px，避免阴影在屏幕外被裁掉。
+pub const GLOW_STRIP: i32 = 10;
 
-/// 按样式、悬浮状态和自定义细线宽度计算露出的逻辑像素。
-/// 细线宽度限制在 1..=12，与设置校验范围一致。
-pub fn strip_for(style: &str, peeking: bool, line_width: u32) -> i32 {
+/// 按样式、悬浮状态、自定义宽度与微光状态计算露出的逻辑像素。
+pub fn strip_for(style: &str, peeking: bool, line_width: u32, glow: bool) -> i32 {
     let width = line_width.clamp(1, 12) as i32;
     match (style, peeking) {
         ("arrow" | "arrow-only", _) => ARROW_STRIP,
         ("hover", true) => PEEK_STRIP,
+        _ if glow => width.max(GLOW_STRIP),
         _ => width,
     }
 }
@@ -199,14 +201,14 @@ mod tests {
 
     #[test]
     fn each_style_leaves_its_own_strip_on_all_edges() {
-        assert_eq!(strip_for("line", false, 3), LINE_STRIP);
-        assert_eq!(strip_for("line", true, 3), LINE_STRIP);
-        assert_eq!(strip_for("arrow", false, 3), ARROW_STRIP);
-        assert_eq!(strip_for("arrow-only", false, 3), ARROW_STRIP);
-        assert_eq!(strip_for("hover", false, 3), LINE_STRIP);
-        assert_eq!(strip_for("hover", true, 3), PEEK_STRIP);
+        assert_eq!(strip_for("line", false, 3, false), LINE_STRIP);
+        assert_eq!(strip_for("line", true, 3, false), LINE_STRIP);
+        assert_eq!(strip_for("arrow", false, 3, false), ARROW_STRIP);
+        assert_eq!(strip_for("arrow-only", false, 3, false), ARROW_STRIP);
+        assert_eq!(strip_for("hover", false, 3, false), LINE_STRIP);
+        assert_eq!(strip_for("hover", true, 3, false), PEEK_STRIP);
         let win = Rect::new(300, 0, 400, 500);
-        let s = strip_for("hover", true, 3);
+        let s = strip_for("hover", true, 3, false);
         assert_eq!(
             hidden_position_with_strip(Edge::Top, win, SCREEN, s),
             (300, -500 + s)
@@ -224,27 +226,38 @@ mod tests {
     #[test]
     fn configurable_thickness_changes_exposed_width_without_affecting_arrow_modes() {
         for width in [1, 4, 8, 12] {
-            assert_eq!(strip_for("line", false, width), width as i32);
-            assert_eq!(strip_for("hover", false, width), width as i32);
-            assert_eq!(strip_for("hover", true, width), PEEK_STRIP);
-            assert_eq!(strip_for("arrow", false, width), ARROW_STRIP);
-            assert_eq!(strip_for("arrow-only", false, width), ARROW_STRIP);
+            assert_eq!(strip_for("line", false, width, false), width as i32);
+            assert_eq!(strip_for("hover", false, width, false), width as i32);
+            assert_eq!(strip_for("hover", true, width, false), PEEK_STRIP);
+            assert_eq!(strip_for("arrow", false, width, false), ARROW_STRIP);
+            assert_eq!(strip_for("arrow-only", false, width, false), ARROW_STRIP);
         }
-        assert_eq!(strip_for("line", false, 0), 1);
-        assert_eq!(strip_for("line", false, 100), 12);
+        assert_eq!(strip_for("line", false, 0, false), 1);
+        assert_eq!(strip_for("line", false, 100, false), 12);
         let win = Rect::new(300, 0, 400, 500);
         assert_eq!(
-            hidden_position_with_strip(Edge::Top, win, SCREEN, strip_for("line", false, 8)),
+            hidden_position_with_strip(Edge::Top, win, SCREEN, strip_for("line", false, 8, false)),
             (300, -492)
         );
         assert_eq!(
-            hidden_position_with_strip(Edge::Left, win, SCREEN, strip_for("line", false, 8)),
+            hidden_position_with_strip(Edge::Left, win, SCREEN, strip_for("line", false, 8, false)),
             (-392, 0)
         );
         assert_eq!(
-            hidden_position_with_strip(Edge::Right, win, SCREEN, strip_for("line", false, 8)),
+            hidden_position_with_strip(Edge::Right, win, SCREEN, strip_for("line", false, 8, false)),
             (1912, 0)
         );
+    }
+
+    #[test]
+    fn glow_has_enough_visible_space_for_each_mode() {
+        assert_eq!(strip_for("line", false, 2, true), GLOW_STRIP);
+        assert_eq!(strip_for("line", false, 12, true), 12);
+        assert_eq!(strip_for("hover", false, 2, true), GLOW_STRIP);
+        assert_eq!(strip_for("hover", true, 2, true), PEEK_STRIP);
+        assert_eq!(strip_for("arrow", false, 2, true), ARROW_STRIP);
+        assert_eq!(strip_for("arrow-only", false, 2, true), ARROW_STRIP);
+        assert_eq!(strip_for("line", false, 2, false), LINE_STRIP);
     }
 
     #[test]
