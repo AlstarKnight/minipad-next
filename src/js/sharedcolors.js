@@ -3,7 +3,7 @@
 import { state } from "./state.js";
 import { ACCENTS, GRADIENTS, parseAccent, tidyAccent, gradientOf } from "./accent.js";
 import { TEXT_COLORS, TEXT_GRADIENTS, BG_COLORS } from "./colors.js";
-import { toast } from "./ui.js";
+import { toast, ask } from "./ui.js";
 
 // 首次使用的颜色库汇集 0.3.4 各个入口的预设；之后完全由用户列表决定。
 export const DEFAULT_COLORS = [...new Set([
@@ -262,10 +262,11 @@ export function makeSharedColorTools({ getValue, onApply, defaultColor = "#d9822
     }).catch((e) => toast(String(e)));
   });
   reset.addEventListener("click", () =>
-    void resetSharedPresets().then(() => {
-      editor.hidden = true; editingPreset = null; edit.setAttribute("aria-expanded", "false");
-      toast("已恢复默认颜色库");
-    }).catch((e) => toast(String(e))));
+    void ask("确定恢复默认颜色库？自己添加或编辑的预设将从颜色库中移除，已经使用的颜色不会改变。", "恢复默认", true)
+      .then((confirmed) => confirmed && resetSharedPresets().then(() => {
+        editor.hidden = true; editingPreset = null; edit.setAttribute("aria-expanded", "false");
+        toast("已恢复默认颜色库");
+      })).catch((e) => toast(String(e))));
   const tool = { root, refreshPresets, sync: () => { if (!editor.hidden && !editingPreset) startEditing(); refreshPresets(); } };
   for (const stale of live) if (!stale.root.isConnected) live.delete(stale);
   live.add(tool);
