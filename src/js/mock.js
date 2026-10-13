@@ -350,6 +350,9 @@ export function mockApi() {
     pause_hotkey: () => {},
     resume_hotkey: () => {},
     note_activity: () => {},
+    start_window_drag: () => {
+      if (window.__mockControl) window.__mockControl.dragStarted = (window.__mockControl.dragStarted || 0) + 1;
+    },
     // 测试可以用 __mockControl.pickFolder 指定"选中"的文件夹
     pick_folder: ({ title }) => {
       if (window.__mockControl && has(window.__mockControl, "pickFolder")) return window.__mockControl.pickFolder;
