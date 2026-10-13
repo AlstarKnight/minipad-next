@@ -166,7 +166,7 @@ impl Default for Settings {
             always_on_top: true,
             edge_hide: true,
             edge_style: "arrow".into(),
-            edge_line_width: 2,
+            edge_line_width: edge::LINE_STRIP as u32,
             edge_line_length: 100,
             edge_line_glow: false,
             edge_color: String::new(),
