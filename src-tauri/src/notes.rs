@@ -535,7 +535,10 @@ pub fn normalized_book_color(value: &str) -> Option<String> {
             *stop = format!("{stop} {percent}%");
         }
     }
-    Some(format!("linear-gradient({degrees}deg, {})", stops.join(", ")))
+    Some(format!(
+        "linear-gradient({degrees}deg, {})",
+        stops.join(", ")
+    ))
 }
 
 /// 笔记本图标与颜色独立保存在对应的 .minipad.json，改页面顺序不会覆盖它。
@@ -1069,9 +1072,8 @@ mod tests {
 
     #[test]
     fn positioned_gradient_stops_roundtrip_and_validate() {
-        let actual = normalized_book_color(
-            "linear-gradient(90deg, #AABBCC 0%, #112233 45%, #445566 100%)",
-        );
+        let actual =
+            normalized_book_color("linear-gradient(90deg, #AABBCC 0%, #112233 45%, #445566 100%)");
         assert_eq!(
             actual.as_deref(),
             Some("linear-gradient(90deg, #aabbcc 0%, #112233 45%, #445566 100%)")
