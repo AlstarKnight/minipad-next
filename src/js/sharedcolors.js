@@ -212,6 +212,7 @@ export function makeSharedColorTools({ getValue, onApply, defaultColor = "#d9822
       const swatch = make("button", "uc-swatch");
       swatch.dataset.color = color;
       swatch.type = "button";
+      swatch.classList.toggle("on", color === current());
       swatch.title = "使用 " + color;
       swatch.setAttribute("aria-label", "使用保存的颜色 " + color);
       swatch.style.background = color;
