@@ -8,7 +8,7 @@ import { mutate } from "./sync.js";
 import { rememberView, showNote } from "./page.js";
 import { renderTabs, ensurePage, removeNote } from "./tabs.js";
 import { BOOK_ICONS, bookIcon, iconColor } from "./bookicons.js";
-import { GRADIENTS, gradientOf, tidyAccent } from "./accent.js";
+import { tidyAccent } from "./accent.js";
 import { makeSharedColorTools } from "./sharedcolors.js";
 
 // 为了"移到笔记本…"打开列表时是要移动的页面,平时是 null
@@ -16,8 +16,6 @@ let moving = null;
 let selectedBook = null;
 let appearanceBusy = false;
 let notebookColorEditor = null;
-const BOOK_COLORS = ["", "#d9822b", "#e76f51", "#e0b348", "#5fb4ff", "#9384df", "#67ad87", "#db75a8", "#a5a5ad"];
-const BOOK_GRADIENTS = GRADIENTS.map((g) => ({ name: g.name + "渐变", value: gradientOf(g.stops) }));
 // 列表里的按钮 -> 笔记本
 const itemBook = new WeakMap();
 

@@ -6,7 +6,7 @@ import { $ } from "./dom.js";
 import { state, book } from "./state.js";
 import { scheduleMeta } from "./save.js";
 import { renderTabs, newNote } from "./tabs.js";
-import { GRADIENTS, gradientOf, parseAccent, tidyAccent } from "./accent.js";
+import { gradientOf, parseAccent, tidyAccent } from "./accent.js";
 import { makeSharedColorTools } from "./sharedcolors.js";
 
 // 分组的颜色,和 Edge 的差不多
@@ -21,9 +21,6 @@ export const GROUP_COLORS = [
   ["青色", "#2fa8b8"],
   ["橙色", "#e8833a"],
 ];
-
-// 分组的渐变色:和强调色同一套
-export const GROUP_GRADIENTS = GRADIENTS.map((g) => [g.name, gradientOf(g.stops, 90)]);
 
 // 分组的颜色放到元素上:--g 是纯色(渐变取起点),--g-grad 是整条颜色(纯色或渐变),
 // --g-soft / --g-soft2 / --g-tint 是淡一些的同样的颜色(分组名字的底色、鼠标移上去、整个标签染色)
@@ -219,7 +216,7 @@ export function openGroupEditor(g, { focusName = false } = {}) {
     $("#ge-name").focus();
     $("#ge-name").select();
   } else {
-    box.querySelector(".ge-color.on")?.focus();
+    box.querySelector(".uc-swatch.on, .uc-swatch")?.focus();
   }
 }
 

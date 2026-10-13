@@ -4,7 +4,7 @@
 import { $prose, Plugin, commandsCtx, undo, redo, liftListItem, TextSelection, wrapInOrderedListCommand, wrapInBulletListCommand, turnIntoTextCommand, wrapInHeadingCommand } from "../vendor/milkdown.js";
 import { BUTTONS, headingLevel } from "./toolbar.js";
 import { openMenu, closeMenu } from "./ui.js";
-import { TEXT_COLORS, TEXT_GRADIENTS, BG_COLORS, setColor, colorAt } from "./colors.js";
+import { setColor, colorAt } from "./colors.js";
 import { parseAccent } from "./accent.js";
 import { makeSharedColorTools } from "./sharedcolors.js";
 
@@ -97,8 +97,8 @@ const ITEMS = [
   { ...byId.strike, inline: true },
   { ...byId.code, inline: true },
   { ...byId.link, inline: true },
-  { id: "color", label: ICON.color, title: "字体颜色", inline: true, palette: { mark: "text_color", colors: TEXT_COLORS, gradients: TEXT_GRADIENTS, none: "默认颜色" } },
-  { id: "bg", label: ICON.bg, title: "背景颜色", inline: true, palette: { mark: "text_bg", colors: BG_COLORS, none: "无背景" } },
+  { id: "color", label: ICON.color, title: "字体颜色", inline: true, palette: { mark: "text_color", none: "默认颜色" } },
+  { id: "bg", label: ICON.bg, title: "背景颜色", inline: true, palette: { mark: "text_bg", none: "无背景" } },
   { sep: true, id: "sep3", title: "竖线分隔" },
   { ...byId.list, title: "列表", active: listActive("bullet_list"), run: toggleList("bullet_list", wrapInBulletListCommand) },
   { id: "ol", label: ICON.ol, title: "编号列表", active: listActive("ordered_list"), run: toggleList("ordered_list", wrapInOrderedListCommand) },
@@ -281,7 +281,7 @@ class Bar {
     this.popFor = null;
   }
 
-  paletteMenu(btn, { mark, colors, gradients, none }) {
+  paletteMenu(btn, { mark, none }) {
     const pick = (value) => {
       this.closePop();
       setColor(this.view, mark, value);
