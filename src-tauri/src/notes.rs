@@ -484,6 +484,33 @@ pub fn save_book_meta(
     write_meta(&dir, &meta)
 }
 
+/// 仅接受纯色或与应用强调色一致的安全渐变写法，绝不信任任意 CSS。
+pub fn normalized_book_color(value: &str) -> Option<String> {
+    let value = value.trim();
+    let valid_hex = |s: &str| {
+        s.len() == 7
+            && s.starts_with('#')
+            && s[1..].bytes().all(|b| b.is_ascii_hexdigit())
+    };
+    if valid_hex(value) {
+        return Some(value.to_ascii_lowercase());
+    }
+    let body = value.strip_prefix("linear-gradient(")?.strip_suffix(')')?;
+    let (degrees, colors) = body.split_once("deg,")?;
+    let degrees = degrees.trim().parse::<u16>().ok()?;
+    if degrees > 360 {
+        return None;
+    }
+    let stops: Vec<_> = colors.split(',').map(str::trim).collect();
+    if !(2..=7).contains(&stops.len()) || !stops.iter().all(|s| valid_hex(s)) {
+        return None;
+    }
+    Some(format!(
+        "linear-gradient({degrees}deg, {})",
+        stops.join(", ").to_ascii_lowercase()
+    ))
+}
+
 /// 笔记本图标与颜色独立保存在对应的 .minipad.json，改页面顺序不会覆盖它。
 pub fn set_book_appearance(root: &Path, book: &str, icon: &str, color: &str) -> Result<(), String> {
     const ICONS: [&str; 8] = [
@@ -499,13 +526,12 @@ pub fn set_book_appearance(root: &Path, book: &str, icon: &str, color: &str) -> 
     if !ICONS.contains(&icon) {
         return Err("不支持的笔记本图标".into());
     }
-    if !color.is_empty()
-        && !(color.len() == 7
-            && color.starts_with('#')
-            && color[1..].bytes().all(|b| b.is_ascii_hexdigit()))
-    {
-        return Err("图标颜色必须是 #RRGGBB".into());
-    }
+    let normalized = if color.is_empty() {
+        String::new()
+    } else {
+        normalized_book_color(color)
+            .ok_or("图标颜色必须是 #RRGGBB 或有效的 linear-gradient 渐变")?
+    };
     let dir = book_dir(root, book)?;
     if !dir.is_dir() {
         return Err(format!(
@@ -526,7 +552,7 @@ pub fn set_book_appearance(root: &Path, book: &str, icon: &str, color: &str) -> 
     } else {
         icon.into()
     };
-    meta.icon_color = color.to_ascii_lowercase();
+    meta.icon_color = normalized;
     write_meta(&dir, &meta)
 }
 
@@ -1011,6 +1037,34 @@ mod tests {
         assert_eq!(read_meta(&root.join("工作")).icon, "briefcase");
         set_book_appearance(&root, "工作", "star", "").unwrap();
         assert_eq!(load_book(&root, "工作").unwrap().icon, "star");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn notebook_gradient_color_round_trip_and_invalid_css_rejected() {
+        let root = temp_dir("book-gradient");
+        fs::create_dir_all(root.join("工作")).unwrap();
+        let color = "linear-gradient(135deg, #5FB4FF, #D66CF0)";
+        set_book_appearance(&root, "工作", "star", color).unwrap();
+        let b = load_book(&root, "工作").unwrap();
+        assert_eq!(
+            b.icon_color,
+            "linear-gradient(135deg, #5fb4ff, #d66cf0)"
+        );
+        for invalid in [
+            "linear-gradient(135deg, red, blue)",
+            "linear-gradient(999deg, #5fb4ff, #d66cf0)",
+            "linear-gradient(135deg, #5fb4ff, url(x))",
+            "linear-gradient(135deg, #5fb4ff)",
+            "#12345",
+            "javascript:alert(1)",
+        ] {
+            assert!(set_book_appearance(&root, "工作", "star", invalid).is_err());
+            assert_eq!(
+                load_book(&root, "工作").unwrap().icon_color,
+                "linear-gradient(135deg, #5fb4ff, #d66cf0)"
+            );
+        }
         fs::remove_dir_all(root).unwrap();
     }
 
