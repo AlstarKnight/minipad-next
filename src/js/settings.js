@@ -391,7 +391,6 @@ function updateEdgeOptions() {
     el.hidden = onlyArrow;
     for (const input of el.querySelectorAll("input")) input.disabled = off || onlyArrow;
   }
-  if (!off) $("#set-edge-to").disabled = !$("#set-edge-grad").checked;
   updateEdgeLinePreview();
 }
 

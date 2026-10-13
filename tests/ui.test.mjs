@@ -1536,8 +1536,9 @@ describe("shared colors and positioned gradients", () => {
     await h.openBooks();
     await p.click("#books-manage");
     await p.click('#bm-list [data-book="工作"]');
-    assert.equal(await p.locator("#bm-saved-colors .bm-saved-item").count(), 1);
-    await p.click('#bm-saved-colors [data-color="#d9822b"]');
+    const saved = p.locator("#book-manager .shared-colors .uc-swatch");
+    assert.equal(await saved.count(), 1);
+    await saved.click();
     await until(() => h.stored().then((db) => db.books["工作"].meta.icon_color), "#d9822b");
   });
 
@@ -1566,7 +1567,7 @@ describe("v0.3.4 picker regressions", () => {
     seed: { ...seed({ "": { 页: "文字" } }), settings: { ...SETTINGS, accent: "linear-gradient(90deg, #112233 0%, #445566 21%, #778899 100%)" } },
   }, async ({ p }) => {
     assert.equal(await p.evaluate(() => document.documentElement.style.getPropertyValue("--accent-grad")), "linear-gradient(90deg, #112233 0%, #445566 21%, #778899 100%)");
-    assert.deepEqual(await p.$eval("#accent-svg-grad stop", (nodes) => nodes.map((x) => x.getAttribute("offset"))), ["0%", "21%", "100%"]);
+    assert.deepEqual(await p.$$eval("#accent-svg-grad stop", (nodes) => nodes.map((x) => x.getAttribute("offset"))), ["0%", "21%", "100%"]);
     await p.click("#btn-settings");
     await settingsPage(p, "look");
     assert.equal(await p.locator("#settings .accent-custom").count(), 0);
@@ -1587,10 +1588,12 @@ describe("v0.3.4 picker regressions", () => {
     await p.click("#tabs .tab:nth-child(1)", { button: "right" });
     await p.click('#ctx button[data-act="group-new"]');
     await check("#ge-colors .uc-preset");
+    assert.equal(await p.$eval("#ge-colors .uc-actions button", (el) => getComputedStyle(el).borderTopWidth), "1px");
     assert.equal(await p.locator("#ge-colors .ge-custom").count(), 0);
     await p.keyboard.press("Escape");
     await p.click('#format-bar [data-cmd="bg"]');
     await check(".fb-pop .uc-preset");
+    assert.equal(await p.$eval(".fb-pop .uc-actions button", (el) => getComputedStyle(el).borderTopWidth), "1px");
   });
 
   ui("fixed px length keeps the numeric input wide enough", async ({ p }) => {

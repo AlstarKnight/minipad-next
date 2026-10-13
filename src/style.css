@@ -1222,7 +1222,7 @@ html[data-edge-style="hover"][data-edge-peek][data-edge="right"] #edge-expand { 
 }
 .menu .shared-colors .uc-delete:hover { background: var(--bg); color: var(--danger); }
 .menu .shared-colors .uc-stop .uc-remove { flex: none; width: 24px; height: 24px; padding: 0; }
-.menu .shared-colors .uc-actions button { white-space: normal; }
+.menu .shared-colors .uc-actions button { white-space: normal; border: 1px solid var(--bar-border); border-radius: 5px; }
 .fb-pop { max-height: min(75vh, 570px); overflow-y: auto; }
 .fb-pop .shared-colors { max-width: 230px; }
 .group-edit .shared-colors { max-width: 255px; }
