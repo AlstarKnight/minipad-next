@@ -46,6 +46,15 @@ export function makeSharedColorTools({ getValue, onApply, defaultColor = "#d9822
   const root = make("section", compact ? "shared-colors compact" : "shared-colors");
   const heading = make("div", "uc-title", "我的颜色");
   const buttons = make("div", "uc-presets");
+  if (compact) {
+    const updateOverflow = () => {
+      buttons.classList.toggle("overflow-left", buttons.scrollLeft > 1);
+      buttons.classList.toggle("overflow-right", buttons.scrollLeft + buttons.clientWidth < buttons.scrollWidth - 1);
+    };
+    buttons.addEventListener("scroll", updateOverflow, { passive: true });
+    new ResizeObserver(updateOverflow).observe(buttons);
+    buttons.updateOverflow = () => requestAnimationFrame(updateOverflow);
+  }
   const actions = make("div", "uc-actions");
   const edit = make("button", "small", "自定义颜色 / 渐变节点");
   edit.type = "button";
@@ -175,6 +184,7 @@ export function makeSharedColorTools({ getValue, onApply, defaultColor = "#d9822
       wrap.append(swatch, remove);
       buttons.append(wrap);
     }
+    buttons.updateOverflow?.();
   };
   edit.addEventListener("click", () => {
     editor.hidden = !editor.hidden;

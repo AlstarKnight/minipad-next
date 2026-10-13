@@ -1219,6 +1219,19 @@ html[data-edge-style="hover"][data-edge-peek][data-edge="right"] #edge-expand { 
   padding: 5px 4px; scrollbar-width: thin;
 }
 .shared-colors.compact .uc-preset { flex: 0 0 31px; }
+/* 横向滚动时，仅在还有隐藏色块的边缘显示渐隐提示。 */
+.shared-colors.compact .uc-presets.overflow-left {
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 16px);
+  mask-image: linear-gradient(to right, transparent, #000 16px);
+}
+.shared-colors.compact .uc-presets.overflow-right {
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 16px), transparent);
+  mask-image: linear-gradient(to right, #000 calc(100% - 16px), transparent);
+}
+.shared-colors.compact .uc-presets.overflow-left.overflow-right {
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 16px, #000 calc(100% - 16px), transparent);
+  mask-image: linear-gradient(to right, transparent, #000 16px, #000 calc(100% - 16px), transparent);
+}
 .shared-colors.compact .uc-presets .muted { white-space: nowrap; font-size: 11px; }
 .shared-colors.compact .uc-actions { flex-wrap: nowrap; gap: 4px; }
 .shared-colors.compact .uc-actions .small { padding: 3px 6px; white-space: nowrap; }

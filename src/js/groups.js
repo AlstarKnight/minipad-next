@@ -30,7 +30,7 @@ export const GROUP_GRADIENTS = GRADIENTS.map((g) => [g.name, gradientOf(g.stops)
 export function groupVars(el, color) {
   const a = parseAccent(color) || parseAccent(GROUP_COLORS[0][1]);
   const stops = a.to ? a.stops : [a.from, a.from];
-  const fade = (p) => gradientOf(stops.map((c) => `color-mix(in srgb, ${c} ${p}%, transparent)`), a.deg ?? 90, a.positions);
+  const fade = (p) => gradientOf(stops.map((c) => `color-mix(in srgb, ${c} ${p}%, transparent)`), 90, a.positions);
   el.style.setProperty("--g", a.from);
   // 分组标签的细线延续横向渐变，保留用户设定的节点位置。
   el.style.setProperty("--g-grad", gradientOf(stops, 90, a.positions));

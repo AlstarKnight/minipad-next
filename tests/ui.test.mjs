@@ -1640,6 +1640,29 @@ describe("v0.3.4 picker regressions", () => {
     await until(async () => (await h.editor()).includes("background-color: #123abc"), true, "enter applies format color");
   });
 
+  ui("compact saved colors fade only where more swatches can be scrolled into view", {
+    seed: { ...seed({ "": { 页: "文字" } }), settings: {
+      ...SETTINGS, color_presets: Array.from({ length: 12 }, (_, i) => "#" + (0x123400 + i).toString(16)),
+    } },
+  }, async ({ p }) => {
+    await p.click("#btn-settings");
+    await settingsPage(p, "look");
+    const presets = "#set-accent + .shared-colors .uc-presets";
+    const status = () => p.$eval(presets, (el) => ({
+      overflow: el.scrollWidth > el.clientWidth + 1,
+      left: el.classList.contains("overflow-left"),
+      right: el.classList.contains("overflow-right"),
+      mask: getComputedStyle(el).maskImage,
+    }));
+    await until(async () => (await status()).right, true, "a right fade signals more saved colors");
+    assert.deepEqual([ (await status()).overflow, (await status()).left ], [true, false]);
+    assert.match((await status()).mask, /linear-gradient/);
+    await p.$eval(presets, (el) => { el.scrollLeft = el.scrollWidth; });
+    await until(async () => [ (await status()).left, (await status()).right ], [true, false], "fades follow scrolling");
+    await p.$eval(presets, (el) => { el.scrollLeft = 0; });
+    await until(async () => [ (await status()).left, (await status()).right ], [false, true], "scrolling back restores the right hint");
+  });
+
   ui("fixed px length keeps the numeric input wide enough", async ({ p }) => {
     await p.click("#btn-settings");
     await settingsPage(p, "window");
@@ -3062,8 +3085,13 @@ describe("v0.3.4 group gradient direction", () => {
       return db;
     })(),
   }, async ({ p }) => {
-    assert.equal(await p.$eval(".tab-group", (el) => el.style.getPropertyValue("--g-grad")),
-      "linear-gradient(90deg, #112233 0%, #445566 25%, #778899 100%)");
+    const gradients = await p.$eval(".tab-group", (el) =>
+      ["--g-grad", "--g-soft", "--g-soft2", "--g-tint"].map((name) => el.style.getPropertyValue(name)));
+    assert.equal(gradients[0], "linear-gradient(90deg, #112233 0%, #445566 25%, #778899 100%)");
+    for (const value of gradients.slice(1)) {
+      assert.match(value, /^linear-gradient\(90deg, /, "soft backgrounds use the same direction as the underline");
+      assert.match(value, /25%/, "custom node positions remain intact");
+    }
   });
 });
 
