@@ -508,7 +508,14 @@ pub fn set_book_appearance(
     if !dir.is_dir() {
         return Err(format!("笔记本不存在:{}", if book.is_empty() { "默认" } else { book }));
     }
-    let mut meta = read_meta(&dir);
+    // 外观更改不能在元文件暂时不可读时把页面排序等内容覆盖为默认值。
+    let meta_path = dir.join(META_FILE);
+    let mut meta = match fs::read(&meta_path) {
+        Ok(bytes) => serde_json::from_str::<Meta>(&decode_text(&bytes))
+            .map_err(|e| format!("笔记本元信息解析失败:{e}"))?,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Meta::default(),
+        Err(e) => return Err(format!("笔记本元信息读取失败:{e}")),
+    };
     meta.icon = if icon == "book" { String::new() } else { icon.into() };
     meta.icon_color = color.to_ascii_lowercase();
     write_meta(&dir, &meta)
@@ -995,6 +1002,18 @@ mod tests {
         assert_eq!(read_meta(&root.join("工作")).icon, "briefcase");
         set_book_appearance(&root, "工作", "star", "").unwrap();
         assert_eq!(load_book(&root, "工作").unwrap().icon, "star");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn malformed_metadata_is_not_overwritten_when_changing_book_icon() {
+        let root = temp_dir("bad-book-icon-meta");
+        fs::create_dir_all(root.join("坏的")).unwrap();
+        let path = root.join("坏的").join(META_FILE);
+        let original = b"{ invalid JSON".to_vec();
+        fs::write(&path, &original).unwrap();
+        assert!(set_book_appearance(&root, "坏的", "star", "#123456").is_err());
+        assert_eq!(fs::read(&path).unwrap(), original);
         fs::remove_dir_all(root).unwrap();
     }
 
