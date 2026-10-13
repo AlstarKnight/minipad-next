@@ -12,6 +12,7 @@ import { openSearch, bindSearch } from "./search.js";
 import { openFind, closeFind, findAgain, bindFind } from "./findbar.js";
 import { bindImport, closeImport } from "./importer.js";
 import { openSettings, saveSettings, applyEdgeAppearance, bindSettings } from "./settings.js";
+import { bindOutline } from "./outline.js";
 import { createEditor, editorDebug, insertText, toggleTask } from "./editor.js";
 import { setLinkPrompt, setTaskCommand } from "./toolbar.js";
 import { formatDate } from "./datetime.js";
@@ -166,6 +167,7 @@ function bindUi() {
   bindFind();
   bindSettings();
   bindImport();
+  bindOutline();
   // 保存时发现这一页在别处也改过:那边的版本已经另存成冲突副本,放到这一页后面
   document.addEventListener("conflict-copy", (e) => addConflictCopy(e.detail));
   // 格式栏上的查找按钮

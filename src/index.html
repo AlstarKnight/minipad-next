@@ -74,6 +74,15 @@
   <main id="main">
     <!-- 编辑区:Milkdown 编辑器由 js/editor.js 放进来 -->
     <div id="editor" class="code-lines"></div>
+    <!-- 悬浮目录(见 js/outline.js):收起时是一列短线,鼠标移上去展开;也可以一直展开在编辑区旁边 -->
+    <aside id="outline" aria-label="目录" hidden>
+      <div class="ol-strip" aria-hidden="true"></div>
+      <div class="ol-panel">
+        <div class="ol-title">目录</div>
+        <div class="ol-list"></div>
+        <div class="ol-empty muted" hidden>这一页没有标题</div>
+      </div>
+    </aside>
     <div id="read-error" role="alert" hidden></div>
   </main>
 
@@ -102,6 +111,7 @@
           <button type="button" role="tab" data-page="edge" aria-controls="set-page-edge"><svg viewBox="0 0 16 16"><rect x="2" y="3" width="8.5" height="10" rx="1.5"/><path d="M13.5 2.5v11"/></svg><span>贴边隐藏</span></button>
           <button type="button" role="tab" data-page="ball" aria-controls="set-page-ball"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="5"/><circle cx="8" cy="8" r="1.6" fill="currentColor"/></svg><span>悬浮图标</span></button>
           <button type="button" role="tab" data-page="editor" aria-controls="set-page-editor"><svg viewBox="0 0 16 16"><path d="M3 13l.9-3.4 6.6-6.6a1.4 1.4 0 0 1 2 0l.5.5a1.4 1.4 0 0 1 0 2l-6.6 6.6z"/><path d="m9.4 4.1 2.5 2.5"/></svg><span>编辑器</span></button>
+          <button type="button" role="tab" data-page="outline" aria-controls="set-page-outline"><svg viewBox="0 0 16 16"><path d="M2.5 4h1M5.5 4h8M4.5 8h1M7.5 8h6M4.5 12h1M7.5 12h6"/></svg><span>目录</span></button>
           <button type="button" role="tab" data-page="find" aria-controls="set-page-find"><svg viewBox="0 0 16 16"><circle cx="7" cy="7" r="4"/><path d="m10 10 3.5 3.5"/></svg><span>查找替换</span></button>
           <button type="button" role="tab" data-page="storage" aria-controls="set-page-storage"><svg viewBox="0 0 16 16"><path d="M2.5 4.5a1 1 0 0 1 1-1h2.8l1.5 1.5h4.7a1 1 0 0 1 1 1V12a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1z"/></svg><span>存储</span></button>
           <button type="button" role="tab" data-page="backup" aria-controls="set-page-backup"><svg viewBox="0 0 16 16"><rect x="2.5" y="3" width="11" height="3" rx="1"/><path d="M3.5 6v6a1 1 0 0 0 1 1h7a1 1 0 0 0 1-1V6M6.5 8.5h3"/></svg><span>备份</span></button>
@@ -216,6 +226,62 @@
               <span id="set-date-preview" class="muted"></span>
               <span>写法:yyyy 年、M 月、d 日、H 时、mm 分、ss 秒、dddd 星期几</span>
             </div>
+          </section>
+
+          <section id="set-page-outline" class="set-page" role="tabpanel" data-page="outline" hidden>
+            <label class="row check"><input id="set-outline" type="checkbox" /> <span>显示悬浮目录(列出这一页的标题,点一下跳过去)</span></label>
+            <div class="row outline-option">
+              <div id="set-outline-preview" class="outline-preview" aria-hidden="true">
+                <div class="ol-panel">
+                  <div class="ol-title">目录</div>
+                  <div class="ol-list">
+                    <span class="ol-item top">第一章</span>
+                    <span class="ol-item" style="--d: 1">背景</span>
+                    <span class="ol-item on" style="--d: 1">做法</span>
+                    <span class="ol-item top">第二章</span>
+                  </div>
+                </div>
+                <div class="ol-strip"><i></i><i style="--d: 1"></i><i class="on" style="--d: 1"></i><i></i></div>
+              </div>
+            </div>
+            <label class="row outline-option">
+              <span>显示方式</span>
+              <select id="set-outline-mode">
+                <option value="hover">鼠标移上去才展开</option>
+                <option value="pinned">一直展开</option>
+              </select>
+            </label>
+            <label class="row outline-option">
+              <span>位置</span>
+              <select id="set-outline-side">
+                <option value="right">编辑区右边</option>
+                <option value="left">编辑区左边</option>
+              </select>
+            </label>
+            <label class="row outline-option">
+              <span>显示到</span>
+              <select id="set-outline-depth">
+                <option value="1">一级标题</option>
+                <option value="2">二级标题</option>
+                <option value="3">三级标题</option>
+                <option value="4">四级标题</option>
+                <option value="5">五级标题</option>
+                <option value="6">六级标题</option>
+              </select>
+            </label>
+            <label class="row outline-option"><span>宽度</span><input id="set-outline-width" type="range" min="140" max="360" step="10" /><span id="set-outline-width-val" class="muted value"></span></label>
+            <label class="row outline-option"><span>展开时的背景</span><input id="set-outline-opacity" type="range" min="40" max="100" step="5" /><span id="set-outline-opacity-val" class="muted value"></span></label>
+            <div class="row col outline-option">
+              <span>当前标题的颜色</span>
+              <div id="set-outline-color" class="accent-swatches"></div>
+              <div class="accent-custom">
+                <span>自定义</span>
+                <input id="set-outline-from" type="color" value="#d9822b" title="颜色" />
+                <label><input id="set-outline-grad" type="checkbox" /> 渐变到</label>
+                <input id="set-outline-to" type="color" value="#f7c34b" title="渐变的另一端" />
+              </div>
+            </div>
+            <div class="row outline-option"><span class="muted grow">一直展开时,窗口太窄、放不下目录和正文的话,会自动收起成短线。</span></div>
           </section>
 
           <section id="set-page-find" class="set-page" role="tabpanel" data-page="find" hidden>

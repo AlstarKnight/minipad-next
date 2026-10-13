@@ -352,6 +352,147 @@ html[data-find-pos="bottom"] #status { order: 2; }
   overflow: auto;
 }
 
+/* ---------- 悬浮目录(见 js/outline.js) ----------
+   收起时是一列短线(每个标题一条,级别越低越短,正在看的那一节亮起来),鼠标移上去在原地展开成目录;
+   一直展开时占编辑区旁边的一列。--ol-width 宽度、--ol-alpha 展开时背景的不透明度、--ol-c / --ol-grad 当前标题的颜色 */
+#outline {
+  position: absolute;
+  top: 10px;
+  bottom: 10px;
+  z-index: 3;
+  pointer-events: none;
+}
+#main[data-ol-side="right"] #outline { right: calc(var(--sbw, 0px) + 4px); }
+#main[data-ol-side="left"] #outline { left: 4px; }
+#main[data-outline="hover"][data-ol-side="right"] #editor .ProseMirror { padding-right: 30px; }
+#main[data-outline="hover"][data-ol-side="left"] #editor .ProseMirror { padding-left: 30px; }
+.ol-strip {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  max-height: 100%;
+  overflow: hidden;
+  padding: 6px 4px;
+  pointer-events: auto;
+  cursor: default;
+}
+#main[data-ol-side="left"] .ol-strip { align-items: flex-start; }
+.ol-strip i {
+  flex: none;
+  width: calc(16px - min(var(--d, 0), 3) * 3px);
+  height: 2px;
+  border-radius: 1px;
+  background: color-mix(in srgb, var(--muted) 45%, transparent);
+}
+.ol-strip i.on { background: var(--ol-grad, var(--accent-grad)); }
+.ol-panel {
+  position: absolute;
+  top: 0;
+  width: var(--ol-width, 200px);
+  max-width: calc(100vw - 40px);
+  max-height: 100%;
+  overflow: auto;
+  padding: 6px;
+  background: color-mix(in srgb, var(--panel) var(--ol-alpha, 100%), transparent);
+  border: 1px solid var(--bar-border);
+  border-radius: 8px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.08);
+  opacity: 0;
+  visibility: hidden;
+  transform: translateX(4px);
+  transition: opacity 0.15s ease 0.25s, visibility 0s linear 0.4s, transform 0.15s ease 0.25s;
+  pointer-events: auto;
+}
+#main[data-ol-side="right"] .ol-panel { right: 0; }
+#main[data-ol-side="left"] .ol-panel { left: 0; transform: translateX(-4px); }
+#outline:hover .ol-panel, #outline:focus-within .ol-panel {
+  opacity: 1;
+  visibility: visible;
+  transform: none;
+  transition: opacity 0.15s ease 0.08s, visibility 0s linear 0.08s, transform 0.15s ease 0.08s;
+}
+.ol-title { padding: 2px 8px 4px; font-size: 11.5px; color: var(--muted); }
+.ol-item {
+  position: relative;
+  display: block;
+  width: 100%;
+  padding: 3px 8px 3px calc(8px + var(--d, 0) * 12px);
+  border-radius: 5px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  text-align: left;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ol-item.top { color: var(--text); }
+.ol-item:hover { background: color-mix(in srgb, var(--text) 6%, transparent); }
+.ol-item.on { color: var(--ol-c, var(--accent)); }
+.ol-item.on::before {
+  content: "";
+  position: absolute;
+  left: 1px;
+  top: 5px;
+  bottom: 5px;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--ol-grad, var(--accent-grad));
+}
+.ol-empty { padding: 4px 8px; font-size: 12px; }
+/* 一直展开:编辑区让出一列,目录不再浮在正文上面 */
+#main[data-outline="pinned"][data-ol-side="right"] #editor { right: var(--ol-width, 200px); }
+#main[data-outline="pinned"][data-ol-side="left"] #editor { left: var(--ol-width, 200px); }
+#main[data-outline="pinned"] #outline { top: 0; bottom: 0; width: var(--ol-width, 200px); pointer-events: auto; }
+#main[data-outline="pinned"][data-ol-side="right"] #outline { right: 0; border-left: 1px solid var(--code-border); }
+#main[data-outline="pinned"][data-ol-side="left"] #outline { left: 0; border-right: 1px solid var(--code-border); }
+#main[data-outline="pinned"] .ol-strip { display: none; }
+#main[data-outline="pinned"] .ol-panel {
+  position: static;
+  width: auto;
+  max-width: none;
+  height: 100%;
+  max-height: none;
+  padding: 8px 6px;
+  background: none;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  opacity: 1;
+  visibility: visible;
+  transform: none;
+  transition: none;
+}
+/* 设置里的预览:后面几行灰条当正文,看得出背景的不透明度 */
+.outline-preview {
+  position: relative;
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  width: 100%;
+  height: 156px;
+  padding: 8px;
+  overflow: hidden;
+  border: 1px solid var(--code-border);
+  border-radius: 8px;
+  background: repeating-linear-gradient(to bottom, transparent 0 9px, color-mix(in srgb, var(--muted) 22%, transparent) 9px 15px) content-box;
+}
+.outline-preview .ol-panel {
+  position: static;
+  opacity: 1;
+  visibility: visible;
+  transform: none;
+  transition: none;
+  max-width: calc(100% - 30px);
+  pointer-events: none;
+}
+.outline-preview .ol-item { cursor: default; }
+.outline-preview .ol-strip { padding-top: 10px; }
+.set-page .row input[type="range"] { flex: 1; min-width: 60px; }
+.set-page .row .value { min-width: 56px; text-align: right; font-size: 12px; }
+.outline-option.off { opacity: 0.5; }
+
 /* ---------- 编辑区(Milkdown 富文本编辑器) ---------- */
 #editor .milkdown { min-height: 100%; display: flex; flex-direction: column; }
 #editor .ProseMirror {
@@ -820,7 +961,23 @@ html[data-find-pos="bottom"] #status { order: 2; }
 }
 /* 选中渐变色的字时,字是透明的会看不见,选中的时候先用普通的颜色 */
 #editor .ProseMirror span[data-color^="linear-gradient"]::selection { color: var(--text); -webkit-text-fill-color: var(--text); }
-input[type="checkbox"] { accent-color: var(--accent); }
+input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
+/* 滑块:一条细的浅色轨道,圆点是强调色(系统默认的样式在浅色主题下是一条很粗的深色轨道) */
+.form input[type="range"] { -webkit-appearance: none; appearance: none; height: 16px; background: transparent; cursor: pointer; }
+.form input[type="range"]::-webkit-slider-runnable-track { height: 4px; border-radius: 2px; background: var(--code-border); }
+.form input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  margin-top: -5px;
+  border-radius: 50%;
+  background: var(--accent-grad);
+  border: 2px solid var(--panel);
+  box-shadow: 0 0 0 1px var(--bar-border);
+}
+.form input[type="range"]:focus-visible { outline: none; }
+.form input[type="range"]:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 2px var(--accent); }
+.form input[type="range"]:disabled { cursor: default; }
 
 /* 贴边隐藏的标识:窗口缩进屏幕边以后只露出一条(宽度由 --edge-peek 决定,见 settings.js)。
    三种样式:arrow 细线 + 箭头 / line 仅细边高亮 / hover 细边 + 悬浮按钮。

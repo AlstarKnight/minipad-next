@@ -40,6 +40,13 @@ const DEFAULT_SETTINGS = {
   find_color: "",
   conflict_mode: "copy",
   settings_nav: "left",
+  outline_enabled: false,
+  outline_mode: "hover",
+  outline_side: "right",
+  outline_depth: 3,
+  outline_width: 200,
+  outline_opacity: 100,
+  outline_color: "",
 };
 
 const has = (obj, key) => Object.prototype.hasOwnProperty.call(obj, key);
@@ -277,6 +284,11 @@ export function mockApi() {
         find_bar_pos: pickOne(settings.find_bar_pos, ["top", "bottom"]),
         conflict_mode: pickOne(settings.conflict_mode, ["copy", "overwrite"]),
         settings_nav: pickOne(settings.settings_nav, ["left", "top"]),
+        outline_mode: pickOne(settings.outline_mode, ["hover", "pinned"]),
+        outline_side: pickOne(settings.outline_side, ["right", "left"]),
+        outline_depth: Math.min(6, Math.max(1, Math.round(Number(settings.outline_depth)) || 3)),
+        outline_width: Math.min(360, Math.max(140, Math.round(Number(settings.outline_width)) || 200)),
+        outline_opacity: Math.min(100, Math.max(40, Math.round(Number(settings.outline_opacity)) || 100)),
       };
       const notes = normPath(s.notes_dir);
       const dest = normPath(s.backup_dir);

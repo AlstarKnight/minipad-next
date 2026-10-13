@@ -13,6 +13,7 @@ import { ACCENTS, applyAccent, parseAccent, tidyAccent, gradient, gradientOf } f
 import { APP_ICON, paintBall } from "./ballicon.js";
 import { applyFindAppearance, findColors } from "./findbar.js";
 import { openImport } from "./importer.js";
+import { applyOutlineSettings, outlineVars } from "./outline.js";
 
 const REPO_URL = "https://github.com/AlstarKnight/minipad-next";
 
@@ -32,6 +33,7 @@ export function applySettings() {
   applyFindAppearance(s);
   $("#btn-search").title = s.ctrl_f === "all" ? "搜索全部页面 (Ctrl+F)" : "搜索全部页面 (Ctrl+Shift+F)";
   applyEditorSettings(s);
+  applyOutlineSettings(s);
 }
 // 贴边隐藏的样式:露出的宽度和 Rust 里 edge::strip_for 一致(逻辑像素,Rust 按屏幕缩放换成物理像素)
 const EDGE_STYLES = ["arrow", "line", "hover"];
@@ -61,7 +63,7 @@ matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => stat
 let backupInfo = null;
 
 // ---- 分类:点左边(或上面)的分类只显示那一类,下次打开设置还停在上次看的那一类 ----
-const PAGES = ["general", "look", "edge", "ball", "editor", "find", "storage", "backup", "import"];
+const PAGES = ["general", "look", "edge", "ball", "editor", "outline", "find", "storage", "backup", "import"];
 const PAGE_KEY = "minipad-next-settings-page";
 let page = (() => {
   try {
@@ -139,6 +141,13 @@ export function openSettings() {
   updateDatePreview();
   $("#set-code-lines").checked = s.code_line_numbers;
   $("#set-format-bar").checked = s.format_bar !== false;
+  $("#set-outline").checked = !!s.outline_enabled;
+  $("#set-outline-mode").value = s.outline_mode === "pinned" ? "pinned" : "hover";
+  $("#set-outline-side").value = s.outline_side === "left" ? "left" : "right";
+  $("#set-outline-depth").value = String(Math.min(6, Math.max(1, Number(s.outline_depth) || 3)));
+  $("#set-outline-width").value = s.outline_width || 200;
+  $("#set-outline-opacity").value = s.outline_opacity || 100;
+  outlineColor.show(s.outline_color || "");
   $("#set-ctrl-f").value = s.ctrl_f === "all" ? "all" : "page";
   $("#set-find-pos").value = s.find_bar_pos === "bottom" ? "bottom" : "top";
   findColor.show(s.find_color || "");
@@ -147,6 +156,7 @@ export function openSettings() {
   $("#set-backup-keep").value = s.backup_keep;
   $("#set-backup-dir").value = s.backup_dir;
   updateEdgeOptions();
+  updateOutline();
   $("#set-nav-pos").value = s.settings_nav === "top" ? "top" : "left";
   applyNavPos(s.settings_nav);
   $("#set-error").hidden = true;
@@ -216,6 +226,27 @@ const findColor = colorPicker(
 // 跟随强调色时,预览用这里正在选的强调色
 function updateFindPreview() {
   findColors($("#set-find-preview"), findColor.value || accentColor.value);
+}
+
+// 目录里当前标题的颜色,上面是预览
+const outlineColor = colorPicker(
+  "outline",
+  "#set-outline-color",
+  [{ name: "跟随强调色", value: "" }, ...ACCENTS.filter((a) => a.value)],
+  "var(--accent-grad)",
+  () => updateOutline(),
+);
+// 目录的选项只在打开目录时能改;预览跟着宽度、不透明度、颜色实时变
+function updateOutline() {
+  const off = !$("#set-outline").checked;
+  for (const el of document.querySelectorAll(".outline-option")) el.classList.toggle("off", off);
+  for (const el of document.querySelectorAll(".outline-option input, .outline-option select, .outline-option button")) el.disabled = off;
+  if (!off) $("#set-outline-to").disabled = !$("#set-outline-grad").checked;
+  const width = Number($("#set-outline-width").value) || 200;
+  const opacity = Number($("#set-outline-opacity").value) || 100;
+  $("#set-outline-width-val").textContent = width + " 像素";
+  $("#set-outline-opacity-val").textContent = opacity + "%";
+  outlineVars($("#set-outline-preview"), { width, opacity, color: outlineColor.value });
 }
 
 const ballColor = colorPicker(
@@ -336,6 +367,13 @@ async function submitSettings() {
     date_format: $("#set-date-format").value.trim(),
     code_line_numbers: $("#set-code-lines").checked,
     format_bar: $("#set-format-bar").checked,
+    outline_enabled: $("#set-outline").checked,
+    outline_mode: $("#set-outline-mode").value,
+    outline_side: $("#set-outline-side").value,
+    outline_depth: Number($("#set-outline-depth").value) || 3,
+    outline_width: Number($("#set-outline-width").value) || 200,
+    outline_opacity: Number($("#set-outline-opacity").value) || 100,
+    outline_color: outlineColor.value,
     ctrl_f: $("#set-ctrl-f").value,
     find_bar_pos: $("#set-find-pos").value,
     find_color: findColor.value,
@@ -447,6 +485,8 @@ export function bindSettings() {
   for (const id of ["#set-edge-from", "#set-edge-to", "#set-edge-grad"]) $(id).addEventListener("input", edgeColor.custom);
   for (const id of ["#set-ball-from", "#set-ball-to", "#set-ball-grad"]) $(id).addEventListener("input", ballColor.custom);
   for (const id of ["#set-find-from", "#set-find-to", "#set-find-grad"]) $(id).addEventListener("input", findColor.custom);
+  for (const id of ["#set-outline-from", "#set-outline-to", "#set-outline-grad"]) $(id).addEventListener("input", outlineColor.custom);
+  for (const id of ["#set-outline", "#set-outline-width", "#set-outline-opacity"]) $(id).addEventListener("input", updateOutline);
   $("#set-import").addEventListener("click", openImport);
   for (const id of ["#set-ball", "#set-ball-size", "#set-ball-opacity"]) $(id).addEventListener("input", updateBall);
   for (const r of document.querySelectorAll('input[name="set-ball-icon"]')) r.addEventListener("change", updateBall);

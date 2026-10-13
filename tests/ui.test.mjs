@@ -2102,7 +2102,7 @@ describe("0.3.1: settings in categories", () => {
     await p.click("#btn-settings");
     assert.deepEqual(
       await p.$$eval("#set-nav [role=tab]", (els) => els.map((e) => e.textContent.trim())),
-      ["常规", "外观", "贴边隐藏", "悬浮图标", "编辑器", "查找替换", "存储", "备份", "导入"],
+      ["常规", "外观", "贴边隐藏", "悬浮图标", "编辑器", "目录", "查找替换", "存储", "备份", "导入"],
     );
     assert.deepEqual(await shown(p), ["general"], "常规 comes first");
     assert.deepEqual(await p.$$eval('#set-nav [aria-selected="true"]', (els) => els.map((e) => e.dataset.page)), ["general"]);
@@ -2119,7 +2119,7 @@ describe("0.3.1: settings in categories", () => {
     assert.equal(await focused(p), "storage");
     await p.keyboard.press("ArrowUp");
     await p.keyboard.press("ArrowUp");
-    assert.deepEqual(await shown(p), ["editor"], "↑ goes back");
+    assert.deepEqual(await shown(p), ["outline"], "↑ goes back");
     await p.keyboard.press("End");
     assert.deepEqual(await shown(p), ["import"]);
     await p.keyboard.press("ArrowDown");
@@ -2204,5 +2204,160 @@ describe("0.3.1: settings in categories", () => {
     assert.deepEqual(await shown(p), ["storage"], "shows the notes folder setting");
     assert.ok(await p.isVisible("#settings"), "the settings stay open");
     assert.equal(await p.evaluate(() => window.__minipad.state.settings.notes_dir), "");
+  });
+});
+
+// ---------- 0.3.2:悬浮目录 ----------
+describe("0.3.2: floating outline", () => {
+  const TEXT = "一段正文,撑开页面的高度。".repeat(12);
+  const PLAN = ["# 项目计划", TEXT, "## 背景", TEXT, "## 目标", TEXT, "### 第一阶段", TEXT, "#### 细节", TEXT, "## 做法", TEXT, "# 附录", TEXT].join("\n\n");
+  const ON = { ...SETTINGS, outline_enabled: true };
+  const items = (p) => p.$$eval("#outline .ol-item", (els) => els.map((e) => e.textContent));
+  const current = (p) => p.$$eval("#outline .ol-item.on", (els) => els.map((e) => e.textContent));
+  const strip = (p) => p.$$eval("#outline .ol-strip i", (els) => els.map((e) => (e.classList.contains("on") ? "on" : "")));
+  const panelShown = (p) => p.$eval("#outline .ol-panel", (e) => getComputedStyle(e).visibility === "visible" && getComputedStyle(e).opacity === "1");
+  const mainAttr = (p) => p.$eval("#main", (m) => [m.dataset.outline, m.dataset.olSide]);
+  const scrollTop = (p) => p.$eval("#editor", (e) => e.scrollTop);
+
+  ui("outline: off by default; turned on in the settings it lists the headings up to the chosen level, and opens when the mouse is on its lines", { seed: seed({ "": { 计划: PLAN } }) }, async (h) => {
+    const { p } = h;
+    assert.ok(await p.isHidden("#outline"), "off by default");
+    await p.click("#btn-settings");
+    await settingsPage(p, "outline");
+    assert.equal(await p.isChecked("#set-outline"), false);
+    assert.ok(await p.isDisabled("#set-outline-mode"), "the options are off while the outline is off");
+    await p.check("#set-outline");
+    assert.ok(await p.isEnabled("#set-outline-mode"));
+    assert.equal(await p.inputValue("#set-outline-mode"), "hover");
+    assert.equal(await p.inputValue("#set-outline-side"), "right");
+    assert.equal(await p.inputValue("#set-outline-depth"), "3");
+    assert.equal(await p.textContent("#set-outline-width-val"), "200 像素");
+    assert.equal(await p.getAttribute("#set-outline-color button.on", "title"), "跟随强调色");
+    await p.click("#set-save");
+    await until(async () => (await h.stored())?.settings?.outline_enabled, true, "saved");
+
+    await until(() => items(p), ["项目计划", "背景", "目标", "第一阶段", "做法", "附录"], "headings up to level 3");
+    assert.deepEqual(await mainAttr(p), ["hover", "right"]);
+    assert.equal((await strip(p)).length, 6, "one line per heading");
+    assert.equal(await panelShown(p), false, "folded into lines");
+    await p.hover("#outline .ol-strip");
+    await until(() => panelShown(p), true, "opens on hover");
+    await p.mouse.move(20, 300);
+    await until(() => panelShown(p), false, "folds again when the mouse leaves");
+
+    await p.click("#btn-settings");
+    await p.selectOption("#set-outline-depth", "1");
+    await p.click("#set-save");
+    await until(() => items(p), ["项目计划", "附录"], "only level 1");
+    await p.click("#btn-settings");
+    await p.selectOption("#set-outline-depth", "4");
+    await p.click("#set-save");
+    await until(() => items(p), ["项目计划", "背景", "目标", "第一阶段", "细节", "做法", "附录"], "down to level 4");
+  });
+
+  ui("outline: clicking a heading scrolls to it and puts the cursor there; the section being read lights up while scrolling", { seed: { ...seed({ "": { 计划: PLAN } }), settings: ON } }, async (h) => {
+    const { p } = h;
+    await until(() => items(p), ["项目计划", "背景", "目标", "第一阶段", "做法", "附录"], "listed");
+    assert.deepEqual(await current(p), ["项目计划"], "the first heading is at the top");
+    await p.hover("#outline .ol-strip");
+    await until(() => panelShown(p), true, "open");
+    await p.locator("#outline .ol-item", { hasText: "做法" }).click();
+    const headingTop = () => p.evaluate(() => {
+      const el = [...document.querySelectorAll("#editor h2")].find((e) => e.textContent === "做法");
+      return Math.round(el.getBoundingClientRect().top - document.querySelector("#editor").getBoundingClientRect().top);
+    });
+    await until(async () => Math.abs((await headingTop()) - 8) <= 2, true, "scrolled so the heading is at the top");
+    assert.equal(await p.evaluate(() => window.__minipad.editor().view.state.selection.$from.parent.textContent), "做法", "the cursor is in the heading");
+    assert.ok(await h.editorFocused(), "and the editor has the focus");
+    await until(() => current(p), ["做法"], "the heading lights up");
+    assert.deepEqual(await strip(p), ["", "", "", "", "on", ""], "so does its line");
+
+    await p.$eval("#editor", (e) => (e.scrollTop = 0));
+    await until(() => current(p), ["项目计划"], "back at the top");
+    await p.$eval("#editor", (e) => {
+      const el = [...e.querySelectorAll("h2")].find((x) => x.textContent === "目标");
+      e.scrollTop += el.getBoundingClientRect().top - e.getBoundingClientRect().top + 60;
+    });
+    await until(() => current(p), ["目标"], "reading the section under 目标");
+    await p.$eval("#editor", (e) => (e.scrollTop = e.scrollHeight));
+    await until(() => current(p), ["附录"], "at the end the last heading lights up");
+    assert.ok((await scrollTop(p)) > 0);
+  });
+
+  ui("outline: it can stay open on the left; a window too narrow folds it into lines, and pages without headings show none", { seed: { ...seed({ "": { 计划: PLAN, 空白: "没有标题的一页" } }), settings: { ...ON, outline_mode: "pinned", outline_side: "left" } } }, async (h) => {
+    const { p } = h;
+    await until(() => mainAttr(p), ["pinned", "left"], "open on the left");
+    assert.equal(await panelShown(p), true, "open without the mouse");
+    const editorLeft = () => p.$eval("#editor", (e) => Math.round(e.getBoundingClientRect().left - e.parentElement.getBoundingClientRect().left));
+    assert.equal(await editorLeft(), 200, "the text moves over to make room");
+    await p.setViewportSize({ width: 380, height: 540 });
+    await until(() => mainAttr(p), ["hover", "left"], "too narrow: folded into lines");
+    assert.equal(await editorLeft(), 0);
+    await until(() => panelShown(p), false, "and stays folded until the mouse comes");
+    await p.setViewportSize({ width: 440, height: 540 });
+    await until(() => mainAttr(p), ["pinned", "left"], "open again");
+
+    await h.tab("空白").click();
+    await until(() => p.isVisible("#outline .ol-empty"), true, "open: says the page has no headings");
+    assert.deepEqual(await items(p), []);
+    await p.click("#btn-settings");
+    await settingsPage(p, "outline");
+    await p.selectOption("#set-outline-mode", "hover");
+    await p.click("#set-save");
+    await until(() => p.isHidden("#outline"), true, "folded: nothing shows on a page without headings");
+    await h.tab("计划").click();
+    await until(() => p.isVisible("#outline"), true);
+    assert.equal((await items(p)).length, 6);
+  });
+
+  ui("outline: it follows the headings as they are typed and changes with the page", { seed: { ...seed({ "": { 甲: "# 第一页\n\n正文", 乙: "## 第二页的标题" } }), settings: ON } }, async (h) => {
+    const { p } = h;
+    await until(() => items(p), ["第一页"], "the first page");
+    await p.click("#editor .ProseMirror p");
+    await p.keyboard.press("End");
+    await p.keyboard.press("Enter");
+    await p.keyboard.type("## 新加的一节");
+    await until(() => items(p), ["第一页", "新加的一节"], "a heading being typed shows up");
+    await h.tab("乙").click();
+    await until(() => items(p), ["第二页的标题"], "page switched");
+    await h.tab("甲").click();
+    await until(() => items(p), ["第一页", "新加的一节"], "and back");
+  });
+
+  ui("outline: position, width, background and color are saved and shown in the preview", { seed: { ...seed({ "": { 计划: PLAN } }), settings: ON } }, async (h) => {
+    const { p } = h;
+    const vars = (sel) => p.$eval(sel, (e) => ["--ol-width", "--ol-alpha", "--ol-c"].map((v) => e.style.getPropertyValue(v)));
+    await p.click("#btn-settings");
+    await settingsPage(p, "outline");
+    assert.deepEqual(await vars("#set-outline-preview"), ["200px", "100%", ""], "the preview starts with the saved look");
+    await p.$eval("#set-outline-width", (e) => {
+      e.value = "260";
+      e.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await p.$eval("#set-outline-opacity", (e) => {
+      e.value = "70";
+      e.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await p.click('#set-outline-color button[title="蓝色"]');
+    assert.equal(await p.textContent("#set-outline-width-val"), "260 像素");
+    assert.equal(await p.textContent("#set-outline-opacity-val"), "70%");
+    assert.deepEqual(await vars("#set-outline-preview"), ["260px", "70%", "#3b82f6"], "the preview follows right away");
+    assert.deepEqual(await vars("#main"), ["200px", "100%", ""], "the outline itself changes only when saved");
+    await p.selectOption("#set-outline-side", "left");
+    await p.click("#set-save");
+    await until(
+      async () => {
+        const s = (await h.stored())?.settings;
+        return [s?.outline_width, s?.outline_opacity, s?.outline_color, s?.outline_side];
+      },
+      [260, 70, "#3b82f6", "left"],
+      "saved",
+    );
+    assert.deepEqual(await vars("#main"), ["260px", "70%", "#3b82f6"]);
+    assert.deepEqual(await mainAttr(p), ["hover", "left"]);
+    await p.hover("#outline .ol-strip");
+    await until(() => panelShown(p), true);
+    assert.equal(await p.$eval("#outline .ol-panel", (e) => Math.round(e.getBoundingClientRect().width)), 260);
+    assert.equal(await p.$eval("#outline .ol-item.on", (e) => getComputedStyle(e).color), "rgb(59, 130, 246)", "the current heading in the chosen color");
   });
 });
