@@ -1078,6 +1078,7 @@ html[data-edge-style="hover"][data-edge-peek][data-edge="right"] #edge-expand {
 html[data-edge-style="hover"][data-edge-peek][data-edge="left"] #edge-expand { left: 8px; }
 html[data-edge-style="hover"][data-edge-peek][data-edge="right"] #edge-expand { right: 8px; }
 /* 细线设置预览，模拟贴在顶部时的显示。 */
+.edge-line-option[hidden] { display: none !important; }
 .edge-line-control { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .edge-line-control > span:first-child { flex: none; min-width: 110px; }
 .edge-line-control input[type="range"] { flex: 1; min-width: 90px; }
