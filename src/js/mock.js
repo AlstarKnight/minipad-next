@@ -14,6 +14,8 @@ const DEFAULT_SETTINGS = {
   edge_style: "arrow",
   edge_line_width: 2,
   edge_line_length: 100,
+  edge_line_length_unit: "percent",
+  edge_line_length_px: 120,
   edge_line_glow: false,
   edge_color: "",
   ball_enabled: false,
