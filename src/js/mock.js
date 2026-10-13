@@ -183,6 +183,8 @@ export function mockApi() {
       }),
       active: order.includes(meta.active) ? meta.active : (order[0] ?? ""),
       groups: (meta.groups || []).filter((x) => order.some((n) => meta.note_groups?.[n] === x.id)),
+      icon: meta.icon || "",
+      icon_color: meta.icon_color || "",
     };
   };
   const readBooks = () => ["", ...bookNames()].filter((name) => !window.__mockControl?.unreadableBook?.includes(name)).map(readBook);
@@ -261,7 +263,7 @@ export function mockApi() {
     save_meta: ({ book, order, active, modes, groups, note_groups }) => {
       if (!has(db.books, book)) return;
       const old = db.books[book].meta || {};
-      const meta = { order, active, modes, groups: old.groups || [], note_groups: old.note_groups || {} };
+      const meta = { ...old, order, active, modes, groups: old.groups || [], note_groups: old.note_groups || {} };
       if (groups) {
         const ng = Object.fromEntries(
           Object.entries(note_groups || {}).filter(([n, id]) => id && order.includes(n) && groups.some((g) => g.id === id)),
@@ -289,6 +291,14 @@ export function mockApi() {
         if (db.book === old) db.book = n;
       }
       return n;
+    },
+    set_book_appearance: ({ book, icon, color }) => {
+      if (!["book", "folder", "briefcase", "heart", "star", "lightbulb", "code", "bookmark"].includes(icon)) throw "不支持的笔记本图标";
+      if (color && !/^#[0-9a-f]{6}$/i.test(color)) throw "图标颜色必须是 #RRGGBB";
+      if (!has(db.books, book)) throw "笔记本不存在";
+      const meta = bookOf(book).meta;
+      meta.icon = icon === "book" ? "" : icon;
+      meta.icon_color = color.toLowerCase();
     },
     delete_book: ({ name }) => {
       backup();
