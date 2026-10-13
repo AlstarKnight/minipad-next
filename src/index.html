@@ -526,9 +526,21 @@
           <h3 id="bm-selected">默认</h3>
           <div class="bm-field-title">选择图标</div>
           <div id="bm-icons" class="bm-icon-grid" role="radiogroup" aria-label="笔记本图标"></div>
-          <div class="bm-field-title">图标颜色</div>
-          <div id="bm-colors" class="bm-colors" role="radiogroup" aria-label="笔记本图标颜色"></div>
-          <label class="bm-custom-color">自定义 <input id="bm-custom-color" type="color" value="#d9822b" /></label>
+          <div class="bm-field-title">纯色</div>
+          <div id="bm-colors" class="bm-colors" role="radiogroup" aria-label="笔记本纯色"></div>
+          <div class="bm-field-title">渐变色</div>
+          <div id="bm-gradients" class="bm-colors" role="radiogroup" aria-label="笔记本渐变色"></div>
+          <div class="bm-field-title">自定义</div>
+          <div class="bm-custom-color">
+            <label>颜色 <input id="bm-custom-color" type="color" value="#d9822b" /></label>
+            <label class="bm-gradient-toggle"><input id="bm-gradient-enabled" type="checkbox" /> 渐变</label>
+            <label id="bm-gradient-to-label" hidden>终点 <input id="bm-gradient-to" type="color" value="#d66cf0" /></label>
+          </div>
+          <div class="bm-preset-head">
+            <span class="bm-field-title">我的颜色</span>
+            <button id="bm-save-preset" class="small">保存当前颜色</button>
+          </div>
+          <div id="bm-saved-colors" class="bm-colors bm-saved-colors" aria-label="保存的颜色预设"></div>
           <div class="bm-actions">
             <button id="bm-rename" class="small">重命名</button>
             <button id="bm-delete" class="small danger">删除笔记本</button>
