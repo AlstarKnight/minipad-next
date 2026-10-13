@@ -1528,7 +1528,7 @@ describe("shared colors and positioned gradients", () => {
     await p.click("#btn-settings");
     await settingsPage(p, "look");
     const accent = p.locator("#set-accent").locator("..").locator(".shared-colors");
-    await accent.locator(".uc-actions button").last().click();
+    await accent.locator(".uc-actions").first().locator("button").last().click();
     await until(() => h.stored().then((db) => db.settings.color_presets), ["#d9822b"]);
     await settingsPage(p, "window");
     assert.equal(await p.locator("#set-edge-color").locator("..").locator(".uc-presets .uc-swatch").count(), 1);
