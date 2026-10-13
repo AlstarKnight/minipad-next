@@ -16,47 +16,47 @@ pub fn strip_for(style: &str, peeking: bool, line_width: u32, _glow: bool) -> i3
     }
 }
 
-/// 只允许在真正绘制的线段（或中央箭头、悬浮按钮）范围内唤醒窗口。
-/// 坐标、窗口大小和显示器边界均为物理像素。
-pub fn indicator_contains(
-    edge: Edge,
-    win: Rect,
-    mon: Rect,
-    px: i32,
-    py: i32,
-    style: &str,
-    length_percent: u32,
-    peeking: bool,
-    scale: f64,
-) -> bool {
-    let (along, start, span, across) = match edge {
-        Edge::Top => (px, win.x, win.w, py >= mon.y && py < win.y + win.h),
-        Edge::Left => (py, win.y, win.h, px >= mon.x && px < win.x + win.w),
-        Edge::Right => (
-            py,
-            win.y,
-            win.h,
-            px >= win.x && px < mon.x + mon.w,
-        ),
-    };
-    if !across || span <= 0 {
-        return false;
-    }
-    let pct = length_percent.clamp(10, 100) as i64;
-    let line_len = (i64::from(span) * pct / 100) as i32;
-    // 箭头和悬浮按钮保留居中的独立点击范围，不影响短线两端的空白。
-    let arrow_len = (36.0 * scale).round() as i32;
-    let hover_len = (56.0 * scale).round() as i32;
-    let len = match (style, peeking) {
-        ("arrow-only", _) => arrow_len,
-        ("arrow", _) => line_len.max(arrow_len),
-        ("hover", true) => line_len.max(hover_len),
-        _ => line_len,
-    }
-    .clamp(1, span);
-    let from = start + (span - len) / 2;
-    along >= from && along < from + len
+/// 只允许在真正绘制的线段或中央箭头附近唤醒窗口。
+/// 所有坐标都是物理像素；命中区域配置与窗口一起传递，避免参数位置混淆。
+pub struct IndicatorHotzone<'a> {
+    pub edge: Edge,
+    pub win: Rect,
+    pub mon: Rect,
+    pub style: &'a str,
+    pub length_percent: u32,
+    pub peeking: bool,
+    pub scale: f64,
 }
+
+impl IndicatorHotzone<'_> {
+    pub fn contains(&self, px: i32, py: i32) -> bool {
+        let win = self.win;
+        let mon = self.mon;
+        let (along, start, span, across) = match self.edge {
+            Edge::Top => (px, win.x, win.w, py >= mon.y && py < win.y + win.h),
+            Edge::Left => (py, win.y, win.h, px >= mon.x && px < win.x + win.w),
+            Edge::Right => (py, win.y, win.h, px >= win.x && px < mon.x + mon.w),
+        };
+        if !across || span <= 0 {
+            return false;
+        }
+        let pct = self.length_percent.clamp(10, 100) as i64;
+        let line_len = (i64::from(span) * pct / 100) as i32;
+        // 箭头和悬浮按钮保留居中的独立点击范围；短线两侧的空白不可唤出。
+        let arrow_len = (36.0 * self.scale).round() as i32;
+        let hover_len = (56.0 * self.scale).round() as i32;
+        let len = match (self.style, self.peeking) {
+            ("arrow-only", _) => arrow_len,
+            ("arrow", _) => line_len.max(arrow_len),
+            ("hover", true) => line_len.max(hover_len),
+            _ => line_len,
+        }
+        .clamp(1, span);
+        let from = start + (span - len) / 2;
+        along >= from && along < from + len
+    }
+}
+
 /// 离屏幕边缘多近算"靠边"
 pub const SNAP: i32 = 8;
 
@@ -305,34 +305,74 @@ mod tests {
 
     #[test]
     fn short_line_is_only_interactive_where_it_is_drawn_on_each_edge() {
-        let win_top = Rect::new(300, -498, 400, 500);
-        // 40% of 400 = 160 pixels, centered from x=420 to x=580.
-        assert!(!indicator_contains(Edge::Top, win_top, SCREEN, 320, 0, "line", 40, false, 1.0));
-        assert!(indicator_contains(Edge::Top, win_top, SCREEN, 500, 1, "line", 40, false, 1.0));
-        assert!(!indicator_contains(Edge::Top, win_top, SCREEN, 580, 1, "line", 40, false, 1.0));
-        assert!(!indicator_contains(Edge::Top, win_top, SCREEN, 500, 3, "line", 40, false, 1.0));
+        let top = IndicatorHotzone {
+            edge: Edge::Top,
+            win: Rect::new(300, -498, 400, 500),
+            mon: SCREEN,
+            style: "line",
+            length_percent: 40,
+            peeking: false,
+            scale: 1.0,
+        };
+        // 40% of 400 = 160, centered from x=420 to x=580.
+        assert!(!top.contains(320, 0));
+        assert!(top.contains(500, 1));
+        assert!(!top.contains(580, 1));
+        assert!(!top.contains(500, 3));
 
-        let win_left = Rect::new(-398, 100, 400, 500);
-        // 20% of 500 = 100 pixels, centered from y=300 to y=400.
-        assert!(!indicator_contains(Edge::Left, win_left, SCREEN, 0, 125, "line", 20, false, 1.0));
-        assert!(indicator_contains(Edge::Left, win_left, SCREEN, 1, 350, "line", 20, false, 1.0));
-        assert!(!indicator_contains(Edge::Left, win_left, SCREEN, 2, 350, "line", 20, false, 1.0));
-        let win_right = Rect::new(1918, 100, 400, 500);
-        assert!(indicator_contains(Edge::Right, win_right, SCREEN, 1919, 350, "line", 20, false, 1.0));
-        assert!(!indicator_contains(Edge::Right, win_right, SCREEN, 1919, 450, "line", 20, false, 1.0));
+        let left = IndicatorHotzone {
+            edge: Edge::Left,
+            win: Rect::new(-398, 100, 400, 500),
+            length_percent: 20,
+            ..top
+        };
+        // 20% of 500 = 100, centered from y=300 to y=400.
+        assert!(!left.contains(0, 125));
+        assert!(left.contains(1, 350));
+        assert!(!left.contains(2, 350));
+        let right = IndicatorHotzone {
+            edge: Edge::Right,
+            win: Rect::new(1918, 100, 400, 500),
+            ..left
+        };
+        assert!(right.contains(1919, 350));
+        assert!(!right.contains(1919, 450));
     }
 
     #[test]
     fn arrow_and_hover_targets_are_centered_and_scale_for_dpi() {
-        let win = Rect::new(300, -482, 400, 500);
-        assert!(indicator_contains(Edge::Top, win, SCREEN, 500, 4, "arrow-only", 10, false, 1.0));
-        assert!(!indicator_contains(Edge::Top, win, SCREEN, 475, 4, "arrow-only", 10, false, 1.0));
-        assert!(indicator_contains(Edge::Top, win, SCREEN, 470, 4, "arrow-only", 10, false, 2.0));
-        assert!(indicator_contains(Edge::Top, win, SCREEN, 480, 4, "arrow", 10, false, 1.0));
-        let hover = Rect::new(-368, 100, 400, 500);
-        assert!(indicator_contains(Edge::Left, hover, SCREEN, 0, 350, "hover", 10, true, 1.0));
-        assert!(!indicator_contains(Edge::Left, hover, SCREEN, 0, 270, "hover", 10, true, 1.0));
-        assert!(indicator_contains(Edge::Left, hover, SCREEN, 0, 350, "hover", 10, false, 1.0));
+        let arrow = IndicatorHotzone {
+            edge: Edge::Top,
+            win: Rect::new(300, -482, 400, 500),
+            mon: SCREEN,
+            style: "arrow-only",
+            length_percent: 10,
+            peeking: false,
+            scale: 1.0,
+        };
+        assert!(arrow.contains(500, 4));
+        assert!(!arrow.contains(475, 4));
+        let high_dpi = IndicatorHotzone { scale: 2.0, ..arrow };
+        assert!(high_dpi.contains(470, 4));
+        let with_line = IndicatorHotzone {
+            style: "arrow",
+            ..arrow
+        };
+        assert!(with_line.contains(480, 4));
+        let hover = IndicatorHotzone {
+            edge: Edge::Left,
+            win: Rect::new(-368, 100, 400, 500),
+            style: "hover",
+            peeking: true,
+            ..arrow
+        };
+        assert!(hover.contains(0, 350));
+        assert!(!hover.contains(0, 270));
+        let resting = IndicatorHotzone {
+            peeking: false,
+            ..hover
+        };
+        assert!(resting.contains(0, 350));
     }
 
     #[test]
