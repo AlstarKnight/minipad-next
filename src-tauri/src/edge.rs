@@ -6,8 +6,8 @@ pub const ARROW_STRIP: i32 = 18;
 pub const LINE_STRIP: i32 = 2;
 /// 鼠标靠近时展开悬浮按钮所需的宽度。
 pub const PEEK_STRIP: i32 = 32;
-/// 开启微光时至少露出 10px，避免阴影在屏幕外被裁掉。
-pub const GLOW_STRIP: i32 = 10;
+/// 为细线微光预留额外空间，避免粗线的阴影在屏幕外被裁掉。
+pub const GLOW_PADDING: i32 = 8;
 
 /// 按样式、悬浮状态、自定义宽度与微光状态计算露出的逻辑像素。
 pub fn strip_for(style: &str, peeking: bool, line_width: u32, glow: bool) -> i32 {
@@ -15,7 +15,7 @@ pub fn strip_for(style: &str, peeking: bool, line_width: u32, glow: bool) -> i32
     match (style, peeking) {
         ("arrow" | "arrow-only", _) => ARROW_STRIP,
         ("hover", true) => PEEK_STRIP,
-        _ if glow => width.max(GLOW_STRIP),
+        _ if glow => width + GLOW_PADDING,
         _ => width,
     }
 }
@@ -256,9 +256,9 @@ mod tests {
 
     #[test]
     fn glow_has_enough_visible_space_for_each_mode() {
-        assert_eq!(strip_for("line", false, 2, true), GLOW_STRIP);
-        assert_eq!(strip_for("line", false, 12, true), 12);
-        assert_eq!(strip_for("hover", false, 2, true), GLOW_STRIP);
+        assert_eq!(strip_for("line", false, 2, true), 10);
+        assert_eq!(strip_for("line", false, 12, true), 20);
+        assert_eq!(strip_for("hover", false, 2, true), 10);
         assert_eq!(strip_for("hover", true, 2, true), PEEK_STRIP);
         assert_eq!(strip_for("arrow", false, 2, true), ARROW_STRIP);
         assert_eq!(strip_for("arrow-only", false, 2, true), ARROW_STRIP);
