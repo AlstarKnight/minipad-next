@@ -53,7 +53,7 @@ export function applyEdgeAppearance() {
   const style = EDGE_STYLES.includes(s.edge_style) ? s.edge_style : "arrow";
   root.dataset.edgeStyle = style;
   const peeking = style === "hover" && root.dataset.edgePeek === "on";
-  const lineStrip = s.edge_line_glow ? edgeWidth(s) + 8 : edgeWidth(s);
+  const lineStrip = edgeWidth(s);
   const strip = peeking ? EDGE_PEEK_STRIP : style === "arrow" || style === "arrow-only" ? EDGE_ARROW_STRIP : lineStrip;
   root.style.setProperty("--edge-peek", strip + "px");
   root.style.setProperty("--edge-line-width", edgeWidth(s) + "px");
@@ -238,7 +238,10 @@ function colorPicker(prefix, box, options, firstSwatch, onChange) {
   };
   return picker;
 }
-const accentColor = colorPicker("accent", "#set-accent", ACCENTS, "#d9822b", () => updateFindPreview());
+const accentColor = colorPicker("accent", "#set-accent", ACCENTS, "#d9822b", () => {
+  updateFindPreview();
+  updateEdgeLinePreview();
+});
 const edgeColor = colorPicker(
   "edge",
   "#set-edge-color",
@@ -398,6 +401,7 @@ function updateEdgeLinePreview() {
   const picked = edgeColor.value || accentColor.value;
   const col = parseAccent(picked);
   preview.style.setProperty("--preview-edge-color", col ? (col.to ? gradientOf(col.stops, col.deg) : col.from) : "var(--accent-grad)");
+  preview.style.setProperty("--preview-glow-color", col?.from || "var(--accent)");
 }
 
 // 现在按 F5 会插入什么,跟着输入框实时变;空着就是默认格式
