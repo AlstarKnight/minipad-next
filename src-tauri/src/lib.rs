@@ -1477,21 +1477,16 @@ fn edge_tick(app: &AppHandle) {
                 e.peeking = peek;
                 e.outside_ticks = 0;
             }
-            let (x, y) = edge::hidden_position_with_strip(
-                edge,
-                rect,
-                mon,
-                {
-                    let settings = st.settings.lock().unwrap();
-                    scaled_strip(
-                        &win,
-                        "hover",
-                        peek,
-                        settings.edge_line_width,
-                        settings.edge_line_glow,
-                    )
-                },
-            );
+            let (x, y) = edge::hidden_position_with_strip(edge, rect, mon, {
+                let settings = st.settings.lock().unwrap();
+                scaled_strip(
+                    &win,
+                    "hover",
+                    peek,
+                    settings.edge_line_width,
+                    settings.edge_line_glow,
+                )
+            });
             let _ = win.set_position(PhysicalPosition::new(x, y));
             let _ = app.emit("edge-peek", peek);
         }
