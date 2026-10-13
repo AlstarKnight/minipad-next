@@ -1160,6 +1160,8 @@ html[data-edge-style="hover"][data-edge-peek][data-edge="right"] #edge-expand { 
 .edge-line-control { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .edge-line-control > span:first-child { flex: none; min-width: 110px; }
 .edge-line-control input[type="range"] { flex: 1; min-width: 90px; }
+.edge-line-control input[type="number"] { width: 66px; min-width: 0; padding: 3px 5px; }
+.edge-line-control select { flex: 1; min-width: 0; font-size: 12px; }
 .edge-line-control .muted { min-width: 45px; text-align: right; }
 .edge-line-preview {
   position: relative;
