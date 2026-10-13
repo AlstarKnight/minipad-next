@@ -295,6 +295,7 @@ function renderManager() {
     button.setAttribute("role", "radio");
     button.setAttribute("aria-checked", String((b.icon || "book") === id));
     button.dataset.icon = id;
+    button.disabled = appearanceBusy;
     button.innerHTML = bookIcon(id);
     button.addEventListener("click", () => void saveAppearance(b, id, b.icon_color || ""));
     icons.append(button);
@@ -306,6 +307,7 @@ function renderManager() {
     button.type = "button";
     button.title = color || "跟随强调色";
     button.dataset.color = color;
+    button.disabled = appearanceBusy;
     button.setAttribute("role", "radio");
     button.setAttribute("aria-checked", String((b.icon_color || "") === color));
     button.style.setProperty("--book-swatch", color || "var(--accent)");
@@ -314,6 +316,7 @@ function renderManager() {
     colors.append(button);
   }
   $("#bm-custom-color").value = /^#[0-9a-f]{6}$/i.test(b.icon_color) ? b.icon_color : "#d9822b";
+  $("#bm-custom-color").disabled = appearanceBusy;
 }
 
 async function saveAppearance(b, icon, color) {
@@ -321,6 +324,7 @@ async function saveAppearance(b, icon, color) {
   if ((b.icon || "book") === icon && (b.icon_color || "") === color) return;
   appearanceBusy = true;
   $("#bm-error").hidden = true;
+  renderManager();
   try {
     await mutate(async () => {
       // 与正常的页面顺序/分组元信息保存串行，避免并发改写 .minipad.json。
@@ -335,6 +339,7 @@ async function saveAppearance(b, icon, color) {
     $("#bm-error").hidden = false;
   } finally {
     appearanceBusy = false;
+    renderManager();
   }
 }
 
