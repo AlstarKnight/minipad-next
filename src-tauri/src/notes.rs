@@ -38,6 +38,12 @@ pub struct Meta {
     /// 页面名 → 所在分组的 id
     #[serde(skip_serializing_if = "HashMap::is_empty")]
     pub note_groups: HashMap<String, String>,
+    /// 笔记本自己的顶栏图标，不设置时使用 book。
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub icon: String,
+    /// 笔记本图标颜色，可单独自定义。
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub icon_color: String,
 }
 
 /// 一个标签分组。颜色是 "#rrggbb",名字可以空着(只显示颜色)
@@ -76,6 +82,8 @@ pub struct Book {
     pub active: String,
     /// 还有页面在里面的分组
     pub groups: Vec<TabGroup>,
+    pub icon: String,
+    pub icon_color: String,
 }
 
 pub fn write_atomic(path: &Path, data: &str) -> Result<(), String> {
@@ -418,6 +426,8 @@ where
         notes,
         active,
         groups,
+        icon: meta.icon,
+        icon_color: meta.icon_color,
     })
 }
 
@@ -471,6 +481,36 @@ pub fn save_book_meta(
             .collect();
         meta.note_groups = note_groups;
     }
+    write_meta(&dir, &meta)
+}
+
+/// 笔记本图标与颜色独立保存在对应的 .minipad.json，改页面顺序不会覆盖它。
+pub fn set_book_appearance(
+    root: &Path,
+    book: &str,
+    icon: &str,
+    color: &str,
+) -> Result<(), String> {
+    const ICONS: [&str; 8] = [
+        "book", "folder", "briefcase", "heart", "star", "lightbulb", "code", "bookmark",
+    ];
+    if !ICONS.contains(&icon) {
+        return Err("不支持的笔记本图标".into());
+    }
+    if !color.is_empty()
+        && !(color.len() == 7
+            && color.starts_with('#')
+            && color[1..].bytes().all(|b| b.is_ascii_hexdigit()))
+    {
+        return Err("图标颜色必须是 #RRGGBB".into());
+    }
+    let dir = book_dir(root, book)?;
+    if !dir.is_dir() {
+        return Err(format!("笔记本不存在:{}", if book.is_empty() { "默认" } else { book }));
+    }
+    let mut meta = read_meta(&dir);
+    meta.icon = if icon == "book" { String::new() } else { icon.into() };
+    meta.icon_color = color.to_ascii_lowercase();
     write_meta(&dir, &meta)
 }
 
@@ -929,6 +969,33 @@ mod tests {
         let b = load_book(&root, "").unwrap();
         assert!(b.groups.is_empty() && b.notes.iter().all(|n| n.group.is_empty()));
         fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn notebook_appearance_is_persistent_and_survives_regular_meta_updates() {
+        let root = temp_dir("book-appearance");
+        fs::create_dir_all(root.join("工作")).unwrap();
+        fs::write(root.join("工作").join("周报.md"), "内容").unwrap();
+        set_book_appearance(&root, "工作", "briefcase", "#AABBCC").unwrap();
+        let b = load_book(&root, "工作").unwrap();
+        assert_eq!((&b.icon[..], &b.icon_color[..]), ("briefcase", "#aabbcc"));
+        save_book_meta(
+            &root,
+            "工作",
+            vec!["周报".into()],
+            "周报".into(),
+            HashMap::new(),
+            None,
+        )
+        .unwrap();
+        let b = load_book(&root, "工作").unwrap();
+        assert_eq!((&b.icon[..], &b.icon_color[..]), ("briefcase", "#aabbcc"));
+        assert!(set_book_appearance(&root, "工作", "bad-icon", "").is_err());
+        assert!(set_book_appearance(&root, "工作", "star", "javascript:red").is_err());
+        assert_eq!(read_meta(&root.join("工作")).icon, "briefcase");
+        set_book_appearance(&root, "工作", "star", "").unwrap();
+        assert_eq!(load_book(&root, "工作").unwrap().icon, "star");
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
