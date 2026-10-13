@@ -75,6 +75,8 @@ pub struct Settings {
     accent: String,
     /// 笔记本管理里保存的自定义纯色/渐变预设，最多 20 项。
     book_color_presets: Vec<String>,
+    /// 全局共享预设；None 表示旧版本未迁移，Some([]) 表示用户已主动清空。
+    color_presets: Option<Vec<String>>,
     /// 活跃标签的高亮:line 顶部线条、fill 整个标签、border 整圈边框
     tab_style: String,
     font_size: u32,
@@ -182,6 +184,7 @@ impl Default for Settings {
             theme: "system".into(),
             accent: String::new(),
             book_color_presets: Vec::new(),
+            color_presets: None,
             tab_style: "line".into(),
             font_size: 14,
             notes_dir: String::new(),
@@ -538,13 +541,15 @@ fn tidy_settings(s: &mut Settings) {
     s.backup_keep = s.backup_keep.clamp(1, 365);
     tidy_color(&mut s.accent);
     let mut seen_colors = std::collections::HashSet::new();
-    s.book_color_presets = s
-        .book_color_presets
-        .iter()
-        .filter_map(|v| notes::normalized_book_color(v))
-        .filter(|v| seen_colors.insert(v.clone()))
-        .take(20)
-        .collect();
+    let source = s.color_presets.as_ref().unwrap_or(&s.book_color_presets);
+    s.color_presets = Some(
+        source
+            .iter()
+            .filter_map(|v| notes::normalized_book_color(v))
+            .filter(|v| seen_colors.insert(v.clone()))
+            .take(20)
+            .collect(),
+    );
     tidy_color(&mut s.edge_color);
     tidy_color(&mut s.ball_color);
     tidy_color(&mut s.find_color);
@@ -2281,6 +2286,20 @@ mod tests {
     }
 
     #[test]
+    fn shared_color_presets_migrate_once_without_resurrecting_deleted_entries() {
+        let mut old: Settings = serde_json::from_str(
+            r##"{"book_color_presets":["#123456","linear-gradient(135deg, #abcdef, #012345)"]}"##,
+        )
+        .unwrap();
+        assert!(old.color_presets.is_none());
+        tidy_settings(&mut old);
+        assert_eq!(old.color_presets.as_ref().unwrap().len(), 2);
+        old.color_presets = Some(Vec::new());
+        tidy_settings(&mut old);
+        assert!(old.color_presets.unwrap().is_empty());
+    }
+
+    #[test]
     fn notebook_user_color_presets_are_safe_unique_and_bounded() {
         let mut s = Settings {
             book_color_presets: vec![
@@ -2293,16 +2312,16 @@ mod tests {
         };
         tidy_settings(&mut s);
         assert_eq!(
-            s.book_color_presets,
+            s.color_presets.clone().unwrap(),
             vec!["#abcdef", "linear-gradient(135deg, #ff0000, #00ff00)"]
         );
-        s.book_color_presets = (0..40).map(|i| format!("#{:06x}", i)).collect();
+        s.color_presets = Some((0..40).map(|i| format!("#{:06x}", i)).collect());
         tidy_settings(&mut s);
-        assert_eq!(s.book_color_presets.len(), 20);
+        assert_eq!(s.color_presets.as_ref().unwrap().len(), 20);
         assert!(serde_json::from_str::<Settings>(r#"{"theme":"dark"}"#)
             .unwrap()
-            .book_color_presets
-            .is_empty());
+            .color_presets
+            .is_none());
     }
 
     #[test]
