@@ -485,14 +485,16 @@ pub fn save_book_meta(
 }
 
 /// 笔记本图标与颜色独立保存在对应的 .minipad.json，改页面顺序不会覆盖它。
-pub fn set_book_appearance(
-    root: &Path,
-    book: &str,
-    icon: &str,
-    color: &str,
-) -> Result<(), String> {
+pub fn set_book_appearance(root: &Path, book: &str, icon: &str, color: &str) -> Result<(), String> {
     const ICONS: [&str; 8] = [
-        "book", "folder", "briefcase", "heart", "star", "lightbulb", "code", "bookmark",
+        "book",
+        "folder",
+        "briefcase",
+        "heart",
+        "star",
+        "lightbulb",
+        "code",
+        "bookmark",
     ];
     if !ICONS.contains(&icon) {
         return Err("不支持的笔记本图标".into());
@@ -506,7 +508,10 @@ pub fn set_book_appearance(
     }
     let dir = book_dir(root, book)?;
     if !dir.is_dir() {
-        return Err(format!("笔记本不存在:{}", if book.is_empty() { "默认" } else { book }));
+        return Err(format!(
+            "笔记本不存在:{}",
+            if book.is_empty() { "默认" } else { book }
+        ));
     }
     // 外观更改不能在元文件暂时不可读时把页面排序等内容覆盖为默认值。
     let meta_path = dir.join(META_FILE);
@@ -516,7 +521,11 @@ pub fn set_book_appearance(
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Meta::default(),
         Err(e) => return Err(format!("笔记本元信息读取失败:{e}")),
     };
-    meta.icon = if icon == "book" { String::new() } else { icon.into() };
+    meta.icon = if icon == "book" {
+        String::new()
+    } else {
+        icon.into()
+    };
     meta.icon_color = color.to_ascii_lowercase();
     write_meta(&dir, &meta)
 }
