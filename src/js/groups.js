@@ -23,17 +23,18 @@ export const GROUP_COLORS = [
 ];
 
 // 分组的渐变色:和强调色同一套
-export const GROUP_GRADIENTS = GRADIENTS.map((g) => [g.name, gradientOf(g.stops)]);
+export const GROUP_GRADIENTS = GRADIENTS.map((g) => [g.name, gradientOf(g.stops, 90)]);
 
 // 分组的颜色放到元素上:--g 是纯色(渐变取起点),--g-grad 是整条颜色(纯色或渐变),
 // --g-soft / --g-soft2 / --g-tint 是淡一些的同样的颜色(分组名字的底色、鼠标移上去、整个标签染色)
 export function groupVars(el, color) {
   const a = parseAccent(color) || parseAccent(GROUP_COLORS[0][1]);
   const stops = a.to ? a.stops : [a.from, a.from];
-  const fade = (p) => gradientOf(stops.map((c) => `color-mix(in srgb, ${c} ${p}%, transparent)`), 90, a.positions);
+  const angle = a.deg ?? 90;
+  const fade = (p) => gradientOf(stops.map((c) => `color-mix(in srgb, ${c} ${p}%, transparent)`), angle, a.positions);
   el.style.setProperty("--g", a.from);
-  // 分组标签的细线延续横向渐变，保留用户设定的节点位置。
-  el.style.setProperty("--g-grad", gradientOf(stops, 90, a.positions));
+  // 细线和淡色背景使用相同角度，保留自定义节点位置。
+  el.style.setProperty("--g-grad", gradientOf(stops, angle, a.positions));
   el.style.setProperty("--g-soft", fade(24));
   el.style.setProperty("--g-soft2", fade(36));
   el.style.setProperty("--g-tint", fade(15));

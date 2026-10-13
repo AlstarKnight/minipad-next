@@ -3074,7 +3074,7 @@ describe("0.3.2: tab groups", () => {
 });
 
 describe("v0.3.4 group gradient direction", () => {
-  ui("group underline keeps a horizontal gradient and custom stop positions", {
+  ui("group underline and tint honor a custom gradient angle and stop positions", {
     seed: (() => {
       const db = seed({ "": { a: "a", b: "b" } });
       db.settings.tab_groups = true;
@@ -3087,9 +3087,9 @@ describe("v0.3.4 group gradient direction", () => {
   }, async ({ p }) => {
     const gradients = await p.$eval(".tab-group", (el) =>
       ["--g-grad", "--g-soft", "--g-soft2", "--g-tint"].map((name) => el.style.getPropertyValue(name)));
-    assert.equal(gradients[0], "linear-gradient(90deg, #112233 0%, #445566 25%, #778899 100%)");
+    assert.equal(gradients[0], "linear-gradient(45deg, #112233 0%, #445566 25%, #778899 100%)");
     for (const value of gradients.slice(1)) {
-      assert.match(value, /^linear-gradient\(90deg, /, "soft backgrounds use the same direction as the underline");
+      assert.match(value, /^linear-gradient\(45deg, /, "soft backgrounds use the same custom direction as the underline");
       assert.match(value, /25%/, "custom node positions remain intact");
     }
   });
@@ -3154,12 +3154,36 @@ describe("0.3.2: floating format buttons on a selection", () => {
     assert.ok(await p.isHidden("#toolbar"), "no floating buttons when turned off");
   });
 
+  ui("groups: choosing a gradient angle applies it to line and tint and persists", {
+    seed: { ...seed({ "": { a: "a", b: "b" } }), settings: { ...SETTINGS, tab_groups: true } },
+  }, async (h) => {
+    const { p } = h;
+    await p.click("#tabs .tab:nth-child(1)", { button: "right" });
+    await p.click('#ctx button[data-act="group-new"]');
+    await p.click('#ge-colors .ge-color[title="蓝紫渐变"]');
+    const editor = p.locator("#ge-colors .shared-colors");
+    await editor.locator(":scope > .uc-actions button").first().click();
+    assert.equal(await editor.locator('input[aria-label="渐变角度"]').inputValue(), "90", "group presets default to the old horizontal direction");
+    await editor.locator('input[aria-label="渐变角度"]').fill("215");
+    await editor.locator('input[aria-label="渐变角度"]').dispatchEvent("change");
+    await editor.locator(".uc-editor .uc-actions button").last().click();
+    const expected = "linear-gradient(215deg, #5fb4ff 0%, #d66cf0 100%)";
+    await until(async () => (await h.stored())?.books?.[""]?.meta?.groups?.[0]?.color, expected);
+    const gradients = await p.$eval(".tab-group", (el) =>
+      ["--g-grad", "--g-soft", "--g-soft2", "--g-tint"].map((key) => el.style.getPropertyValue(key)));
+    assert.equal(gradients[0], expected, "the group underline respects the chosen angle");
+    for (const css of gradients.slice(1)) {
+      assert.match(css, /^linear-gradient\(215deg, /, "tinted backgrounds use the same angle");
+      assert.match(css, /0%.*100%/, "stop positions remain intact");
+    }
+  });
+
   ui("groups: a group can be a gradient, from the presets or a custom one", { seed: { ...seed({ "": { a: "a", b: "b" } }), settings: { ...SETTINGS, tab_groups: true } } }, async (h) => {
     const { p } = h;
     await p.click("#tabs .tab:nth-child(1)", { button: "right" });
     await p.click('#ctx button[data-act="group-new"]');
     await p.click('#ge-colors .ge-color[title="蓝紫渐变"]');
-    await until(async () => (await h.stored())?.books?.[""]?.meta?.groups?.[0]?.color, "linear-gradient(135deg, #5fb4ff, #d66cf0)", "a preset gradient");
+    await until(async () => (await h.stored())?.books?.[""]?.meta?.groups?.[0]?.color, "linear-gradient(90deg, #5fb4ff, #d66cf0)", "a preset gradient");
     assert.match(await p.$eval(".tab-group", (c) => c.style.getPropertyValue("--g-grad")), /#5fb4ff, #d66cf0/);
     const editor = p.locator("#ge-colors .shared-colors");
     assert.equal(await p.locator("#ge-colors .ge-custom").count(), 0, "no duplicate old custom picker");
