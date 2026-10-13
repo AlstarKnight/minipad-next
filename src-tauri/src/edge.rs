@@ -352,7 +352,10 @@ mod tests {
         };
         assert!(arrow.contains(500, 4));
         assert!(!arrow.contains(475, 4));
-        let high_dpi = IndicatorHotzone { scale: 2.0, ..arrow };
+        let high_dpi = IndicatorHotzone {
+            scale: 2.0,
+            ..arrow
+        };
         assert!(high_dpi.contains(470, 4));
         let with_line = IndicatorHotzone {
             style: "arrow",
