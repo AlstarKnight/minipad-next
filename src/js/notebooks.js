@@ -29,7 +29,7 @@ export function renderBook() {
   $("#book-name").textContent = label;
   btn.title = label;
   btn.setAttribute("aria-label", `当前笔记本：${label}，点击切换`);
-  $("#book-icon").innerHTML = bookIcon(currentBook?.icon, currentBook?.icon_color);
+  $("#book-icon").innerHTML = bookIcon(currentBook?.icon, currentBook?.icon_color || state.settings?.accent);
   $("#book-icon").style.color = iconColor(currentBook);
   renderList();
   if (!$("#book-manager").hidden) renderManager();
@@ -47,7 +47,7 @@ function renderList() {
     item.disabled = !!moving && b === book();
     const icon = document.createElement("span");
     icon.className = "book-item-icon";
-    icon.innerHTML = bookIcon(b.icon, b.icon_color);
+    icon.innerHTML = bookIcon(b.icon, b.icon_color || state.settings?.accent);
     icon.style.color = iconColor(b);
     const name = document.createElement("span");
     name.className = "name";
@@ -270,7 +270,7 @@ function renderManager() {
     button.title = bookLabel(b);
     button.setAttribute("aria-pressed", String(b === selectedBook));
     const icon = document.createElement("span");
-    icon.innerHTML = bookIcon(b.icon, b.icon_color);
+    icon.innerHTML = bookIcon(b.icon, b.icon_color || state.settings?.accent);
     icon.style.color = iconColor(b);
     const name = document.createElement("span");
     name.textContent = bookLabel(b);
