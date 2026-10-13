@@ -1,3 +1,4 @@
+import { parseAccent } from "./accent.js";
 // 笔记本图标：固定的 SVG 图形，不插入文件里的任意 HTML。
 export const BOOK_ICONS = [
   ["book", "书本"],
@@ -19,10 +20,24 @@ const SHAPES = {
   code: '<path d="m5.3 4.3-3.6 3.7 3.6 3.7M10.7 4.3l3.6 3.7-3.6 3.7M9.1 2.7 6.9 13.3"/>',
   bookmark: '<path d="M4 2.1h8v12l-4-3-4 3z"/>',
 };
-export function bookIcon(icon) {
+let nextGradientId = 0;
+
+// SVG strokes can use a real gradient paint server. Every icon gets its own ID,
+// so separate notebooks never accidentally share another icon's gradient.
+export function bookIcon(icon, color = "") {
   const shape = SHAPES[icon] || SHAPES.book;
-  return `<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">${shape}</svg>`;
+  const parsed = parseAccent(color);
+  if (!parsed?.to) return `<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">${shape}</svg>`;
+  const id = `book-icon-gradient-${++nextGradientId}`;
+  const angle = (parsed.deg * Math.PI) / 180;
+  const dx = Math.sin(angle) * 8;
+  const dy = -Math.cos(angle) * 8;
+  const stops = parsed.stops.map((hex, i) =>
+    `<stop offset="${(i / (parsed.stops.length - 1)) * 100}%" stop-color="${hex}"/>`
+  ).join("");
+  const defs = `<defs><linearGradient id="${id}" gradientUnits="userSpaceOnUse" x1="${8 - dx}" y1="${8 - dy}" x2="${8 + dx}" y2="${8 + dy}">${stops}</linearGradient></defs>`;
+  return `<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false" style="stroke: url(#${id})">${defs}${shape}</svg>`;
 }
 export function iconColor(book) {
-  return /^#[0-9a-fA-F]{6}$/.test(book?.icon_color || "") ? book.icon_color : "var(--accent)";
+  return parseAccent(book?.icon_color)?.from || "var(--accent)";
 }
