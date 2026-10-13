@@ -108,6 +108,8 @@ pub struct Settings {
     find_color: String,
     /// 同一页在这里和别处(网盘同步)都改过:copy 把那边的版本另存为冲突副本 / overwrite 用这边的覆盖
     conflict_mode: String,
+    /// 设置页面的分类放在哪:left 左边一列 / top 上面一排
+    settings_nav: String,
     window: Option<Geom>,
 }
 
@@ -146,6 +148,7 @@ impl Default for Settings {
             find_bar_pos: "top".into(),
             find_color: String::new(),
             conflict_mode: "copy".into(),
+            settings_nav: "left".into(),
             window: None,
         }
     }
@@ -457,6 +460,7 @@ fn tidy_settings(s: &mut Settings) {
     pick_one(&mut s.ctrl_f, &["page", "all"]);
     pick_one(&mut s.find_bar_pos, &["top", "bottom"]);
     pick_one(&mut s.conflict_mode, &["copy", "overwrite"]);
+    pick_one(&mut s.settings_nav, &["left", "top"]);
     s.ball_size = s.ball_size.clamp(32, 96);
     if !["app", "custom"].contains(&s.ball_icon.as_str()) {
         s.ball_icon = "app".into();
@@ -1872,6 +1876,21 @@ mod tests {
             (old.ctrl_f.as_str(), old.conflict_mode.as_str()),
             ("page", "copy")
         );
+    }
+
+    #[test]
+    fn tidy_settings_keeps_settings_nav_known() {
+        let mut s = Settings::default();
+        assert_eq!(s.settings_nav, "left");
+        s.settings_nav = "top".into();
+        tidy_settings(&mut s);
+        assert_eq!(s.settings_nav, "top");
+        s.settings_nav = "right".into();
+        tidy_settings(&mut s);
+        assert_eq!(s.settings_nav, "left");
+        // 0.3.0 的设置文件里没有这一项,读出来是默认值
+        let old: Settings = serde_json::from_str(r#"{"hotkey":"Ctrl+M"}"#).unwrap();
+        assert_eq!(old.settings_nav, "left");
     }
 
     #[test]

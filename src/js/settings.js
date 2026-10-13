@@ -60,6 +60,48 @@ matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => stat
 // 后端给的备份情况 { dir, latest, count },还没读到时是 null
 let backupInfo = null;
 
+// ---- 分类:点左边(或上面)的分类只显示那一类,下次打开设置还停在上次看的那一类 ----
+const PAGES = ["general", "look", "edge", "ball", "editor", "find", "storage", "backup", "import"];
+const PAGE_KEY = "minipad-next-settings-page";
+let page = (() => {
+  try {
+    const saved = localStorage.getItem(PAGE_KEY);
+    return PAGES.includes(saved) ? saved : "general";
+  } catch {
+    return "general";
+  }
+})();
+
+export function showSettingsPage(name, { focus = false } = {}) {
+  if (!PAGES.includes(name)) return;
+  page = name;
+  try {
+    localStorage.setItem(PAGE_KEY, name);
+  } catch {}
+  for (const tab of document.querySelectorAll("#set-nav [role=tab]")) {
+    const on = tab.dataset.page === name;
+    tab.setAttribute("aria-selected", String(on));
+    tab.tabIndex = on ? 0 : -1;
+    if (on && focus) tab.focus();
+    if (on) tab.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }
+  for (const el of document.querySelectorAll(".set-page")) el.hidden = el.dataset.page !== name;
+  $(".set-pages").scrollTop = 0;
+}
+
+// 保存时出的错放在下面,同时换到出错的那一类,好看到要改的地方
+function pageForError(msg) {
+  if (/热键|开机启动/.test(msg)) return "general";
+  if (/备份/.test(msg)) return "backup";
+  if (/文件夹|笔记/.test(msg)) return "storage";
+  return page;
+}
+
+// 分类放在左边还是上面:选了马上换,取消就回到原来的
+function applyNavPos(value) {
+  $("#settings").dataset.nav = value === "top" ? "top" : "left";
+}
+
 export function openSettings() {
   closeOverlays();
   const s = state.settings;
@@ -105,11 +147,14 @@ export function openSettings() {
   $("#set-backup-keep").value = s.backup_keep;
   $("#set-backup-dir").value = s.backup_dir;
   updateEdgeOptions();
+  $("#set-nav-pos").value = s.settings_nav === "top" ? "top" : "left";
+  applyNavPos(s.settings_nav);
   $("#set-error").hidden = true;
   $("#set-version").textContent = state.version ? `Minipad Next ${state.version}` : "Minipad Next";
   backupInfo = null;
   updateBackup();
   $("#settings").hidden = false;
+  showSettingsPage(page, { focus: true });
   api
     .invoke("backup_info")
     .then((info) => {
@@ -295,6 +340,7 @@ async function submitSettings() {
     find_bar_pos: $("#set-find-pos").value,
     find_color: findColor.value,
     conflict_mode: $("#set-conflict").value,
+    settings_nav: $("#set-nav-pos").value,
     backup_enabled: $("#set-backup").checked,
     backup_keep: Math.min(365, Math.max(1, Math.round(Number($("#set-backup-keep").value)) || 14)),
     backup_dir: $("#set-backup-dir").value.trim(),
@@ -307,6 +353,7 @@ async function submitSettings() {
     const err = $("#set-error");
     err.textContent = String(e);
     err.hidden = false;
+    showSettingsPage(pageForError(String(e)));
   }
 }
 
@@ -364,6 +411,35 @@ export function bindSettings() {
     if (combo) hk.value = combo;
   });
   $("#set-save").addEventListener("click", submitSettings);
+  // 分类:点一下换过去;焦点在分类上时,上下(分类在上面时左右)方向键换到相邻的一类,Home / End 换到第一类和最后一类
+  const nav = $("#set-nav");
+  nav.addEventListener("click", (e) => {
+    const tab = e.target.closest("[role=tab]");
+    if (tab) showSettingsPage(tab.dataset.page);
+  });
+  nav.addEventListener("keydown", (e) => {
+    const i = PAGES.indexOf(page);
+    const step = { ArrowDown: 1, ArrowRight: 1, ArrowUp: -1, ArrowLeft: -1 }[e.key];
+    let next = null;
+    if (step) next = PAGES[(i + step + PAGES.length) % PAGES.length];
+    else if (e.key === "Home") next = PAGES[0];
+    else if (e.key === "End") next = PAGES[PAGES.length - 1];
+    if (!next) return;
+    e.preventDefault();
+    showSettingsPage(next, { focus: true });
+  });
+  // 分类排成一排放不下时,滚轮也能左右滑动
+  nav.addEventListener(
+    "wheel",
+    (e) => {
+      const row = getComputedStyle(nav).flexDirection === "row";
+      if (!row || nav.scrollWidth <= nav.clientWidth || Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
+      e.preventDefault();
+      nav.scrollLeft += e.deltaY;
+    },
+    { passive: false },
+  );
+  $("#set-nav-pos").addEventListener("change", () => applyNavPos($("#set-nav-pos").value));
   $("#set-edge").addEventListener("change", updateEdgeOptions);
   $("#set-dir").addEventListener("input", updateMigration);
   $("#set-cancel").addEventListener("click", () => closeOverlays());

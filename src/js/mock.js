@@ -39,6 +39,7 @@ const DEFAULT_SETTINGS = {
   find_bar_pos: "top",
   find_color: "",
   conflict_mode: "copy",
+  settings_nav: "left",
 };
 
 const has = (obj, key) => Object.prototype.hasOwnProperty.call(obj, key);
@@ -275,6 +276,7 @@ export function mockApi() {
         ctrl_f: pickOne(settings.ctrl_f, ["page", "all"]),
         find_bar_pos: pickOne(settings.find_bar_pos, ["top", "bottom"]),
         conflict_mode: pickOne(settings.conflict_mode, ["copy", "overwrite"]),
+        settings_nav: pickOne(settings.settings_nav, ["left", "top"]),
       };
       const notes = normPath(s.notes_dir);
       const dest = normPath(s.backup_dir);
