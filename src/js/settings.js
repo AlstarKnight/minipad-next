@@ -47,6 +47,10 @@ const EDGE_PEEK_STRIP = 32;
 const EDGE_ARROW_STRIP = 18;
 const edgeWidth = (s) => Math.min(12, Math.max(1, Number(s.edge_line_width) || 2));
 const edgeLength = (s) => Math.min(100, Math.max(10, Number(s.edge_line_length) || 100));
+const edgeLengthPx = (s) => Math.min(600, Math.max(24, Number(s.edge_line_length_px) || 120));
+const edgeUnit = (s) => s.edge_line_length_unit === "px" ? "px" : "percent";
+const edgeCssLength = (s) => edgeUnit(s) === "px" ? `min(100%, ${edgeLengthPx(s)}px)` : `${edgeLength(s)}%`;
+let edgeLengthValues = { percent: 100, px: 120 };
 export function applyEdgeAppearance() {
   const s = state.settings || {};
   const root = document.documentElement;
@@ -57,7 +61,7 @@ export function applyEdgeAppearance() {
   const strip = peeking ? EDGE_PEEK_STRIP : style === "arrow" || style === "arrow-only" ? EDGE_ARROW_STRIP : lineStrip;
   root.style.setProperty("--edge-peek", strip + "px");
   root.style.setProperty("--edge-line-width", edgeWidth(s) + "px");
-  root.style.setProperty("--edge-line-length", edgeLength(s) + "%");
+  root.style.setProperty("--edge-line-length", edgeCssLength(s));
   root.dataset.edgeGlow = s.edge_line_glow ? "on" : "off";
   // 空着跟随强调色(CSS 里退回 --accent / --accent-grad)
   const c = parseAccent(s.edge_color);
@@ -125,7 +129,9 @@ export function openSettings() {
   $("#set-edge").checked = s.edge_hide;
   $("#set-edge-style").value = EDGE_STYLES.includes(s.edge_style) ? s.edge_style : "arrow";
   $("#set-edge-line-width").value = edgeWidth(s);
-  $("#set-edge-line-length").value = edgeLength(s);
+  edgeLengthValues = { percent: edgeLength(s), px: edgeLengthPx(s) };
+  $("#set-edge-length-unit").value = edgeUnit(s);
+  setEdgeLengthInput();
   $("#set-edge-glow").checked = !!s.edge_line_glow;
   edgeColor.show(s.edge_color || "");
   $("#set-taskbar").checked = s.show_in_taskbar;
@@ -389,14 +395,33 @@ function updateEdgeOptions() {
   updateEdgeLinePreview();
 }
 
+function setEdgeLengthInput() {
+  const unit = $("#set-edge-length-unit").value;
+  const input = $("#set-edge-line-length");
+  const number = $("#set-edge-length-number");
+  const fixed = unit === "px";
+  const min = fixed ? 24 : 10;
+  const max = fixed ? 600 : 100;
+  input.min = number.min = String(min);
+  input.max = number.max = String(max);
+  input.step = fixed ? "1" : "5";
+  number.step = "1";
+  input.value = number.value = String(edgeLengthValues[unit]);
+  updateEdgeLinePreview();
+}
+
 function updateEdgeLinePreview() {
   const width = Math.min(12, Math.max(1, Number($("#set-edge-line-width").value) || 2));
-  const length = Math.min(100, Math.max(10, Number($("#set-edge-line-length").value) || 100));
+  const unit = $("#set-edge-length-unit").value;
+  const value = Number($("#set-edge-line-length").value);
+  const length = unit === "px" ? Math.min(600, Math.max(24, value || 120)) : Math.min(100, Math.max(10, value || 100));
+  edgeLengthValues[unit] = length;
   $("#set-edge-line-width-val").textContent = width + " 像素";
-  $("#set-edge-line-length-val").textContent = length + "%";
+  $("#set-edge-line-length-val").textContent = length + (unit === "px" ? "px" : "%");
+  $("#set-edge-length-number").value = String(length);
   const preview = $("#set-edge-line-preview");
   preview.style.setProperty("--edge-line-width", width + "px");
-  preview.style.setProperty("--edge-line-length", length + "%");
+  preview.style.setProperty("--edge-line-length", unit === "px" ? `min(100%, ${length}px)` : length + "%");
   preview.classList.toggle("glow", $("#set-edge-glow").checked);
   const picked = edgeColor.value || accentColor.value;
   const col = parseAccent(picked);
@@ -455,7 +480,9 @@ async function submitSettings() {
     edge_hide: $("#set-edge").checked,
     edge_style: $("#set-edge-style").value,
     edge_line_width: Number($("#set-edge-line-width").value) || 2,
-    edge_line_length: Number($("#set-edge-line-length").value) || 100,
+    edge_line_length: edgeLengthValues.percent,
+    edge_line_length_unit: $("#set-edge-length-unit").value,
+    edge_line_length_px: edgeLengthValues.px,
     edge_line_glow: $("#set-edge-glow").checked,
     edge_color: edgeColor.value,
     ball_enabled: $("#set-ball").checked,
@@ -601,6 +628,13 @@ export function bindSettings() {
   $("#set-edge").addEventListener("change", updateEdgeOptions);
   $("#set-edge-style").addEventListener("change", updateEdgeOptions);
   for (const id of ["#set-edge-line-width", "#set-edge-line-length", "#set-edge-glow"]) $(id).addEventListener("input", updateEdgeLinePreview);
+  $("#set-edge-length-unit").addEventListener("change", setEdgeLengthInput);
+  $("#set-edge-length-number").addEventListener("change", (e) => {
+    const slider = $("#set-edge-line-length");
+    const val = Math.min(Number(slider.max), Math.max(Number(slider.min), Number(e.target.value)));
+    slider.value = String(val);
+    updateEdgeLinePreview();
+  });
   $("#set-dir").addEventListener("input", updateMigration);
   $("#set-cancel").addEventListener("click", () => closeOverlays());
   for (const id of ["#set-accent-from", "#set-accent-to", "#set-accent-grad"]) $(id).addEventListener("input", accentColor.custom);
