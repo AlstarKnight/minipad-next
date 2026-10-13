@@ -1454,17 +1454,16 @@ fn edge_tick(app: &AppHandle) {
             let settings = st.settings.lock().unwrap();
             (settings.edge_style.clone(), settings.edge_line_length)
         };
-        let inside = edge::indicator_contains(
+        let inside = edge::IndicatorHotzone {
             edge,
-            rect,
+            win: rect,
             mon,
-            cx,
-            cy,
-            &style,
-            length,
+            style: &style,
+            length_percent: length,
             peeking,
-            win.scale_factor().unwrap_or(1.0),
-        );
+            scale: win.scale_factor().unwrap_or(1.0),
+        }
+        .contains(cx, cy);
         if style != "hover" {
             // 鼠标碰到露出来的那条边就滑出来
             if inside {
