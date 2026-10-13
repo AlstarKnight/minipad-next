@@ -2289,7 +2289,10 @@ mod tests {
         tidy_settings(&mut old);
         assert_eq!(old.color_presets.as_ref().unwrap().len(), 2);
         let written = serde_json::to_value(&old).unwrap();
-        assert!(written.get("book_color_presets").is_none(), "旧预设字段只读，不再写回");
+        assert!(
+            written.get("book_color_presets").is_none(),
+            "旧预设字段只读，不再写回"
+        );
         assert_eq!(written["color_presets"].as_array().unwrap().len(), 2);
         old.color_presets = Some(Vec::new());
         tidy_settings(&mut old);
