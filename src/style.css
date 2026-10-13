@@ -102,40 +102,31 @@ svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width:
   user-select: none;
 }
 
-/* 当前笔记本,点开切换 */
+/* 顶栏紧凑的笔记本图标，鼠标悬停可从原生 tooltip 看到完整名称。 */
 #btn-book {
   position: relative;
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 3px;
-  flex-shrink: 0;
-  /* 窗口变窄时名字先缩短,标签栏才有地方 */
-  max-width: clamp(56px, calc(100vw - 320px), 120px);
-  height: 26px;
-  margin: 0 9px 4px 0;
-  padding: 0 5px 0 8px;
-  border-radius: 6px;
+  justify-content: center;
+  flex: 0 0 32px;
+  width: 32px;
+  height: 28px;
+  margin: 0 9px 3px 0;
+  padding: 4px;
+  border-radius: 7px;
   color: var(--muted);
-  font-size: 12.5px;
-  white-space: nowrap;
 }
-#btn-book:hover, #btn-book[aria-expanded="true"] { background: var(--accent-soft); color: var(--text); }
-#book-name { overflow: hidden; text-overflow: ellipsis; }
-#btn-book svg { width: 11px; height: 11px; flex-shrink: 0; stroke-width: 1.8; }
-/* 和标签之间的分隔线 */
+#btn-book:hover, #btn-book[aria-expanded="true"] { background: var(--accent-soft); }
+#book-icon { display: inline-flex; align-items: center; justify-content: center; }
+#book-icon svg { width: 19px; height: 19px; stroke-width: 1.7; }
+.visually-hidden {
+  position: absolute; width: 1px; height: 1px;
+  padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0);
+  white-space: nowrap; border: 0;
+}
 #btn-book::after {
-  content: "";
-  position: absolute;
-  top: 6px;
-  bottom: 6px;
-  right: -5px;
-  width: 1px;
-  background: var(--bar-border);
-}
-/* 很窄的窗口里只留箭头 */
-@media (max-width: 320px) {
-  #book-name { display: none; }
-  #btn-book { padding: 0 7px; }
+  content: ""; position: absolute; top: 6px; bottom: 6px; right: -5px;
+  width: 1px; background: var(--bar-border);
 }
 
 #tabs {
@@ -870,6 +861,66 @@ html[data-find-pos="bottom"] #status { order: 2; }
 .menu-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .menu-hint { font-size: 11px; }
 
+/* 独立的笔记本管理页面，保持在浮窗内完成，无需弹出新的系统窗口。 */
+.book-manager-panel { max-width: 580px; height: min(530px, 100%); display: flex; flex-direction: column; overflow: hidden; padding: 12px; }
+.bm-head { display: flex; align-items: center; gap: 8px; padding-bottom: 10px; border-bottom: 1px solid var(--code-border); }
+.bm-head h2 { margin: 0; font-size: 15px; }
+.bm-head .icon { font-size: 22px; line-height: 1; width: 26px; height: 26px; border-radius: 6px; }
+.bm-head .icon:hover { background: var(--accent-soft); }
+.bm-body { display: flex; flex: 1; min-height: 0; margin: 0 -12px -12px; }
+#bm-list { flex: 0 0 38%; min-width: 105px; overflow-y: auto; border-right: 1px solid var(--code-border); padding: 8px; }
+.bm-list-item { display: flex; align-items: center; width: 100%; gap: 9px; padding: 9px 7px; border-radius: 7px; text-align: left; font-size: 13px; }
+.bm-list-item:hover, .bm-list-item.selected { background: var(--accent-soft); }
+.bm-list-item svg, .book-item-icon svg { width: 18px; height: 18px; flex-shrink: 0; }
+.bm-list-item > span:first-child, .book-item-icon { display: inline-flex; flex-shrink: 0; }
+.bm-list-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+.bm-list-count { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+#bm-details { min-width: 0; flex: 1; padding: 12px; overflow-y: auto; }
+#bm-selected { margin: 0 0 12px; font-size: 15px; overflow-wrap: anywhere; }
+.bm-field-title { font-size: 12px; color: var(--muted); margin: 12px 0 7px; }
+.bm-icon-grid, .bm-colors { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 7px; }
+.bm-icon-grid button { padding: 9px; display: flex; justify-content: center; border: 1px solid var(--bar-border); border-radius: 7px; }
+.bm-icon-grid svg { width: 20px; height: 20px; }
+.bm-icon-grid button:hover, .bm-icon-grid button[aria-checked="true"] { border-color: var(--accent); background: var(--accent-soft); }
+.bm-colors { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+.bm-colors button { height: 26px; border-radius: 7px; background: var(--book-swatch); border: 1px solid var(--bar-border); color: white; }
+.bm-colors button:hover { border-color: color-mix(in srgb, var(--accent) 70%, var(--bar-border)); }
+.bm-colors button[aria-checked="true"] {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 13%, transparent);
+}
+.bm-colors button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.bm-custom-color { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 12px; margin-top: 9px; }
+.bm-custom-color label { display: inline-flex; align-items: center; gap: 5px; }
+.bm-custom-color input[type="color"] { width: 38px; height: 26px; padding: 2px; background: transparent; border: 1px solid var(--bar-border); border-radius: 6px; }
+.bm-custom-color input[type="checkbox"] { accent-color: var(--accent); }
+#bm-gradient-to-label[hidden] { display: none; }
+.bm-preset-head { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin: 12px 0 7px; }
+.bm-preset-head .bm-field-title { margin: 0; }
+.bm-saved-colors { min-height: 24px; }
+.bm-saved-item { position: relative; min-width: 0; }
+.bm-colors .bm-saved-item > button[role="radio"] { display: block; width: 100%; padding: 0; }
+.bm-colors .bm-saved-item > button.bm-remove-color {
+  position: absolute; top: -5px; right: -5px; z-index: 1;
+  width: 15px; height: 15px; padding: 0; border-radius: 50%;
+  border: 1px solid var(--bar-border); background: var(--bg); color: var(--muted);
+  font-size: 12px; line-height: 12px;
+}
+.bm-colors .bm-saved-item > button.bm-remove-color:hover { color: var(--danger); border-color: var(--danger); }
+.bm-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 18px; }
+.bm-actions .danger { color: var(--danger); }
+#bm-error { margin-top: 12px; }
+@media (max-width: 370px) {
+  .book-manager-panel { padding: 9px; }
+  #bm-list { padding: 4px; flex-basis: 39%; }
+  .bm-list-item { gap: 5px; padding: 8px 3px; }
+  #bm-details { padding: 9px 7px; }
+  .bm-icon-grid, .bm-colors { gap: 4px; }
+}
+/* 状态栏空白处允许拖动，计数与保存状态仍然能正常选取文字。 */
+#status > .spacer { cursor: grab; }
+
 /* 笔记本列表 */
 .books { min-width: 180px; max-width: min(280px, calc(100vw - 8px)); max-height: 60vh; overflow-y: auto; }
 .menu .book-item { display: flex; align-items: center; gap: 12px; }
@@ -979,10 +1030,8 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
 .form input[type="range"]:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 2px var(--accent); }
 .form input[type="range"]:disabled { cursor: default; }
 
-/* 贴边隐藏的标识:窗口缩进屏幕边以后只露出一条(宽度由 --edge-peek 决定,见 settings.js)。
-   三种样式:arrow 细线 + 箭头 / line 仅细边高亮 / hover 细边 + 悬浮按钮。
-   颜色用 --edge-c(纯色)和 --edge-grad(可以是渐变),没单独设就跟随强调色。
-   不透明底色盖住窗口原有的内容(状态栏等)。 */
+/* 贴边隐藏标识：只有 marker 留在屏幕内，正文与状态栏完全隐藏。
+   细线粗细、长度可配置；仅箭头模式完全不绘制细线。 */
 #edge-mark {
   --ec: var(--edge-c, var(--accent));
   --eg: var(--edge-grad, var(--accent-grad));
@@ -992,25 +1041,47 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
   pointer-events: none;
 }
 html[data-edge] #edge-mark { display: block; background: transparent; }
-/* 缩进去以后窗口是透明的:只画细线、箭头和按钮,窗口原来的内容和底色都不露出来 */
 html[data-edge], html[data-edge] body { background: transparent; border-color: transparent; }
 html[data-edge] body > :not(#edge-mark) { visibility: hidden; }
-html[data-edge="top"] #edge-mark { left: 0; right: 0; bottom: 0; height: var(--edge-peek, 6px); }
-html[data-edge="left"] #edge-mark { top: 0; bottom: 0; right: 0; width: var(--edge-peek, 6px); }
-html[data-edge="right"] #edge-mark { top: 0; bottom: 0; left: 0; width: var(--edge-peek, 6px); }
-/* 彩色细线:贴在靠屏幕边缘的那一侧 */
-#edge-mark > span { position: absolute; background: var(--eg); box-shadow: 0 0 2px #0006; }
-html[data-edge="top"] #edge-mark > span { left: 0; right: 0; top: 0; height: 3px; }
-html[data-edge="left"] #edge-mark > span { top: 0; bottom: 0; left: 0; width: 3px; }
-html[data-edge="right"] #edge-mark > span { top: 0; bottom: 0; right: 0; width: 3px; }
-/* 仅细边,以及悬浮按钮样式平时:露出的这一条整条就是彩色细线 */
-html[data-edge-style="line"] #edge-mark,
-html[data-edge-style="hover"]:not([data-edge-peek]) #edge-mark { background: var(--eg); }
+html[data-edge="top"] #edge-mark { left: 0; right: 0; bottom: 0; height: var(--edge-peek, 18px); }
+html[data-edge="left"] #edge-mark { top: 0; bottom: 0; right: 0; width: var(--edge-peek, 18px); }
+html[data-edge="right"] #edge-mark { top: 0; bottom: 0; left: 0; width: var(--edge-peek, 18px); }
 
-/* 展开按钮:整条都能点(碰到这条窗口本来也会滑出来) */
+/* 细线围绕窗口所在的边居中，调长度时不会改变窗口真正的贴边位置。 */
+#edge-mark > span { position: absolute; background: var(--eg); box-shadow: 0 0 2px #0006; }
+html[data-edge="top"] #edge-mark > span {
+  width: var(--edge-line-length, 100%); height: var(--edge-line-width, 2px);
+  top: 0; left: 50%; transform: translateX(-50%);
+}
+html[data-edge="left"] #edge-mark > span {
+  height: var(--edge-line-length, 100%); width: var(--edge-line-width, 2px);
+  left: 0; top: 50%; transform: translateY(-50%);
+}
+html[data-edge="right"] #edge-mark > span {
+  height: var(--edge-line-length, 100%); width: var(--edge-line-width, 2px);
+  right: 0; top: 50%; transform: translateY(-50%);
+}
+/* 细线 + 箭头：在中间留 36px 间隙，12px 粗线也不会压住箭头。 */
+html[data-edge-style="arrow"][data-edge="top"] #edge-mark > span {
+  -webkit-mask-image: linear-gradient(to right, #000 calc(50% - 18px), transparent calc(50% - 18px), transparent calc(50% + 18px), #000 calc(50% + 18px));
+  mask-image: linear-gradient(to right, #000 calc(50% - 18px), transparent calc(50% - 18px), transparent calc(50% + 18px), #000 calc(50% + 18px));
+}
+html[data-edge-style="arrow"][data-edge="left"] #edge-mark > span,
+html[data-edge-style="arrow"][data-edge="right"] #edge-mark > span {
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(50% - 18px), transparent calc(50% - 18px), transparent calc(50% + 18px), #000 calc(50% + 18px));
+  mask-image: linear-gradient(to bottom, #000 calc(50% - 18px), transparent calc(50% - 18px), transparent calc(50% + 18px), #000 calc(50% + 18px));
+}
+html[data-edge-style="arrow-only"] #edge-mark > span { display: none; }
+/* 微光轻量且静态：细线、普通箭头和悬浮展开按钮都支持。 */
+html[data-edge-glow="on"] #edge-mark > span {
+  filter: brightness(1.2);
+  box-shadow: 0 0 4px 1px color-mix(in srgb, var(--ec) 38%, transparent),
+              0 0 8px 1px color-mix(in srgb, var(--ec) 16%, transparent);
+}
+
+/* 展开按钮的点击区域与显示的细线长度一致；中央箭头至少保留 36px。 */
 #edge-expand {
   position: absolute;
-  inset: 0;
   pointer-events: auto;
   border: 0;
   padding: 0;
@@ -1030,23 +1101,51 @@ html[data-edge-style="hover"]:not([data-edge-peek]) #edge-mark { background: var
   filter: drop-shadow(0 0 1px #000a) drop-shadow(0 0 3px color-mix(in srgb, var(--ec) 70%, transparent));
   transition: transform .15s;
 }
+html[data-edge-glow="on"] #edge-expand::before {
+  filter: drop-shadow(0 0 2px color-mix(in srgb, var(--ec) 60%, transparent))
+          drop-shadow(0 0 4px color-mix(in srgb, var(--ec) 34%, transparent));
+}
 html[data-edge="left"] #edge-expand::before { rotate: -90deg; }
 html[data-edge="right"] #edge-expand::before { rotate: 90deg; }
-html[data-edge="top"] #edge-expand { top: 3px; }
-html[data-edge="left"] #edge-expand { left: 3px; }
-html[data-edge="right"] #edge-expand { right: 3px; }
+html[data-edge="top"] #edge-expand {
+  top: 0; left: 50%; transform: translateX(-50%);
+  width: var(--edge-line-length, 100%); height: 100%;
+}
+html[data-edge="left"] #edge-expand,
+html[data-edge="right"] #edge-expand {
+  top: 50%; transform: translateY(-50%);
+  width: 100%; height: var(--edge-line-length, 100%);
+}
+html[data-edge="left"] #edge-expand { left: 0; }
+html[data-edge="right"] #edge-expand { right: 0; }
+html[data-edge-style="arrow"][data-edge="top"] #edge-expand { width: max(var(--edge-line-length, 100%), 36px); }
+html[data-edge-style="arrow"][data-edge="left"] #edge-expand,
+html[data-edge-style="arrow"][data-edge="right"] #edge-expand { height: max(var(--edge-line-length, 100%), 36px); }
+html[data-edge-style="arrow-only"][data-edge="top"] #edge-expand { width: 36px; }
+html[data-edge-style="arrow-only"][data-edge="left"] #edge-expand,
+html[data-edge-style="arrow-only"][data-edge="right"] #edge-expand { height: 36px; }
+/* 悬浮样式平时只靠后台的线段命中检测浮出按钮。 */
+html[data-edge-style="hover"]:not([data-edge-peek]) #edge-expand { pointer-events: none; }
 #edge-expand:hover::before { transform: scale(1.2); }
 html[data-edge-style="line"] #edge-expand::before,
 html[data-edge-style="hover"]:not([data-edge-peek]) #edge-expand::before { display: none; }
 
 /* 细边 + 悬浮按钮:鼠标靠近时窗口多露出一点,中间浮出一个按钮,点了才展开 */
 html[data-edge-style="hover"][data-edge-peek] #edge-expand {
-  inset: auto;
+  pointer-events: auto;
+  transform: none;
   border-radius: 10px;
   background: var(--eg);
   box-shadow: 0 2px 10px #0005, 0 0 8px color-mix(in srgb, var(--ec) 60%, transparent);
 }
 html[data-edge-style="hover"][data-edge-peek] #edge-expand::before { background: #fff; filter: none; }
+html[data-edge-style="hover"][data-edge-peek][data-edge-glow="on"] #edge-expand {
+  box-shadow: 0 2px 10px #0005,
+              0 0 9px 2px color-mix(in srgb, var(--ec) 42%, transparent);
+}
+html[data-edge-style="hover"][data-edge-peek][data-edge-glow="on"] #edge-expand::before {
+  filter: drop-shadow(0 0 3px color-mix(in srgb, var(--ec) 55%, transparent));
+}
 html[data-edge-style="hover"][data-edge-peek][data-edge="top"] #edge-expand {
   left: 50%; translate: -50% 0; top: 8px; width: 56px; height: calc(100% - 12px);
 }
@@ -1055,7 +1154,36 @@ html[data-edge-style="hover"][data-edge-peek][data-edge="right"] #edge-expand {
   top: 50%; translate: 0 -50%; height: 56px; width: calc(100% - 12px);
 }
 html[data-edge-style="hover"][data-edge-peek][data-edge="left"] #edge-expand { left: 8px; }
-html[data-edge-style="hover"][data-edge-peek][data-edge="right"] #edge-expand { right: 8px; }
+html[data-edge-style="hover"][data-edge-peek][data-edge="right"] #edge-expand { right: 8px; left: auto; }
+/* 细线设置预览，模拟贴在顶部时的显示。 */
+.edge-line-option[hidden] { display: none !important; }
+.edge-line-control { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.edge-line-control > span:first-child { flex: none; min-width: 110px; }
+.edge-line-control input[type="range"] { flex: 1; min-width: 90px; }
+.edge-line-control .muted { min-width: 45px; text-align: right; }
+.edge-line-preview {
+  position: relative;
+  box-sizing: border-box;
+  height: 18px;
+  border: 1px solid var(--bar-border);
+  border-radius: 5px;
+  background: var(--bg);
+}
+.edge-line-preview > span {
+  display: block;
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  height: var(--edge-line-width, 2px);
+  width: var(--edge-line-length, 100%);
+  max-width: 100%;
+  background: var(--preview-edge-color, var(--accent-grad));
+}
+.edge-line-preview.glow > span {
+  box-shadow: 0 0 4px 1px color-mix(in srgb, var(--preview-glow-color, var(--accent)) 38%, transparent),
+              0 0 8px 1px color-mix(in srgb, var(--preview-glow-color, var(--accent)) 16%, transparent);
+}
 /* 设置里的悬浮图标:预览 + 大小 / 图标 / 颜色 */
 .ball-option { padding-left: 18px; }
 .ball-option.off { opacity: .5; }

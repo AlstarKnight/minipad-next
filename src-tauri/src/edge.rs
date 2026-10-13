@@ -1,20 +1,62 @@
 //! 贴边隐藏的几何计算(不依赖 Tauri,方便测试)。所有坐标都是物理像素。
 
-/// 「细线 + 箭头」样式露出的宽度，够放下一个小箭头
+/// 有箭头的两种模式都预留 18 逻辑像素，保证箭头始终可点击。
 pub const ARROW_STRIP: i32 = 18;
-/// 「仅细边」和「悬浮按钮」平时露出的宽度:整条就是一根彩色细线
-pub const LINE_STRIP: i32 = 3;
-/// 「细边 + 悬浮按钮」样式在鼠标靠近时滑出的宽度，够放下展开按钮
+/// 默认细线为 2 逻辑像素，避免在贴边时过于醒目。
+pub const LINE_STRIP: i32 = 2;
+/// 鼠标靠近时展开悬浮按钮所需的宽度。
 pub const PEEK_STRIP: i32 = 32;
-
-/// 贴边隐藏后露在屏幕内的宽度(逻辑像素,用的时候乘上屏幕缩放):按样式(arrow / line / hover)和悬浮按钮是否浮出
-pub fn strip_for(style: &str, peeking: bool) -> i32 {
+/// 开启微光不额外增大窗口露出的厚度，避免出现一大条透明触发区。
+pub fn strip_for(style: &str, peeking: bool, line_width: u32, _glow: bool) -> i32 {
+    let width = line_width.clamp(1, 12) as i32;
     match (style, peeking) {
-        ("arrow", _) => ARROW_STRIP,
+        ("arrow" | "arrow-only", _) => ARROW_STRIP,
         ("hover", true) => PEEK_STRIP,
-        _ => LINE_STRIP,
+        _ => width,
     }
 }
+
+/// 只允许在真正绘制的线段或中央箭头附近唤醒窗口。
+/// 所有坐标都是物理像素；命中区域配置与窗口一起传递，避免参数位置混淆。
+pub struct IndicatorHotzone<'a> {
+    pub edge: Edge,
+    pub win: Rect,
+    pub mon: Rect,
+    pub style: &'a str,
+    pub length_percent: u32,
+    pub peeking: bool,
+    pub scale: f64,
+}
+
+impl IndicatorHotzone<'_> {
+    pub fn contains(&self, px: i32, py: i32) -> bool {
+        let win = self.win;
+        let mon = self.mon;
+        let (along, start, span, across) = match self.edge {
+            Edge::Top => (px, win.x, win.w, py >= mon.y && py < win.y + win.h),
+            Edge::Left => (py, win.y, win.h, px >= mon.x && px < win.x + win.w),
+            Edge::Right => (py, win.y, win.h, px >= win.x && px < mon.x + mon.w),
+        };
+        if !across || span <= 0 {
+            return false;
+        }
+        let pct = self.length_percent.clamp(10, 100) as i64;
+        let line_len = (i64::from(span) * pct / 100) as i32;
+        // 箭头和悬浮按钮保留居中的独立点击范围；短线两侧的空白不可唤出。
+        let arrow_len = (36.0 * self.scale).round() as i32;
+        let hover_len = (56.0 * self.scale).round() as i32;
+        let len = match (self.style, self.peeking) {
+            ("arrow-only", _) => arrow_len,
+            ("arrow", _) => line_len.max(arrow_len),
+            ("hover", true) => line_len.max(hover_len),
+            _ => line_len,
+        }
+        .clamp(1, span);
+        let from = start + (span - len) / 2;
+        along >= from && along < from + len
+    }
+}
+
 /// 离屏幕边缘多近算"靠边"
 pub const SNAP: i32 = 8;
 
@@ -197,13 +239,14 @@ mod tests {
 
     #[test]
     fn each_style_leaves_its_own_strip_on_all_edges() {
-        assert_eq!(strip_for("line", false), LINE_STRIP);
-        assert_eq!(strip_for("line", true), LINE_STRIP);
-        assert_eq!(strip_for("arrow", false), ARROW_STRIP);
-        assert_eq!(strip_for("hover", false), LINE_STRIP);
-        assert_eq!(strip_for("hover", true), PEEK_STRIP);
+        assert_eq!(strip_for("line", false, 2, false), LINE_STRIP);
+        assert_eq!(strip_for("line", true, 2, false), LINE_STRIP);
+        assert_eq!(strip_for("arrow", false, 2, false), ARROW_STRIP);
+        assert_eq!(strip_for("arrow-only", false, 2, false), ARROW_STRIP);
+        assert_eq!(strip_for("hover", false, 2, false), LINE_STRIP);
+        assert_eq!(strip_for("hover", true, 2, false), PEEK_STRIP);
         let win = Rect::new(300, 0, 400, 500);
-        let s = strip_for("hover", true);
+        let s = strip_for("hover", true, 2, false);
         assert_eq!(
             hidden_position_with_strip(Edge::Top, win, SCREEN, s),
             (300, -500 + s)
@@ -216,6 +259,123 @@ mod tests {
             hidden_position_with_strip(Edge::Right, win, SCREEN, s),
             (1920 - s, 0)
         );
+    }
+
+    #[test]
+    fn configurable_thickness_changes_exposed_width_without_affecting_arrow_modes() {
+        for width in [1, 4, 8, 12] {
+            assert_eq!(strip_for("line", false, width, false), width as i32);
+            assert_eq!(strip_for("hover", false, width, false), width as i32);
+            assert_eq!(strip_for("hover", true, width, false), PEEK_STRIP);
+            assert_eq!(strip_for("arrow", false, width, false), ARROW_STRIP);
+            assert_eq!(strip_for("arrow-only", false, width, false), ARROW_STRIP);
+        }
+        assert_eq!(strip_for("line", false, 0, false), 1);
+        assert_eq!(strip_for("line", false, 100, false), 12);
+        let win = Rect::new(300, 0, 400, 500);
+        assert_eq!(
+            hidden_position_with_strip(Edge::Top, win, SCREEN, strip_for("line", false, 8, false)),
+            (300, -492)
+        );
+        assert_eq!(
+            hidden_position_with_strip(Edge::Left, win, SCREEN, strip_for("line", false, 8, false)),
+            (-392, 0)
+        );
+        assert_eq!(
+            hidden_position_with_strip(
+                Edge::Right,
+                win,
+                SCREEN,
+                strip_for("line", false, 8, false)
+            ),
+            (1912, 0)
+        );
+    }
+
+    #[test]
+    fn glow_keeps_original_hit_strip_thickness() {
+        for width in [1, 2, 3, 7, 12] {
+            assert_eq!(strip_for("line", false, width, true), width as i32);
+            assert_eq!(strip_for("hover", false, width, true), width as i32);
+        }
+        assert_eq!(strip_for("hover", true, 2, true), PEEK_STRIP);
+        assert_eq!(strip_for("arrow", false, 2, true), ARROW_STRIP);
+        assert_eq!(strip_for("arrow-only", false, 2, true), ARROW_STRIP);
+    }
+
+    #[test]
+    fn short_line_is_only_interactive_where_it_is_drawn_on_each_edge() {
+        let top = IndicatorHotzone {
+            edge: Edge::Top,
+            win: Rect::new(300, -498, 400, 500),
+            mon: SCREEN,
+            style: "line",
+            length_percent: 40,
+            peeking: false,
+            scale: 1.0,
+        };
+        // 40% of 400 = 160, centered from x=420 to x=580.
+        assert!(!top.contains(320, 0));
+        assert!(top.contains(500, 1));
+        assert!(!top.contains(580, 1));
+        assert!(!top.contains(500, 3));
+
+        let left = IndicatorHotzone {
+            edge: Edge::Left,
+            win: Rect::new(-398, 100, 400, 500),
+            length_percent: 20,
+            ..top
+        };
+        // 20% of 500 = 100, centered from y=300 to y=400.
+        assert!(!left.contains(0, 125));
+        assert!(left.contains(1, 350));
+        assert!(!left.contains(2, 350));
+        let right = IndicatorHotzone {
+            edge: Edge::Right,
+            win: Rect::new(1918, 100, 400, 500),
+            ..left
+        };
+        assert!(right.contains(1919, 350));
+        assert!(!right.contains(1919, 450));
+    }
+
+    #[test]
+    fn arrow_and_hover_targets_are_centered_and_scale_for_dpi() {
+        let arrow = IndicatorHotzone {
+            edge: Edge::Top,
+            win: Rect::new(300, -482, 400, 500),
+            mon: SCREEN,
+            style: "arrow-only",
+            length_percent: 10,
+            peeking: false,
+            scale: 1.0,
+        };
+        assert!(arrow.contains(500, 4));
+        assert!(!arrow.contains(475, 4));
+        let high_dpi = IndicatorHotzone {
+            scale: 2.0,
+            ..arrow
+        };
+        assert!(high_dpi.contains(470, 4));
+        let with_line = IndicatorHotzone {
+            style: "arrow",
+            ..arrow
+        };
+        assert!(with_line.contains(480, 4));
+        let hover = IndicatorHotzone {
+            edge: Edge::Left,
+            win: Rect::new(-368, 100, 400, 500),
+            style: "hover",
+            peeking: true,
+            ..arrow
+        };
+        assert!(hover.contains(0, 350));
+        assert!(!hover.contains(0, 270));
+        let resting = IndicatorHotzone {
+            peeking: false,
+            ..hover
+        };
+        assert!(resting.contains(0, 350));
     }
 
     #[test]

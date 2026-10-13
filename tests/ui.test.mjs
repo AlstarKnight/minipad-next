@@ -360,6 +360,158 @@ const TWO_BOOKS = seed(
   { active: { "": "乙", 工作: "会议" } },
 );
 
+describe("notebook manager and window movement", () => {
+  ui("topbar uses one colored icon, title reveals notebook name; manager remembers book appearance", {
+    seed: seed({ "": { 欢迎: "默认内容" }, 工作: { 周报: "内容" } }),
+  }, async (h) => {
+    const { p } = h;
+    assert.equal(await p.$eval("#btn-book", (b) => b.title), "默认");
+    assert.equal(await p.isVisible("#book-icon svg"), true);
+    const buttonSize = await p.$eval("#btn-book", (b) => Math.round(b.getBoundingClientRect().width));
+    assert.equal(buttonSize, 32, "topbar keeps a 32px icon instead of notebook name");
+    await h.openBooks();
+    await p.click("#books-manage");
+    assert.equal(await p.isVisible("#book-manager"), true);
+    assert.equal(await p.isHidden("#books"), true);
+    assert.equal(await p.isDisabled("#bm-rename"), true, "default notebook cannot be renamed");
+    assert.equal(await p.isDisabled("#bm-delete"), true, "default notebook cannot be deleted");
+    await p.click('#bm-list [data-book="工作"]');
+    assert.equal(await p.textContent("#bm-selected"), "工作");
+    await p.click('#bm-icons [data-icon="briefcase"]');
+    await until(() => h.stored().then((db) => db.books["工作"].meta.icon), "briefcase");
+    await p.click('#bm-colors [data-color="#5fb4ff"]');
+    await until(() => h.stored().then((db) => db.books["工作"].meta.icon_color), "#5fb4ff");
+    assert.equal(await p.$eval('#bm-list [data-book="工作"] svg', (el) => getComputedStyle(el).color), "rgb(95, 180, 255)");
+    await p.click("#bm-close");
+    await h.switchBook("工作");
+    assert.equal(await p.$eval("#btn-book", (b) => b.title), "工作");
+    assert.equal(await p.$eval("#book-icon svg", (e) => getComputedStyle(e).color), "rgb(95, 180, 255)");
+    await p.reload();
+    await until(h.bookName, "工作", "current notebook is restored");
+    assert.equal(await p.$eval("#btn-book", (b) => b.title), "工作");
+    assert.equal(await p.$eval("#book-icon svg", (e) => getComputedStyle(e).color), "rgb(95, 180, 255)");
+    assert.equal(await h.mockFile("工作", "周报"), "内容", "changing icon does not touch notebook pages");
+  });
+
+  ui("manager lets users set custom colors, rename and keep icon metadata", {
+    seed: seed({ "": { 首页: "Welcome" }, 旅行: { 清单: "passport" } }),
+  }, async (h) => {
+    const { p } = h;
+    await h.openBooks();
+    await p.click("#books-manage");
+    await p.click('#bm-list [data-book="旅行"]');
+    await p.click('#bm-icons [data-icon="heart"]');
+    await until(() => h.stored().then((db) => db.books["旅行"].meta.icon), "heart");
+    await p.$eval("#bm-custom-color", (el) => {
+      el.value = "#1122aa";
+      el.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await until(() => h.stored().then((db) => db.books["旅行"].meta.icon_color), "#1122aa");
+    await p.click("#bm-rename");
+    await h.answer("旅途");
+    await until(() => h.stored().then((db) => db.books["旅途"]?.meta.icon), "heart");
+    assert.equal(await h.mockFile("旅途", "清单"), "passport");
+    assert.equal(await p.$eval('#bm-list [data-book="旅途"] svg', (el) => getComputedStyle(el).color), "rgb(17, 34, 170)");
+    await p.press("#bm-close", "Escape");
+    assert.equal(await p.isHidden("#book-manager"), true, "Escape closes manager before hiding the app");
+  });
+
+  ui("notebook gradients render on actual icons, and presets persist and work across notebooks", {
+    seed: seed({ "": { 首页: "welcome" }, 工作: { 文档: "work" }, 生活: { 清单: "life" } }),
+  }, async (h) => {
+    const { p } = h;
+    await h.openBooks();
+    await p.click("#books-manage");
+    await p.click('#bm-list [data-book="工作"]');
+    const gradient = "linear-gradient(135deg, #5fb4ff, #d66cf0)";
+    await p.click('#bm-gradients [data-color="' + gradient + '"]');
+    await until(() => h.stored().then((db) => db.books["工作"].meta.icon_color), gradient);
+    const strokes = await p.$eval('#bm-list [data-book="工作"] svg', (svg) => ({
+      gradient: svg.querySelectorAll("linearGradient stop").length,
+      stroke: svg.getAttribute("style"),
+    }));
+    assert.equal(strokes.gradient, 2, "gradient icon has actual SVG color stops");
+    assert.match(strokes.stroke, /url\(#book-icon-gradient-/, "icon uses SVG gradient stroke");
+    await p.click("#bm-save-preset");
+    await until(() => h.stored().then((db) => db.settings.book_color_presets), [gradient]);
+    await p.click('#bm-list [data-book="生活"]');
+    await p.click('#bm-saved-colors [role="radio"]');
+    await until(() => h.stored().then((db) => db.books["生活"].meta.icon_color), gradient);
+    await p.reload();
+    await h.openBooks();
+    await p.click("#books-manage");
+    assert.equal(await p.locator("#bm-saved-colors .bm-saved-item").count(), 1, "custom presets survive restart");
+    await p.click("#bm-saved-colors .bm-remove-color");
+    await until(() => h.stored().then((db) => db.settings.book_color_presets), []);
+    assert.equal(await h.stored().then((db) => db.books["工作"].meta.icon_color), gradient, "removing preset keeps existing book colors");
+    assert.equal(await h.mockFile("工作", "文档"), "work", "no note files changed");
+  });
+
+  ui("custom two-color gradient can be saved; selected swatches use a light theme outline", {
+    seed: seed({ "": { 首页: "welcome" }, 设计: { 草稿: "notes" } }),
+  }, async (h) => {
+    const { p } = h;
+    await h.openBooks();
+    await p.click("#books-manage");
+    await p.click('#bm-list [data-book="设计"]');
+    const solid = p.locator('#bm-colors [data-color="#5fb4ff"]');
+    await solid.click();
+    const outline = await solid.evaluate((el) => {
+      const style = getComputedStyle(el);
+      return { outline: style.outlineWidth, border: style.borderTopWidth };
+    });
+    assert.equal(outline.outline, "1px", "thin selection outline");
+    assert.equal(outline.border, "1px", "thin swatch border");
+    await p.check("#bm-gradient-enabled");
+    await until(() => h.stored().then((db) => db.books["设计"].meta.icon_color),
+      "linear-gradient(135deg, #5fb4ff, #d66cf0)");
+    await p.$eval("#bm-gradient-to", (el) => {
+      el.value = "#abcdef";
+      el.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    const custom = "linear-gradient(135deg, #5fb4ff, #abcdef)";
+    await until(() => h.stored().then((db) => db.books["设计"].meta.icon_color), custom);
+    await p.click("#bm-save-preset");
+    await until(() => h.stored().then((db) => db.settings.book_color_presets), [custom]);
+    await p.click("#bm-save-preset");
+    assert.deepEqual(await h.stored().then((db) => db.settings.book_color_presets), [custom], "duplicate presets are ignored");
+  });
+
+  ui("manager refuses invalid native save and does not change local icon", {
+    seed: seed({ "": { 主页: "a" }, 工作: { 日志: "b" } }),
+  }, async (h) => {
+    const { p } = h;
+    await p.evaluate(() => { window.__mockControl = { fail: { set_book_appearance: "拒绝写入" } }; });
+    await h.openBooks();
+    await p.click("#books-manage");
+    await p.click('#bm-list [data-book="工作"]');
+    await p.click('#bm-icons [data-icon="star"]');
+    await until(() => p.textContent("#bm-error"), "保存图标失败：Error: 拒绝写入");
+    assert.equal(await h.stored().then((db) => db.books["工作"].meta.icon || ""), "");
+    assert.equal(await p.$eval('#bm-icons [data-icon="book"]', (b) => b.getAttribute("aria-checked")), "true");
+  });
+
+  ui("free status bar and Alt+left click allow native window dragging without editing", async (h) => {
+    const { p } = h;
+    assert.equal(await p.getAttribute('#status > .spacer', "data-tauri-drag-region"), "");
+    assert.equal(await p.getAttribute("#status", "data-tauri-drag-region"), "");
+    await p.evaluate(() => { window.__mockControl = { dragStarted: 0, calls: [] }; });
+    await p.$eval("#editor", (el) => {
+      el.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0 }));
+    });
+    assert.equal(await p.evaluate(() => window.__mockControl.dragStarted), 0, "normal clicks remain unchanged");
+    await p.$eval("#editor", (el) => {
+      el.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, altKey: true, button: 0 }));
+    });
+    await until(() => p.evaluate(() => window.__mockControl.dragStarted), 1, "Alt-click triggers native drag");
+    await p.click("#btn-settings");
+    await p.$eval("#set-hotkey", (el) => {
+      el.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, altKey: true, button: 0 }));
+    });
+    assert.equal(await p.evaluate(() => window.__mockControl.dragStarted), 1, "modal controls do not trigger drag");
+  });
+});
+
 describe("notebooks", () => {
   ui("the button shows 默认; Ctrl+B lists notebooks with page counts; Esc, Ctrl+B and clicks outside close it", async (h) => {
     const { p } = h;
@@ -1470,7 +1622,7 @@ describe("theme and accent", () => {
     await p.click("#set-save");
     await until(() => h.stored().then((s) => [s.settings.edge_style, s.settings.edge_color]), ["line", "linear-gradient(135deg, #5fb4ff, #d66cf0)"]);
     await p.evaluate(() => window.__mockEmit("edge-hidden", "top"));
-    assert.deepEqual(await mark(), [0, 537, 440, 3], "line style: the strip is just a 3px line");
+    assert.deepEqual(await mark(), [0, 538, 440, 2], "line style defaults to a 2px strip");
     assert.equal(await p.$eval("#edge-expand", (b) => getComputedStyle(b, "::before").display), "none", "no arrow in line style");
     assert.deepEqual(await edgeVars(), ["#5fb4ff", "linear-gradient(135deg, #5fb4ff, #d66cf0)"], "edge uses its own color");
     await p.evaluate(() => window.__mockEmit("edge-shown"));
@@ -1483,7 +1635,7 @@ describe("theme and accent", () => {
     await p.click("#set-save");
     await until(() => h.stored().then((s) => [s.settings.edge_style, s.settings.edge_color]), ["hover", ""]);
     await p.evaluate(() => window.__mockEmit("edge-hidden", "left"));
-    assert.deepEqual(await mark(), [437, 0, 3, 540], "hover style starts as a slim edge");
+    assert.deepEqual(await mark(), [438, 0, 2, 540], "hover style starts as a 2px edge");
     assert.equal(await p.$eval("#edge-expand", (b) => getComputedStyle(b, "::before").display), "none", "no button until the mouse comes near");
     assert.equal((await edgeVars())[1], "", "edge color follows the accent again");
     await p.evaluate(() => window.__mockEmit("edge-peek", true));
@@ -1491,10 +1643,98 @@ describe("theme and accent", () => {
     const btn = await p.$eval("#edge-expand", (b) => { const r = b.getBoundingClientRect(); return [Math.round(r.width), Math.round(r.height)]; });
     assert.deepEqual(btn, [20, 56], "floating button");
     await p.evaluate(() => window.__mockEmit("edge-peek", false));
-    assert.deepEqual(await mark(), [437, 0, 3, 540], "mouse away: back to the slim edge");
+    assert.deepEqual(await mark(), [438, 0, 2, 540], "mouse away: back to the slim edge");
     await p.evaluate(() => window.__mockEmit("edge-peek", true));
     await p.click("#edge-expand");
     assert.equal(await mark(), null, "clicking the floating button restores the window");
+  });
+
+  ui("edge line width, length and universal glow settings work across all modes", { seed: seed({ "": { 页: "文字" } }) }, async (h) => {
+    const { p } = h;
+    const mark = () => p.$eval("#edge-mark", (m) => {
+      const r = m.getBoundingClientRect();
+      return [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)];
+    });
+    await p.click("#btn-settings");
+    await settingsPage(p, "window");
+    assert.equal(await p.inputValue("#set-edge-line-width"), "2", "existing users default to 2px");
+    assert.equal(await p.inputValue("#set-edge-line-length"), "100");
+    assert.equal(await p.isChecked("#set-edge-glow"), false);
+    await p.selectOption("#set-edge-style", "line");
+    await p.$eval("#set-edge-line-width", (input) => {
+      input.value = "7";
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await p.$eval("#set-edge-line-length", (input) => {
+      input.value = "45";
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await p.check("#set-edge-glow");
+    await p.click('#set-edge-color button[title="蓝紫渐变"]');
+    const previewGlow = await p.$eval("#set-edge-line-preview", (x) =>
+      getComputedStyle(x).getPropertyValue("--preview-glow-color").trim()
+    );
+    assert.equal(previewGlow, "#5fb4ff", "preview glow uses edge color instead of accent color");
+    assert.equal(await p.textContent("#set-edge-line-width-val"), "7 像素");
+    assert.equal(await p.textContent("#set-edge-line-length-val"), "45%");
+    assert.equal(await p.$eval("#set-edge-line-preview", (x) => x.classList.contains("glow")), true);
+    await p.click("#set-save");
+    await until(() => h.stored().then((s) =>
+      [s.settings.edge_style, s.settings.edge_line_width, s.settings.edge_line_length, s.settings.edge_line_glow]),
+      ["line", 7, 45, true], "the settings persist");
+    await p.evaluate(() => window.__mockEmit("edge-hidden", "top"));
+    assert.deepEqual(await mark(), [0, 533, 440, 7], "glow leaves the exposed strip at the selected 7px");
+    const line = await p.$eval("#edge-mark > span", (x) => {
+      const r = x.getBoundingClientRect();
+      return [Math.round(r.width), Math.round(r.height), getComputedStyle(x).boxShadow];
+    });
+    assert.equal(line[0], 198, "line covers 45% of 440px");
+    assert.equal(line[1], 7, "line remains 7px thick despite glow visibility");
+    assert.match(line[2], /(?:rgba?\(|color\(srgb)/, "line has a glow shadow");
+    await p.evaluate(() => window.__mockEmit("edge-shown"));
+    await p.click("#btn-settings");
+    await settingsPage(p, "window");
+    await p.selectOption("#set-edge-style", "arrow-only");
+    assert.equal(await p.isVisible(".edge-line-option"), false, "arrow-only hides line-only controls");
+    assert.equal(await p.isDisabled("#set-edge-glow"), false, "glow also applies to arrow-only");
+    await p.click("#set-save");
+    await until(() => h.stored().then((s) => s.settings.edge_style), "arrow-only");
+    await p.evaluate(() => window.__mockEmit("edge-hidden", "right"));
+    assert.deepEqual(await mark(), [0, 0, 18, 540]);
+    assert.equal(await p.$eval("#edge-mark > span", (x) => getComputedStyle(x).display), "none", "arrow-only draws no line");
+    const arrow = await p.$eval("#edge-expand", (b) => getComputedStyle(b, "::before").filter);
+    assert.match(arrow, /drop-shadow/, "arrow-only has glow enabled");
+    await p.evaluate(() => window.__mockEmit("edge-shown"));
+    await p.click("#btn-settings");
+    await settingsPage(p, "window");
+    await p.selectOption("#set-edge-style", "hover");
+    await p.click("#set-save");
+    await until(() => h.stored().then((s) => s.settings.edge_style), "hover");
+    await p.evaluate(() => window.__mockEmit("edge-hidden", "left"));
+    assert.deepEqual(await mark(), [433, 0, 7, 540], "glow does not widen the hidden line");
+    await p.evaluate(() => window.__mockEmit("edge-peek", true));
+    const glow = await p.$eval("#edge-expand", (b) => getComputedStyle(b).boxShadow);
+    assert.match(glow, /(?:rgba?\(|color\(srgb)/, "hover reveal button has a glow");
+    await p.evaluate(() => window.__mockEmit("edge-shown"));
+    await p.click("#btn-settings");
+    await settingsPage(p, "window");
+    await p.selectOption("#set-edge-style", "arrow");
+    await p.$eval("#set-edge-line-width", (input) => {
+      input.value = "12";
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await p.click("#set-save");
+    await until(() => h.stored().then((s) => [s.settings.edge_style, s.settings.edge_line_width]), ["arrow", 12]);
+    await p.evaluate(() => window.__mockEmit("edge-hidden", "top"));
+    const masked = await p.$eval("#edge-mark > span", (el) => {
+      const s = getComputedStyle(el);
+      return { height: Math.round(el.getBoundingClientRect().height), mask: s.maskImage || s.webkitMaskImage };
+    });
+    assert.equal(masked.height, 12);
+    assert.match(masked.mask, /linear-gradient/, "thick line leaves a gap beneath the arrow");
+    const arrowHit = await p.$eval("#edge-expand", (b) => Math.round(b.getBoundingClientRect().width));
+    assert.equal(arrowHit, 198, "only the drawn 45% span is clickable");
+    await p.evaluate(() => window.__mockEmit("edge-shown"));
   });
 
   ui("the floating icon is off by default; when on, the top bar gets a button that collapses the window", { seed: seed({ "": { 页: "文字" } }) }, async (h) => {

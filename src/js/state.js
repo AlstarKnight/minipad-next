@@ -20,8 +20,8 @@ export function makeNote(name, content, mode = "edit", unreadable = false, reaso
 
 // 笔记本:「默认」的 name 是空字符串,active 是当前页面在 notes 里的位置;
 // groups 是标签分组 [{ id, name, color, collapsed }](见 groups.js)
-export function makeBook(name, notes = [], active = 0, groups = []) {
-  return { name, notes, active, groups };
+export function makeBook(name, notes = [], active = 0, groups = [], icon = "", icon_color = "") {
+  return { name, notes, active, groups, icon, icon_color };
 }
 
 // 后端读出来的笔记本 { name, notes, active: 页面名, groups } 换成界面用的
@@ -30,7 +30,7 @@ export function noteFromDisk(n) {
 }
 export function bookFromDisk(d) {
   const notes = d.notes.map(noteFromDisk);
-  return makeBook(d.name, notes, Math.max(0, notes.findIndex((n) => n.name === d.active)), (d.groups || []).map((g) => ({ ...g })));
+  return makeBook(d.name, notes, Math.max(0, notes.findIndex((n) => n.name === d.active)), (d.groups || []).map((g) => ({ ...g })), d.icon || "", d.icon_color || "");
 }
 
 export function book() {

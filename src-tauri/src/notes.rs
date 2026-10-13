@@ -38,6 +38,12 @@ pub struct Meta {
     /// 页面名 → 所在分组的 id
     #[serde(skip_serializing_if = "HashMap::is_empty")]
     pub note_groups: HashMap<String, String>,
+    /// 笔记本自己的顶栏图标，不设置时使用 book。
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub icon: String,
+    /// 笔记本图标颜色，可单独自定义。
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub icon_color: String,
 }
 
 /// 一个标签分组。颜色是 "#rrggbb",名字可以空着(只显示颜色)
@@ -76,6 +82,8 @@ pub struct Book {
     pub active: String,
     /// 还有页面在里面的分组
     pub groups: Vec<TabGroup>,
+    pub icon: String,
+    pub icon_color: String,
 }
 
 pub fn write_atomic(path: &Path, data: &str) -> Result<(), String> {
@@ -418,6 +426,8 @@ where
         notes,
         active,
         groups,
+        icon: meta.icon,
+        icon_color: meta.icon_color,
     })
 }
 
@@ -471,6 +481,76 @@ pub fn save_book_meta(
             .collect();
         meta.note_groups = note_groups;
     }
+    write_meta(&dir, &meta)
+}
+
+/// 仅接受纯色或与应用强调色一致的安全渐变写法，绝不信任任意 CSS。
+pub fn normalized_book_color(value: &str) -> Option<String> {
+    let value = value.trim();
+    let valid_hex = |s: &str| {
+        s.len() == 7 && s.starts_with('#') && s[1..].bytes().all(|b| b.is_ascii_hexdigit())
+    };
+    if valid_hex(value) {
+        return Some(value.to_ascii_lowercase());
+    }
+    let body = value.strip_prefix("linear-gradient(")?.strip_suffix(')')?;
+    let (degrees, colors) = body.split_once("deg,")?;
+    let degrees = degrees.trim().parse::<u16>().ok()?;
+    if degrees > 360 {
+        return None;
+    }
+    let stops: Vec<_> = colors.split(',').map(str::trim).collect();
+    if !(2..=7).contains(&stops.len()) || !stops.iter().all(|s| valid_hex(s)) {
+        return None;
+    }
+    Some(format!(
+        "linear-gradient({degrees}deg, {})",
+        stops.join(", ").to_ascii_lowercase()
+    ))
+}
+
+/// 笔记本图标与颜色独立保存在对应的 .minipad.json，改页面顺序不会覆盖它。
+pub fn set_book_appearance(root: &Path, book: &str, icon: &str, color: &str) -> Result<(), String> {
+    const ICONS: [&str; 8] = [
+        "book",
+        "folder",
+        "briefcase",
+        "heart",
+        "star",
+        "lightbulb",
+        "code",
+        "bookmark",
+    ];
+    if !ICONS.contains(&icon) {
+        return Err("不支持的笔记本图标".into());
+    }
+    let normalized = if color.is_empty() {
+        String::new()
+    } else {
+        normalized_book_color(color)
+            .ok_or("图标颜色必须是 #RRGGBB 或有效的 linear-gradient 渐变")?
+    };
+    let dir = book_dir(root, book)?;
+    if !dir.is_dir() {
+        return Err(format!(
+            "笔记本不存在:{}",
+            if book.is_empty() { "默认" } else { book }
+        ));
+    }
+    // 外观更改不能在元文件暂时不可读时把页面排序等内容覆盖为默认值。
+    let meta_path = dir.join(META_FILE);
+    let mut meta = match fs::read(&meta_path) {
+        Ok(bytes) => serde_json::from_str::<Meta>(&decode_text(&bytes))
+            .map_err(|e| format!("笔记本元信息解析失败:{e}"))?,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Meta::default(),
+        Err(e) => return Err(format!("笔记本元信息读取失败:{e}")),
+    };
+    meta.icon = if icon == "book" {
+        String::new()
+    } else {
+        icon.into()
+    };
+    meta.icon_color = normalized;
     write_meta(&dir, &meta)
 }
 
@@ -929,6 +1009,70 @@ mod tests {
         let b = load_book(&root, "").unwrap();
         assert!(b.groups.is_empty() && b.notes.iter().all(|n| n.group.is_empty()));
         fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn notebook_appearance_is_persistent_and_survives_regular_meta_updates() {
+        let root = temp_dir("book-appearance");
+        fs::create_dir_all(root.join("工作")).unwrap();
+        fs::write(root.join("工作").join("周报.md"), "内容").unwrap();
+        set_book_appearance(&root, "工作", "briefcase", "#AABBCC").unwrap();
+        let b = load_book(&root, "工作").unwrap();
+        assert_eq!((&b.icon[..], &b.icon_color[..]), ("briefcase", "#aabbcc"));
+        save_book_meta(
+            &root,
+            "工作",
+            vec!["周报".into()],
+            "周报".into(),
+            HashMap::new(),
+            None,
+        )
+        .unwrap();
+        let b = load_book(&root, "工作").unwrap();
+        assert_eq!((&b.icon[..], &b.icon_color[..]), ("briefcase", "#aabbcc"));
+        assert!(set_book_appearance(&root, "工作", "bad-icon", "").is_err());
+        assert!(set_book_appearance(&root, "工作", "star", "javascript:red").is_err());
+        assert_eq!(read_meta(&root.join("工作")).icon, "briefcase");
+        set_book_appearance(&root, "工作", "star", "").unwrap();
+        assert_eq!(load_book(&root, "工作").unwrap().icon, "star");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn notebook_gradient_color_round_trip_and_invalid_css_rejected() {
+        let root = temp_dir("book-gradient");
+        fs::create_dir_all(root.join("工作")).unwrap();
+        let color = "linear-gradient(135deg, #5FB4FF, #D66CF0)";
+        set_book_appearance(&root, "工作", "star", color).unwrap();
+        let b = load_book(&root, "工作").unwrap();
+        assert_eq!(b.icon_color, "linear-gradient(135deg, #5fb4ff, #d66cf0)");
+        for invalid in [
+            "linear-gradient(135deg, red, blue)",
+            "linear-gradient(999deg, #5fb4ff, #d66cf0)",
+            "linear-gradient(135deg, #5fb4ff, url(x))",
+            "linear-gradient(135deg, #5fb4ff)",
+            "#12345",
+            "javascript:alert(1)",
+        ] {
+            assert!(set_book_appearance(&root, "工作", "star", invalid).is_err());
+            assert_eq!(
+                load_book(&root, "工作").unwrap().icon_color,
+                "linear-gradient(135deg, #5fb4ff, #d66cf0)"
+            );
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn malformed_metadata_is_not_overwritten_when_changing_book_icon() {
+        let root = temp_dir("bad-book-icon-meta");
+        fs::create_dir_all(root.join("坏的")).unwrap();
+        let path = root.join("坏的").join(META_FILE);
+        let original = b"{ invalid JSON".to_vec();
+        fs::write(&path, &original).unwrap();
+        assert!(set_book_appearance(&root, "坏的", "star", "#123456").is_err());
+        assert_eq!(fs::read(&path).unwrap(), original);
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

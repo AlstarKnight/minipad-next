@@ -103,6 +103,7 @@ export async function applyDisk(disk) {
       if (b === cur) tabsChanged = true;
       scheduleMeta(b);
     }
+    if (r.appearance) booksChanged = true;
     if (r.content && b === cur) currentChanged = true;
   }
 
@@ -135,6 +136,11 @@ export async function applyDisk(disk) {
 function mergeBook(b, d) {
   const onDisk = new Map(d.notes.map((n) => [n.name, n]));
   const before = b.notes[b.active];
+  const appearance = b.icon !== (d.icon || "") || b.icon_color !== (d.icon_color || "");
+  if (appearance) {
+    b.icon = d.icon || "";
+    b.icon_color = d.icon_color || "";
+  }
   let tabs = false;
   let content = false;
 
@@ -206,7 +212,7 @@ function mergeBook(b, d) {
     const idx = kept.indexOf(before);
     b.active = idx >= 0 ? idx : Math.max(0, Math.min(b.active, kept.length - 1));
   }
-  return { tabs, content };
+  return { tabs, content, appearance };
 }
 
 // 保存时发现页面在别处也被改过,别处的版本已经另存成同一个笔记本里的冲突副本(save.js 发来的 conflict-copy):

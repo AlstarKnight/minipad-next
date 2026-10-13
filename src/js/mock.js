@@ -2,6 +2,7 @@
 // 数据存在 localStorage 里,命令和真正的后端一一对应
 import { toast } from "./ui.js";
 import { DEFAULT_DATE_FORMAT } from "./datetime.js";
+import { parseAccent, tidyAccent } from "./accent.js";
 
 const KEY = "minipad-next-demo";
 const WELCOME =
@@ -11,6 +12,9 @@ const DEFAULT_SETTINGS = {
   always_on_top: true,
   edge_hide: true,
   edge_style: "arrow",
+  edge_line_width: 2,
+  edge_line_length: 100,
+  edge_line_glow: false,
   edge_color: "",
   ball_enabled: false,
   ball_size: 48,
@@ -32,6 +36,7 @@ const DEFAULT_SETTINGS = {
   format_bar_order: [],
   tab_style: "line",
   accent: "",
+  book_color_presets: [],
   backup_enabled: true,
   backup_keep: 14,
   backup_dir: "",
@@ -180,6 +185,8 @@ export function mockApi() {
       }),
       active: order.includes(meta.active) ? meta.active : (order[0] ?? ""),
       groups: (meta.groups || []).filter((x) => order.some((n) => meta.note_groups?.[n] === x.id)),
+      icon: meta.icon || "",
+      icon_color: meta.icon_color || "",
     };
   };
   const readBooks = () => ["", ...bookNames()].filter((name) => !window.__mockControl?.unreadableBook?.includes(name)).map(readBook);
@@ -258,7 +265,7 @@ export function mockApi() {
     save_meta: ({ book, order, active, modes, groups, note_groups }) => {
       if (!has(db.books, book)) return;
       const old = db.books[book].meta || {};
-      const meta = { order, active, modes, groups: old.groups || [], note_groups: old.note_groups || {} };
+      const meta = { ...old, order, active, modes, groups: old.groups || [], note_groups: old.note_groups || {} };
       if (groups) {
         const ng = Object.fromEntries(
           Object.entries(note_groups || {}).filter(([n, id]) => id && order.includes(n) && groups.some((g) => g.id === id)),
@@ -287,6 +294,14 @@ export function mockApi() {
       }
       return n;
     },
+    set_book_appearance: ({ book, icon, color }) => {
+      if (!["book", "folder", "briefcase", "heart", "star", "lightbulb", "code", "bookmark"].includes(icon)) throw "不支持的笔记本图标";
+      if (color && !parseAccent(color)) throw "图标颜色格式无效";
+      if (!has(db.books, book)) throw "笔记本不存在";
+      const meta = bookOf(book).meta;
+      meta.icon = icon === "book" ? "" : icon;
+      meta.icon_color = tidyAccent(color);
+    },
     delete_book: ({ name }) => {
       backup();
       if (!name) throw "「默认」笔记本不能删除";
@@ -311,6 +326,11 @@ export function mockApi() {
         find_bar_pos: pickOne(settings.find_bar_pos, ["top", "bottom"]),
         conflict_mode: pickOne(settings.conflict_mode, ["copy", "overwrite"]),
         settings_nav: pickOne(settings.settings_nav, ["left", "top"]),
+        book_color_presets: Array.isArray(settings.book_color_presets)
+          ? [...new Set(settings.book_color_presets
+              .filter((v) => typeof v === "string" && (/^#[0-9a-f]{6}$/i.test(v) || /^linear-gradient\(\d{1,3}deg,\s*#[0-9a-f]{6}(?:,\s*#[0-9a-f]{6}){1,6}\)$/i.test(v)))
+              .map((v) => v.toLowerCase()))].slice(0, 20)
+          : [],
         outline_mode: pickOne(settings.outline_mode, ["hover", "pinned"]),
         outline_side: pickOne(settings.outline_side, ["right", "left"]),
         outline_depth: Math.min(6, Math.max(1, Math.round(Number(settings.outline_depth)) || 3)),
@@ -337,6 +357,9 @@ export function mockApi() {
     pause_hotkey: () => {},
     resume_hotkey: () => {},
     note_activity: () => {},
+    start_window_drag: () => {
+      if (window.__mockControl) window.__mockControl.dragStarted = (window.__mockControl.dragStarted || 0) + 1;
+    },
     // 测试可以用 __mockControl.pickFolder 指定"选中"的文件夹
     pick_folder: ({ title }) => {
       if (window.__mockControl && has(window.__mockControl, "pickFolder")) return window.__mockControl.pickFolder;

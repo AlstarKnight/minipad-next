@@ -55,8 +55,14 @@ pub struct Settings {
     hotkey: String,
     always_on_top: bool,
     edge_hide: bool,
-    /// 贴边隐藏后的样式:arrow 细线 + 箭头 / line 仅细边高亮 / hover 细边 + 悬浮按钮
+    /// arrow 细线+箭头 / arrow-only 只有箭头 / line 仅细线 / hover 悬浮按钮
     edge_style: String,
+    /// 细线粗细，逻辑像素，1..=12
+    edge_line_width: u32,
+    /// 细线占所在窗口边长的百分比，10..=100
+    edge_line_length: u32,
+    /// 细线微光效果（默认关闭）
+    edge_line_glow: bool,
     /// 贴边标识的颜色,写法同 accent;空着跟随强调色
     edge_color: String,
     show_in_taskbar: bool,
@@ -64,6 +70,8 @@ pub struct Settings {
     theme: String,
     /// 强调色:空着是默认的橙色,"#3b82f6" 是纯色,"linear-gradient(135deg, #a, #b)" 是渐变色
     accent: String,
+    /// 笔记本管理里保存的自定义纯色/渐变预设，最多 20 项。
+    book_color_presets: Vec<String>,
     /// 活跃标签的高亮:line 顶部线条、fill 整个标签、border 整圈边框
     tab_style: String,
     font_size: u32,
@@ -160,11 +168,15 @@ impl Default for Settings {
             always_on_top: true,
             edge_hide: true,
             edge_style: "arrow".into(),
+            edge_line_width: edge::LINE_STRIP as u32,
+            edge_line_length: 100,
+            edge_line_glow: false,
             edge_color: String::new(),
             show_in_taskbar: false,
             autostart: false,
             theme: "system".into(),
             accent: String::new(),
+            book_color_presets: Vec::new(),
             tab_style: "line".into(),
             font_size: 14,
             notes_dir: String::new(),
@@ -255,6 +267,8 @@ struct AppState {
     /// 配置文件不存在或成功读取时才可以写回。读失败/解析失败时保持原文件。
     settings_write_allowed: AtomicBool,
     settings_read_error: Mutex<Option<String>>,
+    /// 避免外观更改和页面排序同时改写同一份 .minipad.json。
+    meta_io: Mutex<()>,
     quit: Mutex<QuitState>,
     quit_sequence: AtomicU64,
     edge: Mutex<EdgeState>,
@@ -490,7 +504,7 @@ fn persist_settings(app: &AppHandle) {
     }
 }
 
-const EDGE_STYLES: [&str; 3] = ["arrow", "line", "hover"];
+const EDGE_STYLES: [&str; 4] = ["arrow", "line", "hover", "arrow-only"];
 
 /// 颜色(强调色、贴边标识色)只是给界面用的一小段文字,太长或者有奇怪的字符就不要
 fn tidy_color(c: &mut String) {
@@ -518,6 +532,14 @@ fn tidy_settings(s: &mut Settings) {
     s.backup_dir = s.backup_dir.trim().to_string();
     s.backup_keep = s.backup_keep.clamp(1, 365);
     tidy_color(&mut s.accent);
+    let mut seen_colors = std::collections::HashSet::new();
+    s.book_color_presets = s
+        .book_color_presets
+        .iter()
+        .filter_map(|v| notes::normalized_book_color(v))
+        .filter(|v| seen_colors.insert(v.clone()))
+        .take(20)
+        .collect();
     tidy_color(&mut s.edge_color);
     tidy_color(&mut s.ball_color);
     tidy_color(&mut s.find_color);
@@ -553,6 +575,8 @@ fn tidy_settings(s: &mut Settings) {
     if !EDGE_STYLES.contains(&s.edge_style.as_str()) {
         s.edge_style = "arrow".into();
     }
+    s.edge_line_width = s.edge_line_width.clamp(1, 12);
+    s.edge_line_length = s.edge_line_length.clamp(10, 100);
     if !["line", "fill", "border"].contains(&s.tab_style.as_str()) {
         s.tab_style = "line".into();
     }
@@ -786,6 +810,8 @@ fn save_meta(
         groups,
         note_groups: note_groups.unwrap_or_default(),
     });
+    let st = app.state::<AppState>();
+    let _guard = st.meta_io.lock().unwrap();
     notes::save_book_meta(
         &current_notes_dir(&app),
         &book,
@@ -814,9 +840,33 @@ fn delete_book(app: AppHandle, name: String) -> Result<(), String> {
     notes::delete_book(&current_notes_dir(&app), &name)
 }
 
+/// 从窗口内容区（Alt+左键）触发原生 Windows 拖动。
+#[tauri::command]
+fn start_window_drag(app: AppHandle) -> Result<(), String> {
+    main_window(&app)
+        .ok_or("找不到主窗口")?
+        .start_dragging()
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn set_book_appearance(
+    app: AppHandle,
+    book: String,
+    icon: String,
+    color: String,
+) -> Result<(), String> {
+    maybe_backup(&app);
+    let st = app.state::<AppState>();
+    let _guard = st.meta_io.lock().unwrap();
+    notes::set_book_appearance(&current_notes_dir(&app), &book, &icon, &color)
+}
+
 /// 记住当前打开的笔记本,下次启动还打开它
 #[tauri::command]
 fn set_current_book(app: AppHandle, book: String) -> Result<(), String> {
+    let st = app.state::<AppState>();
+    let _guard = st.meta_io.lock().unwrap();
     notes::set_current_book(&current_notes_dir(&app), &book)
 }
 
@@ -986,7 +1036,11 @@ fn save_settings(
         let _ = win.set_skip_taskbar(!new.show_in_taskbar);
     }
     // 关掉贴边隐藏或者换了样式(露出的宽度不同),先把窗口放出来
-    if !new.edge_hide || new.edge_style != old.edge_style {
+    if !new.edge_hide
+        || new.edge_style != old.edge_style
+        || new.edge_line_width != old.edge_line_width
+        || new.edge_line_glow != old.edge_line_glow
+    {
         restore_from_edge(&app, false);
     }
     // 换了笔记文件夹或备份位置,今天就在新地方重新判断要不要备份
@@ -1401,9 +1455,15 @@ fn restore_from_edge(app: &AppHandle, focus: bool) {
 }
 
 /// 露出的宽度按逻辑像素算,换成这块屏幕的物理像素(高分屏上不会变细)
-fn scaled_strip(win: &tauri::WebviewWindow, style: &str, peeking: bool) -> i32 {
+fn scaled_strip(
+    win: &tauri::WebviewWindow,
+    style: &str,
+    peeking: bool,
+    line_width: u32,
+    glow: bool,
+) -> i32 {
     let scale = win.scale_factor().unwrap_or(1.0);
-    (f64::from(edge::strip_for(style, peeking)) * scale).round() as i32
+    (f64::from(edge::strip_for(style, peeking, line_width, glow)) * scale).round() as i32
 }
 
 fn edge_tick(app: &AppHandle) {
@@ -1429,8 +1489,21 @@ fn edge_tick(app: &AppHandle) {
         (e.hidden, e.peeking, e.monitor)
     };
     if let Some(edge) = hidden {
-        let inside = rect.contains_with_margin(cx, cy, 1);
-        if st.settings.lock().unwrap().edge_style != "hover" {
+        let (style, length) = {
+            let settings = st.settings.lock().unwrap();
+            (settings.edge_style.clone(), settings.edge_line_length)
+        };
+        let inside = edge::IndicatorHotzone {
+            edge,
+            win: rect,
+            mon,
+            style: &style,
+            length_percent: length,
+            peeking,
+            scale: win.scale_factor().unwrap_or(1.0),
+        }
+        .contains(cx, cy);
+        if style != "hover" {
             // 鼠标碰到露出来的那条边就滑出来
             if inside {
                 restore_from_edge(app, true);
@@ -1456,12 +1529,16 @@ fn edge_tick(app: &AppHandle) {
                 e.peeking = peek;
                 e.outside_ticks = 0;
             }
-            let (x, y) = edge::hidden_position_with_strip(
-                edge,
-                rect,
-                mon,
-                scaled_strip(&win, "hover", peek),
-            );
+            let (x, y) = edge::hidden_position_with_strip(edge, rect, mon, {
+                let settings = st.settings.lock().unwrap();
+                scaled_strip(
+                    &win,
+                    "hover",
+                    peek,
+                    settings.edge_line_width,
+                    settings.edge_line_glow,
+                )
+            });
             let _ = win.set_position(PhysicalPosition::new(x, y));
             let _ = app.emit("edge-peek", peek);
         }
@@ -1508,10 +1585,21 @@ fn edge_tick(app: &AppHandle) {
         }
     };
     if let Some((edge, mon)) = ready {
-        let style = st.settings.lock().unwrap().edge_style.clone();
+        let (style, line_width, glow) = {
+            let settings = st.settings.lock().unwrap();
+            (
+                settings.edge_style.clone(),
+                settings.edge_line_width,
+                settings.edge_line_glow,
+            )
+        };
         st.edge.lock().unwrap().peeking = false;
-        let (x, y) =
-            edge::hidden_position_with_strip(edge, rect, mon, scaled_strip(&win, &style, false));
+        let (x, y) = edge::hidden_position_with_strip(
+            edge,
+            rect,
+            mon,
+            scaled_strip(&win, &style, false, line_width, glow),
+        );
         let _ = app.emit("flush", ());
         let _ = app.emit("edge-hidden", edge.name());
         // Windows 给无边框窗口加的阴影会从露出的细边上投到桌面和别的窗口上,缩进去时先关掉
@@ -1576,6 +1664,8 @@ pub fn run() {
             create_book,
             rename_book,
             delete_book,
+            set_book_appearance,
+            start_window_drag,
             set_current_book,
             backup_info,
             open_backup_dir,
@@ -2120,6 +2210,31 @@ mod tests {
     }
 
     #[test]
+    fn edge_line_dimensions_are_backward_compatible_and_bounded() {
+        let old: Settings = serde_json::from_str(r#"{"edge_style":"line"}"#).unwrap();
+        assert_eq!(old.edge_line_width, 2);
+        assert_eq!(old.edge_line_length, 100);
+        assert!(!old.edge_line_glow);
+
+        let mut s = Settings {
+            edge_style: "arrow-only".into(),
+            edge_line_width: 0,
+            edge_line_length: 0,
+            ..Settings::default()
+        };
+        tidy_settings(&mut s);
+        assert_eq!(s.edge_style, "arrow-only");
+        assert_eq!(s.edge_line_width, 1);
+        assert_eq!(s.edge_line_length, 10);
+
+        s.edge_line_width = 200;
+        s.edge_line_length = 200;
+        tidy_settings(&mut s);
+        assert_eq!(s.edge_line_width, 12);
+        assert_eq!(s.edge_line_length, 100);
+    }
+
+    #[test]
     fn tidy_settings_checks_edge_style_and_color() {
         let mut s = Settings::default();
         assert_eq!(s.edge_style, "arrow");
@@ -2137,6 +2252,31 @@ mod tests {
         s.edge_color = "url(javascript:x)".into();
         tidy_settings(&mut s);
         assert_eq!(s.edge_color, "");
+    }
+
+    #[test]
+    fn notebook_user_color_presets_are_safe_unique_and_bounded() {
+        let mut s = Settings {
+            book_color_presets: vec![
+                "#ABCDEF".into(),
+                "#abcdef".into(),
+                "linear-gradient(135deg, #FF0000, #00FF00)".into(),
+                "javascript:alert(1)".into(),
+            ],
+            ..Settings::default()
+        };
+        tidy_settings(&mut s);
+        assert_eq!(
+            s.book_color_presets,
+            vec!["#abcdef", "linear-gradient(135deg, #ff0000, #00ff00)"]
+        );
+        s.book_color_presets = (0..40).map(|i| format!("#{:06x}", i)).collect();
+        tidy_settings(&mut s);
+        assert_eq!(s.book_color_presets.len(), 20);
+        assert!(serde_json::from_str::<Settings>(r#"{"theme":"dark"}"#)
+            .unwrap()
+            .book_color_presets
+            .is_empty());
     }
 
     #[test]

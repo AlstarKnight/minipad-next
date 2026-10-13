@@ -109,7 +109,7 @@ function openLink(href) {
 
 // 有没有开着的弹层、菜单或对话框
 function anyOverlay() {
-  return dialogOpen() || ["#search", "#settings", "#import", "#books", "#ctx"].some((sel) => !$(sel).hidden);
+  return dialogOpen() || ["#search", "#settings", "#import", "#books", "#book-manager", "#ctx"].some((sel) => !$(sel).hidden);
 }
 
 // 顶栏的 Aa 按钮、格式栏右边的收起按钮:显示 / 收起格式栏,记在设置里
@@ -163,6 +163,13 @@ function bindUi() {
       toast(String(e));
     }
   });
+
+  // Alt + 鼠标左键可以从窗口任意非弹层位置拖动，不占用编辑区普通点击和选中。
+  document.addEventListener("mousedown", (e) => {
+    if (!e.altKey || e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.target.closest(".overlay, #ctx, #books, #pages-menu")) return;
+    e.preventDefault();
+    api.invoke("start_window_drag").catch((err) => toast("拖动窗口失败：" + err));
+  }, true);
 
   bindBooks();
   bindSearch();
