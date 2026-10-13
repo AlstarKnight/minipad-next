@@ -8,12 +8,16 @@ import { mutate } from "./sync.js";
 import { rememberView, showNote } from "./page.js";
 import { renderTabs, ensurePage, removeNote } from "./tabs.js";
 import { BOOK_ICONS, bookIcon, iconColor } from "./bookicons.js";
+import { GRADIENTS, gradient, gradientOf, parseAccent, tidyAccent } from "./accent.js";
+import { saveSettings } from "./settings.js";
 
 // 为了"移到笔记本…"打开列表时是要移动的页面,平时是 null
 let moving = null;
 let selectedBook = null;
 let appearanceBusy = false;
+let presetBusy = false;
 const BOOK_COLORS = ["", "#d9822b", "#e76f51", "#e0b348", "#5fb4ff", "#9384df", "#67ad87", "#db75a8", "#a5a5ad"];
+const BOOK_GRADIENTS = GRADIENTS.map((g) => ({ name: g.name + "渐变", value: gradientOf(g.stops) }));
 // 列表里的按钮 -> 笔记本
 const itemBook = new WeakMap();
 
@@ -25,7 +29,7 @@ export function renderBook() {
   $("#book-name").textContent = label;
   btn.title = label;
   btn.setAttribute("aria-label", `当前笔记本：${label}，点击切换`);
-  $("#book-icon").innerHTML = bookIcon(currentBook?.icon);
+  $("#book-icon").innerHTML = bookIcon(currentBook?.icon, currentBook?.icon_color);
   $("#book-icon").style.color = iconColor(currentBook);
   renderList();
   if (!$("#book-manager").hidden) renderManager();
@@ -43,7 +47,7 @@ function renderList() {
     item.disabled = !!moving && b === book();
     const icon = document.createElement("span");
     icon.className = "book-item-icon";
-    icon.innerHTML = bookIcon(b.icon);
+    icon.innerHTML = bookIcon(b.icon, b.icon_color);
     icon.style.color = iconColor(b);
     const name = document.createElement("span");
     name.className = "name";
@@ -266,7 +270,7 @@ function renderManager() {
     button.title = bookLabel(b);
     button.setAttribute("aria-pressed", String(b === selectedBook));
     const icon = document.createElement("span");
-    icon.innerHTML = bookIcon(b.icon);
+    icon.innerHTML = bookIcon(b.icon, b.icon_color);
     icon.style.color = iconColor(b);
     const name = document.createElement("span");
     name.textContent = bookLabel(b);
@@ -300,23 +304,108 @@ function renderManager() {
     button.addEventListener("click", () => void saveAppearance(b, id, b.icon_color || ""));
     icons.append(button);
   }
-  const colors = $("#bm-colors");
-  colors.replaceChildren();
-  for (const color of BOOK_COLORS) {
+  const addColorButton = (container, color, title) => {
     const button = document.createElement("button");
     button.type = "button";
-    button.title = color || "跟随强调色";
+    button.title = title;
     button.dataset.color = color;
     button.disabled = appearanceBusy;
     button.setAttribute("role", "radio");
     button.setAttribute("aria-checked", String((b.icon_color || "") === color));
-    button.style.setProperty("--book-swatch", color || "var(--accent)");
+    button.style.setProperty("--book-swatch", color || "var(--accent-grad)");
     if (!color) button.textContent = "A";
     button.addEventListener("click", () => void saveAppearance(b, b.icon || "book", color));
-    colors.append(button);
-  }
-  $("#bm-custom-color").value = /^#[0-9a-f]{6}$/i.test(b.icon_color) ? b.icon_color : "#d9822b";
+    container.append(button);
+    return button;
+  };
+  const colors = $("#bm-colors");
+  colors.replaceChildren();
+  for (const color of BOOK_COLORS) addColorButton(colors, color, color || "跟随强调色");
+  const gradients = $("#bm-gradients");
+  gradients.replaceChildren();
+  for (const g of BOOK_GRADIENTS) addColorButton(gradients, g.value, g.name);
+  const parsed = parseAccent(b.icon_color);
+  $("#bm-custom-color").value = parsed?.from || "#d9822b";
   $("#bm-custom-color").disabled = appearanceBusy;
+  $("#bm-gradient-enabled").checked = !!parsed?.to;
+  $("#bm-gradient-enabled").disabled = appearanceBusy;
+  $("#bm-gradient-to").value = parsed?.to || "#d66cf0";
+  $("#bm-gradient-to").disabled = appearanceBusy;
+  $("#bm-gradient-to-label").hidden = !parsed?.to;
+
+  const saved = $("#bm-saved-colors");
+  saved.replaceChildren();
+  for (const value of state.settings?.book_color_presets || []) {
+    if (!parseAccent(value)) continue;
+    const item = document.createElement("div");
+    item.className = "bm-saved-item";
+    const apply = addColorButton(item, value, "应用保存的颜色");
+    apply.setAttribute("aria-label", "应用保存的颜色 " + value);
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "bm-remove-color";
+    remove.textContent = "×";
+    remove.title = "删除此颜色预设";
+    remove.setAttribute("aria-label", "删除保存的颜色 " + value);
+    remove.disabled = presetBusy;
+    remove.addEventListener("click", () => void deleteColorPreset(value));
+    item.append(remove);
+    saved.append(item);
+  }
+  $("#bm-save-preset").disabled = appearanceBusy || presetBusy;
+}
+
+function customColor() {
+  const from = $("#bm-custom-color").value;
+  return $("#bm-gradient-enabled").checked
+    ? gradient(from, $("#bm-gradient-to").value)
+    : from;
+}
+
+async function saveColorPreset() {
+  if (presetBusy || appearanceBusy || !selectedBook || !state.settings) return;
+  // “跟随强调色”也可保存为一个实际的可复用色值。
+  const color = tidyAccent(selectedBook.icon_color || state.settings.accent || "#d9822b");
+  if (!color) return;
+  const saved = state.settings.book_color_presets || [];
+  if (saved.includes(color)) {
+    toast("这个颜色已经保存过了");
+    return;
+  }
+  if (saved.length >= 20) {
+    toast("最多保存 20 个颜色预设");
+    return;
+  }
+  presetBusy = true;
+  renderManager();
+  try {
+    await saveSettings({ ...state.settings, book_color_presets: [...saved, color] });
+    renderManager();
+    toast("颜色预设已保存");
+  } catch (e) {
+    $("#bm-error").textContent = "保存颜色预设失败：" + e;
+    $("#bm-error").hidden = false;
+  } finally {
+    presetBusy = false;
+    renderManager();
+  }
+}
+
+async function deleteColorPreset(color) {
+  if (presetBusy || appearanceBusy || !state.settings) return;
+  presetBusy = true;
+  renderManager();
+  try {
+    const saved = state.settings.book_color_presets || [];
+    await saveSettings({ ...state.settings, book_color_presets: saved.filter((v) => v !== color) });
+    toast("颜色预设已删除");
+  } catch (e) {
+    $("#bm-error").textContent = "删除颜色预设失败：" + e;
+    $("#bm-error").hidden = false;
+  } finally {
+    presetBusy = false;
+    renderManager();
+  }
 }
 
 async function saveAppearance(b, icon, color) {
@@ -331,7 +420,7 @@ async function saveAppearance(b, icon, color) {
       await saveMeta();
       await api.invoke("set_book_appearance", { book: b.name, icon, color });
       b.icon = icon === "book" ? "" : icon;
-      b.icon_color = color.toLowerCase();
+      b.icon_color = tidyAccent(color);
     });
     renderBook();
   } catch (e) {
@@ -378,9 +467,13 @@ export function bindBooks() {
   });
   $("#bm-rename").addEventListener("click", () => { if (selectedBook) void renameBook(selectedBook); });
   $("#bm-delete").addEventListener("click", () => { if (selectedBook) void deleteBook(selectedBook); });
-  $("#bm-custom-color").addEventListener("change", (e) => {
-    if (selectedBook) void saveAppearance(selectedBook, selectedBook.icon || "book", e.target.value);
-  });
+  const applyCustom = () => {
+    if (selectedBook) void saveAppearance(selectedBook, selectedBook.icon || "book", customColor());
+  };
+  $("#bm-custom-color").addEventListener("change", applyCustom);
+  $("#bm-gradient-to").addEventListener("change", applyCustom);
+  $("#bm-gradient-enabled").addEventListener("change", applyCustom);
+  $("#bm-save-preset").addEventListener("click", () => void saveColorPreset());
   $("#books").addEventListener("keydown", onKey);
   // 焦点跟着鼠标走,免得键盘选中的和鼠标指着的是两项
   $("#books").addEventListener("mousemove", (e) => {
