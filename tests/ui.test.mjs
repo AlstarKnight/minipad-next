@@ -1794,7 +1794,7 @@ describe("v0.3.4 picker regressions", () => {
 
   ui("quick color row stays compact and the full library has its own scroll area", {
     seed: { ...seed({ "": { 页: "文字" } }), settings: {
-      ...SETTINGS, color_library: Array.from({ length: 12 }, (_, i) => "#" + (0x123400 + i).toString(16)),
+      ...SETTINGS, color_library: Array.from({ length: 40 }, (_, i) => "#" + (0x123400 + i).toString(16)),
     } },
   }, async ({ p }) => {
     await p.click("#btn-settings");
@@ -1802,9 +1802,9 @@ describe("v0.3.4 picker regressions", () => {
     const root = p.locator("#set-accent + .shared-colors");
     assert.equal(await root.locator(".uc-more").getAttribute("aria-expanded"), "false");
     assert.equal(await root.locator(".uc-preset:visible").count(), 5, "five quick colors");
-    assert.equal(await root.locator(".uc-swatch").count(), 12, "full library remains available");
+    assert.equal(await root.locator(".uc-swatch").count(), 40, "full library remains available");
     await root.locator(".uc-more").click();
-    assert.equal(await root.locator(".uc-preset:visible").count(), 12);
+    assert.equal(await root.locator(".uc-preset:visible").count(), 40);
     assert.ok(await root.locator(".uc-presets").evaluate((el) => el.scrollHeight > el.clientHeight),
       "large library scrolls inside its own grid");
     await root.locator(".uc-more").click();
