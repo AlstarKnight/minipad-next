@@ -201,14 +201,14 @@ mod tests {
 
     #[test]
     fn each_style_leaves_its_own_strip_on_all_edges() {
-        assert_eq!(strip_for("line", false, 3, false), LINE_STRIP);
-        assert_eq!(strip_for("line", true, 3, false), LINE_STRIP);
-        assert_eq!(strip_for("arrow", false, 3, false), ARROW_STRIP);
-        assert_eq!(strip_for("arrow-only", false, 3, false), ARROW_STRIP);
-        assert_eq!(strip_for("hover", false, 3, false), LINE_STRIP);
-        assert_eq!(strip_for("hover", true, 3, false), PEEK_STRIP);
+        assert_eq!(strip_for("line", false, 2, false), LINE_STRIP);
+        assert_eq!(strip_for("line", true, 2, false), LINE_STRIP);
+        assert_eq!(strip_for("arrow", false, 2, false), ARROW_STRIP);
+        assert_eq!(strip_for("arrow-only", false, 2, false), ARROW_STRIP);
+        assert_eq!(strip_for("hover", false, 2, false), LINE_STRIP);
+        assert_eq!(strip_for("hover", true, 2, false), PEEK_STRIP);
         let win = Rect::new(300, 0, 400, 500);
-        let s = strip_for("hover", true, 3, false);
+        let s = strip_for("hover", true, 2, false);
         assert_eq!(
             hidden_position_with_strip(Edge::Top, win, SCREEN, s),
             (300, -500 + s)
