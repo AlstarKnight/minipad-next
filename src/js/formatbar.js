@@ -282,7 +282,6 @@ class Bar {
   }
 
   paletteMenu(btn, { mark, colors, gradients, none }) {
-    const now = colorAt(this.view.state, mark);
     const pick = (value) => {
       this.closePop();
       setColor(this.view, mark, value);
@@ -292,28 +291,8 @@ class Bar {
     clear.className = "fb-none";
     clear.textContent = none;
     clear.addEventListener("click", () => pick(""));
-    const grid = (list, cls) => {
-      const g = document.createElement("div");
-      g.className = "fb-swatches " + cls;
-      for (const c of list) {
-        const b = document.createElement("button");
-        b.className = "fb-swatch" + (c.value === now ? " on" : "");
-        b.dataset.color = c.value;
-        b.title = c.name;
-        b.style.setProperty(mark === "text_color" ? "--fg" : "--sw", c.value);
-        b.textContent = mark === "text_color" ? "A" : "";
-        b.addEventListener("click", () => pick(c.value));
-        g.appendChild(b);
-      }
-      return g;
-    };
-    const parts = [clear, grid(colors, "")];
-    if (gradients) {
-      const title = document.createElement("div");
-      title.className = "menu-title";
-      title.textContent = "渐变色";
-      parts.push(title, grid(gradients, "fb-gradients"));
-    }
+    // 所有色块来自可编辑的颜色库；清除格式单独保留。
+    const parts = [clear];
     const shared = makeSharedColorTools({
       getValue: () => colorAt(this.view.state, mark) || btn.dataset.last || "#d9822b",
       onApply: (value) => pick(value),

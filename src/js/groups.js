@@ -232,32 +232,11 @@ export function closeGroupEditor() {
 
 function paintColors() {
   const g = editing;
-  const now = tidyAccent(g.color);
-  const swatch = (label, c) => {
-    const b = document.createElement("button");
-    b.type = "button";
-    b.className = "ge-color" + (now === c ? " on" : "");
-    b.style.setProperty("--c", c);
-    b.title = label;
-    b.setAttribute("role", "radio");
-    b.setAttribute("aria-checked", String(now === c));
-    b.addEventListener("click", () => setColor(c));
-    return b;
-  };
-  const solid = document.createElement("div");
-  solid.className = "ge-row";
-  solid.append(...GROUP_COLORS.map(([label, c]) => swatch(label, c)));
-  const title = document.createElement("div");
-  title.className = "menu-title";
-  title.textContent = "渐变色";
-  const grads = document.createElement("div");
-  grads.className = "ge-row";
-  grads.append(...GROUP_GRADIENTS.map(([label, c]) => swatch(label + "渐变", c)));
   const shared = makeSharedColorTools({
     getValue: () => editing?.color || "#d9822b",
     onApply: (value) => setColor(value),
   });
-  $("#ge-colors").replaceChildren(solid, title, grads, shared.root);
+  $("#ge-colors").replaceChildren(shared.root);
 }
 
 function setColor(c, repaint = true) {

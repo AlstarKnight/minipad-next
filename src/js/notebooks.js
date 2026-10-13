@@ -320,10 +320,11 @@ function renderManager() {
   };
   const colors = $("#bm-colors");
   colors.replaceChildren();
-  for (const color of BOOK_COLORS) addColorButton(colors, color, color || "跟随强调色");
+  // “跟随强调色”保留，其余颜色统一来自可编辑的颜色库。
+  addColorButton(colors, "", "跟随强调色");
   const gradients = $("#bm-gradients");
   gradients.replaceChildren();
-  for (const g of BOOK_GRADIENTS) addColorButton(gradients, g.value, g.name);
+
   if (!notebookColorEditor) notebookColorEditor = makeSharedColorTools({
     getValue: () => selectedBook?.icon_color || state.settings?.accent || "#d9822b",
     onApply: (value) => selectedBook && saveAppearance(selectedBook, selectedBook.icon || "book", value),
