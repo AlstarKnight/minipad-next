@@ -223,6 +223,7 @@ function colorPicker(prefix, box, options, firstSwatch, onChange) {
     sharedTool = makeSharedColorTools({
       getValue: () => picker.value || state.settings?.accent || "#d9822b",
       onApply: (value) => picker.show(value),
+      compact: true,
     });
     $(box).after(sharedTool.root);
   };
@@ -416,7 +417,7 @@ function updateEdgeLinePreview() {
   const length = unit === "px" ? Math.min(600, Math.max(24, value || 120)) : Math.min(100, Math.max(10, value || 100));
   edgeLengthValues[unit] = length;
   $("#set-edge-line-width-val").textContent = width + " 像素";
-  $("#set-edge-line-length-val").textContent = length + (unit === "px" ? "px" : "%");
+  $("#set-edge-line-length-val").textContent = unit === "px" ? "px" : length + "%";
   $("#set-edge-length-number").value = String(length);
   const preview = $("#set-edge-line-preview");
   preview.style.setProperty("--edge-line-width", width + "px");

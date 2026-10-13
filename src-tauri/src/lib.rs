@@ -73,7 +73,8 @@ pub struct Settings {
     theme: String,
     /// 强调色:空着是默认的橙色,"#3b82f6" 是纯色,"linear-gradient(135deg, #a, #b)" 是渐变色
     accent: String,
-    /// 笔记本管理里保存的自定义纯色/渐变预设，最多 20 项。
+    /// 只读取旧配置供首次迁移，不再写回 settings.json。
+    #[serde(skip_serializing)]
     book_color_presets: Vec<String>,
     /// 全局共享预设；None 表示旧版本未迁移，Some([]) 表示用户已主动清空。
     color_presets: Option<Vec<String>>,
@@ -514,16 +515,9 @@ fn persist_settings(app: &AppHandle) {
 
 const EDGE_STYLES: [&str; 4] = ["arrow", "line", "hover", "arrow-only"];
 
-/// 颜色(强调色、贴边标识色)只是给界面用的一小段文字,太长或者有奇怪的字符就不要
+/// 所有可自定义的设置颜色与笔记本图标共用严格的纯色/渐变校验。
 fn tidy_color(c: &mut String) {
-    *c = c.trim().to_string();
-    if c.len() > 160
-        || !c
-            .chars()
-            .all(|ch| ch.is_ascii_alphanumeric() || " #(),-.%".contains(ch))
-    {
-        c.clear();
-    }
+    *c = notes::normalized_book_color(c).unwrap_or_default();
 }
 
 /// 只能是几个选项之一的设置:不认识的值换成第一个(默认的那个)

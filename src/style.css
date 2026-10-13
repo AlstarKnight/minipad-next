@@ -1208,6 +1208,21 @@ html[data-edge-style="hover"][data-edge-peek][data-edge="right"] #edge-expand { 
 }
 .uc-stop input[type="number"] { width: 63px; min-width: 0; padding: 3px 5px; }
 .uc-stop .uc-remove { margin-left: auto; }
+/* 设置页将预设、入口和保存按钮收成一行；展开编辑器时才占用下一行。 */
+.shared-colors.compact {
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center; gap: 5px; padding: 2px 0;
+}
+.shared-colors.compact .uc-title { white-space: nowrap; }
+.shared-colors.compact .uc-presets {
+  flex-wrap: nowrap; min-width: 0; overflow-x: auto; overflow-y: hidden;
+  padding: 5px 4px; scrollbar-width: thin;
+}
+.shared-colors.compact .uc-preset { flex: 0 0 31px; }
+.shared-colors.compact .uc-presets .muted { white-space: nowrap; font-size: 11px; }
+.shared-colors.compact .uc-actions { flex-wrap: nowrap; gap: 4px; }
+.shared-colors.compact .uc-actions .small { padding: 3px 6px; white-space: nowrap; }
+.shared-colors.compact .uc-editor { grid-column: 1 / -1; }
 /* Reset the broad full-width .menu button styles inside the reusable color palette. */
 .menu .shared-colors button {
   display: inline-flex; align-items: center; justify-content: center;
@@ -1223,6 +1238,9 @@ html[data-edge-style="hover"][data-edge-peek][data-edge="right"] #edge-expand { 
 .menu .shared-colors .uc-delete:hover { background: var(--bg); color: var(--danger); }
 .menu .shared-colors .uc-stop .uc-remove { flex: none; width: 24px; height: 24px; padding: 0; }
 .menu .shared-colors .uc-actions button { white-space: normal; border: 1px solid var(--bar-border); border-radius: 5px; }
+.menu :is(.shared-colors button, .fb-swatch, .ge-color):focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 2px;
+}
 .fb-pop { max-height: min(75vh, 570px); overflow-y: auto; }
 .fb-pop .shared-colors { max-width: 230px; }
 .group-edit .shared-colors { max-width: 255px; }

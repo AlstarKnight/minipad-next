@@ -32,7 +32,8 @@ export function groupVars(el, color) {
   const stops = a.to ? a.stops : [a.from, a.from];
   const fade = (p) => gradientOf(stops.map((c) => `color-mix(in srgb, ${c} ${p}%, transparent)`), a.deg ?? 90, a.positions);
   el.style.setProperty("--g", a.from);
-  el.style.setProperty("--g-grad", gradientOf(stops, a.deg ?? 90, a.positions));
+  // 分组标签的细线延续横向渐变，保留用户设定的节点位置。
+  el.style.setProperty("--g-grad", gradientOf(stops, 90, a.positions));
   el.style.setProperty("--g-soft", fade(24));
   el.style.setProperty("--g-soft2", fade(36));
   el.style.setProperty("--g-tint", fade(15));

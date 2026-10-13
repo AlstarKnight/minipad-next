@@ -42,8 +42,8 @@ const percentage = (i, count) => Math.round((i / Math.max(count - 1, 1)) * 100);
 /** 返回可挂到任意容器的通用“我的颜色 + 多节点编辑器”。
  *  onApply 可以是异步函数；只有用户主动点击应用才更新目标设置。
  */
-export function makeSharedColorTools({ getValue, onApply, defaultColor = "#d9822b", allowGradient = true, showPresets = true } = {}) {
-  const root = make("section", "shared-colors");
+export function makeSharedColorTools({ getValue, onApply, defaultColor = "#d9822b", allowGradient = true, showPresets = true, compact = false } = {}) {
+  const root = make("section", compact ? "shared-colors compact" : "shared-colors");
   const heading = make("div", "uc-title", "我的颜色");
   const buttons = make("div", "uc-presets");
   const actions = make("div", "uc-actions");
@@ -52,6 +52,14 @@ export function makeSharedColorTools({ getValue, onApply, defaultColor = "#d9822
   edit.setAttribute("aria-expanded", "false");
   const save = make("button", "small", "保存当前颜色");
   save.type = "button";
+  if (compact) {
+    edit.textContent = "自定义…";
+    edit.title = "自定义颜色 / 渐变节点";
+    edit.setAttribute("aria-label", "自定义颜色 / 渐变节点");
+    save.textContent = "保存";
+    save.title = "保存当前颜色";
+    save.setAttribute("aria-label", "保存当前颜色");
+  }
   actions.append(edit, save);
   const editor = make("div", "uc-editor");
   editor.hidden = true;
