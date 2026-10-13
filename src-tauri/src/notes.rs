@@ -488,9 +488,7 @@ pub fn save_book_meta(
 pub fn normalized_book_color(value: &str) -> Option<String> {
     let value = value.trim();
     let valid_hex = |s: &str| {
-        s.len() == 7
-            && s.starts_with('#')
-            && s[1..].bytes().all(|b| b.is_ascii_hexdigit())
+        s.len() == 7 && s.starts_with('#') && s[1..].bytes().all(|b| b.is_ascii_hexdigit())
     };
     if valid_hex(value) {
         return Some(value.to_ascii_lowercase());
@@ -1047,10 +1045,7 @@ mod tests {
         let color = "linear-gradient(135deg, #5FB4FF, #D66CF0)";
         set_book_appearance(&root, "工作", "star", color).unwrap();
         let b = load_book(&root, "工作").unwrap();
-        assert_eq!(
-            b.icon_color,
-            "linear-gradient(135deg, #5fb4ff, #d66cf0)"
-        );
+        assert_eq!(b.icon_color, "linear-gradient(135deg, #5fb4ff, #d66cf0)");
         for invalid in [
             "linear-gradient(135deg, red, blue)",
             "linear-gradient(999deg, #5fb4ff, #d66cf0)",
