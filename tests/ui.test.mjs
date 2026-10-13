@@ -1584,6 +1584,57 @@ describe("shared colors and positioned gradients", () => {
   });
 });
 
+describe("v0.3.5 remaining color UX details", () => {
+  ui("pencil-free swatches support F2 and right-click editing", {
+    seed: { ...seed({ "": { 页: "文字" } }), settings: { ...SETTINGS, color_library: ["#123abc", "#fbe9a6"] } },
+  }, async ({ p }) => {
+    await p.click("#btn-settings");
+    await settingsPage(p, "look");
+    const library = p.locator("#set-accent + .shared-colors");
+    await expandLibrary(p, "#set-accent + .shared-colors");
+    assert.equal(await library.locator(".uc-modify").count(), 0, "the pencil no longer overlaps tiny swatches");
+    const color = library.locator('.uc-swatch[data-color="#123abc"]');
+    await color.focus();
+    await p.keyboard.press("F2");
+    assert.ok(await library.locator(".uc-editor").isVisible(), "F2 opens the existing editor");
+    await library.locator(":scope > .uc-actions button").first().click();
+    assert.ok(await library.locator(".uc-editor").isHidden());
+    await color.click({ button: "right" });
+    assert.ok(await library.locator(".uc-editor").isVisible(), "right-click edits a preset");
+    assert.equal(await library.locator(".uc-delete").count(), 2, "delete remains available separately");
+  });
+
+  ui("notebook follow-accent is labeled and header styles match the color library", {
+    seed: seed({ "": { 首页: "正文" }, 工作: { 文档: "示例" } }),
+  }, async (h) => {
+    const { p } = h;
+    await h.openBooks();
+    await p.click("#books-manage");
+    assert.equal(await p.textContent("#bm-details .bm-follow-color span"), "跟随强调色");
+    assert.equal(await p.locator('#bm-colors [data-color=""]').count(), 1);
+    const appearance = await p.evaluate(() => ({
+      defaultWeight: getComputedStyle(document.querySelector("#bm-details .bm-field-title")).fontWeight,
+      libraryWeight: getComputedStyle(document.querySelector("#bm-details .uc-title")).fontWeight,
+      divider: getComputedStyle(document.querySelector(".bm-head")).borderBottomWidth,
+    }));
+    assert.equal(appearance.defaultWeight, appearance.libraryWeight);
+    assert.equal(appearance.divider, "0px", "extra notebook header divider is removed");
+  });
+
+  ui("pale font swatches warn about contrast and keep their A preview", {
+    seed: seed({ "": { 页: "文字" } }),
+  }, async ({ p }) => {
+    await p.click('#format-bar [data-cmd="color"]');
+    await expandLibrary(p, ".fb-pop .shared-colors");
+    const pale = p.locator('.fb-pop .uc-swatch[data-color="#fbe9a6"]');
+    assert.equal(await pale.getAttribute("data-contrast-warning"), "light-text");
+    assert.match(await pale.getAttribute("title"), /对比度/);
+    assert.equal(await pale.textContent(), "A");
+    const dark = p.locator('.fb-pop .uc-swatch[data-color="#df2a3f"]');
+    assert.equal(await dark.getAttribute("data-contrast-warning"), null);
+  });
+});
+
 describe("v0.3.5 editable color library", () => {
   ui("built-in solid and gradient colors can be edited without changing colors already in use", {
     seed: { ...seed({ "": { 页: "正文" } }), settings: { ...SETTINGS, accent: "#3b82f6", color_presets: ["#123abc"] } },
