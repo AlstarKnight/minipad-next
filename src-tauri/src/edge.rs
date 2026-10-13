@@ -1,18 +1,20 @@
 //! 贴边隐藏的几何计算(不依赖 Tauri,方便测试)。所有坐标都是物理像素。
 
-/// 「细线 + 箭头」样式露出的宽度，够放下一个小箭头
+/// 有箭头的两种模式都预留 18 逻辑像素，保证箭头始终可点击。
 pub const ARROW_STRIP: i32 = 18;
-/// 「仅细边」和「悬浮按钮」平时露出的宽度:整条就是一根彩色细线
+/// 旧版细线默认 3px。新的细线宽度为设置值（逻辑像素）。
 pub const LINE_STRIP: i32 = 3;
-/// 「细边 + 悬浮按钮」样式在鼠标靠近时滑出的宽度，够放下展开按钮
+/// 鼠标靠近时展开悬浮按钮所需的宽度。
 pub const PEEK_STRIP: i32 = 32;
 
-/// 贴边隐藏后露在屏幕内的宽度(逻辑像素,用的时候乘上屏幕缩放):按样式(arrow / line / hover)和悬浮按钮是否浮出
-pub fn strip_for(style: &str, peeking: bool) -> i32 {
+/// 按样式、悬浮状态和自定义细线宽度计算露出的逻辑像素。
+/// 细线宽度限制在 1..=12，与设置校验范围一致。
+pub fn strip_for(style: &str, peeking: bool, line_width: u32) -> i32 {
+    let width = line_width.clamp(1, 12) as i32;
     match (style, peeking) {
-        ("arrow", _) => ARROW_STRIP,
+        ("arrow" | "arrow-only", _) => ARROW_STRIP,
         ("hover", true) => PEEK_STRIP,
-        _ => LINE_STRIP,
+        _ => width,
     }
 }
 /// 离屏幕边缘多近算"靠边"
@@ -197,13 +199,14 @@ mod tests {
 
     #[test]
     fn each_style_leaves_its_own_strip_on_all_edges() {
-        assert_eq!(strip_for("line", false), LINE_STRIP);
-        assert_eq!(strip_for("line", true), LINE_STRIP);
-        assert_eq!(strip_for("arrow", false), ARROW_STRIP);
-        assert_eq!(strip_for("hover", false), LINE_STRIP);
-        assert_eq!(strip_for("hover", true), PEEK_STRIP);
+        assert_eq!(strip_for("line", false, 3), LINE_STRIP);
+        assert_eq!(strip_for("line", true, 3), LINE_STRIP);
+        assert_eq!(strip_for("arrow", false, 3), ARROW_STRIP);
+        assert_eq!(strip_for("arrow-only", false, 3), ARROW_STRIP);
+        assert_eq!(strip_for("hover", false, 3), LINE_STRIP);
+        assert_eq!(strip_for("hover", true, 3), PEEK_STRIP);
         let win = Rect::new(300, 0, 400, 500);
-        let s = strip_for("hover", true);
+        let s = strip_for("hover", true, 3);
         assert_eq!(
             hidden_position_with_strip(Edge::Top, win, SCREEN, s),
             (300, -500 + s)
@@ -215,6 +218,32 @@ mod tests {
         assert_eq!(
             hidden_position_with_strip(Edge::Right, win, SCREEN, s),
             (1920 - s, 0)
+        );
+    }
+
+    #[test]
+    fn configurable_thickness_changes_exposed_width_without_affecting_arrow_modes() {
+        for width in [1, 4, 8, 12] {
+            assert_eq!(strip_for("line", false, width), width as i32);
+            assert_eq!(strip_for("hover", false, width), width as i32);
+            assert_eq!(strip_for("hover", true, width), PEEK_STRIP);
+            assert_eq!(strip_for("arrow", false, width), ARROW_STRIP);
+            assert_eq!(strip_for("arrow-only", false, width), ARROW_STRIP);
+        }
+        assert_eq!(strip_for("line", false, 0), 1);
+        assert_eq!(strip_for("line", false, 100), 12);
+        let win = Rect::new(300, 0, 400, 500);
+        assert_eq!(
+            hidden_position_with_strip(Edge::Top, win, SCREEN, strip_for("line", false, 8)),
+            (300, -492)
+        );
+        assert_eq!(
+            hidden_position_with_strip(Edge::Left, win, SCREEN, strip_for("line", false, 8)),
+            (-392, 0)
+        );
+        assert_eq!(
+            hidden_position_with_strip(Edge::Right, win, SCREEN, strip_for("line", false, 8)),
+            (1912, 0)
         );
     }
 
