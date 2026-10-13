@@ -6,7 +6,8 @@ import { $ } from "./dom.js";
 import { state, book } from "./state.js";
 import { scheduleMeta } from "./save.js";
 import { renderTabs, newNote } from "./tabs.js";
-import { GRADIENTS, gradient, gradientOf, parseAccent, tidyAccent } from "./accent.js";
+import { GRADIENTS, gradientOf, parseAccent, tidyAccent } from "./accent.js";
+import { makeSharedColorTools } from "./sharedcolors.js";
 
 // 分组的颜色,和 Edge 的差不多
 export const GROUP_COLORS = [
@@ -22,16 +23,18 @@ export const GROUP_COLORS = [
 ];
 
 // 分组的渐变色:和强调色同一套
-export const GROUP_GRADIENTS = GRADIENTS.map((g) => [g.name, gradientOf(g.stops)]);
+export const GROUP_GRADIENTS = GRADIENTS.map((g) => [g.name, gradientOf(g.stops, 90)]);
 
 // 分组的颜色放到元素上:--g 是纯色(渐变取起点),--g-grad 是整条颜色(纯色或渐变),
 // --g-soft / --g-soft2 / --g-tint 是淡一些的同样的颜色(分组名字的底色、鼠标移上去、整个标签染色)
 export function groupVars(el, color) {
   const a = parseAccent(color) || parseAccent(GROUP_COLORS[0][1]);
   const stops = a.to ? a.stops : [a.from, a.from];
-  const fade = (p) => `linear-gradient(90deg, ${stops.map((c) => `color-mix(in srgb, ${c} ${p}%, transparent)`).join(", ")})`;
+  const angle = a.deg ?? 90;
+  const fade = (p) => gradientOf(stops.map((c) => `color-mix(in srgb, ${c} ${p}%, transparent)`), angle, a.positions);
   el.style.setProperty("--g", a.from);
-  el.style.setProperty("--g-grad", `linear-gradient(90deg, ${stops.join(", ")})`);
+  // 细线和淡色背景使用相同角度，保留自定义节点位置。
+  el.style.setProperty("--g-grad", gradientOf(stops, angle, a.positions));
   el.style.setProperty("--g-soft", fade(24));
   el.style.setProperty("--g-soft2", fade(36));
   el.style.setProperty("--g-tint", fade(15));
@@ -250,36 +253,11 @@ function paintColors() {
   const grads = document.createElement("div");
   grads.className = "ge-row";
   grads.append(...GROUP_GRADIENTS.map(([label, c]) => swatch(label + "渐变", c)));
-  // 自定义:挑一个颜色,勾上"渐变到"再挑一个就是渐变色
-  const a = parseAccent(now) || parseAccent(GROUP_COLORS[1][1]);
-  const custom = document.createElement("div");
-  custom.className = "ge-custom";
-  const label = document.createElement("span");
-  label.textContent = "自定义";
-  const from = document.createElement("input");
-  from.type = "color";
-  from.value = a.from;
-  from.title = "颜色";
-  const gradBox = document.createElement("label");
-  const grad = document.createElement("input");
-  grad.type = "checkbox";
-  grad.checked = !!a.to;
-  gradBox.append(grad, " 渐变到");
-  const to = document.createElement("input");
-  to.type = "color";
-  to.value = a.to || "#a66bff";
-  to.title = "渐变的另一端";
-  to.disabled = !a.to;
-  const apply = () => {
-    to.disabled = !grad.checked;
-    setColor(grad.checked ? gradient(from.value, to.value) : from.value, false);
-    for (const b of $("#ge-colors").querySelectorAll(".ge-color")) b.classList.remove("on");
-  };
-  from.addEventListener("input", apply);
-  to.addEventListener("input", apply);
-  grad.addEventListener("change", apply);
-  custom.append(label, from, gradBox, to);
-  $("#ge-colors").replaceChildren(solid, title, grads, custom);
+  const shared = makeSharedColorTools({
+    getValue: () => editing?.color || "#d9822b",
+    onApply: (value) => setColor(value),
+  });
+  $("#ge-colors").replaceChildren(solid, title, grads, shared.root);
 }
 
 function setColor(c, repaint = true) {

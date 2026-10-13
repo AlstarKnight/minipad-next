@@ -33,7 +33,7 @@ export function bookIcon(icon, color = "") {
   const dx = Math.sin(angle) * 8;
   const dy = -Math.cos(angle) * 8;
   const stops = parsed.stops.map((hex, i) =>
-    `<stop offset="${(i / (parsed.stops.length - 1)) * 100}%" stop-color="${hex}"/>`
+    `<stop offset="${parsed.positions?.[i] ?? (i / (parsed.stops.length - 1)) * 100}%" stop-color="${hex}"/>`
   ).join("");
   const defs = `<defs><linearGradient id="${id}" gradientUnits="userSpaceOnUse" x1="${8 - dx}" y1="${8 - dy}" x2="${8 + dx}" y2="${8 + dy}">${stops}</linearGradient></defs>`;
   return `<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false" style="stroke: url(#${id})">${defs}${shape}</svg>`;

@@ -65,7 +65,10 @@ function parseStyle(style) {
     else if (key === "background-color" || key === "background") out.bg = value;
   }
   // 渐变色的字:背景是渐变、只画在字上
-  if (grad && clipText) out.color = grad;
+  if (grad) {
+    if (clipText) out.color = grad;
+    else out.bg = grad;
+  }
   return out;
 }
 
@@ -114,7 +117,7 @@ export const colorSpans = $remark("minipadColorSpans", () => () => (tree) => {
 // 写回文件时的样子
 export const colorHandlers = {
   textColor: (node, _, state, info) => `<span style="${colorStyle(node.color)}">${state.containerPhrasing(node, info)}</span>`,
-  textBg: (node, _, state, info) => `<span style="background-color: ${node.bg}">${state.containerPhrasing(node, info)}</span>`,
+  textBg: (node, _, state, info) => `<span style="${isGradient(node.bg) ? "background-image" : "background-color"}: ${node.bg}">${state.containerPhrasing(node, info)}</span>`,
 };
 
 function colorMark(name, attr, mdType, style) {

@@ -61,6 +61,9 @@ pub struct Settings {
     edge_line_width: u32,
     /// 细线占所在窗口边长的百分比，10..=100
     edge_line_length: u32,
+    /// percent 沿用旧值；px 为固定的逻辑像素长度。
+    edge_line_length_unit: String,
+    edge_line_length_px: u32,
     /// 细线微光效果（默认关闭）
     edge_line_glow: bool,
     /// 贴边标识的颜色,写法同 accent;空着跟随强调色
@@ -70,8 +73,11 @@ pub struct Settings {
     theme: String,
     /// 强调色:空着是默认的橙色,"#3b82f6" 是纯色,"linear-gradient(135deg, #a, #b)" 是渐变色
     accent: String,
-    /// 笔记本管理里保存的自定义纯色/渐变预设，最多 20 项。
+    /// 只读取旧配置供首次迁移，不再写回 settings.json。
+    #[serde(skip_serializing)]
     book_color_presets: Vec<String>,
+    /// 全局共享预设；None 表示旧版本未迁移，Some([]) 表示用户已主动清空。
+    color_presets: Option<Vec<String>>,
     /// 活跃标签的高亮:line 顶部线条、fill 整个标签、border 整圈边框
     tab_style: String,
     font_size: u32,
@@ -170,6 +176,8 @@ impl Default for Settings {
             edge_style: "arrow".into(),
             edge_line_width: edge::LINE_STRIP as u32,
             edge_line_length: 100,
+            edge_line_length_unit: "percent".into(),
+            edge_line_length_px: 120,
             edge_line_glow: false,
             edge_color: String::new(),
             show_in_taskbar: false,
@@ -177,6 +185,7 @@ impl Default for Settings {
             theme: "system".into(),
             accent: String::new(),
             book_color_presets: Vec::new(),
+            color_presets: None,
             tab_style: "line".into(),
             font_size: 14,
             notes_dir: String::new(),
@@ -506,16 +515,9 @@ fn persist_settings(app: &AppHandle) {
 
 const EDGE_STYLES: [&str; 4] = ["arrow", "line", "hover", "arrow-only"];
 
-/// 颜色(强调色、贴边标识色)只是给界面用的一小段文字,太长或者有奇怪的字符就不要
+/// 所有可自定义的设置颜色与笔记本图标共用严格的纯色/渐变校验。
 fn tidy_color(c: &mut String) {
-    *c = c.trim().to_string();
-    if c.len() > 160
-        || !c
-            .chars()
-            .all(|ch| ch.is_ascii_alphanumeric() || " #(),-.".contains(ch))
-    {
-        c.clear();
-    }
+    *c = notes::normalized_book_color(c).unwrap_or_default();
 }
 
 /// 只能是几个选项之一的设置:不认识的值换成第一个(默认的那个)
@@ -533,13 +535,15 @@ fn tidy_settings(s: &mut Settings) {
     s.backup_keep = s.backup_keep.clamp(1, 365);
     tidy_color(&mut s.accent);
     let mut seen_colors = std::collections::HashSet::new();
-    s.book_color_presets = s
-        .book_color_presets
-        .iter()
-        .filter_map(|v| notes::normalized_book_color(v))
-        .filter(|v| seen_colors.insert(v.clone()))
-        .take(20)
-        .collect();
+    let source = s.color_presets.as_ref().unwrap_or(&s.book_color_presets);
+    s.color_presets = Some(
+        source
+            .iter()
+            .filter_map(|v| notes::normalized_book_color(v))
+            .filter(|v| seen_colors.insert(v.clone()))
+            .take(20)
+            .collect(),
+    );
     tidy_color(&mut s.edge_color);
     tidy_color(&mut s.ball_color);
     tidy_color(&mut s.find_color);
@@ -577,6 +581,10 @@ fn tidy_settings(s: &mut Settings) {
     }
     s.edge_line_width = s.edge_line_width.clamp(1, 12);
     s.edge_line_length = s.edge_line_length.clamp(10, 100);
+    if !["percent", "px"].contains(&s.edge_line_length_unit.as_str()) {
+        s.edge_line_length_unit = "percent".into();
+    }
+    s.edge_line_length_px = s.edge_line_length_px.clamp(24, 600);
     if !["line", "fill", "border"].contains(&s.tab_style.as_str()) {
         s.tab_style = "line".into();
     }
@@ -1489,9 +1497,14 @@ fn edge_tick(app: &AppHandle) {
         (e.hidden, e.peeking, e.monitor)
     };
     if let Some(edge) = hidden {
-        let (style, length) = {
+        let (style, length, unit, fixed_px) = {
             let settings = st.settings.lock().unwrap();
-            (settings.edge_style.clone(), settings.edge_line_length)
+            (
+                settings.edge_style.clone(),
+                settings.edge_line_length,
+                settings.edge_line_length_unit.clone(),
+                settings.edge_line_length_px,
+            )
         };
         let inside = edge::IndicatorHotzone {
             edge,
@@ -1499,6 +1512,8 @@ fn edge_tick(app: &AppHandle) {
             mon,
             style: &style,
             length_percent: length,
+            length_unit: &unit,
+            length_px: fixed_px,
             peeking,
             scale: win.scale_factor().unwrap_or(1.0),
         }
@@ -2214,24 +2229,34 @@ mod tests {
         let old: Settings = serde_json::from_str(r#"{"edge_style":"line"}"#).unwrap();
         assert_eq!(old.edge_line_width, 2);
         assert_eq!(old.edge_line_length, 100);
+        assert_eq!(old.edge_line_length_unit, "percent");
+        assert_eq!(old.edge_line_length_px, 120);
         assert!(!old.edge_line_glow);
 
         let mut s = Settings {
             edge_style: "arrow-only".into(),
             edge_line_width: 0,
             edge_line_length: 0,
+            edge_line_length_unit: "other".into(),
+            edge_line_length_px: 0,
             ..Settings::default()
         };
         tidy_settings(&mut s);
         assert_eq!(s.edge_style, "arrow-only");
         assert_eq!(s.edge_line_width, 1);
         assert_eq!(s.edge_line_length, 10);
+        assert_eq!(s.edge_line_length_unit, "percent");
+        assert_eq!(s.edge_line_length_px, 24);
 
         s.edge_line_width = 200;
         s.edge_line_length = 200;
+        s.edge_line_length_px = 2000;
+        s.edge_line_length_unit = "px".into();
         tidy_settings(&mut s);
         assert_eq!(s.edge_line_width, 12);
         assert_eq!(s.edge_line_length, 100);
+        assert_eq!(s.edge_line_length_px, 600);
+        assert_eq!(s.edge_line_length_unit, "px");
     }
 
     #[test]
@@ -2255,6 +2280,26 @@ mod tests {
     }
 
     #[test]
+    fn shared_color_presets_migrate_once_without_resurrecting_deleted_entries() {
+        let mut old: Settings = serde_json::from_str(
+            r##"{"book_color_presets":["#123456","linear-gradient(135deg, #abcdef, #012345)"]}"##,
+        )
+        .unwrap();
+        assert!(old.color_presets.is_none());
+        tidy_settings(&mut old);
+        assert_eq!(old.color_presets.as_ref().unwrap().len(), 2);
+        let written = serde_json::to_value(&old).unwrap();
+        assert!(
+            written.get("book_color_presets").is_none(),
+            "旧预设字段只读，不再写回"
+        );
+        assert_eq!(written["color_presets"].as_array().unwrap().len(), 2);
+        old.color_presets = Some(Vec::new());
+        tidy_settings(&mut old);
+        assert!(old.color_presets.unwrap().is_empty());
+    }
+
+    #[test]
     fn notebook_user_color_presets_are_safe_unique_and_bounded() {
         let mut s = Settings {
             book_color_presets: vec![
@@ -2267,16 +2312,40 @@ mod tests {
         };
         tidy_settings(&mut s);
         assert_eq!(
-            s.book_color_presets,
+            s.color_presets.clone().unwrap(),
             vec!["#abcdef", "linear-gradient(135deg, #ff0000, #00ff00)"]
         );
-        s.book_color_presets = (0..40).map(|i| format!("#{:06x}", i)).collect();
+        s.color_presets = Some((0..40).map(|i| format!("#{:06x}", i)).collect());
         tidy_settings(&mut s);
-        assert_eq!(s.book_color_presets.len(), 20);
+        assert_eq!(s.color_presets.as_ref().unwrap().len(), 20);
         assert!(serde_json::from_str::<Settings>(r#"{"theme":"dark"}"#)
             .unwrap()
-            .book_color_presets
-            .is_empty());
+            .color_presets
+            .is_none());
+    }
+
+    #[test]
+    fn tidy_settings_validates_all_custom_colors_like_notebook_icons() {
+        let valid = "linear-gradient(90deg, #112233 0%, #445566 25%, #778899 100%)";
+        let mut s = Settings {
+            accent: " red ".into(),
+            edge_color: "foo".into(),
+            ball_color: format!("  {valid}  "),
+            find_color: "#ABCDEF".into(),
+            outline_color: "blue".into(),
+            ..Settings::default()
+        };
+        tidy_settings(&mut s);
+        assert_eq!(s.accent, "");
+        assert_eq!(s.edge_color, "");
+        assert_eq!(s.ball_color, valid);
+        assert_eq!(s.find_color, "#abcdef");
+        assert_eq!(s.outline_color, "");
+        s.edge_color = "linear-gradient(90deg, #112233 120%, #445566 100%)".into();
+        s.accent = "linear-gradient(20deg, red, foo)".into();
+        tidy_settings(&mut s);
+        assert_eq!(s.edge_color, "");
+        assert_eq!(s.accent, "");
     }
 
     #[test]

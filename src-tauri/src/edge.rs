@@ -24,6 +24,8 @@ pub struct IndicatorHotzone<'a> {
     pub mon: Rect,
     pub style: &'a str,
     pub length_percent: u32,
+    pub length_unit: &'a str,
+    pub length_px: u32,
     pub peeking: bool,
     pub scale: f64,
 }
@@ -40,8 +42,11 @@ impl IndicatorHotzone<'_> {
         if !across || span <= 0 {
             return false;
         }
-        let pct = self.length_percent.clamp(10, 100) as i64;
-        let line_len = (i64::from(span) * pct / 100) as i32;
+        let line_len = if self.length_unit == "px" {
+            (f64::from(self.length_px.clamp(24, 600)) * self.scale).round() as i32
+        } else {
+            (i64::from(span) * i64::from(self.length_percent.clamp(10, 100)) / 100) as i32
+        };
         // 箭头和悬浮按钮保留居中的独立点击范围；短线两侧的空白不可唤出。
         let arrow_len = (36.0 * self.scale).round() as i32;
         let hover_len = (56.0 * self.scale).round() as i32;
@@ -311,6 +316,8 @@ mod tests {
             mon: SCREEN,
             style: "line",
             length_percent: 40,
+            length_unit: "percent",
+            length_px: 120,
             peeking: false,
             scale: 1.0,
         };
@@ -340,6 +347,53 @@ mod tests {
     }
 
     #[test]
+    fn fixed_pixel_hit_area_stays_constant_when_window_changes_size() {
+        let base = IndicatorHotzone {
+            edge: Edge::Top,
+            win: Rect::new(300, -498, 400, 500),
+            mon: SCREEN,
+            style: "line",
+            length_percent: 40,
+            length_unit: "px",
+            length_px: 100,
+            peeking: false,
+            scale: 1.0,
+        };
+        assert!(base.contains(451, 1));
+        assert!(base.contains(549, 1));
+        assert!(!base.contains(449, 1));
+        let wider = IndicatorHotzone {
+            win: Rect::new(300, -498, 600, 500),
+            ..base
+        };
+        assert!(wider.contains(551, 1));
+        assert!(!wider.contains(549, 1));
+        assert!(!wider.contains(651, 1));
+        let hidpi = IndicatorHotzone {
+            win: Rect::new(300, -497, 600, 500),
+            length_px: 100,
+            scale: 1.5,
+            ..base
+        };
+        assert!(hidpi.contains(525, 1));
+        assert!(!hidpi.contains(525, 4));
+        let left = IndicatorHotzone {
+            edge: Edge::Left,
+            win: Rect::new(-398, 100, 400, 500),
+            ..base
+        };
+        assert!(left.contains(1, 350));
+        assert!(!left.contains(1, 290));
+        let right = IndicatorHotzone {
+            edge: Edge::Right,
+            win: Rect::new(1918, 100, 400, 500),
+            ..base
+        };
+        assert!(right.contains(1919, 350));
+        assert!(!right.contains(1919, 290));
+    }
+
+    #[test]
     fn arrow_and_hover_targets_are_centered_and_scale_for_dpi() {
         let arrow = IndicatorHotzone {
             edge: Edge::Top,
@@ -347,6 +401,8 @@ mod tests {
             mon: SCREEN,
             style: "arrow-only",
             length_percent: 10,
+            length_unit: "percent",
+            length_px: 120,
             peeking: false,
             scale: 1.0,
         };

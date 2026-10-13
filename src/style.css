@@ -891,23 +891,6 @@ html[data-find-pos="bottom"] #status { order: 2; }
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 13%, transparent);
 }
 .bm-colors button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.bm-custom-color { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 12px; margin-top: 9px; }
-.bm-custom-color label { display: inline-flex; align-items: center; gap: 5px; }
-.bm-custom-color input[type="color"] { width: 38px; height: 26px; padding: 2px; background: transparent; border: 1px solid var(--bar-border); border-radius: 6px; }
-.bm-custom-color input[type="checkbox"] { accent-color: var(--accent); }
-#bm-gradient-to-label[hidden] { display: none; }
-.bm-preset-head { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin: 12px 0 7px; }
-.bm-preset-head .bm-field-title { margin: 0; }
-.bm-saved-colors { min-height: 24px; }
-.bm-saved-item { position: relative; min-width: 0; }
-.bm-colors .bm-saved-item > button[role="radio"] { display: block; width: 100%; padding: 0; }
-.bm-colors .bm-saved-item > button.bm-remove-color {
-  position: absolute; top: -5px; right: -5px; z-index: 1;
-  width: 15px; height: 15px; padding: 0; border-radius: 50%;
-  border: 1px solid var(--bar-border); background: var(--bg); color: var(--muted);
-  font-size: 12px; line-height: 12px;
-}
-.bm-colors .bm-saved-item > button.bm-remove-color:hover { color: var(--danger); border-color: var(--danger); }
 .bm-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 18px; }
 .bm-actions .danger { color: var(--danger); }
 #bm-error { margin-top: 12px; }
@@ -944,7 +927,7 @@ html[data-find-pos="bottom"] #status { order: 2; }
 
 /* 背景颜色:深色主题里调淡,不然浅色的底配浅色的字看不清 */
 #editor span[data-bg] { background: var(--mark-bg); border-radius: 2px; padding: 0 1px; }
-[data-theme="dark"] #editor span[data-bg] { background: color-mix(in srgb, var(--mark-bg) 42%, transparent); }
+[data-theme="dark"] #editor span[data-bg] { background: var(--mark-bg); }
 
 /* 格式栏:颜色按钮下面的色条,颜色板,自定义 */
 #format-bar .fb-color .swatch { stroke: none; fill: var(--muted); }
@@ -992,10 +975,7 @@ html[data-find-pos="bottom"] #status { order: 2; }
   width: 24px; height: 24px; border-radius: 50%; padding: 0;
   background: var(--sw); border: 2px solid var(--panel); box-shadow: 0 0 0 1px var(--bar-border);
 }
-.accent-swatches button.on { box-shadow: 0 0 0 2px var(--text); }
-.accent-custom { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--muted); }
-.accent-custom input[type="color"] { width: 30px; height: 22px; padding: 0 1px; border: 1px solid var(--bar-border); border-radius: 4px; background: none; }
-.accent-custom label { display: flex; align-items: center; gap: 3px; }
+.accent-swatches button.on { outline: 1px solid var(--accent); outline-offset: 2px; box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 13%, transparent); }
 
 /* 明暗切换按钮:浅色时显示月亮(点了变深色),深色时显示太阳 */
 #btn-theme .sun, [data-theme="dark"] #btn-theme .moon { display: none; }
@@ -1160,6 +1140,8 @@ html[data-edge-style="hover"][data-edge-peek][data-edge="right"] #edge-expand { 
 .edge-line-control { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .edge-line-control > span:first-child { flex: none; min-width: 110px; }
 .edge-line-control input[type="range"] { flex: 1; min-width: 90px; }
+.edge-line-control input[type="number"] { flex: 0 0 84px; width: 84px; min-width: 84px; padding: 3px 7px; font-variant-numeric: tabular-nums; }
+.edge-line-control select { flex: 1; min-width: 0; font-size: 12px; }
 .edge-line-control .muted { min-width: 45px; text-align: right; }
 .edge-line-preview {
   position: relative;
@@ -1184,6 +1166,98 @@ html[data-edge-style="hover"][data-edge-peek][data-edge="right"] #edge-expand { 
   box-shadow: 0 0 4px 1px color-mix(in srgb, var(--preview-glow-color, var(--accent)) 38%, transparent),
               0 0 8px 1px color-mix(in srgb, var(--preview-glow-color, var(--accent)) 16%, transparent);
 }
+/* 0.3.4 共用颜色面板：设置、笔记本、标签分组及格式栏保持一致。 */
+.shared-colors {
+  display: flex; flex-direction: column; gap: 7px; padding: 7px 0;
+  min-width: 0; width: 100%; color: var(--text); font-size: 12px;
+}
+.uc-title { font-size: 11.5px; font-weight: 600; color: var(--muted); }
+.uc-presets { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; min-height: 23px; }
+.uc-preset { position: relative; display: inline-flex; width: 31px; height: 25px; }
+.uc-swatch {
+  display: block; width: 27px; height: 25px;
+  border: 1px solid var(--bar-border); border-radius: 6px;
+}
+.uc-swatch:hover, .uc-swatch:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
+.uc-delete {
+  position: absolute; right: -4px; top: -5px; width: 15px; height: 15px;
+  padding: 0; border: 1px solid var(--bar-border); border-radius: 50%;
+  color: var(--muted); background: var(--bg); font-size: 12px; line-height: 12px;
+}
+.uc-delete:hover { border-color: var(--danger); color: var(--danger); }
+.uc-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.uc-actions .small { font-size: 11.5px; }
+.uc-editor {
+  display: flex; flex-direction: column; gap: 8px;
+  width: 100%; box-sizing: border-box; min-width: 0;
+  padding: 9px; border: 1px solid var(--bar-border); border-radius: 7px;
+  background: var(--bg);
+}
+.uc-editor[hidden] { display: none; }
+.uc-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.uc-controls select { min-width: 85px; padding: 3px 5px; }
+.uc-angle { display: flex; align-items: center; gap: 4px; }
+.uc-angle[hidden] { display: none; }
+.uc-angle input { width: 64px; padding: 3px 5px; }
+.uc-preview { width: 100%; height: 22px; border-radius: 6px; border: 1px solid var(--bar-border); }
+.uc-stops { display: flex; flex-direction: column; gap: 6px; max-height: 192px; overflow-y: auto; }
+.uc-stop { display: flex; gap: 7px; align-items: center; font-size: 12px; }
+.uc-stop input[type="color"] {
+  width: 45px; height: 27px; padding: 2px;
+  border: 1px solid var(--bar-border); border-radius: 5px; background: transparent;
+}
+.uc-stop input[type="number"] { width: 63px; min-width: 0; padding: 3px 5px; }
+.uc-stop .uc-remove { margin-left: auto; }
+/* 设置页将预设、入口和保存按钮收成一行；展开编辑器时才占用下一行。 */
+.shared-colors.compact {
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center; gap: 5px; padding: 2px 0;
+}
+.shared-colors.compact .uc-title { white-space: nowrap; }
+.shared-colors.compact .uc-presets {
+  flex-wrap: nowrap; min-width: 0; overflow-x: auto; overflow-y: hidden;
+  padding: 5px 4px; scrollbar-width: thin;
+}
+.shared-colors.compact .uc-preset { flex: 0 0 31px; }
+/* 横向滚动时，仅在还有隐藏色块的边缘显示渐隐提示。 */
+.shared-colors.compact .uc-presets.overflow-left {
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 16px);
+  mask-image: linear-gradient(to right, transparent, #000 16px);
+}
+.shared-colors.compact .uc-presets.overflow-right {
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 16px), transparent);
+  mask-image: linear-gradient(to right, #000 calc(100% - 16px), transparent);
+}
+.shared-colors.compact .uc-presets.overflow-left.overflow-right {
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 16px, #000 calc(100% - 16px), transparent);
+  mask-image: linear-gradient(to right, transparent, #000 16px, #000 calc(100% - 16px), transparent);
+}
+.shared-colors.compact .uc-presets .muted { white-space: nowrap; font-size: 11px; }
+.shared-colors.compact .uc-actions { flex-wrap: nowrap; gap: 4px; }
+.shared-colors.compact .uc-actions .small { padding: 3px 6px; white-space: nowrap; }
+.shared-colors.compact .uc-editor { grid-column: 1 / -1; }
+/* Reset the broad full-width .menu button styles inside the reusable color palette. */
+.menu .shared-colors button {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: auto; min-width: 0; padding: 4px 8px;
+  text-align: center; line-height: 1.35;
+}
+.menu .shared-colors .uc-swatch { flex: none; width: 27px; height: 25px; padding: 0; }
+.menu .shared-colors .uc-delete {
+  display: inline-flex; flex: none; width: 15px; height: 15px;
+  min-width: 15px; padding: 0; line-height: 1;
+  background: var(--bg); z-index: 1;
+}
+.menu .shared-colors .uc-delete:hover { background: var(--bg); color: var(--danger); }
+.menu .shared-colors .uc-stop .uc-remove { flex: none; width: 24px; height: 24px; padding: 0; }
+.menu .shared-colors .uc-actions button { white-space: normal; border: 1px solid var(--bar-border); border-radius: 5px; }
+.menu :is(.shared-colors button, .fb-swatch, .ge-color):focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 2px;
+}
+.fb-pop { max-height: min(75vh, 570px); overflow-y: auto; }
+.fb-pop .shared-colors { max-width: 230px; }
+.group-edit .shared-colors { max-width: 255px; }
+.book-manager-panel .shared-colors { padding: 7px 0; }
 /* 设置里的悬浮图标:预览 + 大小 / 图标 / 颜色 */
 .ball-option { padding-left: 18px; }
 .ball-option.off { opacity: .5; }
@@ -1415,14 +1489,10 @@ html[data-unreadable] #format-bar, html[data-unreadable] #toolbar { pointer-even
 [data-group-style="line"] #drawer .tab.in-group { background-size: 2px 100%; background-position: left; }
 
 /* 分组设置:名字、颜色 */
-.group-edit { width: 220px; display: flex; flex-direction: column; gap: 6px; padding: 8px; }
+.group-edit { width: 240px; display: flex; flex-direction: column; gap: 6px; padding: 8px; max-height: calc(100vh - 12px); overflow-y: auto; }
 .ge-colors { display: flex; flex-direction: column; gap: 4px; }
 .ge-row { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 2px; }
 .ge-colors .menu-title { padding: 2px 2px 0; }
-.ge-custom { display: flex; align-items: center; gap: 6px; padding: 4px 2px 0; font-size: 12px; color: var(--muted); }
-.ge-custom input[type="color"] { width: 26px; height: 20px; padding: 0; border: 1px solid var(--bar-border); border-radius: 4px; background: none; }
-.ge-custom input[type="color"]:disabled { opacity: 0.4; }
-.ge-custom label { display: flex; align-items: center; gap: 3px; }
 .ge-color {
   position: relative;
   width: 20px;
@@ -1434,7 +1504,7 @@ html[data-unreadable] #format-bar, html[data-unreadable] #toolbar { pointer-even
 }
 .menu button.ge-color { width: 20px; padding: 0; }
 .menu button.ge-color:hover, .menu button.ge-color:focus { background: var(--c); }
-.ge-color.on { outline: 2px solid var(--accent); outline-offset: 2px; }
+.ge-color.on { outline: 1px solid var(--accent); outline-offset: 2px; box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 13%, transparent); }
 .group-edit hr { margin: 2px 0; }
 
 /* 设置里标签栏的预览 */

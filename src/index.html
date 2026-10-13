@@ -143,12 +143,6 @@
             <div class="row col">
               <span>强调色(活跃标签、亮起来的按钮、勾选框等)</span>
               <div id="set-accent" class="accent-swatches"></div>
-              <div class="accent-custom">
-                <span>自定义</span>
-                <input id="set-accent-from" type="color" value="#d9822b" title="颜色" />
-                <label><input id="set-accent-grad" type="checkbox" /> 渐变到</label>
-                <input id="set-accent-to" type="color" value="#f7c34b" title="渐变的另一端" />
-              </div>
             </div>
             <label class="row">
               <span>字号</span>
@@ -241,7 +235,15 @@
               </label>
               <label class="edge-line-control">
                 <span>细线长度</span>
+                <select id="set-edge-length-unit" aria-label="细线长度单位">
+                  <option value="percent">百分比 (%)</option>
+                  <option value="px">固定像素 (px)</option>
+                </select>
+              </label>
+              <label class="edge-line-control">
+                <span>长度</span>
                 <input id="set-edge-line-length" type="range" min="10" max="100" step="5" />
+                <input id="set-edge-length-number" type="number" min="10" max="100" step="1" aria-label="细线长度数值" />
                 <span id="set-edge-line-length-val" class="muted"></span>
               </label>
               <div id="set-edge-line-preview" class="edge-line-preview" aria-hidden="true"><span></span></div>
@@ -250,12 +252,6 @@
             <div class="row col edge-option">
               <span>贴边标识的颜色</span>
               <div id="set-edge-color" class="accent-swatches"></div>
-              <div class="accent-custom">
-                <span>自定义</span>
-                <input id="set-edge-from" type="color" value="#d9822b" title="颜色" />
-                <label><input id="set-edge-grad" type="checkbox" /> 渐变到</label>
-                <input id="set-edge-to" type="color" value="#f7c34b" title="渐变的另一端" />
-              </div>
             </div>
             <h3>悬浮图标</h3>
             <label class="row check"><input id="set-ball" type="checkbox" /> <span>悬浮图标(顶栏多一个按钮,点了窗口缩成一个可以拖动的小图标)</span></label>
@@ -276,12 +272,6 @@
             <div class="row col ball-option">
               <span>图标颜色(给图标上色,保留原来的明暗)</span>
               <div id="set-ball-color" class="accent-swatches"></div>
-              <div class="accent-custom">
-                <span>自定义</span>
-                <input id="set-ball-from" type="color" value="#d9822b" title="颜色" />
-                <label><input id="set-ball-grad" type="checkbox" /> 渐变到</label>
-                <input id="set-ball-to" type="color" value="#f7c34b" title="渐变的另一端" />
-              </div>
             </div>
           </section>
 
@@ -363,12 +353,6 @@
             <div class="row col outline-option">
               <span>当前标题的颜色</span>
               <div id="set-outline-color" class="accent-swatches"></div>
-              <div class="accent-custom">
-                <span>自定义</span>
-                <input id="set-outline-from" type="color" value="#d9822b" title="颜色" />
-                <label><input id="set-outline-grad" type="checkbox" /> 渐变到</label>
-                <input id="set-outline-to" type="color" value="#f7c34b" title="渐变的另一端" />
-              </div>
             </div>
             <div class="row outline-option"><span class="muted grow">一直展开时,窗口太窄、放不下目录和正文的话,会自动收起成短线。</span></div>
             <h3>查找替换</h3>
@@ -390,12 +374,6 @@
               <span>找到的地方的高亮颜色</span>
               <div id="set-find-preview" class="find-preview">找到的<span class="find-hit">地方</span>会这样高亮,当前这<span class="find-hit find-current">一处</span>颜色深一些</div>
               <div id="set-find-color" class="accent-swatches"></div>
-              <div class="accent-custom">
-                <span>自定义</span>
-                <input id="set-find-from" type="color" value="#d9822b" title="颜色" />
-                <label><input id="set-find-grad" type="checkbox" /> 渐变到</label>
-                <input id="set-find-to" type="color" value="#f7c34b" title="渐变的另一端" />
-              </div>
             </div>
           </section>
 
@@ -530,17 +508,6 @@
           <div id="bm-colors" class="bm-colors" role="radiogroup" aria-label="笔记本纯色"></div>
           <div class="bm-field-title">渐变色</div>
           <div id="bm-gradients" class="bm-colors" role="radiogroup" aria-label="笔记本渐变色"></div>
-          <div class="bm-field-title">自定义</div>
-          <div class="bm-custom-color">
-            <label>颜色 <input id="bm-custom-color" type="color" value="#d9822b" /></label>
-            <label class="bm-gradient-toggle"><input id="bm-gradient-enabled" type="checkbox" /> 渐变</label>
-            <label id="bm-gradient-to-label" hidden>终点 <input id="bm-gradient-to" type="color" value="#d66cf0" /></label>
-          </div>
-          <div class="bm-preset-head">
-            <span class="bm-field-title">我的颜色</span>
-            <button id="bm-save-preset" class="small">保存当前颜色</button>
-          </div>
-          <div id="bm-saved-colors" class="bm-colors bm-saved-colors" aria-label="保存的颜色预设"></div>
           <div class="bm-actions">
             <button id="bm-rename" class="small">重命名</button>
             <button id="bm-delete" class="small danger">删除笔记本</button>
