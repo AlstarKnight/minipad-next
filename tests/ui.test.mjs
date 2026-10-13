@@ -416,6 +416,67 @@ describe("notebook manager and window movement", () => {
     assert.equal(await p.isHidden("#book-manager"), true, "Escape closes manager before hiding the app");
   });
 
+  ui("notebook gradients render on actual icons, and presets persist and work across notebooks", {
+    seed: seed({ "": { 首页: "welcome" }, 工作: { 文档: "work" }, 生活: { 清单: "life" } }),
+  }, async (h) => {
+    const { p } = h;
+    await h.openBooks();
+    await p.click("#books-manage");
+    await p.click('#bm-list [data-book="工作"]');
+    const gradient = "linear-gradient(135deg, #5fb4ff, #d66cf0)";
+    await p.click('#bm-gradients [data-color="' + gradient + '"]');
+    await until(() => h.stored().then((db) => db.books["工作"].meta.icon_color), gradient);
+    const strokes = await p.$eval('#bm-list [data-book="工作"] svg', (svg) => ({
+      gradient: svg.querySelectorAll("linearGradient stop").length,
+      stroke: svg.getAttribute("style"),
+    }));
+    assert.equal(strokes.gradient, 2, "gradient icon has actual SVG color stops");
+    assert.match(strokes.stroke, /url\(#book-icon-gradient-/, "icon uses SVG gradient stroke");
+    await p.click("#bm-save-preset");
+    await until(() => h.stored().then((db) => db.settings.book_color_presets), [gradient]);
+    await p.click('#bm-list [data-book="生活"]');
+    await p.click('#bm-saved-colors [role="radio"]');
+    await until(() => h.stored().then((db) => db.books["生活"].meta.icon_color), gradient);
+    await p.reload();
+    await h.openBooks();
+    await p.click("#books-manage");
+    assert.equal(await p.locator("#bm-saved-colors .bm-saved-item").count(), 1, "custom presets survive restart");
+    await p.click("#bm-saved-colors .bm-remove-color");
+    await until(() => h.stored().then((db) => db.settings.book_color_presets), []);
+    assert.equal(await h.stored().then((db) => db.books["工作"].meta.icon_color), gradient, "removing preset keeps existing book colors");
+    assert.equal(await h.mockFile("工作", "文档"), "work", "no note files changed");
+  });
+
+  ui("custom two-color gradient can be saved; selected swatches use a light theme outline", {
+    seed: seed({ "": { 首页: "welcome" }, 设计: { 草稿: "notes" } }),
+  }, async (h) => {
+    const { p } = h;
+    await h.openBooks();
+    await p.click("#books-manage");
+    await p.click('#bm-list [data-book="设计"]');
+    const solid = p.locator('#bm-colors [data-color="#5fb4ff"]');
+    await solid.click();
+    const outline = await solid.evaluate((el) => {
+      const style = getComputedStyle(el);
+      return { outline: style.outlineWidth, border: style.borderTopWidth };
+    });
+    assert.equal(outline.outline, "1px", "thin selection outline");
+    assert.equal(outline.border, "1px", "thin swatch border");
+    await p.check("#bm-gradient-enabled");
+    await until(() => h.stored().then((db) => db.books["设计"].meta.icon_color),
+      "linear-gradient(135deg, #5fb4ff, #d66cf0)");
+    await p.$eval("#bm-gradient-to", (el) => {
+      el.value = "#abcdef";
+      el.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    const custom = "linear-gradient(135deg, #5fb4ff, #abcdef)";
+    await until(() => h.stored().then((db) => db.books["设计"].meta.icon_color), custom);
+    await p.click("#bm-save-preset");
+    await until(() => h.stored().then((db) => db.settings.book_color_presets), [custom]);
+    await p.click("#bm-save-preset");
+    assert.deepEqual(await h.stored().then((db) => db.settings.book_color_presets), [custom], "duplicate presets are ignored");
+  });
+
   ui("manager refuses invalid native save and does not change local icon", {
     seed: seed({ "": { 主页: "a" }, 工作: { 日志: "b" } }),
   }, async (h) => {
