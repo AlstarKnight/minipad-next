@@ -2,8 +2,8 @@
 
 /// 有箭头的两种模式都预留 18 逻辑像素，保证箭头始终可点击。
 pub const ARROW_STRIP: i32 = 18;
-/// 旧版细线默认 3px。新的细线宽度为设置值（逻辑像素）。
-pub const LINE_STRIP: i32 = 3;
+/// 默认细线为 2 逻辑像素，避免在贴边时过于醒目。
+pub const LINE_STRIP: i32 = 2;
 /// 鼠标靠近时展开悬浮按钮所需的宽度。
 pub const PEEK_STRIP: i32 = 32;
 
