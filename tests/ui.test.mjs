@@ -1628,6 +1628,8 @@ describe("v0.3.4 picker regressions", () => {
     await p.locator("#ge-colors .uc-swatch").focus();
     await p.keyboard.press("Space");
     await until(() => h.stored().then((s) => s.books[""].meta.groups[0].color), "#123abc", "space selects group color");
+    await p.keyboard.press("Escape");
+    assert.ok(await p.isHidden("#group-edit"), "Escape closes the group picker before editing");
 
     await p.click("#editor .ProseMirror p");
     await p.keyboard.press("Home");
