@@ -1509,8 +1509,14 @@ describe("theme and accent", () => {
     assert.equal(await p.inputValue("#set-edge-line-length"), "100");
     assert.equal(await p.isChecked("#set-edge-glow"), false);
     await p.selectOption("#set-edge-style", "line");
-    await p.locator("#set-edge-line-width").fill("7");
-    await p.locator("#set-edge-line-length").fill("45");
+    await p.$eval("#set-edge-line-width", (input) => {
+      input.value = "7";
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await p.$eval("#set-edge-line-length", (input) => {
+      input.value = "45";
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
     await p.check("#set-edge-glow");
     assert.equal(await p.textContent("#set-edge-line-width-val"), "7 像素");
     assert.equal(await p.textContent("#set-edge-line-length-val"), "45%");
