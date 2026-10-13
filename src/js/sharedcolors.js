@@ -262,7 +262,7 @@ export function makeSharedColorTools({ getValue, onApply, defaultColor = "#d9822
     }).catch((e) => toast(String(e)));
   });
   reset.addEventListener("click", () =>
-    void ask("确定恢复默认颜色库？自己添加或编辑的预设将从颜色库中移除，已经使用的颜色不会改变。", "恢复默认", true)
+    void ask("确定恢复默认颜色库？自己添加或编辑的预设将从颜色库中移除，已经使用的颜色不会改变。", "恢复默认", true, true)
       .then((confirmed) => confirmed && resetSharedPresets().then(() => {
         editor.hidden = true; editingPreset = null; edit.setAttribute("aria-expanded", "false");
         toast("已恢复默认颜色库");
