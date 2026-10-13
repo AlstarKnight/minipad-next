@@ -76,8 +76,10 @@ pub struct Settings {
     /// 只读取旧配置供首次迁移，不再写回 settings.json。
     #[serde(skip_serializing)]
     book_color_presets: Vec<String>,
-    /// 全局共享预设；None 表示旧版本未迁移，Some([]) 表示用户已主动清空。
+    /// 全局共享预设，保留以迁移 0.3.4 设置。
     color_presets: Option<Vec<String>>,
+    /// 0.3.5 可编辑的全局颜色库，None 表示沿用内置和旧预设；Some([]) 表示用户已全部删除。
+    color_library: Option<Vec<String>>,
     /// 活跃标签的高亮:line 顶部线条、fill 整个标签、border 整圈边框
     tab_style: String,
     font_size: u32,
@@ -186,6 +188,7 @@ impl Default for Settings {
             accent: String::new(),
             book_color_presets: Vec::new(),
             color_presets: None,
+            color_library: None,
             tab_style: "line".into(),
             font_size: 14,
             notes_dir: String::new(),
@@ -544,6 +547,15 @@ fn tidy_settings(s: &mut Settings) {
             .take(20)
             .collect(),
     );
+    if let Some(colors) = &mut s.color_library {
+        let mut seen = std::collections::HashSet::new();
+        *colors = colors
+            .iter()
+            .filter_map(|v| notes::normalized_book_color(v))
+            .filter(|v| seen.insert(v.clone()))
+            .take(128)
+            .collect();
+    }
     tidy_color(&mut s.edge_color);
     tidy_color(&mut s.ball_color);
     tidy_color(&mut s.find_color);
@@ -2322,6 +2334,37 @@ mod tests {
             .unwrap()
             .color_presets
             .is_none());
+    }
+
+    #[test]
+    fn editable_color_library_preserves_empty_and_legacy_settings() {
+        let old: Settings = serde_json::from_str(
+            r##"{"color_presets":["#abcdef"],"book_color_presets":["#123456"]}"##,
+        ).unwrap();
+        assert!(old.color_library.is_none(), "older settings use the initial palette");
+        let mut s = Settings {
+            color_library: Some(vec![
+                "#ABCDEF".into(),
+                "#abcdef".into(),
+                "foo".into(),
+                "linear-gradient(90deg, #112233 0%, #445566 40%, #778899 100%)".into(),
+            ]),
+            ..Settings::default()
+        };
+        tidy_settings(&mut s);
+        assert_eq!(
+            s.color_library.as_ref().unwrap(),
+            &vec![
+                "#abcdef".to_string(),
+                "linear-gradient(90deg, #112233 0%, #445566 40%, #778899 100%)".to_string()
+            ],
+        );
+        s.color_library = Some(Vec::new());
+        tidy_settings(&mut s);
+        let json = serde_json::to_value(&s).unwrap();
+        assert_eq!(json["color_library"], serde_json::json!([]));
+        let restored: Settings = serde_json::from_value(json).unwrap();
+        assert_eq!(restored.color_library, Some(Vec::new()), "deleted defaults must not reappear");
     }
 
     #[test]
