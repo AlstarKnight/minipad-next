@@ -1623,6 +1623,61 @@ describe("v0.3.5 editable color library", () => {
     assert.ok(await p.locator('#set-accent + .shared-colors .uc-swatch[data-color="#123abc"]').isVisible(), "old saved colors remain after migration");
   });
 
+  ui("drag and keyboard sorting choose the five quick colors; deletion can be undone", {
+    seed: { ...seed({ "": { 页: "正文" } }), settings: { ...SETTINGS,
+      color_library: ["#112233", "#223344", "#334455", "#445566", "#556677", "#667788"] } },
+  }, async (h) => {
+    const { p } = h;
+    await p.click("#btn-settings");
+    await settingsPage(p, "look");
+    const palette = p.locator("#set-accent + .shared-colors");
+    const quick = () => palette.locator(".uc-preset:visible .uc-swatch").evaluateAll((nodes) =>
+      nodes.map((el) => el.dataset.color));
+    assert.deepEqual(await quick(), ["#112233", "#223344", "#334455", "#445566", "#556677"]);
+    await expandLibrary(p, "#set-accent + .shared-colors");
+    await palette.locator('.uc-preset[data-color="#667788"]').dragTo(palette.locator('.uc-preset[data-color="#112233"]'));
+    await until(async () => (await h.stored()).settings.color_library[0], "#667788", "drag changes order");
+    await palette.locator(".uc-more").click();
+    assert.deepEqual(await quick(), ["#667788", "#112233", "#223344", "#334455", "#445566"],
+      "new first five become quick colors");
+    await expandLibrary(p, "#set-accent + .shared-colors");
+    await palette.locator('.uc-swatch[data-color="#667788"]').focus();
+    await p.keyboard.press("Shift+ArrowRight");
+    await until(async () => (await h.stored()).settings.color_library.slice(0, 2),
+      ["#112233", "#667788"], "keyboard reorders the same list");
+    await palette.locator('.uc-swatch[data-color="#667788"]').hover();
+    await palette.locator('.uc-preset[data-color="#667788"] .uc-delete').click();
+    await until(async () => (await h.stored()).settings.color_library.includes("#667788"), false);
+    assert.ok(await palette.locator(".uc-undo").isVisible(), "undo action is displayed");
+    await palette.locator(".uc-undo").click();
+    await until(async () => (await h.stored()).settings.color_library.slice(0, 2),
+      ["#112233", "#667788"], "undo restores the original position");
+    await p.reload();
+    await p.click("#btn-settings");
+    await settingsPage(p, "window");
+    const edge = p.locator("#set-edge-color + .shared-colors");
+    assert.deepEqual(await edge.locator(".uc-preset:visible .uc-swatch").evaluateAll((nodes) =>
+      nodes.map((el) => el.dataset.color)), ["#112233", "#667788", "#223344", "#334455", "#445566"],
+      "quick colors persist and are shared across settings entrances");
+  });
+
+  ui("group popup keeps action buttons on-screen with the color library and editor expanded", {
+    seed: { ...seed({ "": { a: "文字", b: "文本" } }), settings: { ...SETTINGS, tab_groups: true } },
+  }, async ({ p }) => {
+    await p.click("#tabs .tab:nth-child(1)", { button: "right" });
+    await p.click('#ctx button[data-act="group-new"]');
+    await expandLibrary(p, "#ge-colors .shared-colors");
+    const palette = p.locator("#ge-colors .shared-colors");
+    await palette.locator(":scope > .uc-actions button").first().click();
+    for (const id of ["#ge-collapse", "#ge-ungroup"]) {
+      const rect = await p.locator(id).boundingBox();
+      assert.ok(rect && rect.y >= 0 && rect.y + rect.height <= 540, id + " remains visible");
+    }
+    const presets = await palette.locator(".uc-presets").evaluate((el) =>
+      [el.clientHeight, el.scrollHeight]);
+    assert.ok(presets[0] <= 115 && presets[1] > presets[0], "the expanded color grid scrolls internally");
+  });
+
   ui("deleting the last color survives restart and restoring defaults requires confirmation", {
     seed: { ...seed({ "": { 页: "正文" } }), settings: { ...SETTINGS, accent: "#123abc", color_library: ["#123abc"] } },
   }, async (h) => {
