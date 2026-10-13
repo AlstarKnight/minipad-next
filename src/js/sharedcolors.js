@@ -79,7 +79,7 @@ const percentage = (i, count) => Math.round((i / Math.max(count - 1, 1)) * 100);
 /** 返回可挂到任意容器的通用“我的颜色 + 多节点编辑器”。
  *  onApply 可以是异步函数；只有用户主动点击应用才更新目标设置。
  */
-export function makeSharedColorTools({ getValue, onApply, defaultColor = "#d9822b", allowGradient = true, showPresets = true, compact = false, preview = "color" } = {}) {
+export function makeSharedColorTools({ getValue, onApply, defaultColor = "#d9822b", allowGradient = true, showPresets = true, compact = false, previewMode = "color" } = {}) {
   const root = make("section", compact ? "shared-colors compact" : "shared-colors");
   const heading = make("div", "uc-title", "颜色库");
   const buttons = make("div", "uc-presets");
@@ -242,14 +242,14 @@ export function makeSharedColorTools({ getValue, onApply, defaultColor = "#d9822
       swatch.classList.toggle("on", color === current());
       swatch.title = "使用 " + color;
       swatch.setAttribute("aria-label", "使用保存的颜色 " + color);
-      if (preview === "text") {
+      if (previewMode === "text") {
         swatch.classList.add("uc-text-swatch");
         swatch.textContent = "A";
         if (parseAccent(color)?.to) swatch.style.setProperty("--uc-text-gradient", color);
         else swatch.style.color = color;
       } else {
         swatch.style.background = color;
-        if (preview === "background") swatch.title += "（深色背景可能影响文字对比度）";
+        if (previewMode === "background") swatch.title += "（深色背景可能影响文字对比度）";
       }
       swatch.addEventListener("click", () => void Promise.resolve(onApply(color)).catch((e) => toast(String(e))));
       swatch.addEventListener("keydown", (e) => {
