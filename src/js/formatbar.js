@@ -210,7 +210,7 @@ class Bar {
     this.pop.className = "menu fb-pop";
     this.pop.hidden = true;
     // 输入框和自定义面板里可以拖动的行除外
-    this.pop.addEventListener("mousedown", (e) => e.target.tagName !== "INPUT" && !e.target.closest(".fb-check") && e.preventDefault());
+    this.pop.addEventListener("mousedown", (e) => !e.target.closest("input,select,.fb-check") && e.preventDefault());
     this.onDown = (e) => !this.pop.hidden && !this.pop.contains(e.target) && e.target.closest?.("button") !== this.popFor && this.closePop();
     this.onKey = (e) => {
       if (e.key !== "Escape" || this.pop.hidden) return;
