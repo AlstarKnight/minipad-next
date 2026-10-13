@@ -36,7 +36,7 @@ const percentage = (i, count) => Math.round((i / Math.max(count - 1, 1)) * 100);
 /** 返回可挂到任意容器的通用“我的颜色 + 多节点编辑器”。
  *  onApply 可以是异步函数；只有用户主动点击应用才更新目标设置。
  */
-export function makeSharedColorTools({ getValue, onApply, defaultColor = "#d9822b", allowGradient = true } = {}) {
+export function makeSharedColorTools({ getValue, onApply, defaultColor = "#d9822b", allowGradient = true, showPresets = true } = {}) {
   const root = make("section", "shared-colors");
   const heading = make("div", "uc-title", "我的颜色");
   const buttons = make("div", "uc-presets");
@@ -78,6 +78,11 @@ export function makeSharedColorTools({ getValue, onApply, defaultColor = "#d9822
   footer.append(add, apply);
   editor.append(controls, preview, stopList, footer);
   root.append(heading, buttons, actions, editor);
+  if (!showPresets) {
+    heading.hidden = true;
+    buttons.hidden = true;
+    save.hidden = true;
+  }
 
   let stops = [{ color: defaultColor, pos: 0 }];
   const current = () => tidyAccent(getValue?.() || "") || defaultColor;
