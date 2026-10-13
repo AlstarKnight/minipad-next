@@ -16,7 +16,7 @@ export function paintBall(el, info) {
   const c = parseAccent(info.color);
   tint.hidden = !c;
   if (c) {
-    tint.style.background = c.to ? gradientOf(c.stops, c.deg) : c.from;
+    tint.style.background = c.to ? gradientOf(c.stops, c.deg, c.positions) : c.from;
     tint.style.setProperty("--mask", `url("${src}")`);
   }
 }
