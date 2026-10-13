@@ -1619,7 +1619,7 @@ describe("v0.3.5 editable color library", () => {
     assert.ok(await p.isVisible("#dialog"), "reset needs confirmation");
     await p.click("#dialog-ok");
     await until(async () => (await h.stored())?.settings?.color_library?.length > 10, true, "default color library restored");
-    assert.ok(await reopened.locator('.uc-swatch[data-color="#3b82f6"]').isVisible());
+    await until(async () => reopened.locator('.uc-swatch[data-color="#3b82f6"]').isVisible(), true, "restored colors render after save");
   });
 });
 
