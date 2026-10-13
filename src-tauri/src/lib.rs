@@ -1450,8 +1450,22 @@ fn edge_tick(app: &AppHandle) {
         (e.hidden, e.peeking, e.monitor)
     };
     if let Some(edge) = hidden {
-        let inside = rect.contains_with_margin(cx, cy, 1);
-        if st.settings.lock().unwrap().edge_style != "hover" {
+        let (style, length) = {
+            let settings = st.settings.lock().unwrap();
+            (settings.edge_style.clone(), settings.edge_line_length)
+        };
+        let inside = edge::indicator_contains(
+            edge,
+            rect,
+            mon,
+            cx,
+            cy,
+            &style,
+            length,
+            peeking,
+            win.scale_factor().unwrap_or(1.0),
+        );
+        if style != "hover" {
             // 鼠标碰到露出来的那条边就滑出来
             if inside {
                 restore_from_edge(app, true);
