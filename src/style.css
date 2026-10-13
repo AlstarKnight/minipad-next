@@ -944,7 +944,7 @@ html[data-find-pos="bottom"] #status { order: 2; }
 
 /* 背景颜色:深色主题里调淡,不然浅色的底配浅色的字看不清 */
 #editor span[data-bg] { background: var(--mark-bg); border-radius: 2px; padding: 0 1px; }
-[data-theme="dark"] #editor span[data-bg] { background: color-mix(in srgb, var(--mark-bg) 42%, transparent); }
+[data-theme="dark"] #editor span[data-bg] { background: var(--mark-bg); }
 
 /* 格式栏:颜色按钮下面的色条,颜色板,自定义 */
 #format-bar .fb-color .swatch { stroke: none; fill: var(--muted); }
