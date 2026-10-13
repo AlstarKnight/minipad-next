@@ -6,18 +6,56 @@ pub const ARROW_STRIP: i32 = 18;
 pub const LINE_STRIP: i32 = 2;
 /// 鼠标靠近时展开悬浮按钮所需的宽度。
 pub const PEEK_STRIP: i32 = 32;
-/// 为细线微光预留额外空间，避免粗线的阴影在屏幕外被裁掉。
-pub const GLOW_PADDING: i32 = 8;
-
-/// 按样式、悬浮状态、自定义宽度与微光状态计算露出的逻辑像素。
-pub fn strip_for(style: &str, peeking: bool, line_width: u32, glow: bool) -> i32 {
+/// 开启微光不额外增大窗口露出的厚度，避免出现一大条透明触发区。
+pub fn strip_for(style: &str, peeking: bool, line_width: u32, _glow: bool) -> i32 {
     let width = line_width.clamp(1, 12) as i32;
     match (style, peeking) {
         ("arrow" | "arrow-only", _) => ARROW_STRIP,
         ("hover", true) => PEEK_STRIP,
-        _ if glow => width + GLOW_PADDING,
         _ => width,
     }
+}
+
+/// 只允许在真正绘制的线段（或中央箭头、悬浮按钮）范围内唤醒窗口。
+/// 坐标、窗口大小和显示器边界均为物理像素。
+pub fn indicator_contains(
+    edge: Edge,
+    win: Rect,
+    mon: Rect,
+    px: i32,
+    py: i32,
+    style: &str,
+    length_percent: u32,
+    peeking: bool,
+    scale: f64,
+) -> bool {
+    let (along, start, span, across) = match edge {
+        Edge::Top => (px, win.x, win.w, py >= mon.y && py < win.y + win.h),
+        Edge::Left => (py, win.y, win.h, px >= mon.x && px < win.x + win.w),
+        Edge::Right => (
+            py,
+            win.y,
+            win.h,
+            px >= win.x && px < mon.x + mon.w,
+        ),
+    };
+    if !across || span <= 0 {
+        return false;
+    }
+    let pct = length_percent.clamp(10, 100) as i64;
+    let line_len = (i64::from(span) * pct / 100) as i32;
+    // 箭头和悬浮按钮保留居中的独立点击范围，不影响短线两端的空白。
+    let arrow_len = (36.0 * scale).round() as i32;
+    let hover_len = (56.0 * scale).round() as i32;
+    let len = match (style, peeking) {
+        ("arrow-only", _) => arrow_len,
+        ("arrow", _) => line_len.max(arrow_len),
+        ("hover", true) => line_len.max(hover_len),
+        _ => line_len,
+    }
+    .clamp(1, span);
+    let from = start + (span - len) / 2;
+    along >= from && along < from + len
 }
 /// 离屏幕边缘多近算"靠边"
 pub const SNAP: i32 = 8;
@@ -255,14 +293,46 @@ mod tests {
     }
 
     #[test]
-    fn glow_has_enough_visible_space_for_each_mode() {
-        assert_eq!(strip_for("line", false, 2, true), 10);
-        assert_eq!(strip_for("line", false, 12, true), 20);
-        assert_eq!(strip_for("hover", false, 2, true), 10);
+    fn glow_keeps_original_hit_strip_thickness() {
+        for width in [1, 2, 3, 7, 12] {
+            assert_eq!(strip_for("line", false, width, true), width as i32);
+            assert_eq!(strip_for("hover", false, width, true), width as i32);
+        }
         assert_eq!(strip_for("hover", true, 2, true), PEEK_STRIP);
         assert_eq!(strip_for("arrow", false, 2, true), ARROW_STRIP);
         assert_eq!(strip_for("arrow-only", false, 2, true), ARROW_STRIP);
-        assert_eq!(strip_for("line", false, 2, false), LINE_STRIP);
+    }
+
+    #[test]
+    fn short_line_is_only_interactive_where_it_is_drawn_on_each_edge() {
+        let win_top = Rect::new(300, -498, 400, 500);
+        // 40% of 400 = 160 pixels, centered from x=420 to x=580.
+        assert!(!indicator_contains(Edge::Top, win_top, SCREEN, 320, 0, "line", 40, false, 1.0));
+        assert!(indicator_contains(Edge::Top, win_top, SCREEN, 500, 1, "line", 40, false, 1.0));
+        assert!(!indicator_contains(Edge::Top, win_top, SCREEN, 580, 1, "line", 40, false, 1.0));
+        assert!(!indicator_contains(Edge::Top, win_top, SCREEN, 500, 3, "line", 40, false, 1.0));
+
+        let win_left = Rect::new(-398, 100, 400, 500);
+        // 20% of 500 = 100 pixels, centered from y=300 to y=400.
+        assert!(!indicator_contains(Edge::Left, win_left, SCREEN, 0, 125, "line", 20, false, 1.0));
+        assert!(indicator_contains(Edge::Left, win_left, SCREEN, 1, 350, "line", 20, false, 1.0));
+        assert!(!indicator_contains(Edge::Left, win_left, SCREEN, 2, 350, "line", 20, false, 1.0));
+        let win_right = Rect::new(1918, 100, 400, 500);
+        assert!(indicator_contains(Edge::Right, win_right, SCREEN, 1919, 350, "line", 20, false, 1.0));
+        assert!(!indicator_contains(Edge::Right, win_right, SCREEN, 1919, 450, "line", 20, false, 1.0));
+    }
+
+    #[test]
+    fn arrow_and_hover_targets_are_centered_and_scale_for_dpi() {
+        let win = Rect::new(300, -482, 400, 500);
+        assert!(indicator_contains(Edge::Top, win, SCREEN, 500, 4, "arrow-only", 10, false, 1.0));
+        assert!(!indicator_contains(Edge::Top, win, SCREEN, 475, 4, "arrow-only", 10, false, 1.0));
+        assert!(indicator_contains(Edge::Top, win, SCREEN, 470, 4, "arrow-only", 10, false, 2.0));
+        assert!(indicator_contains(Edge::Top, win, SCREEN, 480, 4, "arrow", 10, false, 1.0));
+        let hover = Rect::new(-368, 100, 400, 500);
+        assert!(indicator_contains(Edge::Left, hover, SCREEN, 0, 350, "hover", 10, true, 1.0));
+        assert!(!indicator_contains(Edge::Left, hover, SCREEN, 0, 270, "hover", 10, true, 1.0));
+        assert!(indicator_contains(Edge::Left, hover, SCREEN, 0, 350, "hover", 10, false, 1.0));
     }
 
     #[test]
