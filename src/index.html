@@ -74,6 +74,15 @@
   <main id="main">
     <!-- 编辑区:Milkdown 编辑器由 js/editor.js 放进来 -->
     <div id="editor" class="code-lines"></div>
+    <!-- 悬浮目录(见 js/outline.js):收起时是一列短线,鼠标移上去展开;也可以一直展开在编辑区旁边 -->
+    <aside id="outline" aria-label="目录" hidden>
+      <div class="ol-strip" aria-hidden="true"></div>
+      <div class="ol-panel">
+        <div class="ol-title">目录</div>
+        <div class="ol-list"></div>
+        <div class="ol-empty muted" hidden>这一页没有标题</div>
+      </div>
+    </aside>
     <div id="read-error" role="alert" hidden></div>
   </main>
 
@@ -91,156 +100,258 @@
     </div>
   </div>
 
-  <!-- 设置 -->
+  <!-- 设置:左边(或上面)是分类,点了只显示那一类;保存和取消一直在最下面。分类和面板的切换见 js/settings.js -->
   <div id="settings" class="overlay" hidden>
-    <div class="panel form">
+    <div class="panel form settings-panel">
       <h2>设置</h2>
-      <label class="row">
-        <span>呼出热键</span>
-        <input id="set-hotkey" type="text" readonly placeholder="点这里然后按下组合键" />
-      </label>
-      <label class="row check"><input id="set-top" type="checkbox" /> <span>窗口总在最前</span></label>
-      <label class="row check"><input id="set-edge" type="checkbox" /> <span>靠屏幕边缘时自动隐藏</span></label>
-      <label class="row edge-option">
-        <span>贴边后的样式</span>
-        <select id="set-edge-style">
-          <option value="arrow">细线 + 箭头</option>
-          <option value="line">仅细边高亮</option>
-          <option value="hover">细边 + 悬浮按钮(鼠标靠近时浮出)</option>
-        </select>
-      </label>
-      <div class="row col edge-option">
-        <span>贴边标识的颜色</span>
-        <div id="set-edge-color" class="accent-swatches"></div>
-        <div class="accent-custom">
-          <span>自定义</span>
-          <input id="set-edge-from" type="color" value="#d9822b" title="颜色" />
-          <label><input id="set-edge-grad" type="checkbox" /> 渐变到</label>
-          <input id="set-edge-to" type="color" value="#f7c34b" title="渐变的另一端" />
+      <div class="set-body">
+        <nav id="set-nav" role="tablist" aria-label="设置的分类">
+          <button type="button" role="tab" data-page="general" aria-controls="set-page-general"><svg viewBox="0 0 16 16"><path d="M2.5 4h2M7.5 4h6M2.5 8h6M11.5 8h2M2.5 12h1M6.5 12h7"/><circle cx="6" cy="4" r="1.5"/><circle cx="10" cy="8" r="1.5"/><circle cx="5" cy="12" r="1.5"/></svg><span>常规</span></button>
+          <button type="button" role="tab" data-page="look" aria-controls="set-page-look"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.5"/><path d="M8 2.5a5.5 5.5 0 0 1 0 11z" fill="currentColor"/></svg><span>外观</span></button>
+          <button type="button" role="tab" data-page="edge" aria-controls="set-page-edge"><svg viewBox="0 0 16 16"><rect x="2" y="3" width="8.5" height="10" rx="1.5"/><path d="M13.5 2.5v11"/></svg><span>贴边隐藏</span></button>
+          <button type="button" role="tab" data-page="ball" aria-controls="set-page-ball"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="5"/><circle cx="8" cy="8" r="1.6" fill="currentColor"/></svg><span>悬浮图标</span></button>
+          <button type="button" role="tab" data-page="editor" aria-controls="set-page-editor"><svg viewBox="0 0 16 16"><path d="M3 13l.9-3.4 6.6-6.6a1.4 1.4 0 0 1 2 0l.5.5a1.4 1.4 0 0 1 0 2l-6.6 6.6z"/><path d="m9.4 4.1 2.5 2.5"/></svg><span>编辑器</span></button>
+          <button type="button" role="tab" data-page="outline" aria-controls="set-page-outline"><svg viewBox="0 0 16 16"><path d="M2.5 4h1M5.5 4h8M4.5 8h1M7.5 8h6M4.5 12h1M7.5 12h6"/></svg><span>目录</span></button>
+          <button type="button" role="tab" data-page="find" aria-controls="set-page-find"><svg viewBox="0 0 16 16"><circle cx="7" cy="7" r="4"/><path d="m10 10 3.5 3.5"/></svg><span>查找替换</span></button>
+          <button type="button" role="tab" data-page="storage" aria-controls="set-page-storage"><svg viewBox="0 0 16 16"><path d="M2.5 4.5a1 1 0 0 1 1-1h2.8l1.5 1.5h4.7a1 1 0 0 1 1 1V12a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1z"/></svg><span>存储</span></button>
+          <button type="button" role="tab" data-page="backup" aria-controls="set-page-backup"><svg viewBox="0 0 16 16"><rect x="2.5" y="3" width="11" height="3" rx="1"/><path d="M3.5 6v6a1 1 0 0 0 1 1h7a1 1 0 0 0 1-1V6M6.5 8.5h3"/></svg><span>备份</span></button>
+          <button type="button" role="tab" data-page="import" aria-controls="set-page-import"><svg viewBox="0 0 16 16"><path d="M8 2.5v7.5M5 7.3 8 10.3l3-3M2.5 11v1.5a1 1 0 0 0 1 1h9a1 1 0 0 0 1-1V11"/></svg><span>导入</span></button>
+        </nav>
+        <div class="set-pages">
+          <section id="set-page-general" class="set-page" role="tabpanel" data-page="general">
+            <label class="row">
+              <span>呼出热键</span>
+              <input id="set-hotkey" type="text" readonly placeholder="点这里然后按下组合键" />
+            </label>
+            <label class="row check"><input id="set-autostart" type="checkbox" /> <span>开机启动(启动后藏在托盘)</span></label>
+            <label class="row check"><input id="set-taskbar" type="checkbox" /> <span>在任务栏显示</span></label>
+            <label class="row check"><input id="set-top" type="checkbox" /> <span>窗口总在最前</span></label>
+          </section>
+
+          <section id="set-page-look" class="set-page" role="tabpanel" data-page="look" hidden>
+            <label class="row">
+              <span>外观</span>
+              <select id="set-theme">
+                <option value="system">跟随系统</option>
+                <option value="light">浅色</option>
+                <option value="dark">深色</option>
+              </select>
+            </label>
+            <div class="row col">
+              <span>强调色(活跃标签、亮起来的按钮、勾选框等)</span>
+              <div id="set-accent" class="accent-swatches"></div>
+              <div class="accent-custom">
+                <span>自定义</span>
+                <input id="set-accent-from" type="color" value="#d9822b" title="颜色" />
+                <label><input id="set-accent-grad" type="checkbox" /> 渐变到</label>
+                <input id="set-accent-to" type="color" value="#f7c34b" title="渐变的另一端" />
+              </div>
+            </div>
+            <label class="row">
+              <span>活跃标签的高亮</span>
+              <select id="set-tab-style">
+                <option value="line">顶部线条</option>
+                <option value="fill">整个标签</option>
+                <option value="border">整圈边框</option>
+              </select>
+            </label>
+            <label class="row">
+              <span>字号</span>
+              <input id="set-font" type="number" min="10" max="28" />
+            </label>
+            <label class="row">
+              <span>设置页面的分类</span>
+              <select id="set-nav-pos">
+                <option value="left">放在左边</option>
+                <option value="top">放在上面</option>
+              </select>
+            </label>
+          </section>
+
+          <section id="set-page-edge" class="set-page" role="tabpanel" data-page="edge" hidden>
+            <label class="row check"><input id="set-edge" type="checkbox" /> <span>靠屏幕边缘时自动隐藏</span></label>
+            <label class="row edge-option">
+              <span>贴边后的样式</span>
+              <select id="set-edge-style">
+                <option value="arrow">细线 + 箭头</option>
+                <option value="line">仅细边高亮</option>
+                <option value="hover">细边 + 悬浮按钮(鼠标靠近时浮出)</option>
+              </select>
+            </label>
+            <div class="row col edge-option">
+              <span>贴边标识的颜色</span>
+              <div id="set-edge-color" class="accent-swatches"></div>
+              <div class="accent-custom">
+                <span>自定义</span>
+                <input id="set-edge-from" type="color" value="#d9822b" title="颜色" />
+                <label><input id="set-edge-grad" type="checkbox" /> 渐变到</label>
+                <input id="set-edge-to" type="color" value="#f7c34b" title="渐变的另一端" />
+              </div>
+            </div>
+          </section>
+
+          <section id="set-page-ball" class="set-page" role="tabpanel" data-page="ball" hidden>
+            <label class="row check"><input id="set-ball" type="checkbox" /> <span>悬浮图标(顶栏多一个按钮,点了窗口缩成一个可以拖动的小图标)</span></label>
+            <div class="row ball-option ball-settings">
+              <div id="set-ball-preview" class="ball-preview" title="预览"><img alt="" /><div class="tint" hidden></div></div>
+              <div class="col">
+                <label class="inline"><span>大小</span><input id="set-ball-size" type="range" min="32" max="96" step="4" /><span id="set-ball-size-val" class="muted"></span></label>
+                <label class="inline"><span>不透明</span><input id="set-ball-opacity" type="range" min="30" max="100" step="5" /><span id="set-ball-opacity-val" class="muted"></span></label>
+                <label class="inline"><span>打开方式</span><select id="set-ball-open"><option value="click">单击图标</option><option value="dblclick">双击图标</option></select></label>
+                <div class="inline">
+                  <span>图标</span>
+                  <label><input type="radio" name="set-ball-icon" value="app" /> 应用图标</label>
+                  <label><input type="radio" name="set-ball-icon" value="custom" /> 自定义图片</label>
+                  <button id="set-ball-pick" class="small">选择图片…</button>
+                </div>
+              </div>
+            </div>
+            <div class="row col ball-option">
+              <span>图标颜色(给图标上色,保留原来的明暗)</span>
+              <div id="set-ball-color" class="accent-swatches"></div>
+              <div class="accent-custom">
+                <span>自定义</span>
+                <input id="set-ball-from" type="color" value="#d9822b" title="颜色" />
+                <label><input id="set-ball-grad" type="checkbox" /> 渐变到</label>
+                <input id="set-ball-to" type="color" value="#f7c34b" title="渐变的另一端" />
+              </div>
+            </div>
+          </section>
+
+          <section id="set-page-editor" class="set-page" role="tabpanel" data-page="editor" hidden>
+            <label class="row check"><input id="set-format-bar" type="checkbox" /> <span>标签下面显示格式栏(顶栏的格式栏按钮也能切换)</span></label>
+            <label class="row check"><input id="set-code-lines" type="checkbox" /> <span>代码块显示行号</span></label>
+            <label class="row"><span>F5 插入的日期时间</span><input id="set-date-format" type="text" spellcheck="false" autocomplete="off" /></label>
+            <div class="row col">
+              <span id="set-date-preview" class="muted"></span>
+              <span>写法:yyyy 年、M 月、d 日、H 时、mm 分、ss 秒、dddd 星期几</span>
+            </div>
+          </section>
+
+          <section id="set-page-outline" class="set-page" role="tabpanel" data-page="outline" hidden>
+            <label class="row check"><input id="set-outline" type="checkbox" /> <span>显示悬浮目录(列出这一页的标题,点一下跳过去)</span></label>
+            <div class="row outline-option">
+              <div id="set-outline-preview" class="outline-preview" aria-hidden="true">
+                <div class="ol-panel">
+                  <div class="ol-title">目录</div>
+                  <div class="ol-list">
+                    <span class="ol-item top">第一章</span>
+                    <span class="ol-item" style="--d: 1">背景</span>
+                    <span class="ol-item on" style="--d: 1">做法</span>
+                    <span class="ol-item top">第二章</span>
+                  </div>
+                </div>
+                <div class="ol-strip"><i></i><i style="--d: 1"></i><i class="on" style="--d: 1"></i><i></i></div>
+              </div>
+            </div>
+            <label class="row outline-option">
+              <span>显示方式</span>
+              <select id="set-outline-mode">
+                <option value="hover">鼠标移上去才展开</option>
+                <option value="pinned">一直展开</option>
+              </select>
+            </label>
+            <label class="row outline-option">
+              <span>位置</span>
+              <select id="set-outline-side">
+                <option value="right">编辑区右边</option>
+                <option value="left">编辑区左边</option>
+              </select>
+            </label>
+            <label class="row outline-option">
+              <span>显示到</span>
+              <select id="set-outline-depth">
+                <option value="1">一级标题</option>
+                <option value="2">二级标题</option>
+                <option value="3">三级标题</option>
+                <option value="4">四级标题</option>
+                <option value="5">五级标题</option>
+                <option value="6">六级标题</option>
+              </select>
+            </label>
+            <label class="row outline-option"><span>宽度</span><input id="set-outline-width" type="range" min="140" max="360" step="10" /><span id="set-outline-width-val" class="muted value"></span></label>
+            <label class="row outline-option"><span>展开时的背景</span><input id="set-outline-opacity" type="range" min="40" max="100" step="5" /><span id="set-outline-opacity-val" class="muted value"></span></label>
+            <div class="row col outline-option">
+              <span>当前标题的颜色</span>
+              <div id="set-outline-color" class="accent-swatches"></div>
+              <div class="accent-custom">
+                <span>自定义</span>
+                <input id="set-outline-from" type="color" value="#d9822b" title="颜色" />
+                <label><input id="set-outline-grad" type="checkbox" /> 渐变到</label>
+                <input id="set-outline-to" type="color" value="#f7c34b" title="渐变的另一端" />
+              </div>
+            </div>
+            <div class="row outline-option"><span class="muted grow">一直展开时,窗口太窄、放不下目录和正文的话,会自动收起成短线。</span></div>
+          </section>
+
+          <section id="set-page-find" class="set-page" role="tabpanel" data-page="find" hidden>
+            <label class="row">
+              <span>Ctrl+F</span>
+              <select id="set-ctrl-f">
+                <option value="page">在当前页面里查找(Ctrl+Shift+F 搜索全部页面)</option>
+                <option value="all">搜索全部页面(Ctrl+Shift+F 在当前页面里查找)</option>
+              </select>
+            </label>
+            <label class="row">
+              <span>查找栏位置</span>
+              <select id="set-find-pos">
+                <option value="top">编辑区上方</option>
+                <option value="bottom">编辑区下方</option>
+              </select>
+            </label>
+            <div class="row col">
+              <span>找到的地方的高亮颜色</span>
+              <div id="set-find-preview" class="find-preview">找到的<span class="find-hit">地方</span>会这样高亮,当前这<span class="find-hit find-current">一处</span>颜色深一些</div>
+              <div id="set-find-color" class="accent-swatches"></div>
+              <div class="accent-custom">
+                <span>自定义</span>
+                <input id="set-find-from" type="color" value="#d9822b" title="颜色" />
+                <label><input id="set-find-grad" type="checkbox" /> 渐变到</label>
+                <input id="set-find-to" type="color" value="#f7c34b" title="渐变的另一端" />
+              </div>
+            </div>
+          </section>
+
+          <section id="set-page-storage" class="set-page" role="tabpanel" data-page="storage" hidden>
+            <h3>笔记文件夹</h3>
+            <div class="row col">
+              <span>留空使用程序所在目录下的 notes;旧版笔记会安全复制过去,原文件保留</span>
+              <div class="inline">
+                <input id="set-dir" type="text" spellcheck="false" />
+                <button id="set-pick-dir" class="small">选择…</button>
+              </div>
+            </div>
+            <label class="row check"><input id="set-migrate-notes" type="checkbox" checked /> <span>更换文件夹时复制已有笔记(旧文件保留,目标需为空)</span></label>
+            <div class="row">
+              <button id="set-open-dir" class="link">打开笔记文件夹</button>
+            </div>
+            <h3>同步冲突</h3>
+            <div class="row col">
+              <span>笔记文件夹放在网盘里同步时,同一页可能在这里和别处都改过。这时:</span>
+              <select id="set-conflict">
+                <option value="copy">两边都留着:别处的版本另存成一页冲突副本(推荐)</option>
+                <option value="overwrite">只留这里的:用这里的内容覆盖别处的修改</option>
+              </select>
+            </div>
+          </section>
+
+          <section id="set-page-backup" class="set-page" role="tabpanel" data-page="backup" hidden>
+            <label class="row check"><input id="set-backup" type="checkbox" /> <span>每天第一次保存时,把笔记文件夹备份成 zip</span></label>
+            <label class="row"><span>保留份数</span><input id="set-backup-keep" type="number" min="1" max="365" /></label>
+            <div class="row col">
+              <span>备份位置(留空使用程序所在目录下的 backups;旧版备份会安全复制过去,原文件保留)</span>
+              <div class="inline"><input id="set-backup-dir" type="text" spellcheck="false" /><button id="set-pick-backup" class="small">选择…</button></div>
+            </div>
+            <div class="row"><span id="set-backup-info" class="muted"></span><button id="set-open-backup" class="link">打开备份文件夹</button></div>
+          </section>
+
+          <section id="set-page-import" class="set-page" role="tabpanel" data-page="import" hidden>
+            <div class="row">
+              <span class="muted grow">把 minipad2 的笔记导入成新的笔记本,已有的笔记不会被改动</span>
+              <button id="set-import" class="small">从 minipad2 导入…</button>
+            </div>
+          </section>
         </div>
-      </div>
-      <label class="row check"><input id="set-ball" type="checkbox" /> <span>悬浮图标(顶栏多一个按钮,点了窗口缩成一个可以拖动的小图标)</span></label>
-      <div class="row ball-option ball-settings">
-        <div id="set-ball-preview" class="ball-preview" title="预览"><img alt="" /><div class="tint" hidden></div></div>
-        <div class="col">
-          <label class="inline"><span>大小</span><input id="set-ball-size" type="range" min="32" max="96" step="4" /><span id="set-ball-size-val" class="muted"></span></label>
-          <label class="inline"><span>不透明</span><input id="set-ball-opacity" type="range" min="30" max="100" step="5" /><span id="set-ball-opacity-val" class="muted"></span></label>
-          <label class="inline"><span>打开方式</span><select id="set-ball-open"><option value="click">单击图标</option><option value="dblclick">双击图标</option></select></label>
-          <div class="inline">
-            <span>图标</span>
-            <label><input type="radio" name="set-ball-icon" value="app" /> 应用图标</label>
-            <label><input type="radio" name="set-ball-icon" value="custom" /> 自定义图片</label>
-            <button id="set-ball-pick" class="small">选择图片…</button>
-          </div>
-        </div>
-      </div>
-      <div class="row col ball-option">
-        <span>图标颜色(给图标上色,保留原来的明暗)</span>
-        <div id="set-ball-color" class="accent-swatches"></div>
-        <div class="accent-custom">
-          <span>自定义</span>
-          <input id="set-ball-from" type="color" value="#d9822b" title="颜色" />
-          <label><input id="set-ball-grad" type="checkbox" /> 渐变到</label>
-          <input id="set-ball-to" type="color" value="#f7c34b" title="渐变的另一端" />
-        </div>
-      </div>
-      <label class="row check"><input id="set-taskbar" type="checkbox" /> <span>在任务栏显示</span></label>
-      <label class="row check"><input id="set-autostart" type="checkbox" /> <span>开机启动(启动后藏在托盘)</span></label>
-      <label class="row">
-        <span>外观</span>
-        <select id="set-theme">
-          <option value="system">跟随系统</option>
-          <option value="light">浅色</option>
-          <option value="dark">深色</option>
-        </select>
-      </label>
-      <div class="row col">
-        <span>强调色(活跃标签、亮起来的按钮、勾选框等)</span>
-        <div id="set-accent" class="accent-swatches"></div>
-        <div class="accent-custom">
-          <span>自定义</span>
-          <input id="set-accent-from" type="color" value="#d9822b" title="颜色" />
-          <label><input id="set-accent-grad" type="checkbox" /> 渐变到</label>
-          <input id="set-accent-to" type="color" value="#f7c34b" title="渐变的另一端" />
-        </div>
-      </div>
-      <label class="row">
-        <span>活跃标签的高亮</span>
-        <select id="set-tab-style">
-          <option value="line">顶部线条</option>
-          <option value="fill">整个标签</option>
-          <option value="border">整圈边框</option>
-        </select>
-      </label>
-      <label class="row">
-        <span>字号</span>
-        <input id="set-font" type="number" min="10" max="28" />
-      </label>
-      <div class="row col">
-        <span>笔记文件夹（留空使用程序所在目录下的 notes；旧版笔记会安全复制过去，原文件保留）</span>
-        <div class="inline">
-          <input id="set-dir" type="text" spellcheck="false" />
-          <button id="set-pick-dir" class="small">选择…</button>
-        </div>
-      </div>
-      <label class="row check"><input id="set-migrate-notes" type="checkbox" checked /> <span>更换文件夹时复制已有笔记（旧文件保留，目标需为空）</span></label>
-      <div class="row">
-        <button id="set-open-dir" class="link">打开笔记文件夹</button>
-      </div>
-      <h3>编辑器</h3>
-      <label class="row check"><input id="set-format-bar" type="checkbox" /> <span>标签下面显示格式栏(顶栏的格式栏按钮也能切换)</span></label>
-      <label class="row check"><input id="set-code-lines" type="checkbox" /> <span>代码块显示行号</span></label>
-      <label class="row"><span>F5 插入的日期时间</span><input id="set-date-format" type="text" spellcheck="false" autocomplete="off" /></label>
-      <div class="row col">
-        <span id="set-date-preview" class="muted"></span>
-        <span>写法:yyyy 年、M 月、d 日、H 时、mm 分、ss 秒、dddd 星期几</span>
-      </div>
-      <h3>查找和替换</h3>
-      <label class="row">
-        <span>Ctrl+F</span>
-        <select id="set-ctrl-f">
-          <option value="page">在当前页面里查找(Ctrl+Shift+F 搜索全部页面)</option>
-          <option value="all">搜索全部页面(Ctrl+Shift+F 在当前页面里查找)</option>
-        </select>
-      </label>
-      <label class="row">
-        <span>查找栏位置</span>
-        <select id="set-find-pos">
-          <option value="top">编辑区上方</option>
-          <option value="bottom">编辑区下方</option>
-        </select>
-      </label>
-      <div class="row col">
-        <span>找到的地方的高亮颜色</span>
-        <div id="set-find-preview" class="find-preview">找到的<span class="find-hit">地方</span>会这样高亮,当前这<span class="find-hit find-current">一处</span>颜色深一些</div>
-        <div id="set-find-color" class="accent-swatches"></div>
-        <div class="accent-custom">
-          <span>自定义</span>
-          <input id="set-find-from" type="color" value="#d9822b" title="颜色" />
-          <label><input id="set-find-grad" type="checkbox" /> 渐变到</label>
-          <input id="set-find-to" type="color" value="#f7c34b" title="渐变的另一端" />
-        </div>
-      </div>
-      <h3>每日备份</h3>
-      <label class="row check"><input id="set-backup" type="checkbox" /> <span>每天第一次保存时,把笔记文件夹备份成 zip</span></label>
-      <label class="row"><span>保留份数</span><input id="set-backup-keep" type="number" min="1" max="365" /></label>
-      <div class="row col">
-        <span>备份位置（留空使用程序所在目录下的 backups；旧版备份会安全复制过去，原文件保留）</span>
-        <div class="inline"><input id="set-backup-dir" type="text" spellcheck="false" /><button id="set-pick-backup" class="small">选择…</button></div>
-      </div>
-      <div class="row"><span id="set-backup-info" class="muted"></span><button id="set-open-backup" class="link">打开备份文件夹</button></div>
-      <h3>同步冲突</h3>
-      <div class="row col">
-        <span>笔记文件夹放在网盘里同步时,同一页可能在这里和别处都改过。这时:</span>
-        <select id="set-conflict">
-          <option value="copy">两边都留着:别处的版本另存成一页冲突副本(推荐)</option>
-          <option value="overwrite">只留这里的:用这里的内容覆盖别处的修改</option>
-        </select>
-      </div>
-      <h3>导入</h3>
-      <div class="row">
-        <span class="muted grow">把 minipad2 的笔记导入成新的笔记本,已有的笔记不会被改动</span>
-        <button id="set-import" class="small">从 minipad2 导入…</button>
       </div>
       <p id="set-error" class="error" hidden></p>
       <div class="actions">

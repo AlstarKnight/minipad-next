@@ -110,6 +110,9 @@ function syncUntil(h, get, expected, message) {
   );
 }
 
+// 设置里换到某一类(设置分了类,只显示选中的那一类)
+const settingsPage = (p, name) => p.click(`#set-nav [data-page="${name}"]`);
+
 // 操作页面的常用步骤
 function helpers(p) {
   const h = {
@@ -751,6 +754,7 @@ describe("settings and dialogs", () => {
     const fields = ["#set-backup-keep", "#set-backup-dir", "#set-pick-backup"];
 
     await p.click("#btn-settings");
+    await settingsPage(p, "backup");
     await p.locator("#settings").waitFor();
     assert.equal(await p.isChecked("#set-backup"), true, "backup is on by default");
     assert.equal(await p.inputValue("#set-backup-keep"), "14", "keeps 14 by default");
@@ -771,6 +775,7 @@ describe("settings and dialogs", () => {
     await until(saved, [true, 365, "D:\\笔记备份"], "keep is clamped to 365, the folder trimmed");
 
     await p.click("#btn-settings");
+    await settingsPage(p, "backup");
     await p.locator("#settings").waitFor();
     assert.equal(await p.inputValue("#set-backup-keep"), "365");
     assert.equal(await p.inputValue("#set-backup-dir"), "D:\\笔记备份");
@@ -780,6 +785,7 @@ describe("settings and dialogs", () => {
     await until(saved, [false, 1, "D:\\笔记备份"], "keep is clamped to 1, backup off");
 
     await p.click("#btn-settings");
+    await settingsPage(p, "backup");
     await p.locator("#settings").waitFor();
     assert.equal(await p.isChecked("#set-backup"), false, "backup stays off");
     assert.equal(await p.inputValue("#set-backup-keep"), "1");
@@ -1008,6 +1014,7 @@ describe("editor", () => {
     assert.match(await h.editor(), /^今天\d{1,2}:\d{2} \d{4}\/\d{1,2}\/\d{1,2}$/, "the default format is Notepad's H:mm yyyy/M/d");
 
     await p.click("#btn-settings");
+    await settingsPage(p, "editor");
     await p.locator("#settings").waitFor();
     assert.equal(await p.inputValue("#set-date-format"), "H:mm yyyy/M/d", "the settings show the default format");
     await p.fill("#set-date-format", " yyyy-MM-dd ");
@@ -1187,6 +1194,7 @@ describe("code blocks", () => {
     const numbered = () => p.$eval("#editor .cb-gutter", (e) => getComputedStyle(e).display !== "none");
     assert.equal(await numbered(), true, "on by default");
     await p.click("#btn-settings");
+    await settingsPage(p, "editor");
     await p.locator("#settings").waitFor();
     assert.equal(await p.isChecked("#set-code-lines"), true);
     await p.uncheck("#set-code-lines");
@@ -1194,6 +1202,7 @@ describe("code blocks", () => {
     await until(numbered, false, "line numbers hidden");
     await until(async () => (await h.stored())?.settings?.code_line_numbers, false, "the setting is saved");
     await p.click("#btn-settings");
+    await settingsPage(p, "editor");
     await p.locator("#settings").waitFor();
     assert.equal(await p.isChecked("#set-code-lines"), false, "the checkbox remembers it");
     await p.check("#set-code-lines");
@@ -1378,6 +1387,7 @@ describe("theme and accent", () => {
     const marker = () => p.$eval(".tab.active", (t) => getComputedStyle(t, "::before").backgroundImage);
     assert.equal(await marker(), "none", "the default accent is a plain color");
     await p.click("#btn-settings");
+    await settingsPage(p, "look");
     await p.locator("#settings").waitFor();
     await p.click('#set-accent button[title="彩虹渐变"]');
     assert.ok(await p.isChecked("#set-accent-grad"), "a gradient ticks 渐变到");
@@ -1395,6 +1405,7 @@ describe("theme and accent", () => {
     await p.locator("#btn-pin.on").waitFor();
     // 自定义的纯色
     await p.click("#btn-settings");
+    await settingsPage(p, "look");
     assert.ok(await p.locator('#set-accent button.on[title="彩虹渐变"]').isVisible(), "the saved accent is marked");
     await p.uncheck("#set-accent-grad");
     await p.fill("#set-accent-from", "#123abc");
@@ -1402,6 +1413,7 @@ describe("theme and accent", () => {
     await until(async () => (await h.stored())?.settings?.accent, "#123abc", "a custom color");
     assert.equal(await p.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--accent").trim()), "#123abc");
     await p.click("#btn-settings");
+    await settingsPage(p, "look");
     await p.click('#set-accent button[title="默认(橙色)"]');
     await p.click("#set-save");
     await until(async () => (await h.stored())?.settings?.accent, "", "back to the default");
@@ -1421,6 +1433,7 @@ describe("theme and accent", () => {
       ["line", (l) => l.height === 3],
     ]) {
       await p.click("#btn-settings");
+      await settingsPage(p, "look");
       await p.selectOption("#set-tab-style", style);
       await p.click("#set-save");
       await until(async () => (await h.stored())?.settings?.tab_style, style, `${style} is saved`);
@@ -1444,6 +1457,7 @@ describe("theme and accent", () => {
 
     const edgeVars = () => p.evaluate(() => [getComputedStyle(document.querySelector("#edge-mark")).getPropertyValue("--ec").trim(), document.documentElement.style.getPropertyValue("--edge-grad")]);
     await p.click("#btn-settings");
+    await settingsPage(p, "edge");
     assert.equal(await p.inputValue("#set-edge-style"), "arrow", "line + arrow by default");
     assert.equal(await p.getAttribute("#set-edge-color button.on", "title"), "跟随强调色", "edge color follows the accent by default");
     await p.uncheck("#set-edge");
@@ -1462,6 +1476,7 @@ describe("theme and accent", () => {
 
     // 细边 + 悬浮按钮:平时细边,靠近时多露出一点并浮出按钮
     await p.click("#btn-settings");
+    await settingsPage(p, "edge");
     await p.selectOption("#set-edge-style", "hover");
     await p.click('#set-edge-color button[title="跟随强调色"]');
     await p.click("#set-save");
@@ -1485,6 +1500,7 @@ describe("theme and accent", () => {
     const { p } = h;
     assert.equal(await p.isVisible("#btn-ball"), false, "no collapse button by default");
     await p.click("#btn-settings");
+    await settingsPage(p, "ball");
     assert.equal(await p.isChecked("#set-ball"), false, "off by default");
     assert.equal(await p.isDisabled("#set-ball-size"), true, "options are off while the icon is off");
     await p.check("#set-ball");
@@ -1513,6 +1529,7 @@ describe("theme and accent", () => {
     await until(() => p.evaluate(() => window.__mockControl.collapsed), 1, "clicking it collapses the window to the icon");
 
     await p.click("#btn-settings");
+    await settingsPage(p, "ball");
     await p.uncheck("#set-ball");
     await p.click("#set-save");
     await until(() => h.stored().then((s) => s.settings.ball_enabled), false);
@@ -1676,6 +1693,7 @@ describe("P0 persistence safety", () => {
     const { p } = h;
     await p.evaluate(() => { window.__mockControl = {}; });
     await p.click("#btn-settings");
+    await settingsPage(p, "storage");
     assert.equal(await p.isChecked("#set-migrate-notes"), true);
     assert.equal(await p.isDisabled("#set-migrate-notes"), true);
     await p.fill("#set-dir", "D:\\NewNotes");
@@ -1684,6 +1702,7 @@ describe("P0 persistence safety", () => {
     await until(() => p.evaluate(() => window.__mockControl.migrationRequested), true);
     assert.equal(await h.mockFile("", "页"), "原内容", "existing notes still available after folder change");
     await p.click("#btn-settings");
+    await settingsPage(p, "storage");
     await p.fill("#set-dir", "D:\\OtherNotes");
     await p.uncheck("#set-migrate-notes");
     await p.click("#set-save");
@@ -1695,6 +1714,7 @@ describe("P0 persistence safety", () => {
     const { p } = h;
     await p.evaluate(() => { window.__mockControl = { migrationError: "目标文件夹不为空" }; });
     await p.click("#btn-settings");
+    await settingsPage(p, "storage");
     await p.fill("#set-dir", "D:\\Occupied");
     await p.click("#set-save");
     await until(() => p.textContent("#set-error"), "Error: 目标文件夹不为空");
@@ -1837,6 +1857,7 @@ describe("0.3.0: find and replace", () => {
     const { p } = h;
     assert.equal(await p.getAttribute("#btn-search", "title"), "搜索全部页面 (Ctrl+Shift+F)");
     await p.click("#btn-settings");
+    await settingsPage(p, "find");
     assert.equal(await p.inputValue("#set-ctrl-f"), "page");
     assert.equal(await p.inputValue("#set-find-pos"), "top");
     assert.ok(await p.locator('#set-find-color button.on[data-color=""]').isVisible(), "the highlight follows the accent color by default");
@@ -1933,6 +1954,7 @@ describe("0.3.0: conflict copies", () => {
   ui("settings: conflict copies are on by default and can be switched to overwriting", { seed: seed({ "": { 周报: "原来的" } }) }, async (h) => {
     const { p } = h;
     await p.click("#btn-settings");
+    await settingsPage(p, "storage");
     assert.equal(await p.inputValue("#set-conflict"), "copy");
     await p.selectOption("#set-conflict", "overwrite");
     await p.click("#set-save");
@@ -2033,6 +2055,7 @@ describe("0.3.0: import from minipad2", () => {
     const { p } = h;
     await p.evaluate((c) => (window.__mockControl = { ...c, pickFolder: "D:\\Downloads" }), MP2);
     await p.click("#btn-settings");
+    await settingsPage(p, "import");
     await p.click("#set-import");
     await until(
       () => p.textContent("#import-error"),
@@ -2065,5 +2088,276 @@ describe("0.3.0: import from minipad2", () => {
       await open(saved);
       await syncUntil(h, text, plain, `and so does ${JSON.stringify(saved)}, as the editor saves it`);
     }
+  });
+});
+
+// ---------- 0.3.1:设置分类 ----------
+describe("0.3.1: settings in categories", () => {
+  const shown = (p) => p.$$eval(".set-page", (els) => els.filter((e) => !e.hidden).map((e) => e.dataset.page));
+  const focused = (p) => p.evaluate(() => document.activeElement?.dataset?.page ?? null);
+  const navDirection = (p) => p.$eval("#set-nav", (n) => getComputedStyle(n).flexDirection);
+
+  ui("settings: only the chosen category shows, arrow keys move between them, and the settings reopen where they were left", async (h) => {
+    const { p } = h;
+    await p.click("#btn-settings");
+    assert.deepEqual(
+      await p.$$eval("#set-nav [role=tab]", (els) => els.map((e) => e.textContent.trim())),
+      ["常规", "外观", "贴边隐藏", "悬浮图标", "编辑器", "目录", "查找替换", "存储", "备份", "导入"],
+    );
+    assert.deepEqual(await shown(p), ["general"], "常规 comes first");
+    assert.deepEqual(await p.$$eval('#set-nav [aria-selected="true"]', (els) => els.map((e) => e.dataset.page)), ["general"]);
+    assert.equal(await focused(p), "general", "the focus is on the category");
+    assert.ok(await p.isVisible("#set-hotkey"));
+    assert.ok(await p.isHidden("#set-theme"), "other categories are hidden");
+
+    await settingsPage(p, "find");
+    assert.deepEqual(await shown(p), ["find"]);
+    assert.ok(await p.isVisible("#set-ctrl-f"));
+    assert.ok(await p.isHidden("#set-hotkey"));
+    await p.keyboard.press("ArrowDown");
+    assert.deepEqual(await shown(p), ["storage"], "↓ goes to the next category");
+    assert.equal(await focused(p), "storage");
+    await p.keyboard.press("ArrowUp");
+    await p.keyboard.press("ArrowUp");
+    assert.deepEqual(await shown(p), ["outline"], "↑ goes back");
+    await p.keyboard.press("End");
+    assert.deepEqual(await shown(p), ["import"]);
+    await p.keyboard.press("ArrowDown");
+    assert.deepEqual(await shown(p), ["general"], "and wraps around");
+    await p.keyboard.press("End");
+    await p.keyboard.press("Home");
+    assert.deepEqual(await shown(p), ["general"]);
+
+    // 内容再多,保存和取消也一直在窗口里
+    await settingsPage(p, "ball");
+    const box = await p.locator("#set-save").boundingBox();
+    assert.ok(box && box.y + box.height <= 540, `save stays in view: ${JSON.stringify(box)}`);
+
+    await settingsPage(p, "look");
+    await p.click("#set-cancel");
+    await p.click("#btn-settings");
+    assert.deepEqual(await shown(p), ["look"], "reopens on the category seen last");
+
+    // 换了分类,前面改的也一起保存
+    await p.selectOption("#set-theme", "dark");
+    await settingsPage(p, "editor");
+    await p.uncheck("#set-code-lines");
+    await p.click("#set-save");
+    await until(
+      async () => {
+        const s = (await h.stored())?.settings;
+        return [s?.theme, s?.code_line_numbers];
+      },
+      ["dark", false],
+      "changes from both categories are saved",
+    );
+    await p.reload();
+    await p.waitForSelector("#tabs .tab");
+    await p.click("#btn-settings");
+    assert.deepEqual(await shown(p), ["editor"], "still remembered after a restart");
+  });
+
+  ui("settings: the categories can sit on top instead of on the left, and a narrow window puts them on top", async (h) => {
+    const { p } = h;
+    await p.click("#btn-settings");
+    assert.equal(await navDirection(p), "column", "on the left by default");
+    await p.setViewportSize({ width: 320, height: 540 });
+    assert.equal(await navDirection(p), "row", "a narrow window puts them on top");
+    await p.setViewportSize({ width: 440, height: 540 });
+    assert.equal(await navDirection(p), "column");
+
+    await settingsPage(p, "look");
+    assert.equal(await p.inputValue("#set-nav-pos"), "left");
+    await p.selectOption("#set-nav-pos", "top");
+    assert.equal(await navDirection(p), "row", "moves on top right away");
+    await p.click("#set-cancel");
+    await p.click("#btn-settings");
+    assert.equal(await navDirection(p), "column", "cancel puts it back");
+    assert.equal(await p.inputValue("#set-nav-pos"), "left");
+
+    await p.selectOption("#set-nav-pos", "top");
+    await p.click("#set-save");
+    await until(async () => (await h.stored())?.settings?.settings_nav, "top", "saved");
+    await p.click("#btn-settings");
+    assert.equal(await navDirection(p), "row");
+    assert.equal(await p.inputValue("#set-nav-pos"), "top");
+    assert.equal(await focused(p), "look");
+    await p.keyboard.press("ArrowRight");
+    assert.deepEqual(await shown(p), ["edge"], "→ goes to the next category when they are on top");
+    await p.keyboard.press("ArrowLeft");
+    assert.deepEqual(await shown(p), ["look"]);
+    await p.click("#set-cancel");
+  });
+
+  ui("settings: an error when saving shows below and switches to the category it is about", { seed: seed({ "": { 页: "不能丢" } }) }, async (h) => {
+    const { p } = h;
+    await p.evaluate(() => {
+      window.__mockControl = { migrationError: "目标文件夹不为空" };
+    });
+    await p.click("#btn-settings");
+    await settingsPage(p, "storage");
+    await p.fill("#set-dir", "D:\\Occupied");
+    await settingsPage(p, "general");
+    await p.click("#set-save");
+    await until(() => p.textContent("#set-error"), "Error: 目标文件夹不为空");
+    assert.ok(await p.isVisible("#set-error"));
+    assert.deepEqual(await shown(p), ["storage"], "shows the notes folder setting");
+    assert.ok(await p.isVisible("#settings"), "the settings stay open");
+    assert.equal(await p.evaluate(() => window.__minipad.state.settings.notes_dir), "");
+  });
+});
+
+// ---------- 0.3.1:悬浮目录 ----------
+describe("0.3.1: floating outline", () => {
+  const TEXT = "一段正文,撑开页面的高度。".repeat(12);
+  const PLAN = ["# 项目计划", TEXT, "## 背景", TEXT, "## 目标", TEXT, "### 第一阶段", TEXT, "#### 细节", TEXT, "## 做法", TEXT, "# 附录", TEXT].join("\n\n");
+  const ON = { ...SETTINGS, outline_enabled: true };
+  const items = (p) => p.$$eval("#outline .ol-item", (els) => els.map((e) => e.textContent));
+  const current = (p) => p.$$eval("#outline .ol-item.on", (els) => els.map((e) => e.textContent));
+  const strip = (p) => p.$$eval("#outline .ol-strip i", (els) => els.map((e) => (e.classList.contains("on") ? "on" : "")));
+  const panelShown = (p) => p.$eval("#outline .ol-panel", (e) => getComputedStyle(e).visibility === "visible" && getComputedStyle(e).opacity === "1");
+  const mainAttr = (p) => p.$eval("#main", (m) => [m.dataset.outline, m.dataset.olSide]);
+  const scrollTop = (p) => p.$eval("#editor", (e) => e.scrollTop);
+
+  ui("outline: off by default; turned on in the settings it lists the headings up to the chosen level, and opens when the mouse is on its lines", { seed: seed({ "": { 计划: PLAN } }) }, async (h) => {
+    const { p } = h;
+    assert.ok(await p.isHidden("#outline"), "off by default");
+    await p.click("#btn-settings");
+    await settingsPage(p, "outline");
+    assert.equal(await p.isChecked("#set-outline"), false);
+    assert.ok(await p.isDisabled("#set-outline-mode"), "the options are off while the outline is off");
+    await p.check("#set-outline");
+    assert.ok(await p.isEnabled("#set-outline-mode"));
+    assert.equal(await p.inputValue("#set-outline-mode"), "hover");
+    assert.equal(await p.inputValue("#set-outline-side"), "right");
+    assert.equal(await p.inputValue("#set-outline-depth"), "3");
+    assert.equal(await p.textContent("#set-outline-width-val"), "200 像素");
+    assert.equal(await p.getAttribute("#set-outline-color button.on", "title"), "跟随强调色");
+    await p.click("#set-save");
+    await until(async () => (await h.stored())?.settings?.outline_enabled, true, "saved");
+
+    await until(() => items(p), ["项目计划", "背景", "目标", "第一阶段", "做法", "附录"], "headings up to level 3");
+    assert.deepEqual(await mainAttr(p), ["hover", "right"]);
+    assert.equal((await strip(p)).length, 6, "one line per heading");
+    assert.equal(await panelShown(p), false, "folded into lines");
+    await p.hover("#outline .ol-strip");
+    await until(() => panelShown(p), true, "opens on hover");
+    await p.mouse.move(20, 300);
+    await until(() => panelShown(p), false, "folds again when the mouse leaves");
+
+    await p.click("#btn-settings");
+    await p.selectOption("#set-outline-depth", "1");
+    await p.click("#set-save");
+    await until(() => items(p), ["项目计划", "附录"], "only level 1");
+    await p.click("#btn-settings");
+    await p.selectOption("#set-outline-depth", "4");
+    await p.click("#set-save");
+    await until(() => items(p), ["项目计划", "背景", "目标", "第一阶段", "细节", "做法", "附录"], "down to level 4");
+  });
+
+  ui("outline: clicking a heading scrolls to it and puts the cursor there; the section being read lights up while scrolling", { seed: { ...seed({ "": { 计划: PLAN } }), settings: ON } }, async (h) => {
+    const { p } = h;
+    await until(() => items(p), ["项目计划", "背景", "目标", "第一阶段", "做法", "附录"], "listed");
+    assert.deepEqual(await current(p), ["项目计划"], "the first heading is at the top");
+    await p.hover("#outline .ol-strip");
+    await until(() => panelShown(p), true, "open");
+    await p.locator("#outline .ol-item", { hasText: "做法" }).click();
+    const headingTop = () => p.evaluate(() => {
+      const el = [...document.querySelectorAll("#editor h2")].find((e) => e.textContent === "做法");
+      return Math.round(el.getBoundingClientRect().top - document.querySelector("#editor").getBoundingClientRect().top);
+    });
+    await until(async () => Math.abs((await headingTop()) - 8) <= 2, true, "scrolled so the heading is at the top");
+    assert.equal(await p.evaluate(() => window.__minipad.editor().view.state.selection.$from.parent.textContent), "做法", "the cursor is in the heading");
+    assert.ok(await h.editorFocused(), "and the editor has the focus");
+    await until(() => current(p), ["做法"], "the heading lights up");
+    assert.deepEqual(await strip(p), ["", "", "", "", "on", ""], "so does its line");
+
+    await p.$eval("#editor", (e) => (e.scrollTop = 0));
+    await until(() => current(p), ["项目计划"], "back at the top");
+    await p.$eval("#editor", (e) => {
+      const el = [...e.querySelectorAll("h2")].find((x) => x.textContent === "目标");
+      e.scrollTop += el.getBoundingClientRect().top - e.getBoundingClientRect().top + 60;
+    });
+    await until(() => current(p), ["目标"], "reading the section under 目标");
+    await p.$eval("#editor", (e) => (e.scrollTop = e.scrollHeight));
+    await until(() => current(p), ["附录"], "at the end the last heading lights up");
+    assert.ok((await scrollTop(p)) > 0);
+  });
+
+  ui("outline: it can stay open on the left; a window too narrow folds it into lines, and pages without headings show none", { seed: { ...seed({ "": { 计划: PLAN, 空白: "没有标题的一页" } }), settings: { ...ON, outline_mode: "pinned", outline_side: "left" } } }, async (h) => {
+    const { p } = h;
+    await until(() => mainAttr(p), ["pinned", "left"], "open on the left");
+    assert.equal(await panelShown(p), true, "open without the mouse");
+    const editorLeft = () => p.$eval("#editor", (e) => Math.round(e.getBoundingClientRect().left - e.parentElement.getBoundingClientRect().left));
+    assert.equal(await editorLeft(), 200, "the text moves over to make room");
+    await p.setViewportSize({ width: 380, height: 540 });
+    await until(() => mainAttr(p), ["hover", "left"], "too narrow: folded into lines");
+    assert.equal(await editorLeft(), 0);
+    await until(() => panelShown(p), false, "and stays folded until the mouse comes");
+    await p.setViewportSize({ width: 440, height: 540 });
+    await until(() => mainAttr(p), ["pinned", "left"], "open again");
+
+    await h.tab("空白").click();
+    await until(() => p.isVisible("#outline .ol-empty"), true, "open: says the page has no headings");
+    assert.deepEqual(await items(p), []);
+    await p.click("#btn-settings");
+    await settingsPage(p, "outline");
+    await p.selectOption("#set-outline-mode", "hover");
+    await p.click("#set-save");
+    await until(() => p.isHidden("#outline"), true, "folded: nothing shows on a page without headings");
+    await h.tab("计划").click();
+    await until(() => p.isVisible("#outline"), true);
+    assert.equal((await items(p)).length, 6);
+  });
+
+  ui("outline: it follows the headings as they are typed and changes with the page", { seed: { ...seed({ "": { 甲: "# 第一页\n\n正文", 乙: "## 第二页的标题" } }), settings: ON } }, async (h) => {
+    const { p } = h;
+    await until(() => items(p), ["第一页"], "the first page");
+    await p.click("#editor .ProseMirror p");
+    await p.keyboard.press("End");
+    await p.keyboard.press("Enter");
+    await p.keyboard.type("## 新加的一节");
+    await until(() => items(p), ["第一页", "新加的一节"], "a heading being typed shows up");
+    await h.tab("乙").click();
+    await until(() => items(p), ["第二页的标题"], "page switched");
+    await h.tab("甲").click();
+    await until(() => items(p), ["第一页", "新加的一节"], "and back");
+  });
+
+  ui("outline: position, width, background and color are saved and shown in the preview", { seed: { ...seed({ "": { 计划: PLAN } }), settings: ON } }, async (h) => {
+    const { p } = h;
+    const vars = (sel) => p.$eval(sel, (e) => ["--ol-width", "--ol-alpha", "--ol-c"].map((v) => e.style.getPropertyValue(v)));
+    await p.click("#btn-settings");
+    await settingsPage(p, "outline");
+    assert.deepEqual(await vars("#set-outline-preview"), ["200px", "100%", ""], "the preview starts with the saved look");
+    await p.$eval("#set-outline-width", (e) => {
+      e.value = "260";
+      e.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await p.$eval("#set-outline-opacity", (e) => {
+      e.value = "70";
+      e.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await p.click('#set-outline-color button[title="蓝色"]');
+    assert.equal(await p.textContent("#set-outline-width-val"), "260 像素");
+    assert.equal(await p.textContent("#set-outline-opacity-val"), "70%");
+    assert.deepEqual(await vars("#set-outline-preview"), ["260px", "70%", "#3b82f6"], "the preview follows right away");
+    assert.deepEqual(await vars("#main"), ["200px", "100%", ""], "the outline itself changes only when saved");
+    await p.selectOption("#set-outline-side", "left");
+    await p.click("#set-save");
+    await until(
+      async () => {
+        const s = (await h.stored())?.settings;
+        return [s?.outline_width, s?.outline_opacity, s?.outline_color, s?.outline_side];
+      },
+      [260, 70, "#3b82f6", "left"],
+      "saved",
+    );
+    assert.deepEqual(await vars("#main"), ["260px", "70%", "#3b82f6"]);
+    assert.deepEqual(await mainAttr(p), ["hover", "left"]);
+    await p.hover("#outline .ol-strip");
+    await until(() => panelShown(p), true);
+    assert.equal(await p.$eval("#outline .ol-panel", (e) => Math.round(e.getBoundingClientRect().width)), 260);
+    assert.equal(await p.$eval("#outline .ol-item.on", (e) => getComputedStyle(e).color), "rgb(59, 130, 246)", "the current heading in the chosen color");
   });
 });

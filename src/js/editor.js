@@ -37,6 +37,7 @@ import { toolbar } from "./toolbar.js";
 import { formatBar, setFormatBarItems } from "./formatbar.js";
 import { colorSpans, colorHandlers, textColor, textBg } from "./colors.js";
 import { findPlugin, reapplyFind } from "./find.js";
+import { outlinePlugin } from "./outline.js";
 
 let editor = null;
 let view = null;
@@ -312,7 +313,7 @@ export async function createEditor(opts) {
     .use(history)
     .use(clipboard)
     .use([colorSpans, textColor, textBg].flat())
-    .use([lineBreak, codeBlockWithTitle, codeBlockView, codeHighlight, changes, placeholder, afterRule, findPlugin, toolbar, formatBar])
+    .use([lineBreak, codeBlockWithTitle, codeBlockView, codeHighlight, changes, placeholder, afterRule, findPlugin, outlinePlugin, toolbar, formatBar])
     .create();
   editor.action((c) => {
     ctx = c;

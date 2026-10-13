@@ -108,6 +108,22 @@ pub struct Settings {
     find_color: String,
     /// 同一页在这里和别处(网盘同步)都改过:copy 把那边的版本另存为冲突副本 / overwrite 用这边的覆盖
     conflict_mode: String,
+    /// 设置页面的分类放在哪:left 左边一列 / top 上面一排
+    settings_nav: String,
+    /// 悬浮目录:列出这一页的标题,点了跳过去
+    outline_enabled: bool,
+    /// hover 平时收起成短线、鼠标移上去展开 / pinned 一直展开在编辑区旁边
+    outline_mode: String,
+    /// 目录放在编辑区的 right 右边 / left 左边
+    outline_side: String,
+    /// 显示到几级标题(1–6)
+    outline_depth: u32,
+    /// 展开时的宽度(像素)
+    outline_width: u32,
+    /// 展开时背景的不透明度(百分比)
+    outline_opacity: u32,
+    /// 当前标题的颜色,写法同 accent;空着跟随强调色
+    outline_color: String,
     window: Option<Geom>,
 }
 
@@ -146,6 +162,14 @@ impl Default for Settings {
             find_bar_pos: "top".into(),
             find_color: String::new(),
             conflict_mode: "copy".into(),
+            settings_nav: "left".into(),
+            outline_enabled: false,
+            outline_mode: "hover".into(),
+            outline_side: "right".into(),
+            outline_depth: 3,
+            outline_width: 200,
+            outline_opacity: 100,
+            outline_color: String::new(),
             window: None,
         }
     }
@@ -454,9 +478,16 @@ fn tidy_settings(s: &mut Settings) {
     tidy_color(&mut s.edge_color);
     tidy_color(&mut s.ball_color);
     tidy_color(&mut s.find_color);
+    tidy_color(&mut s.outline_color);
     pick_one(&mut s.ctrl_f, &["page", "all"]);
     pick_one(&mut s.find_bar_pos, &["top", "bottom"]);
     pick_one(&mut s.conflict_mode, &["copy", "overwrite"]);
+    pick_one(&mut s.settings_nav, &["left", "top"]);
+    pick_one(&mut s.outline_mode, &["hover", "pinned"]);
+    pick_one(&mut s.outline_side, &["right", "left"]);
+    s.outline_depth = s.outline_depth.clamp(1, 6);
+    s.outline_width = s.outline_width.clamp(140, 360);
+    s.outline_opacity = s.outline_opacity.clamp(40, 100);
     s.ball_size = s.ball_size.clamp(32, 96);
     if !["app", "custom"].contains(&s.ball_icon.as_str()) {
         s.ball_icon = "app".into();
@@ -525,6 +556,7 @@ const WELCOME: &str = r#"# 欢迎使用 Minipad Next
 - **Ctrl+F** 在这一页里查找,**Ctrl+H** 替换(可以区分大小写、全字匹配、用正则表达式);**Ctrl+Shift+F** 搜索全部笔记本的页面
 - 页面多了可以分**笔记本**:点标签栏最左边的笔记本名字(或按 **Ctrl+B**)新建和切换,每个笔记本就是笔记文件夹里的一个子文件夹
 - 用过 minipad2?在笔记本列表里点"从 minipad2 导入…",原来的分组会变成笔记本
+- 页面长、标题多时,可以在设置的"目录"里打开**悬浮目录**:编辑区旁边一列短线,鼠标移上去展开成目录,点标题就跳过去
 - 每天第一次保存时会自动把笔记文件夹备份成 zip,默认保留最近 14 份,可以在设置里改
 
 ```python 试试复制
@@ -1872,6 +1904,71 @@ mod tests {
             (old.ctrl_f.as_str(), old.conflict_mode.as_str()),
             ("page", "copy")
         );
+    }
+
+    #[test]
+    fn tidy_settings_keeps_settings_nav_known() {
+        let mut s = Settings::default();
+        assert_eq!(s.settings_nav, "left");
+        s.settings_nav = "top".into();
+        tidy_settings(&mut s);
+        assert_eq!(s.settings_nav, "top");
+        s.settings_nav = "right".into();
+        tidy_settings(&mut s);
+        assert_eq!(s.settings_nav, "left");
+        // 0.3.0 的设置文件里没有这一项,读出来是默认值
+        let old: Settings = serde_json::from_str(r#"{"hotkey":"Ctrl+M"}"#).unwrap();
+        assert_eq!(old.settings_nav, "left");
+    }
+
+    #[test]
+    fn tidy_settings_keeps_outline_options_in_range() {
+        let mut s = Settings::default();
+        assert_eq!(
+            (
+                s.outline_enabled,
+                s.outline_mode.as_str(),
+                s.outline_side.as_str(),
+                s.outline_depth,
+                s.outline_width,
+                s.outline_opacity
+            ),
+            (false, "hover", "right", 3, 200, 100)
+        );
+        s.outline_mode = "pinned".into();
+        s.outline_side = "left".into();
+        s.outline_color = " #3b82f6 ".into();
+        tidy_settings(&mut s);
+        assert_eq!(
+            (
+                s.outline_mode.as_str(),
+                s.outline_side.as_str(),
+                s.outline_color.as_str()
+            ),
+            ("pinned", "left", "#3b82f6")
+        );
+        s.outline_mode = "float".into();
+        s.outline_side = "top".into();
+        s.outline_depth = 9;
+        s.outline_width = 20;
+        s.outline_opacity = 0;
+        s.outline_color = "red; x".into();
+        tidy_settings(&mut s);
+        assert_eq!(
+            (
+                s.outline_mode.as_str(),
+                s.outline_side.as_str(),
+                s.outline_depth,
+                s.outline_width,
+                s.outline_opacity,
+                s.outline_color.as_str()
+            ),
+            ("hover", "right", 6, 140, 40, "")
+        );
+        // 0.3.0 的设置文件里没有这几项,读出来是默认值(目录关着)
+        let old: Settings = serde_json::from_str(r#"{"hotkey":"Ctrl+M"}"#).unwrap();
+        assert!(!old.outline_enabled);
+        assert_eq!((old.outline_depth, old.outline_width), (3, 200));
     }
 
     #[test]
