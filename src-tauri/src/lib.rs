@@ -2340,8 +2340,12 @@ mod tests {
     fn editable_color_library_preserves_empty_and_legacy_settings() {
         let old: Settings = serde_json::from_str(
             r##"{"color_presets":["#abcdef"],"book_color_presets":["#123456"]}"##,
-        ).unwrap();
-        assert!(old.color_library.is_none(), "older settings use the initial palette");
+        )
+        .unwrap();
+        assert!(
+            old.color_library.is_none(),
+            "older settings use the initial palette"
+        );
         let mut s = Settings {
             color_library: Some(vec![
                 "#ABCDEF".into(),
@@ -2364,7 +2368,11 @@ mod tests {
         let json = serde_json::to_value(&s).unwrap();
         assert_eq!(json["color_library"], serde_json::json!([]));
         let restored: Settings = serde_json::from_value(json).unwrap();
-        assert_eq!(restored.color_library, Some(Vec::new()), "deleted defaults must not reappear");
+        assert_eq!(
+            restored.color_library,
+            Some(Vec::new()),
+            "deleted defaults must not reappear"
+        );
     }
 
     #[test]
