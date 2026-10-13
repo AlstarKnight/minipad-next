@@ -30,9 +30,9 @@ export const GROUP_GRADIENTS = GRADIENTS.map((g) => [g.name, gradientOf(g.stops)
 export function groupVars(el, color) {
   const a = parseAccent(color) || parseAccent(GROUP_COLORS[0][1]);
   const stops = a.to ? a.stops : [a.from, a.from];
-  const fade = (p) => `linear-gradient(90deg, ${stops.map((c) => `color-mix(in srgb, ${c} ${p}%, transparent)`).join(", ")})`;
+  const fade = (p) => gradientOf(stops.map((c) => `color-mix(in srgb, ${c} ${p}%, transparent)`), a.deg ?? 90, a.positions);
   el.style.setProperty("--g", a.from);
-  el.style.setProperty("--g-grad", `linear-gradient(90deg, ${stops.join(", ")})`);
+  el.style.setProperty("--g-grad", gradientOf(stops, a.deg ?? 90, a.positions));
   el.style.setProperty("--g-soft", fade(24));
   el.style.setProperty("--g-soft2", fade(36));
   el.style.setProperty("--g-tint", fade(15));
