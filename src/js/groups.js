@@ -234,6 +234,12 @@ function setColor(c, repaint = true) {
 }
 
 export function bindGroups() {
+  const panel = $("#group-edit");
+  new ResizeObserver(() => {
+    if (panel.hidden) return;
+    const top = Number.parseFloat(panel.style.top) || 4;
+    panel.style.top = Math.max(4, Math.min(top, window.innerHeight - panel.offsetHeight - 4)) + "px";
+  }).observe(panel);
   $("#ge-name").addEventListener("input", () => {
     if (!editing) return;
     editing.name = $("#ge-name").value.trim();
