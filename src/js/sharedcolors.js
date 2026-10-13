@@ -1,21 +1,16 @@
 // ---------- 全局颜色预设和共用的多节点编辑器 ----------
 // 所有颜色入口使用同一份 settings.color_presets；旧版笔记本预设只导入一次。
 import { state } from "./state.js";
-import { ACCENTS, GRADIENTS, parseAccent, tidyAccent, gradientOf } from "./accent.js";
-import { TEXT_COLORS, TEXT_GRADIENTS, BG_COLORS } from "./colors.js";
+import { GRADIENTS, parseAccent, tidyAccent, gradientOf } from "./accent.js";
 import { toast, ask } from "./ui.js";
 
-// 首次使用的颜色库汇集 0.3.4 各个入口的预设；之后完全由用户列表决定。
-export const DEFAULT_COLORS = [...new Set([
-  "#d9822b",
-  ...ACCENTS.map((x) => x.value).filter(Boolean),
-  ...GRADIENTS.map((x) => gradientOf(x.stops)),
-  ...TEXT_GRADIENTS.map((x) => x.value),
-  ...TEXT_COLORS.map((x) => x.value),
-  ...BG_COLORS.map((x) => x.value),
-  ...["#8a8f98", "#4c8bf5", "#e5534b", "#d4a72c", "#3fa66b", "#e0609e", "#8e6bf0", "#2fa8b8", "#e8833a"],
-  ...["#e76f51", "#e0b348", "#5fb4ff", "#9384df", "#67ad87", "#db75a8", "#a5a5ad"],
-])];
+// 精选的默认库：15 个纯色、9 个不重复的渐变。
+export const DEFAULT_COLORS = [
+  "#d9822b", "#3b82f6", "#16a34a", "#8b5cf6", "#e5484d",
+  "#ec4899", "#8a8f98", "#df2a3f", "#117cee", "#1f9c58",
+  "#c99a06", "#fbe9a6", "#d3e6fd", "#d2f1d9", "#e6dbf8",
+  ...[0, 1, 2, 3, 5, 7, 9, 10, 11].map((i) => gradientOf(GRADIENTS[i].stops)),
+];
 export const sharedColorPresets = () => state.settings?.color_library ??
   [...new Set([...DEFAULT_COLORS, ...(state.settings?.color_presets ?? state.settings?.book_color_presets ?? [])])];
 
@@ -60,6 +55,19 @@ export function replaceSharedPreset(oldValue, newValue) {
   });
 }
 export const resetSharedPresets = () => updateLibrary(() => [...DEFAULT_COLORS]);
+export const moveSharedPreset = (color, target) => updateLibrary((colors) => {
+  const from = colors.indexOf(color);
+  if (from < 0 || target < 0 || target >= colors.length || from === target) return null;
+  const next = [...colors];
+  next.splice(target, 0, ...next.splice(from, 1));
+  return next;
+});
+export const restoreSharedPreset = (color, index) => updateLibrary((colors) => {
+  if (colors.includes(color)) return null;
+  const next = [...colors];
+  next.splice(Math.min(Math.max(index, 0), colors.length), 0, color);
+  return next;
+});
 const make = (tag, cls = "", label = "") => {
   const node = document.createElement(tag);
   node.className = cls;
@@ -71,18 +79,15 @@ const percentage = (i, count) => Math.round((i / Math.max(count - 1, 1)) * 100);
 /** 返回可挂到任意容器的通用“我的颜色 + 多节点编辑器”。
  *  onApply 可以是异步函数；只有用户主动点击应用才更新目标设置。
  */
-export function makeSharedColorTools({ getValue, onApply, defaultColor = "#d9822b", allowGradient = true, showPresets = true, compact = false } = {}) {
+export function makeSharedColorTools({ getValue, onApply, defaultColor = "#d9822b", allowGradient = true, showPresets = true, compact = false, preview = "color" } = {}) {
   const root = make("section", compact ? "shared-colors compact" : "shared-colors");
   const heading = make("div", "uc-title", "颜色库");
   const buttons = make("div", "uc-presets");
-  const updateOverflow = () => {
-    buttons.classList.toggle("overflow-left", buttons.scrollLeft > 1);
-    buttons.classList.toggle("overflow-right", buttons.scrollLeft + buttons.clientWidth < buttons.scrollWidth - 1);
-  };
-  if (compact) {
-    buttons.addEventListener("scroll", updateOverflow, { passive: true });
-    new ResizeObserver(updateOverflow).observe(buttons);
-  }
+  const more = make("button", "uc-more", "＋");
+  more.type = "button";
+  more.title = "展开颜色库，拖动排序";
+  more.setAttribute("aria-label", "更多颜色及排序");
+  more.setAttribute("aria-expanded", "false");
   const actions = make("div", "uc-actions");
   const edit = make("button", "small", "自定义颜色 / 渐变节点");
   edit.type = "button";
@@ -97,7 +102,11 @@ export function makeSharedColorTools({ getValue, onApply, defaultColor = "#d9822
     save.title = "保存当前颜色";
     save.setAttribute("aria-label", "保存当前颜色");
   }
-  actions.append(edit, save);
+  const undo = make("button", "small uc-undo", "撤销删除");
+  undo.type = "button";
+  undo.hidden = true;
+  actions.append(edit, save, undo);
+  let lastDeleted = null;
   const editor = make("div", "uc-editor");
   editor.hidden = true;
   const controls = make("div", "uc-controls");
@@ -132,6 +141,17 @@ export function makeSharedColorTools({ getValue, onApply, defaultColor = "#d9822
   footer.append(add, apply, reset);
   editor.append(controls, preview, stopList, footer);
   root.append(heading, buttons, actions, editor);
+  const expand = (opened) => {
+    buttons.classList.toggle("expanded", opened);
+    root.classList.toggle("library-open", opened);
+    actions.hidden = !opened;
+    if (!opened) editor.hidden = true;
+    more.textContent = opened ? "收起" : "＋";
+    more.title = opened ? "收起颜色库" : "更多颜色及排序";
+    more.setAttribute("aria-expanded", String(opened));
+  };
+  more.addEventListener("click", () => expand(!buttons.classList.contains("expanded")));
+  expand(false);
   if (!showPresets) {
     heading.hidden = true;
     buttons.hidden = true;
@@ -209,14 +229,50 @@ export function makeSharedColorTools({ getValue, onApply, defaultColor = "#d9822
     for (const color of presets) {
       if (!parseAccent(color)) continue;
       const wrap = make("div", "uc-preset");
+      wrap.draggable = true;
+      wrap.dataset.color = color;
+      wrap.title = "拖动排序；焦点在色块上时可按 Shift+左右箭头排序";
       const swatch = make("button", "uc-swatch");
       swatch.dataset.color = color;
       swatch.type = "button";
       swatch.classList.toggle("on", color === current());
       swatch.title = "使用 " + color;
       swatch.setAttribute("aria-label", "使用保存的颜色 " + color);
-      swatch.style.background = color;
+      if (preview === "text") {
+        swatch.classList.add("uc-text-swatch");
+        swatch.textContent = "A";
+        if (parseAccent(color)?.to) swatch.style.setProperty("--uc-text-gradient", color);
+        else swatch.style.color = color;
+      } else {
+        swatch.style.background = color;
+        if (preview === "background") swatch.title += "（深色背景可能影响文字对比度）";
+      }
       swatch.addEventListener("click", () => void Promise.resolve(onApply(color)).catch((e) => toast(String(e))));
+      swatch.addEventListener("keydown", (e) => {
+        if (!e.shiftKey || (e.key !== "ArrowLeft" && e.key !== "ArrowRight")) return;
+        e.preventDefault();
+        const index = sharedColorPresets().indexOf(color);
+        void moveSharedPreset(color, index + (e.key === "ArrowLeft" ? -1 : 1))
+          .then(() => [...buttons.querySelectorAll(".uc-swatch")].find((x) => x.dataset.color === color)?.focus())
+          .catch((err) => toast(String(err)));
+      });
+      wrap.addEventListener("dragstart", (e) => {
+        e.dataTransfer.effectAllowed = "move";
+        e.dataTransfer.setData("text/plain", color);
+      });
+      wrap.addEventListener("dragover", (e) => {
+        if (!buttons.classList.contains("expanded")) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "move";
+      });
+      wrap.addEventListener("drop", (e) => {
+        e.preventDefault();
+        if (!buttons.classList.contains("expanded")) return;
+        const dragged = e.dataTransfer.getData("text/plain");
+        if (!sharedColorPresets().includes(dragged)) return;
+        void moveSharedPreset(dragged, sharedColorPresets().indexOf(color))
+          .catch((err) => toast(String(err)));
+      });
       swatch.addEventListener("dblclick", () => openEditor(color, color));
       const modify = make("button", "uc-modify", "✎");
       modify.type = "button";
@@ -226,13 +282,29 @@ export function makeSharedColorTools({ getValue, onApply, defaultColor = "#d9822
       const remove = make("button", "uc-delete", "×");
       remove.type = "button"; remove.title = "删除颜色预设";
       remove.setAttribute("aria-label", "删除保存的颜色 " + color);
-      remove.addEventListener("click", () =>
-        void changeSharedPreset(color, true).catch((e) => toast(String(e))));
+      remove.addEventListener("click", () => {
+        const index = sharedColorPresets().indexOf(color);
+        void changeSharedPreset(color, true).then(() => {
+          lastDeleted = { color, index };
+          undo.hidden = false;
+          toast("已删除颜色，可点击“撤销删除”");
+        }).catch((err) => toast(String(err)));
+      });
       wrap.append(swatch, modify, remove);
       buttons.append(wrap);
     }
-    if (compact) requestAnimationFrame(updateOverflow);
+    buttons.append(more);
+    more.hidden = !showPresets;
   };
+  undo.addEventListener("click", () => {
+    if (!lastDeleted) return;
+    const { color, index } = lastDeleted;
+    void restoreSharedPreset(color, index).then(() => {
+      lastDeleted = null;
+      undo.hidden = true;
+      toast("已撤销删除");
+    }).catch((err) => toast(String(err)));
+  });
   edit.addEventListener("click", () => {
     if (editor.hidden) openEditor(current());
     else { editor.hidden = true; editingPreset = null; edit.setAttribute("aria-expanded", "false"); }
