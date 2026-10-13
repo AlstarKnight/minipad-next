@@ -484,7 +484,7 @@ describe("notebook manager and window movement", () => {
     await editor.locator("select").selectOption("gradient");
     await editor.locator('input[aria-label="节点 2 颜色"]').fill("#abcdef");
     await editor.locator(".uc-editor .uc-actions .primary").click();
-    const custom = "linear-gradient(135deg, #5fb4ff 0%, #abcdef 100%)";
+    const custom = "linear-gradient(135deg, #3b82f6 0%, #abcdef 100%)";
     await until(() => h.stored().then((db) => db.books["设计"].meta.icon_color), custom);
     await editor.locator(":scope > .uc-actions button").nth(1).click();
     await until(async () => (await h.stored()).settings.color_library?.includes(custom), true);
@@ -3163,14 +3163,14 @@ describe("0.3.2: tab groups", () => {
         const s = await stored(h);
         return [s.order, s.groups, Object.keys(s.note_groups || {}).sort()];
       },
-      [["a", "b", "e", "c", "d"], [["工作", "#8e6bf0", false]], ["b", "e"]],
+      [["a", "b", "e", "c", "d"], [["工作", "#8b5cf6", false]], ["b", "e"]],
       "saved with the notebook",
     );
 
     // 点分组的名字折叠:只剩当前页面以外的标签都收起来
     await p.click(".tab-group");
     assert.deepEqual(await strip(p), ["a", "[工作2]", "(b)", "(e)", "c", "d"]);
-    await until(async () => (await stored(h)).groups, [["工作", "#8e6bf0", true]], "folding is saved");
+    await until(async () => (await stored(h)).groups, [["工作", "#8b5cf6", true]], "folding is saved");
     // 换到折叠起来的组里的页面时自动展开
     await p.keyboard.press("Control+Tab");
     assert.deepEqual(await strip(p), ["a", "[工作]", "b", "e", "c", "d"]);
@@ -3178,7 +3178,7 @@ describe("0.3.2: tab groups", () => {
     await p.reload();
     await p.waitForSelector("#tabs .tab");
     assert.deepEqual(await strip(p), ["a", "[工作]", "b", "e", "c", "d"], "still there after a restart");
-    assert.equal(await p.$eval(".tab-group", (c) => c.style.getPropertyValue("--g")), "#8e6bf0");
+    assert.equal(await p.$eval(".tab-group", (c) => c.style.getPropertyValue("--g")), "#8b5cf6");
   });
 
   ui("groups: dragging a tab next to a grouped tab joins the group; 移出分组 and 取消分组 take tabs out", { seed: books({ tab_groups: true }, { groups: [{ id: "g1", name: "组", color: "#4c8bf5", collapsed: false }], note_groups: { b: "g1", c: "g1" } }) }, async (h) => {
