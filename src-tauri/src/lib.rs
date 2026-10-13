@@ -799,7 +799,8 @@ fn save_meta(
         groups,
         note_groups: note_groups.unwrap_or_default(),
     });
-    let _guard = app.state::<AppState>().meta_io.lock().unwrap();
+    let st = app.state::<AppState>();
+    let _guard = st.meta_io.lock().unwrap();
     notes::save_book_meta(
         &current_notes_dir(&app),
         &book,
@@ -845,14 +846,16 @@ fn set_book_appearance(
     color: String,
 ) -> Result<(), String> {
     maybe_backup(&app);
-    let _guard = app.state::<AppState>().meta_io.lock().unwrap();
+    let st = app.state::<AppState>();
+    let _guard = st.meta_io.lock().unwrap();
     notes::set_book_appearance(&current_notes_dir(&app), &book, &icon, &color)
 }
 
 /// 记住当前打开的笔记本,下次启动还打开它
 #[tauri::command]
 fn set_current_book(app: AppHandle, book: String) -> Result<(), String> {
-    let _guard = app.state::<AppState>().meta_io.lock().unwrap();
+    let st = app.state::<AppState>();
+    let _guard = st.meta_io.lock().unwrap();
     notes::set_current_book(&current_notes_dir(&app), &book)
 }
 
