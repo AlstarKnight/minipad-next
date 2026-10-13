@@ -825,6 +825,17 @@ fn delete_book(app: AppHandle, name: String) -> Result<(), String> {
     notes::delete_book(&current_notes_dir(&app), &name)
 }
 
+#[tauri::command]
+fn set_book_appearance(
+    app: AppHandle,
+    book: String,
+    icon: String,
+    color: String,
+) -> Result<(), String> {
+    maybe_backup(&app);
+    notes::set_book_appearance(&current_notes_dir(&app), &book, &icon, &color)
+}
+
 /// 记住当前打开的笔记本,下次启动还打开它
 #[tauri::command]
 fn set_current_book(app: AppHandle, book: String) -> Result<(), String> {
@@ -1625,6 +1636,7 @@ pub fn run() {
             create_book,
             rename_book,
             delete_book,
+            set_book_appearance,
             set_current_book,
             backup_info,
             open_backup_dir,
