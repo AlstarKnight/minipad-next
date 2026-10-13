@@ -112,6 +112,10 @@ function syncUntil(h, get, expected, message) {
 
 // 设置里换到某一类(设置分了类,只显示选中的那一类)
 const settingsPage = (p, name) => p.click(`#set-nav [data-page="${name}"]`);
+async function expandLibrary(p, selector) {
+  const more = p.locator(selector + " .uc-more");
+  if ((await more.getAttribute("aria-expanded")) === "false") await more.click();
+}
 
 // 操作页面的常用步骤
 function helpers(p) {
@@ -379,7 +383,9 @@ describe("notebook manager and window movement", () => {
     assert.equal(await p.textContent("#bm-selected"), "工作");
     await p.click('#bm-icons [data-icon="briefcase"]');
     await until(() => h.stored().then((db) => db.books["工作"].meta.icon), "briefcase");
-    await p.click('#bm-details .uc-swatch[data-color="#5fb4ff"]');
+    await expandLibrary(p, "#bm-details");
+    await expandLibrary(p, "#bm-details .shared-colors");
+    await p.click('#bm-details .uc-swatch[data-color="#3b82f6"]');
     await until(() => h.stored().then((db) => db.books["工作"].meta.icon_color), "#5fb4ff");
     assert.equal(await p.$eval('#bm-list [data-book="工作"] svg', (el) => getComputedStyle(el).color), "rgb(95, 180, 255)");
     await p.click("#bm-close");
@@ -402,6 +408,7 @@ describe("notebook manager and window movement", () => {
     await p.click('#bm-list [data-book="旅行"]');
     await p.click('#bm-icons [data-icon="heart"]');
     await until(() => h.stored().then((db) => db.books["旅行"].meta.icon), "heart");
+    await expandLibrary(p, "#bm-details .shared-colors");
     const customEditor = p.locator("#bm-details .shared-colors");
     await customEditor.locator(".uc-actions button").first().click();
     await customEditor.locator('input[aria-label="节点 1 颜色"]').fill("#1122aa");
@@ -424,6 +431,8 @@ describe("notebook manager and window movement", () => {
     await p.click("#books-manage");
     await p.click('#bm-list [data-book="工作"]');
     const gradient = "linear-gradient(135deg, #5fb4ff, #d66cf0)";
+    await expandLibrary(p, "#bm-details");
+    await expandLibrary(p, "#bm-details .shared-colors");
     await p.click('#bm-details .uc-swatch[data-color="' + gradient + '"]');
     await until(() => h.stored().then((db) => db.books["工作"].meta.icon_color), gradient);
     const strokes = await p.$eval('#bm-list [data-book="工作"] svg', (svg) => ({
@@ -432,15 +441,19 @@ describe("notebook manager and window movement", () => {
     }));
     assert.equal(strokes.gradient, 2, "gradient icon has actual SVG color stops");
     assert.match(strokes.stroke, /url\(#book-icon-gradient-/, "icon uses SVG gradient stroke");
+    await expandLibrary(p, "#bm-details .shared-colors");
     await p.click("#bm-details .shared-colors > .uc-actions button >> nth=1");
     assert.ok(await p.locator('#bm-details .uc-swatch[data-color="' + gradient + '"]').isVisible(), "built-in gradient exists in shared library");
     await p.click('#bm-list [data-book="生活"]');
+    await expandLibrary(p, "#bm-details");
+    await expandLibrary(p, "#bm-details .shared-colors");
     await p.click('#bm-details .uc-swatch[data-color="' + gradient + '"]');
     await until(() => h.stored().then((db) => db.books["生活"].meta.icon_color), gradient);
     await p.reload();
     await h.openBooks();
     await p.click("#books-manage");
     assert.ok(await p.locator('#bm-details .uc-swatch[data-color="' + gradient + '"]').isVisible(), "colors survive restart");
+    await expandLibrary(p, "#bm-details .shared-colors");
     await p.locator('#bm-details .uc-swatch[data-color="' + gradient + '"]').locator("..").locator(".uc-delete").click();
     await until(async () => !(await h.stored()).settings.color_library.includes(gradient), true, "built-in colors can be removed");
     assert.equal(await h.stored().then((db) => db.books["工作"].meta.icon_color), gradient, "removing preset keeps existing book colors");
@@ -454,7 +467,8 @@ describe("notebook manager and window movement", () => {
     await h.openBooks();
     await p.click("#books-manage");
     await p.click('#bm-list [data-book="设计"]');
-    const solid = p.locator('#bm-details .uc-swatch[data-color="#5fb4ff"]');
+    await expandLibrary(p, "#bm-details .shared-colors");
+    const solid = p.locator('#bm-details .uc-swatch[data-color="#3b82f6"]');
     await solid.click();
     const outline = await solid.evaluate((el) => {
       const style = getComputedStyle(el);
@@ -462,6 +476,7 @@ describe("notebook manager and window movement", () => {
     });
     assert.equal(outline.outline, "1px", "thin selection outline");
     assert.equal(outline.border, "1px", "thin swatch border");
+    await expandLibrary(p, "#bm-details .shared-colors");
     const editor = p.locator("#bm-details .shared-colors");
     await editor.locator(".uc-actions button").first().click();
     await editor.locator("select").selectOption("gradient");
@@ -1428,10 +1443,12 @@ describe("format bar", () => {
     await p.click(fb("color"));
     await p.locator(".fb-pop").waitFor();
     assert.ok(await p.locator('.fb-pop .uc-swatch[data-color="#df2a3f"]').isVisible(), "the current color is available");
+    await expandLibrary(p, ".fb-pop");
     await p.click('.fb-pop .uc-swatch[data-color="#117cee"]');
     assert.equal(await h.editor(), '红<span style="color: #117cee">字</span>', "a new text color");
     await p.keyboard.press("Shift+Home");
     await p.click(fb("bg"));
+    await expandLibrary(p, ".fb-pop");
     await p.click('.fb-pop .uc-swatch[data-color="#fbe9a6"]');
     assert.equal(
       await h.editor(),
@@ -1526,7 +1543,7 @@ describe("shared colors and positioned gradients", () => {
     await p.click("#btn-settings");
     await settingsPage(p, "look");
     const accent = p.locator("#set-accent").locator("..").locator(".shared-colors");
-    await accent.locator(".uc-actions").first().locator("button").last().click();
+    await accent.locator(".uc-actions").first().locator("button").nth(1).click();
     assert.ok(await accent.locator('.uc-swatch[data-color="#d9822b"]').isVisible());
     await settingsPage(p, "window");
     assert.ok(await p.locator('#set-edge-color + .shared-colors .uc-swatch[data-color="#d9822b"]').isVisible());
@@ -1546,6 +1563,7 @@ describe("shared colors and positioned gradients", () => {
     const { p } = h;
     await p.click("#btn-settings");
     await settingsPage(p, "look");
+    await expandLibrary(p, "#set-accent + .shared-colors");
     const tool = p.locator("#set-accent").locator("..").locator(".shared-colors");
     await tool.locator(".uc-actions button").first().click();
     await tool.locator("select").selectOption("gradient");
@@ -1569,6 +1587,7 @@ describe("v0.3.5 editable color library", () => {
     const { p } = h;
     await p.click("#btn-settings");
     await settingsPage(p, "look");
+    await expandLibrary(p, "#set-accent + .shared-colors");
     const palette = p.locator("#set-accent + .shared-colors");
     assert.ok(await palette.locator('.uc-swatch[data-color="#123abc"]').isVisible(), "previously saved colors were migrated");
     const solid = palette.locator('.uc-swatch[data-color="#3b82f6"]');
@@ -1604,6 +1623,7 @@ describe("v0.3.5 editable color library", () => {
     const { p } = h;
     await p.click("#btn-settings");
     await settingsPage(p, "look");
+    await expandLibrary(p, "#set-accent + .shared-colors");
     const palette = p.locator("#set-accent + .shared-colors");
     await palette.locator('.uc-swatch[data-color="#123abc"]').locator("..").locator(".uc-delete").click();
     await until(async () => (await h.stored())?.settings?.color_library, [], "the library can be fully cleared");
@@ -1614,6 +1634,7 @@ describe("v0.3.5 editable color library", () => {
     await settingsPage(p, "look");
     const reopened = p.locator("#set-accent + .shared-colors");
     assert.equal(await reopened.locator(".uc-swatch").count(), 0, "empty custom library does not restore built-ins");
+    await expandLibrary(p, "#set-accent + .shared-colors");
     await reopened.locator(":scope > .uc-actions button").first().click();
     await reopened.locator(".uc-reset").click();
     assert.ok(await p.isVisible("#dialog"), "reset needs confirmation");
@@ -1641,6 +1662,7 @@ describe("v0.3.4 picker regressions", () => {
     });
     assert.equal(layout[0], "grid", "settings palettes are compact");
     assert.ok(Math.max(...layout.slice(1)) - Math.min(...layout.slice(1)) < 3, "presets and actions share one row");
+    await expandLibrary(p, "#set-accent + .shared-colors");
     await p.click('#set-accent + .shared-colors .uc-swatch[data-color="#3b82f6"]');
     assert.equal(await p.$eval("#set-accent + .shared-colors .uc-swatch.on", (el) => getComputedStyle(el).outlineWidth), "1px");
   });
@@ -1672,6 +1694,7 @@ describe("v0.3.4 picker regressions", () => {
     const { p } = h;
     await p.click("#btn-settings");
     await settingsPage(p, "look");
+    await expandLibrary(p, "#set-accent + .shared-colors");
     const accent = p.locator("#set-accent + .shared-colors");
     await accent.locator('.uc-swatch[data-color="#123abc"]').focus();
     await p.keyboard.press("Enter");
@@ -1686,6 +1709,7 @@ describe("v0.3.4 picker regressions", () => {
 
     await p.click("#tabs .tab:nth-child(1)", { button: "right" });
     await p.click('#ctx button[data-act="group-new"]');
+    await expandLibrary(p, "#ge-colors .shared-colors");
     await p.locator('#ge-colors .uc-swatch[data-color="#123abc"]').focus();
     await p.keyboard.press("Space");
     await until(() => h.stored().then((s) => s.books[""].meta.groups[0].color), "#123abc", "space selects group color");
@@ -1696,6 +1720,8 @@ describe("v0.3.4 picker regressions", () => {
     await p.keyboard.press("Home");
     await p.keyboard.press("Shift+End");
     await p.click('#format-bar [data-cmd="bg"]');
+    await expandLibrary(p, ".fb-pop .shared-colors");
+    await expandLibrary(p, ".fb-pop .shared-colors");
     await p.locator('.fb-pop .uc-swatch[data-color="#123abc"]').focus();
     await p.keyboard.press("Enter");
     await until(async () => (await h.editor()).includes("background-color: #123abc"), true, "enter applies format color");
@@ -1756,6 +1782,7 @@ describe("theme and accent", () => {
     await p.click("#btn-settings");
     await settingsPage(p, "look");
     await p.locator("#settings").waitFor();
+    await expandLibrary(p, "#set-accent + .shared-colors");
     await p.click('#set-accent + .shared-colors .uc-swatch[data-color="linear-gradient(135deg, #ff5f6d, #ffa94d, #f5d142, #51cf66, #4dabf7, #9775fa)"]');
     assert.equal(await p.locator("#set-accent").locator("..").locator(".accent-custom").count(), 0, "no duplicate legacy custom picker");
     await p.click("#set-save");
@@ -1774,6 +1801,7 @@ describe("theme and accent", () => {
     await p.click("#btn-settings");
     await settingsPage(p, "look");
     assert.ok(await p.locator('#set-accent + .shared-colors .uc-swatch.on[data-color="linear-gradient(135deg, #ff5f6d, #ffa94d, #f5d142, #51cf66, #4dabf7, #9775fa)"]').isVisible(), "the saved accent is marked");
+    await expandLibrary(p, "#set-accent + .shared-colors");
     const picker = p.locator("#set-accent").locator("..").locator(".shared-colors");
     await picker.locator(":scope > .uc-actions button").first().click();
     await picker.locator("select").selectOption("solid");
@@ -1835,6 +1863,7 @@ describe("theme and accent", () => {
     await p.check("#set-edge");
     // 仅细边 + 单独的渐变色
     await p.selectOption("#set-edge-style", "line");
+    await expandLibrary(p, "#set-edge-color + .shared-colors");
     await p.click('#set-edge-color + .shared-colors .uc-swatch[data-color="linear-gradient(135deg, #5fb4ff, #d66cf0)"]');
     await p.click("#set-save");
     await until(() => h.stored().then((s) => [s.settings.edge_style, s.settings.edge_color]), ["line", "linear-gradient(135deg, #5fb4ff, #d66cf0)"]);
@@ -1887,6 +1916,7 @@ describe("theme and accent", () => {
       input.dispatchEvent(new Event("input", { bubbles: true }));
     });
     await p.check("#set-edge-glow");
+    await expandLibrary(p, "#set-edge-color + .shared-colors");
     await p.click('#set-edge-color + .shared-colors .uc-swatch[data-color="linear-gradient(135deg, #5fb4ff, #d66cf0)"]');
     const previewGlow = await p.$eval("#set-edge-line-preview", (x) =>
       getComputedStyle(x).getPropertyValue("--preview-glow-color").trim()
@@ -2001,6 +2031,7 @@ describe("theme and accent", () => {
     await p.fill("#set-ball-size", "64");
     await p.fill("#set-ball-opacity", "80");
     await p.selectOption("#set-ball-open", "dblclick");
+    await expandLibrary(p, "#set-ball-color + .shared-colors");
     await p.click('#set-ball-color + .shared-colors .uc-swatch[data-color="linear-gradient(135deg, #5fb4ff, #d66cf0)"]');
     const preview = await p.$eval("#set-ball-preview", (el) => [Math.round(el.getBoundingClientRect().width), el.querySelector(".tint").hidden, el.querySelector(".tint").style.background, el.style.opacity]);
     assert.equal(preview[3], "0.8", "preview follows the opacity");
@@ -2033,6 +2064,7 @@ describe("theme and accent", () => {
     await p.keyboard.press("Shift+Home");
     await until(h.selection, "渐变");
     await p.click('#format-bar [data-cmd="color"]');
+    await expandLibrary(p, ".fb-pop");
     await p.click('.fb-pop .uc-swatch[data-color="linear-gradient(90deg, #ff5f6d, #ffa94d, #f5d142, #51cf66, #4dabf7, #9775fa)"]');
     const md =
       '<span style="color: #ff5f6d; background-image: linear-gradient(90deg, #ff5f6d, #ffa94d, #f5d142, #51cf66, #4dabf7, #9775fa); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent">渐变</span>';
@@ -2353,6 +2385,7 @@ describe("0.3.0: find and replace", () => {
     assert.ok(await p.locator('#set-find-color button.on[data-color=""]').isVisible(), "the highlight follows the accent color by default");
     await p.selectOption("#set-ctrl-f", "all");
     await p.selectOption("#set-find-pos", "bottom");
+    await expandLibrary(p, "#set-find-color + .shared-colors");
     await p.click('#set-find-color + .shared-colors .uc-swatch[data-color="#3b82f6"]');
     assert.match(await p.$eval("#set-find-preview", (el) => el.style.getPropertyValue("--find-soft")), /#3b82f6 30%/, "the preview shows the color");
     await p.click("#set-save");
@@ -2846,6 +2879,7 @@ describe("0.3.1: floating outline", () => {
       e.value = "70";
       e.dispatchEvent(new Event("input", { bubbles: true }));
     });
+    await expandLibrary(p, "#set-outline-color + .shared-colors");
     await p.click('#set-outline-color + .shared-colors .uc-swatch[data-color="#3b82f6"]');
     assert.equal(await p.textContent("#set-outline-width-val"), "260 像素");
     assert.equal(await p.textContent("#set-outline-opacity-val"), "70%");
@@ -3050,6 +3084,7 @@ describe("0.3.2: tab groups", () => {
     assert.ok(await p.isVisible("#group-edit"), "the group settings open");
     assert.equal(await p.evaluate(() => document.activeElement.id), "ge-name");
     await p.keyboard.type("工作");
+    await expandLibrary(p, "#ge-colors");
     await p.click('#ge-colors .uc-swatch[data-color="#8e6bf0"]');
     await p.keyboard.press("Escape");
     assert.ok(await p.isHidden("#group-edit"));
@@ -3180,6 +3215,8 @@ describe("0.3.2: floating format buttons on a selection", () => {
     assert.equal(await h.editor(), "第一段\n\n第二段\n\n一段**文字**");
     await p.click('#toolbar [data-cmd="color"]');
     await p.locator(".fb-pop:not([hidden])").waitFor();
+    await expandLibrary(p, ".fb-pop:not([hidden])");
+    await expandLibrary(p, ".fb-pop .shared-colors");
     await p.click('.fb-pop:not([hidden]) .uc-swatch[data-color^="linear-gradient("] >> nth=0');
     await until(async () => (await h.editor()).includes("linear-gradient"), true, "a gradient colour from the floating buttons");
     assert.ok(await p.isVisible("#toolbar"), "the buttons stay for the selection");
@@ -3221,7 +3258,9 @@ describe("0.3.2: floating format buttons on a selection", () => {
     const { p } = h;
     await p.click("#tabs .tab:nth-child(1)", { button: "right" });
     await p.click('#ctx button[data-act="group-new"]');
+    await expandLibrary(p, "#ge-colors");
     await p.click('#ge-colors .uc-swatch[data-color="linear-gradient(90deg, #5fb4ff, #d66cf0)"]');
+    await expandLibrary(p, "#ge-colors .shared-colors");
     const editor = p.locator("#ge-colors .shared-colors");
     await editor.locator(":scope > .uc-actions button").first().click();
     assert.equal(await editor.locator('input[aria-label="渐变角度"]').inputValue(), "90", "group presets default to the old horizontal direction");
@@ -3243,9 +3282,11 @@ describe("0.3.2: floating format buttons on a selection", () => {
     const { p } = h;
     await p.click("#tabs .tab:nth-child(1)", { button: "right" });
     await p.click('#ctx button[data-act="group-new"]');
+    await expandLibrary(p, "#ge-colors");
     await p.click('#ge-colors .uc-swatch[data-color="linear-gradient(90deg, #5fb4ff, #d66cf0)"]');
     await until(async () => (await h.stored())?.books?.[""]?.meta?.groups?.[0]?.color, "linear-gradient(90deg, #5fb4ff, #d66cf0)", "a preset gradient");
     assert.match(await p.$eval(".tab-group", (c) => c.style.getPropertyValue("--g-grad")), /#5fb4ff, #d66cf0/);
+    await expandLibrary(p, "#ge-colors .shared-colors");
     const editor = p.locator("#ge-colors .shared-colors");
     assert.equal(await p.locator("#ge-colors .ge-custom").count(), 0, "no duplicate old custom picker");
     await editor.locator(":scope > .uc-actions button").first().click();
