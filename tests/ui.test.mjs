@@ -469,9 +469,9 @@ describe("notebook manager and window movement", () => {
     await editor.locator(".uc-editor .uc-actions button").last().click();
     const custom = "linear-gradient(135deg, #5fb4ff 0%, #abcdef 100%)";
     await until(() => h.stored().then((db) => db.books["设计"].meta.icon_color), custom);
-    await editor.locator("> .uc-actions button").nth(1).click();
+    await editor.locator(":scope > .uc-actions button").nth(1).click();
     await until(() => h.stored().then((db) => db.settings.color_presets), [custom]);
-    await editor.locator("> .uc-actions button").nth(1).click();
+    await editor.locator(":scope > .uc-actions button").nth(1).click();
     assert.deepEqual(await h.stored().then((db) => db.settings.color_presets), [custom], "duplicate presets are ignored");
   });
 
@@ -1644,7 +1644,7 @@ describe("theme and accent", () => {
     await settingsPage(p, "look");
     assert.ok(await p.locator('#set-accent button.on[title="彩虹渐变"]').isVisible(), "the saved accent is marked");
     const picker = p.locator("#set-accent").locator("..").locator(".shared-colors");
-    await picker.locator("> .uc-actions button").first().click();
+    await picker.locator(":scope > .uc-actions button").first().click();
     await picker.locator("select").selectOption("solid");
     await picker.locator('input[aria-label="节点 1 颜色"]').fill("#123abc");
     await picker.locator(".uc-editor .uc-actions button").last().click();
@@ -3071,11 +3071,11 @@ describe("0.3.2: floating format buttons on a selection", () => {
     assert.match(await p.$eval(".tab-group", (c) => c.style.getPropertyValue("--g-grad")), /#5fb4ff, #d66cf0/);
     const editor = p.locator("#ge-colors .shared-colors");
     assert.equal(await p.locator("#ge-colors .ge-custom").count(), 0, "no duplicate old custom picker");
-    await editor.locator("> .uc-actions button").first().click();
+    await editor.locator(":scope > .uc-actions button").first().click();
     await editor.locator("select").selectOption("gradient");
     await editor.locator(".uc-editor .uc-actions button").last().click();
     await until(async () => (await h.stored())?.books?.[""]?.meta?.groups?.[0]?.color?.includes(" 0%"), true, "a custom gradient");
-    await editor.locator("> .uc-actions button").first().click();
+    await editor.locator(":scope > .uc-actions button").first().click();
     await editor.locator("select").selectOption("solid");
     await editor.locator(".uc-editor .uc-actions button").last().click();
     await until(async () => /^#[0-9a-f]{6}$/.test((await h.stored())?.books?.[""]?.meta?.groups?.[0]?.color), true, "or a single colour");
