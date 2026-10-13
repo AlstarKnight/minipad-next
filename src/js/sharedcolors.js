@@ -1,11 +1,23 @@
 // ---------- 全局颜色预设和共用的多节点编辑器 ----------
 // 所有颜色入口使用同一份 settings.color_presets；旧版笔记本预设只导入一次。
 import { state } from "./state.js";
-import { parseAccent, tidyAccent, gradientOf } from "./accent.js";
+import { ACCENTS, GRADIENTS, parseAccent, tidyAccent, gradientOf } from "./accent.js";
+import { TEXT_COLORS, TEXT_GRADIENTS, BG_COLORS } from "./colors.js";
 import { toast } from "./ui.js";
 
-export const sharedColorPresets = () =>
-  state.settings?.color_presets ?? state.settings?.book_color_presets ?? [];
+// 首次使用的颜色库汇集 0.3.4 各个入口的预设；之后完全由用户列表决定。
+export const DEFAULT_COLORS = [...new Set([
+  "#d9822b",
+  ...ACCENTS.map((x) => x.value).filter(Boolean),
+  ...GRADIENTS.map((x) => gradientOf(x.stops)),
+  ...TEXT_GRADIENTS.map((x) => x.value),
+  ...TEXT_COLORS.map((x) => x.value),
+  ...BG_COLORS.map((x) => x.value),
+  ...["#8a8f98", "#4c8bf5", "#e5534b", "#d4a72c", "#3fa66b", "#e0609e", "#8e6bf0", "#2fa8b8", "#e8833a"],
+  ...["#e76f51", "#e0b348", "#5fb4ff", "#9384df", "#67ad87", "#db75a8", "#a5a5ad"],
+])];
+export const sharedColorPresets = () => state.settings?.color_library ??
+  [...new Set([...DEFAULT_COLORS, ...(state.settings?.color_presets ?? state.settings?.book_color_presets ?? [])])];
 
 const live = new Set();
 export function refreshSharedColors() {
@@ -15,22 +27,39 @@ export function refreshSharedColors() {
   }
 }
 let presetQueue = Promise.resolve();
-export function changeSharedPreset(value, remove = false) {
-  // 在最新保存结果上操作，连续点多个“保存颜色”也不会覆盖之前的预设。
+function updateLibrary(change) {
+  // 每次从最新已保存的颜色库计算，快速连续操作不会丢失修改。
   const task = presetQueue.then(async () => {
-    const normalized = tidyAccent(value);
-    if (!normalized) throw new Error("颜色格式无效");
-    const old = sharedColorPresets();
-    if (!remove && old.includes(normalized)) return;
-    if (!remove && old.length >= 20) throw new Error("最多保存 20 个颜色预设");
-    const next = remove ? old.filter((c) => c !== normalized) : [...old, normalized];
+    const next = change(sharedColorPresets());
+    if (next === null) return;
     const { saveSettings } = await import("./settings.js");
-    await saveSettings({ ...state.settings, color_presets: next });
+    await saveSettings({ ...state.settings, color_library: next });
     refreshSharedColors();
   });
   presetQueue = task.catch(() => {});
   return task;
 }
+export function changeSharedPreset(value, remove = false) {
+  const normalized = tidyAccent(value);
+  if (!normalized) return Promise.reject(new Error("颜色格式无效"));
+  return updateLibrary((old) => {
+    if (!remove && old.includes(normalized)) return null;
+    if (!remove && old.length >= 128) throw new Error("颜色库最多保存 128 个颜色");
+    return remove ? old.filter((c) => c !== normalized) : [...old, normalized];
+  });
+}
+export function replaceSharedPreset(oldValue, newValue) {
+  const normalized = tidyAccent(newValue);
+  if (!normalized) return Promise.reject(new Error("颜色格式无效"));
+  return updateLibrary((old) => {
+    const index = old.indexOf(oldValue);
+    if (index < 0) throw new Error("待编辑的颜色已被删除");
+    const next = old.filter((color) => color !== oldValue && color !== normalized);
+    next.splice(Math.min(index, next.length), 0, normalized);
+    return next;
+  });
+}
+export const resetSharedPresets = () => updateLibrary(() => [...DEFAULT_COLORS]);
 const make = (tag, cls = "", label = "") => {
   const node = document.createElement(tag);
   node.className = cls;
@@ -44,7 +73,7 @@ const percentage = (i, count) => Math.round((i / Math.max(count - 1, 1)) * 100);
  */
 export function makeSharedColorTools({ getValue, onApply, defaultColor = "#d9822b", allowGradient = true, showPresets = true, compact = false } = {}) {
   const root = make("section", compact ? "shared-colors compact" : "shared-colors");
-  const heading = make("div", "uc-title", "我的颜色");
+  const heading = make("div", "uc-title", "颜色库");
   const buttons = make("div", "uc-presets");
   const updateOverflow = () => {
     buttons.classList.toggle("overflow-left", buttons.scrollLeft > 1);
@@ -93,11 +122,14 @@ export function makeSharedColorTools({ getValue, onApply, defaultColor = "#d9822
   preview.setAttribute("aria-label", "颜色预览");
   const stopList = make("div", "uc-stops");
   const footer = make("div", "uc-actions");
+  const reset = make("button", "small uc-reset", "恢复默认颜色");
+  reset.type = "button";
+  reset.title = "恢复内置颜色，已应用的颜色不受影响";
   const add = make("button", "small", "+ 添加节点");
   add.type = "button";
   const apply = make("button", "small primary", "应用颜色");
   apply.type = "button";
-  footer.append(add, apply);
+  footer.append(add, apply, reset);
   editor.append(controls, preview, stopList, footer);
   root.append(heading, buttons, actions, editor);
   if (!showPresets) {
@@ -108,8 +140,9 @@ export function makeSharedColorTools({ getValue, onApply, defaultColor = "#d9822
 
   let stops = [{ color: defaultColor, pos: 0 }];
   const current = () => tidyAccent(getValue?.() || "") || defaultColor;
-  const startEditing = () => {
-    const parsed = parseAccent(current()) || parseAccent(defaultColor);
+  let editingPreset = null;
+  const startEditing = (from = current()) => {
+    const parsed = parseAccent(from) || parseAccent(defaultColor);
     mode.value = parsed?.to && allowGradient ? "gradient" : "solid";
     angle.value = String(parsed?.deg ?? 135);
     const colors = parsed?.stops || [defaultColor];
@@ -159,6 +192,13 @@ export function makeSharedColorTools({ getValue, onApply, defaultColor = "#d9822
     });
     paintPreview();
   };
+  const openEditor = (from, preset = null) => {
+    editingPreset = preset;
+    editor.hidden = false;
+    edit.setAttribute("aria-expanded", "true");
+    apply.textContent = preset ? "保存修改" : "应用颜色";
+    startEditing(from);
+  };
   const refreshPresets = () => {
     buttons.replaceChildren();
     const presets = sharedColorPresets();
@@ -170,28 +210,41 @@ export function makeSharedColorTools({ getValue, onApply, defaultColor = "#d9822
       if (!parseAccent(color)) continue;
       const wrap = make("div", "uc-preset");
       const swatch = make("button", "uc-swatch");
+      swatch.dataset.color = color;
       swatch.type = "button";
       swatch.title = "使用 " + color;
       swatch.setAttribute("aria-label", "使用保存的颜色 " + color);
       swatch.style.background = color;
       swatch.addEventListener("click", () => void Promise.resolve(onApply(color)).catch((e) => toast(String(e))));
+      swatch.addEventListener("dblclick", () => openEditor(color, color));
+      const modify = make("button", "uc-modify", "✎");
+      modify.type = "button";
+      modify.title = "编辑颜色";
+      modify.setAttribute("aria-label", "编辑颜色 " + color);
+      modify.addEventListener("click", () => openEditor(color, color));
       const remove = make("button", "uc-delete", "×");
       remove.type = "button"; remove.title = "删除颜色预设";
       remove.setAttribute("aria-label", "删除保存的颜色 " + color);
       remove.addEventListener("click", () =>
         void changeSharedPreset(color, true).catch((e) => toast(String(e))));
-      wrap.append(swatch, remove);
+      wrap.append(swatch, modify, remove);
       buttons.append(wrap);
     }
     if (compact) requestAnimationFrame(updateOverflow);
   };
   edit.addEventListener("click", () => {
-    editor.hidden = !editor.hidden;
-    edit.setAttribute("aria-expanded", String(!editor.hidden));
-    if (!editor.hidden) startEditing();
+    if (editor.hidden) openEditor(current());
+    else { editor.hidden = true; editingPreset = null; edit.setAttribute("aria-expanded", "false"); }
   });
-  save.addEventListener("click", () =>
-    void changeSharedPreset(editor.hidden ? current() : value()).then(() => toast("颜色预设已保存")).catch((e) => toast(String(e))));
+  save.addEventListener("click", () => {
+    const operation = editingPreset
+      ? replaceSharedPreset(editingPreset, value())
+      : changeSharedPreset(editor.hidden ? current() : value());
+    void operation.then(() => {
+      editor.hidden = true; editingPreset = null; edit.setAttribute("aria-expanded", "false");
+      toast("颜色库已保存");
+    }).catch((e) => toast(String(e)));
+  });
   mode.addEventListener("change", () => { paintStops(); });
   angle.addEventListener("change", () => { angle.value = String(Math.max(0, Math.min(360, Number(angle.value) || 0))); paintPreview(); });
   add.addEventListener("click", () => {
@@ -201,9 +254,18 @@ export function makeSharedColorTools({ getValue, onApply, defaultColor = "#d9822
     stops.splice(index, 0, { color: left.color, pos: Math.round((left.pos + right.pos) / 2) });
     paintStops();
   });
-  apply.addEventListener("click", () =>
-    void Promise.resolve(onApply(value())).then(() => { editor.hidden = true; edit.setAttribute("aria-expanded", "false"); }).catch((e) => toast(String(e))));
-  const tool = { root, refreshPresets, sync: () => { if (!editor.hidden) startEditing(); refreshPresets(); } };
+  apply.addEventListener("click", () => {
+    const operation = editingPreset ? replaceSharedPreset(editingPreset, value()) : Promise.resolve(onApply(value()));
+    void operation.then(() => {
+      editor.hidden = true; editingPreset = null; edit.setAttribute("aria-expanded", "false");
+    }).catch((e) => toast(String(e)));
+  });
+  reset.addEventListener("click", () =>
+    void resetSharedPresets().then(() => {
+      editor.hidden = true; editingPreset = null; edit.setAttribute("aria-expanded", "false");
+      toast("已恢复默认颜色库");
+    }).catch((e) => toast(String(e))));
+  const tool = { root, refreshPresets, sync: () => { if (!editor.hidden && !editingPreset) startEditing(); refreshPresets(); } };
   for (const stale of live) if (!stale.root.isConnected) live.delete(stale);
   live.add(tool);
   refreshPresets();
