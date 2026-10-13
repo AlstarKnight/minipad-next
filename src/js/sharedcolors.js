@@ -107,6 +107,7 @@ export function makeSharedColorTools({ getValue, onApply, defaultColor = "#d9822
   undo.hidden = true;
   actions.append(edit, save, undo);
   let lastDeleted = null;
+  let editingPreset = null;
   const editor = make("div", "uc-editor");
   editor.hidden = true;
   const controls = make("div", "uc-controls");
@@ -145,7 +146,11 @@ export function makeSharedColorTools({ getValue, onApply, defaultColor = "#d9822
     buttons.classList.toggle("expanded", opened);
     root.classList.toggle("library-open", opened);
     actions.hidden = !opened;
-    if (!opened) editor.hidden = true;
+    if (!opened) {
+      editor.hidden = true;
+      editingPreset = null;
+      edit.setAttribute("aria-expanded", "false");
+    }
     more.textContent = opened ? "收起" : "＋";
     more.title = opened ? "收起颜色库" : "更多颜色及排序";
     more.setAttribute("aria-expanded", String(opened));
@@ -160,7 +165,6 @@ export function makeSharedColorTools({ getValue, onApply, defaultColor = "#d9822
 
   let stops = [{ color: defaultColor, pos: 0 }];
   const current = () => tidyAccent(getValue?.() || "") || defaultColor;
-  let editingPreset = null;
   const startEditing = (from = current()) => {
     const parsed = parseAccent(from) || parseAccent(defaultColor);
     mode.value = parsed?.to && allowGradient ? "gradient" : "solid";
