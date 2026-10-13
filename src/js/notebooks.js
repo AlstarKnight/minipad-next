@@ -9,13 +9,14 @@ import { rememberView, showNote } from "./page.js";
 import { renderTabs, ensurePage, removeNote } from "./tabs.js";
 import { BOOK_ICONS, bookIcon, iconColor } from "./bookicons.js";
 import { GRADIENTS, gradient, gradientOf, parseAccent, tidyAccent } from "./accent.js";
-import { saveSettings } from "./settings.js";
+import { makeSharedColorTools, sharedColorPresets, changeSharedPreset } from "./sharedcolors.js";
 
 // 为了"移到笔记本…"打开列表时是要移动的页面,平时是 null
 let moving = null;
 let selectedBook = null;
 let appearanceBusy = false;
 let presetBusy = false;
+let notebookColorEditor = null;
 const BOOK_COLORS = ["", "#d9822b", "#e76f51", "#e0b348", "#5fb4ff", "#9384df", "#67ad87", "#db75a8", "#a5a5ad"];
 const BOOK_GRADIENTS = GRADIENTS.map((g) => ({ name: g.name + "渐变", value: gradientOf(g.stops) }));
 // 列表里的按钮 -> 笔记本
@@ -335,7 +336,7 @@ function renderManager() {
 
   const saved = $("#bm-saved-colors");
   saved.replaceChildren();
-  for (const value of state.settings?.book_color_presets || []) {
+  for (const value of sharedColorPresets()) {
     if (!parseAccent(value)) continue;
     const item = document.createElement("div");
     item.className = "bm-saved-item";
@@ -353,6 +354,12 @@ function renderManager() {
     saved.append(item);
   }
   $("#bm-save-preset").disabled = appearanceBusy || presetBusy;
+  if (!notebookColorEditor) notebookColorEditor = makeSharedColorTools({
+    getValue: () => selectedBook?.icon_color || state.settings?.accent || "#d9822b",
+    onApply: (value) => selectedBook && saveAppearance(selectedBook, selectedBook.icon || "book", value),
+    showPresets: false,
+  });
+  $("#bm-saved-colors").after(notebookColorEditor.root);
 }
 
 function customColor() {
@@ -364,23 +371,12 @@ function customColor() {
 
 async function saveColorPreset() {
   if (presetBusy || appearanceBusy || !selectedBook || !state.settings) return;
-  // “跟随强调色”也可保存为一个实际的可复用色值。
   const color = tidyAccent(selectedBook.icon_color || state.settings.accent || "#d9822b");
   if (!color) return;
-  const saved = state.settings.book_color_presets || [];
-  if (saved.includes(color)) {
-    toast("这个颜色已经保存过了");
-    return;
-  }
-  if (saved.length >= 20) {
-    toast("最多保存 20 个颜色预设");
-    return;
-  }
   presetBusy = true;
   renderManager();
   try {
-    await saveSettings({ ...state.settings, book_color_presets: [...saved, color] });
-    renderManager();
+    await changeSharedPreset(color);
     toast("颜色预设已保存");
   } catch (e) {
     $("#bm-error").textContent = "保存颜色预设失败：" + e;
@@ -396,8 +392,7 @@ async function deleteColorPreset(color) {
   presetBusy = true;
   renderManager();
   try {
-    const saved = state.settings.book_color_presets || [];
-    await saveSettings({ ...state.settings, book_color_presets: saved.filter((v) => v !== color) });
+    await changeSharedPreset(color, true);
     toast("颜色预设已删除");
   } catch (e) {
     $("#bm-error").textContent = "删除颜色预设失败：" + e;
