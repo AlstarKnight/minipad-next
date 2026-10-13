@@ -1546,7 +1546,8 @@ describe("shared colors and positioned gradients", () => {
     await p.click("#btn-settings");
     await settingsPage(p, "look");
     const accent = p.locator("#set-accent").locator("..").locator(".shared-colors");
-    await accent.locator(".uc-actions").first().locator("button").nth(1).click();
+    await expandLibrary(p, "#set-accent + .shared-colors");
+    await accent.locator(":scope > .uc-actions button").nth(1).click();
     assert.ok(await accent.locator('.uc-swatch[data-color="#d9822b"]').isVisible());
     await settingsPage(p, "window");
     assert.ok(await p.locator('#set-edge-color + .shared-colors .uc-swatch[data-color="#d9822b"]').isVisible());
@@ -1724,7 +1725,7 @@ describe("v0.3.4 picker regressions", () => {
     });
     assert.equal(layout[0], "grid", "settings palettes are compact");
     assert.ok(Math.abs(layout[1] - layout[2]) < 3, "quick swatches align with the library heading");
-    assert.equal(await p.locator("#set-accent + .shared-colors .uc-actions").isVisible(), false,
+    assert.equal(await p.locator("#set-accent + .shared-colors > .uc-actions").isVisible(), false,
       "editing controls stay hidden until the library opens");
     await expandLibrary(p, "#set-accent + .shared-colors");
     await p.click('#set-accent + .shared-colors .uc-swatch[data-color="#3b82f6"]');
