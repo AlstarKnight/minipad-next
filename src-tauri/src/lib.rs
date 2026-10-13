@@ -264,6 +264,8 @@ struct AppState {
     /// 配置文件不存在或成功读取时才可以写回。读失败/解析失败时保持原文件。
     settings_write_allowed: AtomicBool,
     settings_read_error: Mutex<Option<String>>,
+    /// 避免外观更改和页面排序同时改写同一份 .minipad.json。
+    meta_io: Mutex<()>,
     quit: Mutex<QuitState>,
     quit_sequence: AtomicU64,
     edge: Mutex<EdgeState>,
@@ -797,6 +799,7 @@ fn save_meta(
         groups,
         note_groups: note_groups.unwrap_or_default(),
     });
+    let _guard = app.state::<AppState>().meta_io.lock().unwrap();
     notes::save_book_meta(
         &current_notes_dir(&app),
         &book,
@@ -842,12 +845,14 @@ fn set_book_appearance(
     color: String,
 ) -> Result<(), String> {
     maybe_backup(&app);
+    let _guard = app.state::<AppState>().meta_io.lock().unwrap();
     notes::set_book_appearance(&current_notes_dir(&app), &book, &icon, &color)
 }
 
 /// 记住当前打开的笔记本,下次启动还打开它
 #[tauri::command]
 fn set_current_book(app: AppHandle, book: String) -> Result<(), String> {
+    let _guard = app.state::<AppState>().meta_io.lock().unwrap();
     notes::set_current_book(&current_notes_dir(&app), &book)
 }
 
