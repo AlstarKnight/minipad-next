@@ -979,10 +979,8 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
 .form input[type="range"]:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 2px var(--accent); }
 .form input[type="range"]:disabled { cursor: default; }
 
-/* 贴边隐藏的标识:窗口缩进屏幕边以后只露出一条(宽度由 --edge-peek 决定,见 settings.js)。
-   三种样式:arrow 细线 + 箭头 / line 仅细边高亮 / hover 细边 + 悬浮按钮。
-   颜色用 --edge-c(纯色)和 --edge-grad(可以是渐变),没单独设就跟随强调色。
-   不透明底色盖住窗口原有的内容(状态栏等)。 */
+/* 贴边隐藏标识：只有 marker 留在屏幕内，正文与状态栏完全隐藏。
+   细线粗细、长度可配置；仅箭头模式完全不绘制细线。 */
 #edge-mark {
   --ec: var(--edge-c, var(--accent));
   --eg: var(--edge-grad, var(--accent-grad));
@@ -992,20 +990,32 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
   pointer-events: none;
 }
 html[data-edge] #edge-mark { display: block; background: transparent; }
-/* 缩进去以后窗口是透明的:只画细线、箭头和按钮,窗口原来的内容和底色都不露出来 */
 html[data-edge], html[data-edge] body { background: transparent; border-color: transparent; }
 html[data-edge] body > :not(#edge-mark) { visibility: hidden; }
-html[data-edge="top"] #edge-mark { left: 0; right: 0; bottom: 0; height: var(--edge-peek, 6px); }
-html[data-edge="left"] #edge-mark { top: 0; bottom: 0; right: 0; width: var(--edge-peek, 6px); }
-html[data-edge="right"] #edge-mark { top: 0; bottom: 0; left: 0; width: var(--edge-peek, 6px); }
-/* 彩色细线:贴在靠屏幕边缘的那一侧 */
+html[data-edge="top"] #edge-mark { left: 0; right: 0; bottom: 0; height: var(--edge-peek, 18px); }
+html[data-edge="left"] #edge-mark { top: 0; bottom: 0; right: 0; width: var(--edge-peek, 18px); }
+html[data-edge="right"] #edge-mark { top: 0; bottom: 0; left: 0; width: var(--edge-peek, 18px); }
+
+/* 细线围绕窗口所在的边居中，调长度时不会改变窗口真正的贴边位置。 */
 #edge-mark > span { position: absolute; background: var(--eg); box-shadow: 0 0 2px #0006; }
-html[data-edge="top"] #edge-mark > span { left: 0; right: 0; top: 0; height: 3px; }
-html[data-edge="left"] #edge-mark > span { top: 0; bottom: 0; left: 0; width: 3px; }
-html[data-edge="right"] #edge-mark > span { top: 0; bottom: 0; right: 0; width: 3px; }
-/* 仅细边,以及悬浮按钮样式平时:露出的这一条整条就是彩色细线 */
-html[data-edge-style="line"] #edge-mark,
-html[data-edge-style="hover"]:not([data-edge-peek]) #edge-mark { background: var(--eg); }
+html[data-edge="top"] #edge-mark > span {
+  width: var(--edge-line-length, 100%); height: var(--edge-line-width, 2px);
+  top: 0; left: 50%; transform: translateX(-50%);
+}
+html[data-edge="left"] #edge-mark > span {
+  height: var(--edge-line-length, 100%); width: var(--edge-line-width, 2px);
+  left: 0; top: 50%; transform: translateY(-50%);
+}
+html[data-edge="right"] #edge-mark > span {
+  height: var(--edge-line-length, 100%); width: var(--edge-line-width, 2px);
+  right: 0; top: 50%; transform: translateY(-50%);
+}
+html[data-edge-style="arrow-only"] #edge-mark > span { display: none; }
+/* 微光只绘制在细线上，不使用动画或定时器。 */
+html[data-edge-glow="on"] #edge-mark > span {
+  box-shadow: 0 0 4px 1px color-mix(in srgb, var(--ec) 38%, transparent),
+              0 0 8px 1px color-mix(in srgb, var(--ec) 16%, transparent);
+}
 
 /* 展开按钮:整条都能点(碰到这条窗口本来也会滑出来) */
 #edge-expand {
@@ -1056,6 +1066,34 @@ html[data-edge-style="hover"][data-edge-peek][data-edge="right"] #edge-expand {
 }
 html[data-edge-style="hover"][data-edge-peek][data-edge="left"] #edge-expand { left: 8px; }
 html[data-edge-style="hover"][data-edge-peek][data-edge="right"] #edge-expand { right: 8px; }
+/* 细线设置预览，模拟贴在顶部时的显示。 */
+.edge-line-control { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.edge-line-control > span:first-child { flex: none; min-width: 110px; }
+.edge-line-control input[type="range"] { flex: 1; min-width: 90px; }
+.edge-line-control .muted { min-width: 45px; text-align: right; }
+.edge-line-preview {
+  position: relative;
+  box-sizing: border-box;
+  height: 18px;
+  border: 1px solid var(--bar-border);
+  border-radius: 5px;
+  background: var(--bg);
+}
+.edge-line-preview > span {
+  display: block;
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  height: var(--edge-line-width, 2px);
+  width: var(--edge-line-length, 100%);
+  max-width: 100%;
+  background: var(--preview-edge-color, var(--accent-grad));
+}
+.edge-line-preview.glow > span {
+  box-shadow: 0 0 4px 1px color-mix(in srgb, var(--accent) 38%, transparent),
+              0 0 8px 1px color-mix(in srgb, var(--accent) 16%, transparent);
+}
 /* 设置里的悬浮图标:预览 + 大小 / 图标 / 颜色 */
 .ball-option { padding-left: 18px; }
 .ball-option.off { opacity: .5; }
