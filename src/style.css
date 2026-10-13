@@ -102,40 +102,31 @@ svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width:
   user-select: none;
 }
 
-/* 当前笔记本,点开切换 */
+/* 顶栏紧凑的笔记本图标，鼠标悬停可从原生 tooltip 看到完整名称。 */
 #btn-book {
   position: relative;
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 3px;
-  flex-shrink: 0;
-  /* 窗口变窄时名字先缩短,标签栏才有地方 */
-  max-width: clamp(56px, calc(100vw - 320px), 120px);
-  height: 26px;
-  margin: 0 9px 4px 0;
-  padding: 0 5px 0 8px;
-  border-radius: 6px;
+  justify-content: center;
+  flex: 0 0 32px;
+  width: 32px;
+  height: 28px;
+  margin: 0 9px 3px 0;
+  padding: 4px;
+  border-radius: 7px;
   color: var(--muted);
-  font-size: 12.5px;
-  white-space: nowrap;
 }
-#btn-book:hover, #btn-book[aria-expanded="true"] { background: var(--accent-soft); color: var(--text); }
-#book-name { overflow: hidden; text-overflow: ellipsis; }
-#btn-book svg { width: 11px; height: 11px; flex-shrink: 0; stroke-width: 1.8; }
-/* 和标签之间的分隔线 */
+#btn-book:hover, #btn-book[aria-expanded="true"] { background: var(--accent-soft); }
+#book-icon { display: inline-flex; align-items: center; justify-content: center; }
+#book-icon svg { width: 19px; height: 19px; stroke-width: 1.7; }
+.visually-hidden {
+  position: absolute; width: 1px; height: 1px;
+  padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0);
+  white-space: nowrap; border: 0;
+}
 #btn-book::after {
-  content: "";
-  position: absolute;
-  top: 6px;
-  bottom: 6px;
-  right: -5px;
-  width: 1px;
-  background: var(--bar-border);
-}
-/* 很窄的窗口里只留箭头 */
-@media (max-width: 320px) {
-  #book-name { display: none; }
-  #btn-book { padding: 0 7px; }
+  content: ""; position: absolute; top: 6px; bottom: 6px; right: -5px;
+  width: 1px; background: var(--bar-border);
 }
 
 #tabs {
@@ -869,6 +860,45 @@ html[data-find-pos="bottom"] #status { order: 2; }
 .menu-title, .menu-hint { padding: 3px 10px; font-size: 11.5px; color: var(--muted); }
 .menu-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .menu-hint { font-size: 11px; }
+
+/* 独立的笔记本管理页面，保持在浮窗内完成，无需弹出新的系统窗口。 */
+.book-manager-panel { max-width: 580px; height: min(530px, 100%); display: flex; flex-direction: column; overflow: hidden; padding: 12px; }
+.bm-head { display: flex; align-items: center; gap: 8px; padding-bottom: 10px; border-bottom: 1px solid var(--code-border); }
+.bm-head h2 { margin: 0; font-size: 15px; }
+.bm-head .icon { font-size: 22px; line-height: 1; width: 26px; height: 26px; border-radius: 6px; }
+.bm-head .icon:hover { background: var(--accent-soft); }
+.bm-body { display: flex; flex: 1; min-height: 0; margin: 0 -12px -12px; }
+#bm-list { flex: 0 0 38%; min-width: 105px; overflow-y: auto; border-right: 1px solid var(--code-border); padding: 8px; }
+.bm-list-item { display: flex; align-items: center; width: 100%; gap: 9px; padding: 9px 7px; border-radius: 7px; text-align: left; font-size: 13px; }
+.bm-list-item:hover, .bm-list-item.selected { background: var(--accent-soft); }
+.bm-list-item svg, .book-item-icon svg { width: 18px; height: 18px; flex-shrink: 0; }
+.bm-list-item > span:first-child, .book-item-icon { display: inline-flex; flex-shrink: 0; }
+.bm-list-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+.bm-list-count { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+#bm-details { min-width: 0; flex: 1; padding: 12px; overflow-y: auto; }
+#bm-selected { margin: 0 0 12px; font-size: 15px; overflow-wrap: anywhere; }
+.bm-field-title { font-size: 12px; color: var(--muted); margin: 12px 0 7px; }
+.bm-icon-grid, .bm-colors { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 7px; }
+.bm-icon-grid button { padding: 9px; display: flex; justify-content: center; border: 1px solid var(--bar-border); border-radius: 7px; }
+.bm-icon-grid svg { width: 20px; height: 20px; }
+.bm-icon-grid button:hover, .bm-icon-grid button[aria-checked="true"] { border-color: var(--accent); background: var(--accent-soft); }
+.bm-colors { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+.bm-colors button { height: 26px; border-radius: 7px; background: var(--book-swatch); border: 2px solid var(--bar-border); color: white; }
+.bm-colors button[aria-checked="true"] { outline: 2px solid var(--text); outline-offset: 1px; }
+.bm-custom-color { display: flex; align-items: center; gap: 10px; font-size: 12px; margin-top: 12px; }
+.bm-custom-color input { width: 54px; height: 28px; padding: 2px; background: transparent; border: 1px solid var(--bar-border); border-radius: 6px; }
+.bm-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 18px; }
+.bm-actions .danger { color: var(--danger); }
+#bm-error { margin-top: 12px; }
+@media (max-width: 370px) {
+  .book-manager-panel { padding: 9px; }
+  #bm-list { padding: 4px; flex-basis: 39%; }
+  .bm-list-item { gap: 5px; padding: 8px 3px; }
+  #bm-details { padding: 9px 7px; }
+  .bm-icon-grid, .bm-colors { gap: 4px; }
+}
+/* 状态栏空白处允许拖动，计数与保存状态仍然能正常选取文字。 */
+#status > .spacer { cursor: grab; }
 
 /* 笔记本列表 */
 .books { min-width: 180px; max-width: min(280px, calc(100vw - 8px)); max-height: 60vh; overflow-y: auto; }
