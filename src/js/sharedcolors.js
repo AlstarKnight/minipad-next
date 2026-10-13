@@ -168,7 +168,7 @@ export function makeSharedColorTools({ getValue, onApply, defaultColor = "#d9822
     if (!editor.hidden) startEditing();
   });
   save.addEventListener("click", () =>
-    void changeSharedPreset(current()).then(() => toast("颜色预设已保存")).catch((e) => toast(String(e))));
+    void changeSharedPreset(editor.hidden ? current() : value()).then(() => toast("颜色预设已保存")).catch((e) => toast(String(e))));
   mode.addEventListener("change", () => { paintStops(); });
   angle.addEventListener("change", () => { angle.value = String(Math.max(0, Math.min(360, Number(angle.value) || 0))); paintPreview(); });
   add.addEventListener("click", () => {
