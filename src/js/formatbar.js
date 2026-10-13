@@ -6,6 +6,7 @@ import { BUTTONS, headingLevel } from "./toolbar.js";
 import { openMenu, closeMenu } from "./ui.js";
 import { TEXT_COLORS, TEXT_GRADIENTS, BG_COLORS, setColor, colorAt } from "./colors.js";
 import { parseAccent } from "./accent.js";
+import { makeSharedColorTools } from "./sharedcolors.js";
 
 const ICON = {
   undo: '<svg viewBox="0 0 16 16"><path d="M5.5 3.5 2.5 6.5l3 3"/><path d="M2.5 6.5h7a4 4 0 0 1 0 8H7"/></svg>',
@@ -313,6 +314,11 @@ class Bar {
       title.textContent = "渐变色";
       parts.push(title, grid(gradients, "fb-gradients"));
     }
+    const shared = makeSharedColorTools({
+      getValue: () => colorAt(this.view.state, mark) || btn.dataset.last || "#d9822b",
+      onApply: (value) => pick(value),
+    });
+    parts.push(shared.root);
     this.openPop(btn, parts);
   }
 
