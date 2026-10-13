@@ -155,7 +155,6 @@ svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width:
   display: flex;
   align-items: center;
   height: 28px;
-  max-width: 160px;
   padding: 0 12px;
   margin-right: 2px;
   border: 1px solid transparent;
@@ -167,7 +166,8 @@ svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width:
   cursor: default;
   flex-shrink: 0;
 }
-.tab span { overflow: hidden; text-overflow: ellipsis; }
+/* 标签的名字总是完整显示,放不下时标签栏滚动(或者换成多行、侧拉列表,见下面"标签放不下时") */
+.tab span { white-space: nowrap; }
 .tab:hover { color: var(--text); }
 .tab.active {
   background: var(--tab-active);
@@ -1096,3 +1096,246 @@ html[data-edge-style="hover"][data-edge-peek][data-edge="right"] #edge-expand { 
 .tab.unreadable { opacity: .55; }
 .tab.unreadable::after { content: "⚠"; color: #ba772d; font-size: 12px; margin-left: 3px; }
 html[data-unreadable] #format-bar, html[data-unreadable] #toolbar { pointer-events: none; opacity: .4; }
+
+
+/* ---------- 标签放不下时(设置里选,见 js/tabbar.js) ---------- */
+/* 一排滚动:还有标签藏着的那一端淡出去 */
+#tabs.fade-l { -webkit-mask-image: linear-gradient(90deg, transparent, #000 28px); mask-image: linear-gradient(90deg, transparent, #000 28px); }
+#tabs.fade-r { -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 28px), transparent); mask-image: linear-gradient(90deg, #000 calc(100% - 28px), transparent); }
+#tabs.fade-l.fade-r {
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 28px, #000 calc(100% - 28px), transparent);
+  mask-image: linear-gradient(90deg, transparent, #000 28px, #000 calc(100% - 28px), transparent);
+}
+
+/* 标签后面的按钮:页面数 + 箭头。一排滚动时打开全部页面的列表,多行时展开 / 收起 */
+#btn-all {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+  height: 24px;
+  margin: 0 2px 5px 4px;
+  padding: 0 5px 0 7px;
+  border-radius: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+#btn-all:hover, #btn-all[aria-expanded="true"] { background: var(--accent-soft); color: var(--text); }
+#btn-all svg { width: 11px; height: 11px; stroke-width: 1.8; transition: transform 0.15s; }
+#bar[data-expanded="true"] #btn-all svg { transform: rotate(180deg); }
+
+/* 全部页面的列表:名字长就换行,不截断 */
+.pages-menu { display: flex; flex-direction: column; width: 230px; max-width: calc(100vw - 8px); max-height: min(60vh, 380px); }
+.pages-menu input, .group-edit input[type="text"], #dr-filter {
+  font: inherit;
+  font-size: 12.5px;
+  padding: 4px 8px;
+  border: 1px solid var(--bar-border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  outline: none;
+}
+.pages-menu input:focus, .group-edit input[type="text"]:focus, #dr-filter:focus { border-color: var(--accent); }
+.pages-menu input { margin: 2px 2px 4px; }
+#pm-list { min-height: 0; overflow-y: auto; }
+.menu .pm-item { display: flex; align-items: flex-start; gap: 7px; white-space: normal; overflow-wrap: anywhere; color: var(--muted); }
+.menu .pm-item:hover, .menu .pm-item:focus { color: var(--text); }
+.menu .pm-item.on { color: var(--text); font-weight: 600; }
+.pm-dot { flex-shrink: 0; width: 8px; height: 8px; margin-top: 6px; border-radius: 50%; background: var(--g); }
+
+/* 多行:点按钮展开,在顶栏下面铺开全部标签(盖在编辑区上面),最多显示设置里的行数,再多在里面上下滚。
+   标签原来的位置留着同样宽的空位,顶栏不跳 */
+#bar[data-expanded="true"] #tabs {
+  position: fixed;
+  top: var(--sheet-top, 35px);
+  left: 0;
+  right: 0;
+  z-index: 15;
+  flex-wrap: wrap;
+  align-items: center;
+  align-content: flex-start;
+  gap: 4px 3px;
+  height: auto;
+  max-height: calc(var(--tab-rows, 4) * 30px + 12px);
+  padding: 6px 8px 8px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  background: var(--bar);
+  border-bottom: 1px solid var(--bar-border);
+  box-shadow: 0 6px 14px rgba(0, 0, 0, 0.06);
+}
+#tabs-ph { flex-shrink: 0; height: 100%; }
+#bar[data-expanded="true"] .tab,
+#bar[data-expanded="true"] .tab.active { height: 26px; margin: 0; border: 1px solid transparent; border-radius: 6px; }
+#bar[data-expanded="true"] .tab.active { border-color: var(--bar-border); }
+#bar[data-expanded="true"] .tab.active::before { border-radius: 6px; }
+[data-tab-style="border"] #bar[data-expanded="true"] .tab.active::before { padding: 2px; bottom: -1px; }
+#bar[data-expanded="true"] .tab-group { margin: 0 2px; }
+
+/* 侧拉的页面列表:从窗口左边(或右边)拉出来,盖在编辑区上面;钉住时一直开着,编辑区让出位置 */
+#btn-pages {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 1 auto;
+  min-width: 0;
+  height: 26px;
+  margin: 0 6px 4px 0;
+  padding: 0 8px 0 6px;
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 13px;
+}
+#btn-pages:hover, #btn-pages[aria-expanded="true"] { background: var(--accent-soft); }
+#btn-pages svg { flex-shrink: 0; color: var(--muted); }
+#btn-pages[hidden] { display: none; }
+/* 当前页的名字太长、顶栏放不下时淡出去,鼠标移上去慢慢滚到末尾(全名也在列表里) */
+#cur-page { min-width: 0; overflow: hidden; white-space: nowrap; }
+#cur-page > span { display: inline-block; transition: transform var(--marquee, 0s) linear; }
+#cur-page.long { -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 20px), transparent); mask-image: linear-gradient(90deg, #000 calc(100% - 20px), transparent); }
+#cur-page.long.rolling { -webkit-mask-image: none; mask-image: none; }
+
+#drawer {
+  position: fixed;
+  bottom: 0;
+  z-index: 14;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: var(--dr-w, 200px);
+  max-width: calc(100vw - 24px);
+  padding: 8px 0 0;
+  background: var(--bar);
+  visibility: hidden;
+  transition: transform 0.16s ease, visibility 0s linear 0.16s;
+}
+#drawer[data-side="left"] { left: 0; border-right: 1px solid var(--bar-border); transform: translateX(-100%); }
+#drawer[data-side="right"] { right: 0; border-left: 1px solid var(--bar-border); transform: translateX(100%); }
+#drawer.open, [data-drawer="pinned"] #drawer { transform: none; visibility: visible; transition: transform 0.16s ease; }
+#drawer.open { box-shadow: 0 0 18px rgba(0, 0, 0, 0.08); }
+[data-drawer="pinned"][data-drawer-side="left"] :is(#format-bar, #find-bar, #main, #status) { margin-left: var(--dr-w, 200px); }
+[data-drawer="pinned"][data-drawer-side="right"] :is(#format-bar, #find-bar, #main, #status) { margin-right: var(--dr-w, 200px); }
+.dr-head { display: flex; align-items: center; gap: 6px; padding: 0 6px 0 12px; font-size: 12px; }
+.dr-title { font-weight: 600; }
+#dr-count { font-variant-numeric: tabular-nums; }
+.dr-head .icon { width: 24px; height: 24px; margin: 0; }
+#dr-pin.on { color: var(--accent); }
+#dr-filter { margin: 0 8px; }
+#dr-list { flex: 1; min-height: 0; overflow-y: auto; padding: 0 6px 10px; scrollbar-width: thin; }
+#drawer-edge { position: fixed; bottom: 0; z-index: 13; width: 6px; }
+#drawer-edge[data-side="left"] { left: 0; }
+#drawer-edge[data-side="right"] { right: 0; }
+
+/* 列表里的标签竖着排,名字长就换行 */
+#drawer #tabs { flex-direction: column; align-items: stretch; height: auto; overflow: visible; }
+#drawer .tab,
+#drawer .tab.active { height: auto; min-height: 28px; margin: 0 0 1px; padding: 4px 10px; border: none; border-radius: 6px; }
+#drawer .tab span { white-space: normal; overflow-wrap: anywhere; line-height: 1.45; }
+#drawer .tab.active { background: var(--tab-active); }
+#drawer .tab.active::before { left: 3px; right: auto; top: 7px; bottom: 7px; width: 3px; height: auto; }
+[data-tab-style="fill"] #drawer .tab.active::before,
+[data-tab-style="border"] #drawer .tab.active::before { inset: 0; width: auto; border-radius: 6px; }
+[data-tab-style="border"] #drawer .tab.active::before { padding: 2px; }
+#drawer .tab.drop-before { box-shadow: inset 0 2px 0 var(--accent); }
+#drawer .tab.drop-after { box-shadow: inset 0 -2px 0 var(--accent); }
+#drawer .tab input { width: 100%; }
+.tab.filtered, .tab-group.filtered { display: none; }
+
+/* ---------- 标签分组(设置里打开,见 js/groups.js) ---------- */
+.tab-group {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+  height: 22px;
+  margin: 0 4px 4px 2px;
+  padding: 0 9px;
+  border-radius: 11px;
+  background: color-mix(in srgb, var(--g) 22%, transparent);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.tab-group:hover { background: color-mix(in srgb, var(--g) 34%, transparent); }
+.tab-group .count { font-weight: 500; font-size: 11px; opacity: 0.75; font-variant-numeric: tabular-nums; }
+/* 没起名字的分组只是一个颜色点,折叠时点里写着页数 */
+.tab-group.unnamed { width: 12px; height: 12px; margin-bottom: 9px; padding: 0; background: var(--g); }
+.tab-group.unnamed .name { display: none; }
+.tab-group.unnamed.collapsed { width: auto; height: 18px; margin-bottom: 6px; padding: 0 6px; border-radius: 9px; }
+.tab-group.unnamed.collapsed .count { color: #fff; opacity: 1; }
+.tab-group.drop-into { outline: 2px solid var(--g); outline-offset: 1px; }
+.tab.folded { display: none; }
+#tabs.filtering .tab.folded:not(.filtered) { display: flex; }
+
+/* 组里的标签:下面一条组的颜色,或者整个标签淡淡染上组的颜色 */
+.tab.in-group:not(.group-end) { margin-right: 0; }
+[data-group-style="line"] .tab.in-group {
+  background-image: linear-gradient(var(--g), var(--g));
+  background-size: 100% 2px;
+  background-position: bottom;
+  background-repeat: no-repeat;
+  background-origin: border-box;
+}
+[data-group-style="tint"] .tab.in-group:not(.active) { background: color-mix(in srgb, var(--g) 14%, transparent); }
+#drawer .tab-group { align-self: flex-start; margin: 6px 0 3px 2px; }
+#drawer .tab-group.unnamed { margin: 8px 0 5px 6px; }
+#drawer .tab.in-group { margin-left: 8px; margin-bottom: 0; border-radius: 0 6px 6px 0; }
+[data-group-style="line"] #drawer .tab.in-group { background-size: 2px 100%; background-position: left; }
+
+/* 分组设置:名字、颜色 */
+.group-edit { width: 220px; display: flex; flex-direction: column; gap: 6px; padding: 8px; }
+.ge-colors { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 2px; }
+.ge-color {
+  position: relative;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border-radius: 50%;
+  background: var(--c);
+  cursor: pointer;
+}
+.menu button.ge-color { width: 20px; padding: 0; }
+.menu button.ge-color:hover, .menu button.ge-color:focus { background: var(--c); }
+.ge-color.on { outline: 2px solid var(--c); outline-offset: 2px; }
+.ge-color.custom { border: 1.5px dashed var(--muted); overflow: hidden; }
+.ge-color.custom.on { border-style: solid; border-color: transparent; }
+.ge-color.custom input { position: absolute; inset: -4px; width: 30px; height: 30px; opacity: 0; cursor: pointer; }
+.group-edit hr { margin: 2px 0; }
+
+/* 设置里标签栏的预览 */
+.tabs-preview {
+  position: relative;
+  width: 100%;
+  height: 86px;
+  overflow: hidden;
+  border: 1px solid var(--bar-border);
+  border-radius: 8px;
+  background: var(--bg);
+}
+.tabs-preview i { display: block; height: 9px; border-radius: 3px; background: var(--bar-border); }
+.tabs-preview i.on { background: var(--accent-grad); }
+.tp-bar { display: flex; align-items: center; gap: 5px; height: 20px; padding: 0 8px; background: var(--bar); border-bottom: 1px solid var(--bar-border); }
+.tp-bar i { flex-shrink: 0; width: 30px; }
+.tp-bar i.cut { width: 22px; -webkit-mask-image: linear-gradient(90deg, #000, transparent); mask-image: linear-gradient(90deg, #000, transparent); }
+.tabs-preview.no-fade .tp-bar i.cut { -webkit-mask-image: none; mask-image: none; }
+.tp-bar b { width: 14px; height: 10px; margin-left: 2px; border-radius: 3px; border: 1.5px solid var(--muted); }
+.tabs-preview.no-list[data-mode="scroll"] .tp-bar b { display: none; }
+.tp-rows { position: absolute; top: 20px; left: 8px; right: 30px; display: none; flex-wrap: wrap; gap: 4px 5px; padding: 5px 6px 6px; background: var(--bar); border: 1px solid var(--bar-border); border-top: none; border-radius: 0 0 6px 6px; }
+.tp-rows i { width: 30px; }
+.tabs-preview[data-mode="wrap"] .tp-rows { display: flex; }
+.tp-drawer { position: absolute; top: 21px; bottom: 0; left: 0; display: none; flex-direction: column; gap: 6px; width: 32%; padding: 8px; background: var(--bar); border-right: 1px solid var(--bar-border); }
+.tabs-preview[data-side="right"] .tp-drawer { left: auto; right: 0; border-right: none; border-left: 1px solid var(--bar-border); }
+.tp-drawer i { width: 80%; }
+.tabs-preview[data-mode="drawer"] .tp-drawer { display: flex; }
+.tabs-preview[data-mode="drawer"] .tp-bar i:not(.on), .tabs-preview[data-mode="drawer"] .tp-bar b { display: none; }
+.tabs-preview[data-mode="drawer"] .tp-bar i.on { width: 56px; }
+.tp-text { display: flex; flex-direction: column; gap: 7px; padding: 12px 16px; }
+.tp-text i { height: 6px; }
+.tp-text i:nth-child(1) { width: 80%; }
+.tp-text i:nth-child(2) { width: 64%; }
+.tp-text i:nth-child(3) { width: 72%; }
+.group-option.off { opacity: 0.5; }

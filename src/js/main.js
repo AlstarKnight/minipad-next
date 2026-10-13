@@ -1,12 +1,14 @@
 // Minipad Next 前端入口:启动、全局快捷键、按钮
 import { api, isMock } from "./api.js";
-import { $, tabsEl } from "./dom.js";
+import { $ } from "./dom.js";
 import { state, book, current } from "./state.js";
 import { toast, dialogOpen, closeDialog, closeMenu, closeOverlays, focusEditor, ask, askText } from "./ui.js";
 import { markDirty, flushAll, saveMeta, pendingNoteCount, resetActivity } from "./save.js";
 import { reload, syncFromDisk, addConflictCopy } from "./sync.js";
 import { rememberView } from "./page.js";
 import { switchTo, newNote, deleteNote } from "./tabs.js";
+import { bindTabBar } from "./tabbar.js";
+import { bindGroups } from "./groups.js";
 import { toggleBooks, closeBooks, bindBooks } from "./notebooks.js";
 import { openSearch, bindSearch } from "./search.js";
 import { openFind, closeFind, findAgain, bindFind } from "./findbar.js";
@@ -168,6 +170,8 @@ function bindUi() {
   bindSettings();
   bindImport();
   bindOutline();
+  bindTabBar();
+  bindGroups();
   // 保存时发现这一页在别处也改过:那边的版本已经另存成冲突副本,放到这一页后面
   document.addEventListener("conflict-copy", (e) => addConflictCopy(e.detail));
   // 格式栏上的查找按钮
@@ -193,13 +197,6 @@ function bindUi() {
   // 只在编辑区、输入框和阅读区保留系统右键菜单
   document.addEventListener("contextmenu", (e) => {
     if (!e.target.closest("#editor, textarea, input")) e.preventDefault();
-  });
-  // 标签栏上滚轮横向滚动
-  tabsEl.addEventListener("wheel", (e) => {
-    if (e.deltaY) {
-      e.preventDefault();
-      tabsEl.scrollLeft += e.deltaY;
-    }
   });
 
   document.addEventListener("keydown", (e) => {

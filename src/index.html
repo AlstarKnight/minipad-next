@@ -9,7 +9,14 @@
 <body>
   <header id="bar" data-tauri-drag-region>
     <button id="btn-book" title="切换笔记本 (Ctrl+B)" aria-haspopup="true" aria-expanded="false"><span id="book-name">默认</span><svg viewBox="0 0 16 16"><path d="M4.5 6.5 8 10l3.5-3.5"/></svg></button>
+    <!-- 标签收进侧拉列表时(设置里选):顶栏只显示当前页的名字,点了拉出页面列表 -->
+    <button id="btn-pages" title="页面列表" aria-expanded="false" aria-controls="drawer" hidden>
+      <svg viewBox="0 0 16 16"><rect x="2" y="2.5" width="12" height="11" rx="2"/><path d="M6 2.5v11M3.6 5.5h1M3.6 7.8h1"/></svg>
+      <span id="cur-page"><span></span></span>
+    </button>
     <div id="tabs" data-tauri-drag-region></div>
+    <!-- 标签放不下时:一排滚动时点开全部页面的列表,多行时点了展开 / 收起(见 js/tabbar.js) -->
+    <button id="btn-all" aria-expanded="false" hidden><span id="all-count"></span><svg viewBox="0 0 16 16"><path d="M4.5 6.5 8 10l3.5-3.5"/></svg></button>
     <button id="btn-new" class="icon" title="新建页面 (Ctrl+T)">+</button>
     <div class="spacer" data-tauri-drag-region></div>
     <button id="btn-format" class="icon" title="显示 / 收起格式栏" aria-pressed="true">
@@ -108,14 +115,9 @@
         <nav id="set-nav" role="tablist" aria-label="设置的分类">
           <button type="button" role="tab" data-page="general" aria-controls="set-page-general"><svg viewBox="0 0 16 16"><path d="M2.5 4h2M7.5 4h6M2.5 8h6M11.5 8h2M2.5 12h1M6.5 12h7"/><circle cx="6" cy="4" r="1.5"/><circle cx="10" cy="8" r="1.5"/><circle cx="5" cy="12" r="1.5"/></svg><span>常规</span></button>
           <button type="button" role="tab" data-page="look" aria-controls="set-page-look"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.5"/><path d="M8 2.5a5.5 5.5 0 0 1 0 11z" fill="currentColor"/></svg><span>外观</span></button>
-          <button type="button" role="tab" data-page="edge" aria-controls="set-page-edge"><svg viewBox="0 0 16 16"><rect x="2" y="3" width="8.5" height="10" rx="1.5"/><path d="M13.5 2.5v11"/></svg><span>贴边隐藏</span></button>
-          <button type="button" role="tab" data-page="ball" aria-controls="set-page-ball"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="5"/><circle cx="8" cy="8" r="1.6" fill="currentColor"/></svg><span>悬浮图标</span></button>
-          <button type="button" role="tab" data-page="editor" aria-controls="set-page-editor"><svg viewBox="0 0 16 16"><path d="M3 13l.9-3.4 6.6-6.6a1.4 1.4 0 0 1 2 0l.5.5a1.4 1.4 0 0 1 0 2l-6.6 6.6z"/><path d="m9.4 4.1 2.5 2.5"/></svg><span>编辑器</span></button>
-          <button type="button" role="tab" data-page="outline" aria-controls="set-page-outline"><svg viewBox="0 0 16 16"><path d="M2.5 4h1M5.5 4h8M4.5 8h1M7.5 8h6M4.5 12h1M7.5 12h6"/></svg><span>目录</span></button>
-          <button type="button" role="tab" data-page="find" aria-controls="set-page-find"><svg viewBox="0 0 16 16"><circle cx="7" cy="7" r="4"/><path d="m10 10 3.5 3.5"/></svg><span>查找替换</span></button>
-          <button type="button" role="tab" data-page="storage" aria-controls="set-page-storage"><svg viewBox="0 0 16 16"><path d="M2.5 4.5a1 1 0 0 1 1-1h2.8l1.5 1.5h4.7a1 1 0 0 1 1 1V12a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1z"/></svg><span>存储</span></button>
-          <button type="button" role="tab" data-page="backup" aria-controls="set-page-backup"><svg viewBox="0 0 16 16"><rect x="2.5" y="3" width="11" height="3" rx="1"/><path d="M3.5 6v6a1 1 0 0 0 1 1h7a1 1 0 0 0 1-1V6M6.5 8.5h3"/></svg><span>备份</span></button>
-          <button type="button" role="tab" data-page="import" aria-controls="set-page-import"><svg viewBox="0 0 16 16"><path d="M8 2.5v7.5M5 7.3 8 10.3l3-3M2.5 11v1.5a1 1 0 0 0 1 1h9a1 1 0 0 0 1-1V11"/></svg><span>导入</span></button>
+          <button type="button" role="tab" data-page="window" aria-controls="set-page-window"><svg viewBox="0 0 16 16"><rect x="2" y="3" width="8.5" height="10" rx="1.5"/><path d="M13.5 2.5v11"/></svg><span>窗口</span></button>
+          <button type="button" role="tab" data-page="edit" aria-controls="set-page-edit"><svg viewBox="0 0 16 16"><path d="M3 13l.9-3.4 6.6-6.6a1.4 1.4 0 0 1 2 0l.5.5a1.4 1.4 0 0 1 0 2l-6.6 6.6z"/><path d="m9.4 4.1 2.5 2.5"/></svg><span>编辑</span></button>
+          <button type="button" role="tab" data-page="data" aria-controls="set-page-data"><svg viewBox="0 0 16 16"><path d="M2.5 4.5a1 1 0 0 1 1-1h2.8l1.5 1.5h4.7a1 1 0 0 1 1 1V12a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1z"/></svg><span>数据</span></button>
         </nav>
         <div class="set-pages">
           <section id="set-page-general" class="set-page" role="tabpanel" data-page="general">
@@ -129,6 +131,7 @@
           </section>
 
           <section id="set-page-look" class="set-page" role="tabpanel" data-page="look" hidden>
+            <h3>主题</h3>
             <label class="row">
               <span>外观</span>
               <select id="set-theme">
@@ -148,14 +151,6 @@
               </div>
             </div>
             <label class="row">
-              <span>活跃标签的高亮</span>
-              <select id="set-tab-style">
-                <option value="line">顶部线条</option>
-                <option value="fill">整个标签</option>
-                <option value="border">整圈边框</option>
-              </select>
-            </label>
-            <label class="row">
               <span>字号</span>
               <input id="set-font" type="number" min="10" max="28" />
             </label>
@@ -166,9 +161,68 @@
                 <option value="top">放在上面</option>
               </select>
             </label>
+            <h3>标签栏</h3>
+            <label class="row">
+              <span>活跃标签的高亮</span>
+              <select id="set-tab-style">
+                <option value="line">顶部线条</option>
+                <option value="fill">整个标签</option>
+                <option value="border">整圈边框</option>
+              </select>
+            </label>
+            <label class="row">
+              <span>标签放不下时</span>
+              <select id="set-tab-overflow">
+                <option value="scroll">一排滚动</option>
+                <option value="wrap">点击展开成多行</option>
+                <option value="drawer">侧拉的页面列表</option>
+              </select>
+            </label>
+            <div class="row">
+              <div id="set-tabs-preview" class="tabs-preview" aria-hidden="true">
+                <div class="tp-bar"><i class="on"></i><i></i><i></i><i></i><i class="cut"></i><b></b></div>
+                <div class="tp-rows"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+                <div class="tp-drawer"><i class="on"></i><i></i><i></i><i></i><i></i></div>
+                <div class="tp-text"><i></i><i></i><i></i></div>
+              </div>
+            </div>
+            <label class="row check tab-option" data-for="scroll"><input id="set-tab-fade" type="checkbox" /> <span>还有标签藏着的那一端淡出去</span></label>
+            <label class="row check tab-option" data-for="scroll"><input id="set-tab-list" type="checkbox" /> <span>放不下时在标签后面显示"全部页面"按钮(点开是能筛选的页面列表)</span></label>
+            <label class="row tab-option" data-for="wrap">
+              <span>展开后最多</span>
+              <select id="set-tab-rows">
+                <option value="2">2 行</option>
+                <option value="3">3 行</option>
+                <option value="4">4 行</option>
+                <option value="5">5 行</option>
+                <option value="6">6 行</option>
+                <option value="8">8 行</option>
+              </select>
+            </label>
+            <label class="row tab-option" data-for="drawer">
+              <span>从哪边拉出</span>
+              <select id="set-drawer-side">
+                <option value="left">窗口左边</option>
+                <option value="right">窗口右边</option>
+              </select>
+            </label>
+            <label class="row tab-option" data-for="drawer"><span>列表宽度</span><input id="set-drawer-width" type="range" min="140" max="360" step="10" /><span id="set-drawer-width-val" class="muted value"></span></label>
+            <label class="row check tab-option" data-for="drawer"><input id="set-drawer-hover" type="checkbox" /> <span>鼠标移到窗口这一边的边缘也拉出来</span></label>
+            <label class="row check tab-option" data-for="drawer"><input id="set-drawer-pinned" type="checkbox" /> <span>钉住,一直开在编辑区旁边(列表上的图钉也能切换)</span></label>
+
+            <h3>标签分组</h3>
+            <label class="row check"><input id="set-tab-groups" type="checkbox" /> <span>标签分组(右键标签加进分组;点分组的名字折叠 / 展开,右键改名字和颜色)</span></label>
+            <label class="row group-option">
+              <span>组里的标签</span>
+              <select id="set-group-style">
+                <option value="line">下面画一条组的颜色</option>
+                <option value="tint">整个标签淡淡染上组的颜色</option>
+              </select>
+            </label>
           </section>
 
-          <section id="set-page-edge" class="set-page" role="tabpanel" data-page="edge" hidden>
+          <section id="set-page-window" class="set-page" role="tabpanel" data-page="window" hidden>
+            <h3>贴边隐藏</h3>
             <label class="row check"><input id="set-edge" type="checkbox" /> <span>靠屏幕边缘时自动隐藏</span></label>
             <label class="row edge-option">
               <span>贴边后的样式</span>
@@ -188,9 +242,7 @@
                 <input id="set-edge-to" type="color" value="#f7c34b" title="渐变的另一端" />
               </div>
             </div>
-          </section>
-
-          <section id="set-page-ball" class="set-page" role="tabpanel" data-page="ball" hidden>
+            <h3>悬浮图标</h3>
             <label class="row check"><input id="set-ball" type="checkbox" /> <span>悬浮图标(顶栏多一个按钮,点了窗口缩成一个可以拖动的小图标)</span></label>
             <div class="row ball-option ball-settings">
               <div id="set-ball-preview" class="ball-preview" title="预览"><img alt="" /><div class="tint" hidden></div></div>
@@ -218,7 +270,8 @@
             </div>
           </section>
 
-          <section id="set-page-editor" class="set-page" role="tabpanel" data-page="editor" hidden>
+          <section id="set-page-edit" class="set-page" role="tabpanel" data-page="edit" hidden>
+            <h3>编辑器</h3>
             <label class="row check"><input id="set-format-bar" type="checkbox" /> <span>标签下面显示格式栏(顶栏的格式栏按钮也能切换)</span></label>
             <label class="row check"><input id="set-code-lines" type="checkbox" /> <span>代码块显示行号</span></label>
             <label class="row"><span>F5 插入的日期时间</span><input id="set-date-format" type="text" spellcheck="false" autocomplete="off" /></label>
@@ -226,9 +279,7 @@
               <span id="set-date-preview" class="muted"></span>
               <span>写法:yyyy 年、M 月、d 日、H 时、mm 分、ss 秒、dddd 星期几</span>
             </div>
-          </section>
-
-          <section id="set-page-outline" class="set-page" role="tabpanel" data-page="outline" hidden>
+            <h3>悬浮目录</h3>
             <label class="row check"><input id="set-outline" type="checkbox" /> <span>显示悬浮目录(列出这一页的标题,点一下跳过去)</span></label>
             <div class="row outline-option">
               <div id="set-outline-preview" class="outline-preview" aria-hidden="true">
@@ -282,9 +333,7 @@
               </div>
             </div>
             <div class="row outline-option"><span class="muted grow">一直展开时,窗口太窄、放不下目录和正文的话,会自动收起成短线。</span></div>
-          </section>
-
-          <section id="set-page-find" class="set-page" role="tabpanel" data-page="find" hidden>
+            <h3>查找替换</h3>
             <label class="row">
               <span>Ctrl+F</span>
               <select id="set-ctrl-f">
@@ -312,7 +361,7 @@
             </div>
           </section>
 
-          <section id="set-page-storage" class="set-page" role="tabpanel" data-page="storage" hidden>
+          <section id="set-page-data" class="set-page" role="tabpanel" data-page="data" hidden>
             <h3>笔记文件夹</h3>
             <div class="row col">
               <span>留空使用程序所在目录下的 notes;旧版笔记会安全复制过去,原文件保留</span>
@@ -333,9 +382,7 @@
                 <option value="overwrite">只留这里的:用这里的内容覆盖别处的修改</option>
               </select>
             </div>
-          </section>
-
-          <section id="set-page-backup" class="set-page" role="tabpanel" data-page="backup" hidden>
+            <h3>备份</h3>
             <label class="row check"><input id="set-backup" type="checkbox" /> <span>每天第一次保存时,把笔记文件夹备份成 zip</span></label>
             <label class="row"><span>保留份数</span><input id="set-backup-keep" type="number" min="1" max="365" /></label>
             <div class="row col">
@@ -343,9 +390,7 @@
               <div class="inline"><input id="set-backup-dir" type="text" spellcheck="false" /><button id="set-pick-backup" class="small">选择…</button></div>
             </div>
             <div class="row"><span id="set-backup-info" class="muted"></span><button id="set-open-backup" class="link">打开备份文件夹</button></div>
-          </section>
-
-          <section id="set-page-import" class="set-page" role="tabpanel" data-page="import" hidden>
+            <h3>导入</h3>
             <div class="row">
               <span class="muted grow">把 minipad2 的笔记导入成新的笔记本,已有的笔记不会被改动</span>
               <button id="set-import" class="small">从 minipad2 导入…</button>
@@ -425,6 +470,37 @@
     <button id="books-new">新建笔记本…</button>
     <button id="books-import">从 minipad2 导入…</button>
     <div id="books-hint" class="menu-hint">右键笔记本可以改名或删除</div>
+  </div>
+
+  <!-- 侧拉的页面列表(标签放不下时选"收进侧拉的页面列表"):标签由 js/tabbar.js 搬进来 -->
+  <aside id="drawer" aria-label="页面列表" hidden>
+    <div class="dr-head">
+      <span class="dr-title">页面</span>
+      <span id="dr-count" class="muted"></span>
+      <span class="spacer"></span>
+      <button id="dr-pin" class="icon" title="钉住页面列表" aria-pressed="false">
+        <svg viewBox="0 0 16 16"><path d="M6 1.5h4M7 1.5v4L4.5 8.5h7L9 5.5v-4M8 8.5v6"/></svg>
+      </button>
+    </div>
+    <input id="dr-filter" type="text" placeholder="筛选页面…" spellcheck="false" autocomplete="off" aria-label="筛选页面" />
+    <div id="dr-list"></div>
+  </aside>
+  <div id="drawer-edge" hidden></div>
+
+  <!-- 全部页面(一排滚动、放不下时标签后面的按钮) -->
+  <div id="pages-menu" class="menu pages-menu" hidden>
+    <input id="pm-filter" type="text" placeholder="筛选页面…" spellcheck="false" autocomplete="off" aria-label="筛选页面" />
+    <div id="pm-list" role="listbox" aria-label="全部页面"></div>
+  </div>
+
+  <!-- 标签分组:名字、颜色、折叠、取消分组(右键分组的名字打开,见 js/groups.js) -->
+  <div id="group-edit" class="menu group-edit" hidden>
+    <input id="ge-name" type="text" placeholder="给分组起个名字" spellcheck="false" autocomplete="off" aria-label="分组的名字" />
+    <div id="ge-colors" class="ge-colors" role="radiogroup" aria-label="分组的颜色"></div>
+    <hr />
+    <button id="ge-new">在这个分组里新建页面</button>
+    <button id="ge-collapse">折叠分组</button>
+    <button id="ge-ungroup">取消分组</button>
   </div>
 
   <!-- 右键菜单(内容由 openMenu 生成) -->

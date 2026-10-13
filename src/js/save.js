@@ -116,13 +116,19 @@ async function writeDirtyMeta() {
       metaDirty.delete(b);
       if (!state.books.includes(b)) continue;
       const modes = {};
-      b.notes.forEach((n) => (modes[n.name] = n.mode));
+      const noteGroups = {};
+      b.notes.forEach((n) => {
+        modes[n.name] = n.mode;
+        if (n.group) noteGroups[n.name] = n.group;
+      });
       try {
         await api.invoke("save_meta", {
           book: b.name,
           order: b.notes.map((n) => n.name),
           active: b.notes[b.active]?.name ?? "",
           modes,
+          groups: b.groups.filter((g) => b.notes.some((n) => n.group === g.id)),
+          note_groups: noteGroups,
         });
       } catch (e) {
         metaDirty.add(b);

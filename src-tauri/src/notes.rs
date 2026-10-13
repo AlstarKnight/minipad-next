@@ -32,6 +32,28 @@ pub struct Meta {
     pub modes: HashMap<String, String>,
     #[serde(skip_serializing_if = "String::is_empty")]
     pub book: String,
+    /// 标签分组(设置里打开分组功能才用):分组的名字、颜色、是否折叠,按出现的顺序
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub groups: Vec<TabGroup>,
+    /// 页面名 → 所在分组的 id
+    #[serde(skip_serializing_if = "HashMap::is_empty")]
+    pub note_groups: HashMap<String, String>,
+}
+
+/// 一个标签分组。颜色是 "#rrggbb",名字可以空着(只显示颜色)
+#[derive(Serialize, Deserialize, Default, Clone, Debug, PartialEq)]
+#[serde(default)]
+pub struct TabGroup {
+    pub id: String,
+    pub name: String,
+    pub color: String,
+    pub collapsed: bool,
+}
+
+/// 前端保存分组时发来的:分组列表和每页所在的分组
+pub struct Groups {
+    pub groups: Vec<TabGroup>,
+    pub note_groups: HashMap<String, String>,
 }
 
 #[derive(Serialize, Clone, Debug, PartialEq)]
@@ -42,6 +64,8 @@ pub struct Note {
     /// 内容不可读取时保留页面占位，空内容不得回写磁盘。
     pub unreadable: bool,
     pub reason: Option<String>,
+    /// 所在分组的 id,不在分组里是空的
+    pub group: String,
 }
 
 /// 一个笔记本和它的全部页面(按保存过的顺序)
@@ -50,6 +74,8 @@ pub struct Book {
     pub name: String,
     pub notes: Vec<Note>,
     pub active: String,
+    /// 还有页面在里面的分组
+    pub groups: Vec<TabGroup>,
 }
 
 pub fn write_atomic(path: &Path, data: &str) -> Result<(), String> {
@@ -355,7 +381,7 @@ where
     } else {
         names.first().cloned().unwrap_or_default()
     };
-    let notes = names
+    let notes: Vec<Note> = names
         .into_iter()
         .map(|name| {
             let (content, unreadable, reason) = match read(&dir, &name) {
@@ -366,6 +392,12 @@ where
                 content,
                 unreadable,
                 reason,
+                group: meta
+                    .note_groups
+                    .get(&name)
+                    .filter(|g| meta.groups.iter().any(|x| &x.id == *g))
+                    .cloned()
+                    .unwrap_or_default(),
                 mode: meta
                     .modes
                     .get(&name)
@@ -375,10 +407,17 @@ where
             }
         })
         .collect();
+    let groups = meta
+        .groups
+        .iter()
+        .filter(|g| notes.iter().any(|n| n.group == g.id))
+        .cloned()
+        .collect();
     Ok(Book {
         name: book.to_string(),
         notes,
         active,
+        groups,
     })
 }
 
@@ -398,13 +437,15 @@ pub fn load_books(root: &Path) -> Result<Vec<Book>, String> {
     Ok(books)
 }
 
-/// 保存一个笔记本的页面顺序、当前页面和模式。笔记本已经不在了就不写,免得把删掉的文件夹又建出来。
+/// 保存一个笔记本的页面顺序、当前页面、模式和分组(groups 是 None 时分组保持原样)。
+/// 笔记本已经不在了就不写,免得把删掉的文件夹又建出来。
 pub fn save_book_meta(
     root: &Path,
     book: &str,
     order: Vec<String>,
     active: String,
     modes: HashMap<String, String>,
+    groups: Option<Groups>,
 ) -> Result<(), String> {
     let dir = book_dir(root, book)?;
     if !dir.is_dir() {
@@ -414,6 +455,22 @@ pub fn save_book_meta(
     meta.order = order;
     meta.active = active;
     meta.modes = modes;
+    if let Some(g) = groups {
+        // 只记还有页面的分组,页面也只记在分组里的
+        let note_groups: HashMap<String, String> = g
+            .note_groups
+            .into_iter()
+            .filter(|(n, id)| {
+                !id.is_empty() && meta.order.contains(n) && g.groups.iter().any(|x| &x.id == id)
+            })
+            .collect();
+        meta.groups = g
+            .groups
+            .into_iter()
+            .filter(|x| !x.id.is_empty() && note_groups.values().any(|id| id == &x.id))
+            .collect();
+        meta.note_groups = note_groups;
+    }
     write_meta(&dir, &meta)
 }
 
@@ -792,6 +849,7 @@ mod tests {
             active: "a".into(),
             modes,
             book: "工作".into(),
+            ..Default::default()
         };
         write_meta(&dir, &meta).unwrap();
         assert_eq!(read_meta(&dir), meta);
@@ -803,6 +861,74 @@ mod tests {
         .unwrap();
         assert_eq!(read_meta(&dir).book, "");
         fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn tab_groups_are_saved_with_the_book_and_empty_groups_dropped() {
+        let root = temp_dir("groups");
+        for n in ["a", "b", "c"] {
+            fs::write(note_path(&root, n), n).unwrap();
+        }
+        let group = |id: &str, name: &str| TabGroup {
+            id: id.into(),
+            name: name.into(),
+            color: "#4c8bf5".into(),
+            collapsed: id == "g1",
+        };
+        save_book_meta(
+            &root,
+            "",
+            vec!["a".into(), "b".into(), "c".into()],
+            "a".into(),
+            HashMap::new(),
+            Some(Groups {
+                groups: vec![group("g1", "工作"), group("g2", "空的")],
+                note_groups: HashMap::from([
+                    ("a".to_string(), "g1".to_string()),
+                    ("b".to_string(), "g1".to_string()),
+                    ("gone".to_string(), "g1".to_string()),
+                    ("c".to_string(), "nope".to_string()),
+                ]),
+            }),
+        )
+        .unwrap();
+        let meta = read_meta(&root);
+        assert_eq!(
+            meta.groups,
+            vec![group("g1", "工作")],
+            "a group with no pages is not kept"
+        );
+        assert_eq!(
+            meta.note_groups.len(),
+            2,
+            "pages that are gone or in unknown groups are not kept"
+        );
+        let b = load_book(&root, "").unwrap();
+        assert_eq!(b.groups, vec![group("g1", "工作")]);
+        assert_eq!(
+            b.notes.iter().map(|n| n.group.as_str()).collect::<Vec<_>>(),
+            vec!["g1", "g1", ""]
+        );
+        // 不带分组保存(groups 是 None)时分组保持原样
+        save_book_meta(
+            &root,
+            "",
+            vec!["c".into(), "a".into(), "b".into()],
+            "c".into(),
+            HashMap::new(),
+            None,
+        )
+        .unwrap();
+        assert_eq!(read_meta(&root).groups, vec![group("g1", "工作")]);
+        // 0.3.1 写的 .minipad.json 没有分组
+        fs::write(
+            root.join(META_FILE),
+            r#"{"order":["a"],"active":"a","modes":{}}"#,
+        )
+        .unwrap();
+        let b = load_book(&root, "").unwrap();
+        assert!(b.groups.is_empty() && b.notes.iter().all(|n| n.group.is_empty()));
+        fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]
@@ -824,6 +950,7 @@ mod tests {
             vec!["计划".into(), "周报".into()],
             "周报".into(),
             HashMap::from([("周报".to_string(), "view".to_string())]),
+            None,
         )
         .unwrap();
 
@@ -1031,8 +1158,24 @@ mod tests {
         let root = temp_dir("book-meta");
         create_book(&root, "工作").unwrap();
         set_current_book(&root, "工作").unwrap();
-        save_book_meta(&root, "", vec!["a".into()], "a".into(), HashMap::new()).unwrap();
-        save_book_meta(&root, "工作", vec!["b".into()], "b".into(), HashMap::new()).unwrap();
+        save_book_meta(
+            &root,
+            "",
+            vec!["a".into()],
+            "a".into(),
+            HashMap::new(),
+            None,
+        )
+        .unwrap();
+        save_book_meta(
+            &root,
+            "工作",
+            vec!["b".into()],
+            "b".into(),
+            HashMap::new(),
+            None,
+        )
+        .unwrap();
         // 根目录那份记的当前笔记本不会被页面顺序覆盖掉
         let top = read_meta(&root);
         assert_eq!(
@@ -1044,7 +1187,7 @@ mod tests {
         let raw = fs::read_to_string(root.join("工作").join(META_FILE)).unwrap();
         assert!(!raw.contains("\"book\""));
         // 已经删掉的笔记本不会因为保存顺序又被建出来
-        save_book_meta(&root, "删掉了", vec![], String::new(), HashMap::new()).unwrap();
+        save_book_meta(&root, "删掉了", vec![], String::new(), HashMap::new(), None).unwrap();
         assert!(!root.join("删掉了").exists());
         fs::remove_dir_all(&root).unwrap();
     }

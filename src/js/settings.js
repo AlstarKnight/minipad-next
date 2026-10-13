@@ -14,6 +14,8 @@ import { APP_ICON, paintBall } from "./ballicon.js";
 import { applyFindAppearance, findColors } from "./findbar.js";
 import { openImport } from "./importer.js";
 import { applyOutlineSettings, outlineVars } from "./outline.js";
+import { applyTabBarSettings } from "./tabbar.js";
+import { renderTabs } from "./tabs.js";
 
 const REPO_URL = "https://github.com/AlstarKnight/minipad-next";
 
@@ -34,6 +36,9 @@ export function applySettings() {
   $("#btn-search").title = s.ctrl_f === "all" ? "搜索全部页面 (Ctrl+F)" : "搜索全部页面 (Ctrl+Shift+F)";
   applyEditorSettings(s);
   applyOutlineSettings(s);
+  applyTabBarSettings(s);
+  // 分组开关、分组样式变了要重画标签
+  renderTabs();
 }
 // 贴边隐藏的样式:露出的宽度和 Rust 里 edge::strip_for 一致(逻辑像素,Rust 按屏幕缩放换成物理像素)
 const EDGE_STYLES = ["arrow", "line", "hover"];
@@ -63,12 +68,14 @@ matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => stat
 let backupInfo = null;
 
 // ---- 分类:点左边(或上面)的分类只显示那一类,下次打开设置还停在上次看的那一类 ----
-const PAGES = ["general", "look", "edge", "ball", "editor", "outline", "find", "storage", "backup", "import"];
+const PAGES = ["general", "look", "window", "edit", "data"];
+// 0.3.1 分成 10 类,记着的旧分类换成合并后的那一类
+const OLD_PAGES = { edge: "window", ball: "window", editor: "edit", outline: "edit", find: "edit", storage: "data", backup: "data", import: "data" };
 const PAGE_KEY = "minipad-next-settings-page";
 let page = (() => {
   try {
     const saved = localStorage.getItem(PAGE_KEY);
-    return PAGES.includes(saved) ? saved : "general";
+    return PAGES.includes(saved) ? saved : OLD_PAGES[saved] || "general";
   } catch {
     return "general";
   }
@@ -94,8 +101,7 @@ export function showSettingsPage(name, { focus = false } = {}) {
 // 保存时出的错放在下面,同时换到出错的那一类,好看到要改的地方
 function pageForError(msg) {
   if (/热键|开机启动/.test(msg)) return "general";
-  if (/备份/.test(msg)) return "backup";
-  if (/文件夹|笔记/.test(msg)) return "storage";
+  if (/备份|文件夹|笔记/.test(msg)) return "data";
   return page;
 }
 
@@ -155,8 +161,20 @@ export function openSettings() {
   $("#set-backup").checked = s.backup_enabled;
   $("#set-backup-keep").value = s.backup_keep;
   $("#set-backup-dir").value = s.backup_dir;
+  $("#set-tab-overflow").value = ["scroll", "wrap", "drawer"].includes(s.tab_overflow) ? s.tab_overflow : "scroll";
+  $("#set-tab-fade").checked = s.tab_fade !== false;
+  $("#set-tab-list").checked = s.tab_list_button !== false;
+  const rows = Math.min(8, Math.max(2, Number(s.tab_rows) || 4));
+  $("#set-tab-rows").value = String(rows === 7 ? 8 : rows);
+  $("#set-drawer-side").value = s.tab_drawer_side === "right" ? "right" : "left";
+  $("#set-drawer-width").value = s.tab_drawer_width || 200;
+  $("#set-drawer-hover").checked = !!s.tab_drawer_hover;
+  $("#set-drawer-pinned").checked = !!s.tab_drawer_pinned;
+  $("#set-tab-groups").checked = !!s.tab_groups;
+  $("#set-group-style").value = s.tab_group_style === "tint" ? "tint" : "line";
   updateEdgeOptions();
   updateOutline();
+  updateTabOptions();
   $("#set-nav-pos").value = s.settings_nav === "top" ? "top" : "left";
   applyNavPos(s.settings_nav);
   $("#set-error").hidden = true;
@@ -247,6 +265,21 @@ function updateOutline() {
   $("#set-outline-width-val").textContent = width + " 像素";
   $("#set-outline-opacity-val").textContent = opacity + "%";
   outlineVars($("#set-outline-preview"), { width, opacity, color: outlineColor.value });
+}
+
+// 标签栏:只显示选中的那种方式的选项,预览跟着变;分组的样式只在打开分组时能改
+function updateTabOptions() {
+  const mode = $("#set-tab-overflow").value;
+  for (const el of document.querySelectorAll(".tab-option")) el.hidden = el.dataset.for !== mode;
+  const p = $("#set-tabs-preview");
+  p.dataset.mode = mode;
+  p.dataset.side = $("#set-drawer-side").value;
+  p.classList.toggle("no-fade", !$("#set-tab-fade").checked);
+  p.classList.toggle("no-list", !$("#set-tab-list").checked);
+  $("#set-drawer-width-val").textContent = (Number($("#set-drawer-width").value) || 200) + " 像素";
+  const off = !$("#set-tab-groups").checked;
+  for (const el of document.querySelectorAll(".group-option")) el.classList.toggle("off", off);
+  $("#set-group-style").disabled = off;
 }
 
 const ballColor = colorPicker(
@@ -379,6 +412,16 @@ async function submitSettings() {
     find_color: findColor.value,
     conflict_mode: $("#set-conflict").value,
     settings_nav: $("#set-nav-pos").value,
+    tab_overflow: $("#set-tab-overflow").value,
+    tab_fade: $("#set-tab-fade").checked,
+    tab_list_button: $("#set-tab-list").checked,
+    tab_rows: Number($("#set-tab-rows").value) || 4,
+    tab_drawer_side: $("#set-drawer-side").value,
+    tab_drawer_width: Number($("#set-drawer-width").value) || 200,
+    tab_drawer_hover: $("#set-drawer-hover").checked,
+    tab_drawer_pinned: $("#set-drawer-pinned").checked,
+    tab_groups: $("#set-tab-groups").checked,
+    tab_group_style: $("#set-group-style").value,
     backup_enabled: $("#set-backup").checked,
     backup_keep: Math.min(365, Math.max(1, Math.round(Number($("#set-backup-keep").value)) || 14)),
     backup_dir: $("#set-backup-dir").value.trim(),
@@ -487,6 +530,7 @@ export function bindSettings() {
   for (const id of ["#set-find-from", "#set-find-to", "#set-find-grad"]) $(id).addEventListener("input", findColor.custom);
   for (const id of ["#set-outline-from", "#set-outline-to", "#set-outline-grad"]) $(id).addEventListener("input", outlineColor.custom);
   for (const id of ["#set-outline", "#set-outline-width", "#set-outline-opacity"]) $(id).addEventListener("input", updateOutline);
+  for (const id of ["#set-tab-overflow", "#set-tab-fade", "#set-tab-list", "#set-drawer-side", "#set-drawer-width", "#set-tab-groups"]) $(id).addEventListener("input", updateTabOptions);
   $("#set-import").addEventListener("click", openImport);
   for (const id of ["#set-ball", "#set-ball-size", "#set-ball-opacity"]) $(id).addEventListener("input", updateBall);
   for (const r of document.querySelectorAll('input[name="set-ball-icon"]')) r.addEventListener("change", updateBall);

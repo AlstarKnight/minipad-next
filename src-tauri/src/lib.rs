@@ -124,6 +124,26 @@ pub struct Settings {
     outline_opacity: u32,
     /// 当前标题的颜色,写法同 accent;空着跟随强调色
     outline_color: String,
+    /// 标签放不下时:scroll 一排滚动 / wrap 点按钮展开成多行 / drawer 收进侧拉的页面列表
+    tab_overflow: String,
+    /// 一排滚动时,还有标签藏着的那一端淡出去
+    tab_fade: bool,
+    /// 一排滚动时,放不下就在标签后面显示"全部页面"按钮
+    tab_list_button: bool,
+    /// 点开多行时最多显示几行(再多在里面上下滚)
+    tab_rows: u32,
+    /// 侧拉的页面列表从 left 左边 / right 右边拉出来
+    tab_drawer_side: String,
+    /// 侧拉列表的宽度(像素)
+    tab_drawer_width: u32,
+    /// 鼠标移到窗口那一边的边缘也拉出页面列表
+    tab_drawer_hover: bool,
+    /// 页面列表钉住,一直开在编辑区旁边
+    tab_drawer_pinned: bool,
+    /// 标签分组(像 Edge 那样有名字、颜色、能折叠)
+    tab_groups: bool,
+    /// 组里的标签怎么标出来:line 下面一条组的颜色 / tint 整个标签淡淡染上组的颜色
+    tab_group_style: String,
     window: Option<Geom>,
 }
 
@@ -170,6 +190,16 @@ impl Default for Settings {
             outline_width: 200,
             outline_opacity: 100,
             outline_color: String::new(),
+            tab_overflow: "scroll".into(),
+            tab_fade: true,
+            tab_list_button: true,
+            tab_rows: 4,
+            tab_drawer_side: "left".into(),
+            tab_drawer_width: 200,
+            tab_drawer_hover: false,
+            tab_drawer_pinned: false,
+            tab_groups: false,
+            tab_group_style: "line".into(),
             window: None,
         }
     }
@@ -488,6 +518,11 @@ fn tidy_settings(s: &mut Settings) {
     s.outline_depth = s.outline_depth.clamp(1, 6);
     s.outline_width = s.outline_width.clamp(140, 360);
     s.outline_opacity = s.outline_opacity.clamp(40, 100);
+    pick_one(&mut s.tab_overflow, &["scroll", "wrap", "drawer"]);
+    pick_one(&mut s.tab_drawer_side, &["left", "right"]);
+    pick_one(&mut s.tab_group_style, &["line", "tint"]);
+    s.tab_rows = s.tab_rows.clamp(2, 8);
+    s.tab_drawer_width = s.tab_drawer_width.clamp(140, 360);
     s.ball_size = s.ball_size.clamp(32, 96);
     if !["app", "custom"].contains(&s.ball_icon.as_str()) {
         s.ball_icon = "app".into();
@@ -556,7 +591,8 @@ const WELCOME: &str = r#"# 欢迎使用 Minipad Next
 - **Ctrl+F** 在这一页里查找,**Ctrl+H** 替换(可以区分大小写、全字匹配、用正则表达式);**Ctrl+Shift+F** 搜索全部笔记本的页面
 - 页面多了可以分**笔记本**:点标签栏最左边的笔记本名字(或按 **Ctrl+B**)新建和切换,每个笔记本就是笔记文件夹里的一个子文件夹
 - 用过 minipad2?在笔记本列表里点"从 minipad2 导入…",原来的分组会变成笔记本
-- 页面长、标题多时,可以在设置的"目录"里打开**悬浮目录**:编辑区旁边一列短线,鼠标移上去展开成目录,点标题就跳过去
+- 页面长、标题多时,可以在设置的"编辑"里打开**悬浮目录**:编辑区旁边一列短线,鼠标移上去展开成目录,点标题就跳过去
+- 页面多了标签栏放不下时,点标签后面的页数按钮看全部页面;设置的"外观"里还可以换成点击展开成多行、侧拉的页面列表,或者打开**标签分组**
 - 每天第一次保存时会自动把笔记文件夹备份成 zip,默认保留最近 14 份,可以在设置里改
 
 ```python 试试复制
@@ -724,8 +760,21 @@ fn save_meta(
     order: Vec<String>,
     active: String,
     modes: HashMap<String, String>,
+    groups: Option<Vec<notes::TabGroup>>,
+    note_groups: Option<HashMap<String, String>>,
 ) -> Result<(), String> {
-    notes::save_book_meta(&current_notes_dir(&app), &book, order, active, modes)
+    let groups = groups.map(|groups| notes::Groups {
+        groups,
+        note_groups: note_groups.unwrap_or_default(),
+    });
+    notes::save_book_meta(
+        &current_notes_dir(&app),
+        &book,
+        order,
+        active,
+        modes,
+        groups,
+    )
 }
 
 #[tauri::command]
@@ -1919,6 +1968,58 @@ mod tests {
         // 0.3.0 的设置文件里没有这一项,读出来是默认值
         let old: Settings = serde_json::from_str(r#"{"hotkey":"Ctrl+M"}"#).unwrap();
         assert_eq!(old.settings_nav, "left");
+    }
+
+    #[test]
+    fn tidy_settings_keeps_tab_bar_options_known() {
+        let mut s = Settings::default();
+        assert_eq!(
+            (
+                s.tab_overflow.as_str(),
+                s.tab_fade,
+                s.tab_list_button,
+                s.tab_rows,
+                s.tab_drawer_side.as_str(),
+                s.tab_drawer_width,
+                s.tab_groups,
+                s.tab_group_style.as_str()
+            ),
+            ("scroll", true, true, 4, "left", 200, false, "line")
+        );
+        s.tab_overflow = "drawer".into();
+        s.tab_drawer_side = "right".into();
+        s.tab_group_style = "tint".into();
+        tidy_settings(&mut s);
+        assert_eq!(
+            (
+                s.tab_overflow.as_str(),
+                s.tab_drawer_side.as_str(),
+                s.tab_group_style.as_str()
+            ),
+            ("drawer", "right", "tint")
+        );
+        s.tab_overflow = "shrink".into();
+        s.tab_drawer_side = "top".into();
+        s.tab_group_style = "dot".into();
+        s.tab_rows = 30;
+        s.tab_drawer_width = 20;
+        tidy_settings(&mut s);
+        assert_eq!(
+            (
+                s.tab_overflow.as_str(),
+                s.tab_drawer_side.as_str(),
+                s.tab_group_style.as_str(),
+                s.tab_rows,
+                s.tab_drawer_width
+            ),
+            ("scroll", "left", "line", 8, 140)
+        );
+        // 0.3.1 的设置文件里没有这些,读出来是默认值
+        let old: Settings = serde_json::from_str(r#"{"hotkey":"Ctrl+M"}"#).unwrap();
+        assert_eq!(
+            (old.tab_overflow.as_str(), old.tab_fade, old.tab_groups),
+            ("scroll", true, false)
+        );
     }
 
     #[test]

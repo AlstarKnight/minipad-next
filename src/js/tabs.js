@@ -7,17 +7,37 @@ import { flushAll, scheduleMeta } from "./save.js";
 import { mutate } from "./sync.js";
 import { rememberView, showNote } from "./page.js";
 import { openBooks } from "./notebooks.js";
+import { groupsOn, groupOf, tidyGroups, groupChip, groupMenuItems, joinNeighbour, revealNote } from "./groups.js";
+import { refreshTabBar, afterSwitch, tabsVertical, revealActive } from "./tabbar.js";
 
 // 正在拖动的标签对应的页面
 let dragged = null;
 
+// 第 i 页的标签(打开分组时标签前面还夹着分组的名字,不能按位置找)
+export function tabAt(i) {
+  return tabsEl.querySelector(`.tab[data-index="${i}"]`);
+}
+
 export function renderTabs() {
   const b = book();
   tabsEl.innerHTML = "";
-  if (!b) return;
+  if (!b) return refreshTabBar();
+  const grouped = groupsOn();
+  if (grouped) tidyGroups(b);
   b.notes.forEach((n, i) => {
+    const g = grouped ? groupOf(b, n) : null;
+    if (g && groupOf(b, b.notes[i - 1]) !== g) {
+      tabsEl.appendChild(groupChip(b, g, b.notes.filter((x) => x.group === g.id).length));
+    }
     const t = document.createElement("div");
     t.className = "tab" + (i === b.active ? " active" : "") + (n.unreadable ? " unreadable" : "");
+    if (g) {
+      t.classList.add("in-group");
+      t.style.setProperty("--g", g.color);
+      if (groupOf(b, b.notes[i + 1]) !== g) t.classList.add("group-end");
+      // 折叠起来的分组只留当前页面的标签
+      if (g.collapsed && i !== b.active) t.classList.add("folded");
+    }
     t.draggable = true;
     t.dataset.index = i;
     t.title = n.unreadable ? `${n.name}:读取失败:${n.reason || "未知错误"}` : n.name;
@@ -36,10 +56,12 @@ export function renderTabs() {
     t.addEventListener("dblclick", () => startRename(n));
     t.addEventListener("contextmenu", (e) => {
       e.preventDefault();
+      const groupItems = groupMenuItems(n);
       openMenu(
         [
           { id: "rename", label: "重命名", act: () => startRename(n) },
           { id: "move", label: "移到笔记本…", act: () => openBooks(n) },
+          ...groupItems,
           { id: "delete", label: "删除页面", act: () => deleteNote(n), danger: true },
         ],
         e.clientX,
@@ -52,32 +74,40 @@ export function renderTabs() {
       e.dataTransfer.effectAllowed = "move";
     });
     t.addEventListener("dragend", () => (dragged = null));
+    // 横着排时看鼠标在标签的左半还是右半,竖着排(侧拉的页面列表)时看上半还是下半
+    const after = (e) => (tabsVertical() ? e.offsetY > t.offsetHeight / 2 : e.offsetX > t.offsetWidth / 2);
     t.addEventListener("dragover", (e) => {
       e.preventDefault();
-      const after = e.offsetX > t.offsetWidth / 2;
-      t.classList.toggle("drop-after", after);
-      t.classList.toggle("drop-before", !after);
+      const a = after(e);
+      t.classList.toggle("drop-after", a);
+      t.classList.toggle("drop-before", !a);
     });
     t.addEventListener("dragleave", () => t.classList.remove("drop-after", "drop-before"));
     t.addEventListener("drop", (e) => {
       e.preventDefault();
-      const after = t.classList.contains("drop-after");
+      const a = t.classList.contains("drop-after");
       t.classList.remove("drop-after", "drop-before");
       const notes = book().notes;
-      if (notes.includes(n)) moveTab(notes.indexOf(dragged), notes.indexOf(n) + (after ? 1 : 0));
+      if (!notes.includes(n) || !dragged) return;
+      moveTab(notes.indexOf(dragged), notes.indexOf(n) + (a ? 1 : 0), n);
     });
     tabsEl.appendChild(t);
   });
-  const act = tabsEl.children[b.active];
-  act?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  revealActive();
+  refreshTabBar();
 }
 
-export function moveTab(from, to) {
+// 拖动标签:放到 target 旁边(打开分组时也就进了 target 所在的分组)
+export function moveTab(from, to, target = null) {
   const b = book();
-  if (from < 0 || from === to || from + 1 === to) return;
+  if (from < 0) return;
+  const n = b.notes[from];
+  const joins = target && groupsOn() && (n.group || "") !== (groupOf(b, target) ? target.group : "");
+  if ((from === to || from + 1 === to) && !joins) return;
   const activeNote = current();
-  const [n] = b.notes.splice(from, 1);
+  b.notes.splice(from, 1);
   b.notes.splice(from < to ? to - 1 : to, 0, n);
+  if (target) joinNeighbour(b, n, target);
   b.active = b.notes.indexOf(activeNote);
   renderTabs();
   scheduleMeta(b);
@@ -88,20 +118,26 @@ export function switchTo(i) {
   if (i < 0 || i >= b.notes.length || i === b.active) return;
   rememberView();
   b.active = i;
+  revealNote(b, b.notes[i]);
   renderTabs();
   showNote();
   scheduleMeta(b);
+  afterSwitch();
 }
 
-export async function newNote() {
+// 新页面放在当前页面后面,和当前页面在同一个分组里;传了分组就放到那个分组的最后
+export async function newNote(group = null) {
   await flushAll();
   try {
     await mutate(async () => {
       const b = book();
       const name = await api.invoke("create_note", { book: b.name, name: "新页面" });
-      const n = makeNote(name, "");
+      const g = groupsOn() ? (group?.id ? group : groupOf(b, current())) : null;
+      const n = makeNote(name, "", "edit", false, null, g ? g.id : "");
       rememberView();
-      const at = Math.min(b.active + 1, b.notes.length);
+      let at = Math.min(b.active + 1, b.notes.length);
+      if (group?.id) b.notes.forEach((x, i) => x.group === group.id && (at = i + 1));
+      if (g) g.collapsed = false;
       b.notes.splice(at, 0, n);
       b.active = at;
       renderTabs();
@@ -116,7 +152,7 @@ export async function newNote() {
 
 export function startRename(n) {
   const b = book();
-  const t = tabsEl.children[b.notes.indexOf(n)];
+  const t = tabAt(b.notes.indexOf(n));
   if (!t || t.querySelector("input")) return;
   const input = document.createElement("input");
   input.value = n.name;

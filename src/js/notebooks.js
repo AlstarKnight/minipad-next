@@ -204,6 +204,8 @@ export async function moveNoteTo(n, target) {
       rememberView();
       removeNote(src, n);
       n.name = name;
+      // 分组是每个笔记本自己的,移过去以后不在分组里
+      n.group = "";
       target.notes.push(n);
       await ensurePage(src);
       if (src === book()) {
