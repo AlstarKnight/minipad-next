@@ -61,6 +61,8 @@ pub struct Settings {
     edge_line_width: u32,
     /// 细线占所在窗口边长的百分比，10..=100
     edge_line_length: u32,
+    /// 细线微光效果（默认关闭）
+    edge_line_glow: bool,
     /// 贴边标识的颜色,写法同 accent;空着跟随强调色
     edge_color: String,
     show_in_taskbar: bool,
@@ -164,8 +166,9 @@ impl Default for Settings {
             always_on_top: true,
             edge_hide: true,
             edge_style: "arrow".into(),
-            edge_line_width: 3,
+            edge_line_width: 2,
             edge_line_length: 100,
+            edge_line_glow: false,
             edge_color: String::new(),
             show_in_taskbar: false,
             autostart: false,
@@ -2137,8 +2140,9 @@ mod tests {
     #[test]
     fn edge_line_dimensions_are_backward_compatible_and_bounded() {
         let old: Settings = serde_json::from_str(r#"{"edge_style":"line"}"#).unwrap();
-        assert_eq!(old.edge_line_width, 3);
+        assert_eq!(old.edge_line_width, 2);
         assert_eq!(old.edge_line_length, 100);
+        assert!(!old.edge_line_glow);
 
         let mut s = Settings {
             edge_style: "arrow-only".into(),
