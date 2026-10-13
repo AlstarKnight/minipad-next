@@ -241,7 +241,15 @@
               </label>
               <label class="edge-line-control">
                 <span>细线长度</span>
+                <select id="set-edge-length-unit" aria-label="细线长度单位">
+                  <option value="percent">百分比 (%)</option>
+                  <option value="px">固定像素 (px)</option>
+                </select>
+              </label>
+              <label class="edge-line-control">
+                <span>长度</span>
                 <input id="set-edge-line-length" type="range" min="10" max="100" step="5" />
+                <input id="set-edge-length-number" type="number" min="10" max="100" step="1" aria-label="细线长度数值" />
                 <span id="set-edge-line-length-val" class="muted"></span>
               </label>
               <div id="set-edge-line-preview" class="edge-line-preview" aria-hidden="true"><span></span></div>
