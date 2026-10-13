@@ -1595,8 +1595,7 @@ describe("v0.3.5 editable color library", () => {
     const palette = p.locator("#set-accent + .shared-colors");
     assert.ok(await palette.locator('.uc-swatch[data-color="#123abc"]').isVisible(), "previously saved colors were migrated");
     const solid = palette.locator('.uc-swatch[data-color="#3b82f6"]');
-    await solid.hover();
-    await solid.locator("..").locator(".uc-modify").click();
+    await solid.click({ button: "right" });
     await palette.locator('input[aria-label="节点 1 颜色"]').fill("#abcdef");
     await palette.locator(".uc-editor .primary").click();
     await until(async () => (await h.stored())?.settings?.color_library?.includes("#abcdef"), true, "edited solid is persisted");
@@ -1604,8 +1603,7 @@ describe("v0.3.5 editable color library", () => {
     assert.equal((await h.stored()).settings.accent, "#3b82f6", "editing the library does not recolor the existing accent");
 
     const oldGradient = "linear-gradient(135deg, #5fb4ff, #d66cf0)";
-    await palette.locator('.uc-swatch[data-color="' + oldGradient + '"]').hover();
-    await palette.locator('.uc-swatch[data-color="' + oldGradient + '"]').locator("..").locator(".uc-modify").click();
+    await palette.locator('.uc-swatch[data-color="' + oldGradient + '"]').click({ button: "right" });
     await palette.locator('input[aria-label="渐变角度"]').fill("210");
     await palette.locator('input[aria-label="渐变角度"]').dispatchEvent("change");
     await palette.locator(".uc-editor .uc-actions button").first().click();
@@ -1793,7 +1791,7 @@ describe("v0.3.4 picker regressions", () => {
     await until(async () => (await h.editor()).includes("background-color: #123abc"), true, "enter applies format color");
   });
 
-  ui("quick color row stays compact and the full library has its own scroll area", {
+  ui("quick colors remain aligned and settings palettes expand without nested scrolling", {
     seed: { ...seed({ "": { 页: "文字" } }), settings: {
       ...SETTINGS, color_library: Array.from({ length: 40 }, (_, i) => "#" + (0x123400 + i).toString(16)),
     } },
@@ -1806,8 +1804,14 @@ describe("v0.3.4 picker regressions", () => {
     assert.equal(await root.locator(".uc-swatch").count(), 40, "full library remains available");
     await root.locator(".uc-more").click();
     assert.equal(await root.locator(".uc-preset:visible").count(), 40);
-    assert.ok(await root.locator(".uc-presets").evaluate((el) => el.scrollHeight > el.clientHeight),
-      "large library scrolls inside its own grid");
+    assert.ok(await root.locator(".uc-presets").evaluate((el) => el.scrollHeight <= el.clientHeight + 1),
+      "settings expand without a second vertical scroll area");
+    const placement = await root.locator(".uc-more").evaluate((node) => {
+      const root = node.closest(".uc-presets");
+      const area = root.getBoundingClientRect(), button = node.getBoundingClientRect();
+      return { right: area.right - button.right, top: button.top - area.top };
+    });
+    assert.ok(placement.right < 12 && placement.top < 12, "collapse button stays in the quick row's rightmost slot");
     await root.locator(".uc-more").click();
     assert.equal(await root.locator(".uc-preset:visible").count(), 5);
   });

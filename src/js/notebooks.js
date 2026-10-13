@@ -311,9 +311,17 @@ function renderManager() {
     button.setAttribute("role", "radio");
     button.setAttribute("aria-checked", String((b.icon_color || "") === color));
     button.style.setProperty("--book-swatch", color || "var(--accent-grad)");
-    if (!color) button.textContent = "A";
+    if (!color) button.textContent = "↻";
     button.addEventListener("click", () => void saveAppearance(b, b.icon || "book", color));
-    container.append(button);
+    if (color) container.append(button);
+    else {
+      const row = document.createElement("div");
+      row.className = "bm-follow-color";
+      const label = document.createElement("span");
+      label.textContent = "跟随强调色";
+      row.append(button, label);
+      container.append(row);
+    }
     return button;
   };
   const colors = $("#bm-colors");

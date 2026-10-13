@@ -75,6 +75,15 @@ const make = (tag, cls = "", label = "") => {
   return node;
 };
 const percentage = (i, count) => Math.round((i / Math.max(count - 1, 1)) * 100);
+const lightText = (value) => (parseAccent(value)?.stops || []).some((hex) => {
+  const rgb = hex.match(/^#([0-9a-f]{6})$/i)?.[1];
+  if (!rgb) return false;
+  const channels = [0, 2, 4].map((i) => {
+    const v = parseInt(rgb.slice(i, i + 2), 16) / 255;
+    return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+  });
+  return channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722 > 0.45;
+});
 
 /** 返回可挂到任意容器的通用“我的颜色 + 多节点编辑器”。
  *  onApply 可以是异步函数；只有用户主动点击应用才更新目标设置。
@@ -247,6 +256,10 @@ export function makeSharedColorTools({ getValue, onApply, defaultColor = "#d9822
         swatch.textContent = "A";
         if (parseAccent(color)?.to) swatch.style.setProperty("--uc-text-gradient", color);
         else swatch.style.color = color;
+        if (lightText(color)) {
+          swatch.title += "（浅色主题下文字对比度较低）";
+          swatch.dataset.contrastWarning = "light-text";
+        }
       } else {
         swatch.style.background = color;
         if (previewMode === "background") swatch.title += "（深色背景可能影响文字对比度）";
@@ -277,12 +290,18 @@ export function makeSharedColorTools({ getValue, onApply, defaultColor = "#d9822
         void moveSharedPreset(dragged, sharedColorPresets().indexOf(color))
           .catch((err) => toast(String(err)));
       });
+      swatch.title += "；双击或右键编辑，F2 键也可编辑";
       swatch.addEventListener("dblclick", () => openEditor(color, color));
-      const modify = make("button", "uc-modify", "✎");
-      modify.type = "button";
-      modify.title = "编辑颜色";
-      modify.setAttribute("aria-label", "编辑颜色 " + color);
-      modify.addEventListener("click", () => openEditor(color, color));
+      swatch.addEventListener("contextmenu", (e) => {
+        e.preventDefault();
+        if (buttons.classList.contains("expanded")) openEditor(color, color);
+      });
+      swatch.addEventListener("keydown", (e) => {
+        if (e.key === "F2" && buttons.classList.contains("expanded")) {
+          e.preventDefault();
+          openEditor(color, color);
+        }
+      });
       const remove = make("button", "uc-delete", "×");
       remove.type = "button"; remove.title = "删除颜色预设";
       remove.setAttribute("aria-label", "删除保存的颜色 " + color);
@@ -294,7 +313,7 @@ export function makeSharedColorTools({ getValue, onApply, defaultColor = "#d9822
           toast("已删除颜色，可点击“撤销删除”");
         }).catch((err) => toast(String(err)));
       });
-      wrap.append(swatch, modify, remove);
+      wrap.append(swatch, remove);
       buttons.append(wrap);
     }
     buttons.append(more);
