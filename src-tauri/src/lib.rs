@@ -2288,6 +2288,9 @@ mod tests {
         assert!(old.color_presets.is_none());
         tidy_settings(&mut old);
         assert_eq!(old.color_presets.as_ref().unwrap().len(), 2);
+        let written = serde_json::to_value(&old).unwrap();
+        assert!(written.get("book_color_presets").is_none(), "旧预设字段只读，不再写回");
+        assert_eq!(written["color_presets"].as_array().unwrap().len(), 2);
         old.color_presets = Some(Vec::new());
         tidy_settings(&mut old);
         assert!(old.color_presets.unwrap().is_empty());
@@ -2316,6 +2319,30 @@ mod tests {
             .unwrap()
             .color_presets
             .is_none());
+    }
+
+    #[test]
+    fn tidy_settings_validates_all_custom_colors_like_notebook_icons() {
+        let valid = "linear-gradient(90deg, #112233 0%, #445566 25%, #778899 100%)";
+        let mut s = Settings {
+            accent: " red ".into(),
+            edge_color: "foo".into(),
+            ball_color: format!("  {valid}  "),
+            find_color: "#ABCDEF".into(),
+            outline_color: "blue".into(),
+            ..Settings::default()
+        };
+        tidy_settings(&mut s);
+        assert_eq!(s.accent, "");
+        assert_eq!(s.edge_color, "");
+        assert_eq!(s.ball_color, valid);
+        assert_eq!(s.find_color, "#abcdef");
+        assert_eq!(s.outline_color, "");
+        s.edge_color = "linear-gradient(90deg, #112233 120%, #445566 100%)".into();
+        s.accent = "linear-gradient(20deg, red, foo)".into();
+        tidy_settings(&mut s);
+        assert_eq!(s.edge_color, "");
+        assert_eq!(s.accent, "");
     }
 
     #[test]

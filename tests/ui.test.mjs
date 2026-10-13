@@ -1571,6 +1571,12 @@ describe("v0.3.4 picker regressions", () => {
     await p.click("#btn-settings");
     await settingsPage(p, "look");
     assert.equal(await p.locator("#settings .accent-custom").count(), 0);
+    const layout = await p.$eval("#set-accent + .shared-colors", (el) => {
+      const top = (node) => Math.round(node.getBoundingClientRect().top);
+      return [getComputedStyle(el).display, top(el.querySelector(".uc-title")), top(el.querySelector(".uc-presets")), top(el.querySelector(".uc-actions"))];
+    });
+    assert.equal(layout[0], "grid", "settings palettes are compact");
+    assert.ok(Math.max(...layout.slice(1)) - Math.min(...layout.slice(1)) < 10, "presets and actions share one row");
     await p.click('#set-accent button[title="蓝色"]');
     assert.equal(await p.$eval("#set-accent .on", (el) => getComputedStyle(el).outlineWidth), "1px");
   });
@@ -1594,6 +1600,39 @@ describe("v0.3.4 picker regressions", () => {
     await p.click('#format-bar [data-cmd="bg"]');
     await check(".fb-pop .uc-preset");
     assert.equal(await p.$eval(".fb-pop .uc-actions button", (el) => getComputedStyle(el).borderTopWidth), "1px");
+  });
+
+  ui("saved colors and the node editor support keyboard actions in settings, groups and format bar", {
+    seed: { ...seed({ "": { a: "文字", b: "文本" } }), settings: { ...SETTINGS, tab_groups: true, color_presets: ["#123abc"] } },
+  }, async (h) => {
+    const { p } = h;
+    await p.click("#btn-settings");
+    await settingsPage(p, "look");
+    const accent = p.locator("#set-accent + .shared-colors");
+    await accent.locator(".uc-swatch").focus();
+    await p.keyboard.press("Enter");
+    await accent.locator(".uc-actions button").first().focus();
+    await p.keyboard.press("Enter");
+    assert.ok(await accent.locator(".uc-editor").isVisible(), "Enter opens the same editor");
+    await accent.locator(".uc-controls select").focus();
+    await p.keyboard.press("ArrowDown");
+    assert.equal(await accent.locator(".uc-controls select").inputValue(), "gradient", "keyboard changes the gradient mode");
+    await p.click("#set-save");
+    await until(() => h.stored().then((s) => s.settings.accent), "#123abc");
+
+    await p.click("#tabs .tab:nth-child(1)", { button: "right" });
+    await p.click('#ctx button[data-act="group-new"]');
+    await p.locator("#ge-colors .uc-swatch").focus();
+    await p.keyboard.press("Space");
+    await until(() => h.stored().then((s) => s.books[""].meta.groups[0].color), "#123abc", "space selects group color");
+
+    await p.click("#editor .ProseMirror p");
+    await p.keyboard.press("Home");
+    await p.keyboard.press("Shift+End");
+    await p.click('#format-bar [data-cmd="bg"]');
+    await p.locator(".fb-pop .uc-swatch").focus();
+    await p.keyboard.press("Enter");
+    await until(async () => (await h.editor()).includes("background-color: #123abc"), true, "enter applies format color");
   });
 
   ui("fixed px length keeps the numeric input wide enough", async ({ p }) => {
@@ -1839,7 +1878,7 @@ describe("theme and accent", () => {
     assert.equal(await p.inputValue("#set-edge-line-length"), "120", "fixed mode starts at 120px");
     await p.fill("#set-edge-length-number", "100");
     await p.locator("#set-edge-length-number").dispatchEvent("change");
-    assert.equal(await p.textContent("#set-edge-line-length-val"), "100px");
+    assert.equal(await p.textContent("#set-edge-line-length-val"), "px", "the number is shown only once");
     await p.selectOption("#set-edge-length-unit", "percent");
     assert.equal(await p.inputValue("#set-edge-line-length"), "45", "percent value survives mode switch");
     await p.selectOption("#set-edge-length-unit", "px");
@@ -3003,6 +3042,15 @@ describe("0.3.2: tab groups", () => {
     assert.deepEqual(await strip(p), ["a", "[组]", "b", "c", "d", "e"]);
     await p.fill("#dr-filter", "d");
     assert.deepEqual(await p.$$eval("#tabs > :not(.filtered)", (els) => els.map((e) => e.textContent)), ["d"], "a group with no match hides its name too");
+  });
+});
+
+describe("v0.3.4 group gradient direction", () => {
+  ui("group underline keeps a horizontal gradient and custom stop positions", {
+    seed: books({ tab_groups: true }, { groups: [{ id: "g1", name: "组", color: "linear-gradient(45deg, #112233 0%, #445566 25%, #778899 100%)", collapsed: false }], note_groups: { b: "g1" } }),
+  }, async ({ p }) => {
+    assert.equal(await p.$eval(".tab-group", (el) => el.style.getPropertyValue("--g-grad")),
+      "linear-gradient(90deg, #112233 0%, #445566 25%, #778899 100%)");
   });
 });
 
