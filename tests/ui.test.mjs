@@ -2207,8 +2207,8 @@ describe("0.3.1: settings in categories", () => {
   });
 });
 
-// ---------- 0.3.2:悬浮目录 ----------
-describe("0.3.2: floating outline", () => {
+// ---------- 0.3.1:悬浮目录 ----------
+describe("0.3.1: floating outline", () => {
   const TEXT = "一段正文,撑开页面的高度。".repeat(12);
   const PLAN = ["# 项目计划", TEXT, "## 背景", TEXT, "## 目标", TEXT, "### 第一阶段", TEXT, "#### 细节", TEXT, "## 做法", TEXT, "# 附录", TEXT].join("\n\n");
   const ON = { ...SETTINGS, outline_enabled: true };

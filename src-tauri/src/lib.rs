@@ -1965,7 +1965,7 @@ mod tests {
             ),
             ("hover", "right", 6, 140, 40, "")
         );
-        // 0.3.1 的设置文件里没有这几项,读出来是默认值(目录关着)
+        // 0.3.0 的设置文件里没有这几项,读出来是默认值(目录关着)
         let old: Settings = serde_json::from_str(r#"{"hotkey":"Ctrl+M"}"#).unwrap();
         assert!(!old.outline_enabled);
         assert_eq!((old.outline_depth, old.outline_width), (3, 200));
