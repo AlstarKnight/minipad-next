@@ -144,6 +144,12 @@ pub struct Settings {
     tab_groups: bool,
     /// 组里的标签怎么标出来:line 下面一条组的颜色 / tint 整个标签淡淡染上组的颜色
     tab_group_style: String,
+    /// 选中文字时的悬浮工具栏:always 总是出现 / nobar 只在格式栏收起时 / off 不出现
+    sel_bar: String,
+    /// 悬浮工具栏上的按钮(按顺序,id 同格式栏)
+    sel_bar_items: Vec<String>,
+    /// 悬浮工具栏放在选区的 above 上面 / below 下面(放不下时换到另一边)
+    sel_bar_pos: String,
     window: Option<Geom>,
 }
 
@@ -200,6 +206,13 @@ impl Default for Settings {
             tab_drawer_pinned: false,
             tab_groups: false,
             tab_group_style: "line".into(),
+            sel_bar: "always".into(),
+            sel_bar_items: [
+                "block", "strong", "em", "strike", "code", "link", "sep3", "color", "bg",
+            ]
+            .map(String::from)
+            .to_vec(),
+            sel_bar_pos: "above".into(),
             window: None,
         }
     }
@@ -521,6 +534,12 @@ fn tidy_settings(s: &mut Settings) {
     pick_one(&mut s.tab_overflow, &["scroll", "wrap", "drawer"]);
     pick_one(&mut s.tab_drawer_side, &["left", "right"]);
     pick_one(&mut s.tab_group_style, &["line", "tint"]);
+    pick_one(&mut s.sel_bar, &["always", "nobar", "off"]);
+    pick_one(&mut s.sel_bar_pos, &["above", "below"]);
+    let mut seen = std::collections::HashSet::new();
+    s.sel_bar_items
+        .retain(|id| !id.is_empty() && id.len() <= 32 && seen.insert(id.clone()));
+    s.sel_bar_items.truncate(64);
     s.tab_rows = s.tab_rows.clamp(2, 8);
     s.tab_drawer_width = s.tab_drawer_width.clamp(140, 360);
     s.ball_size = s.ball_size.clamp(32, 96);
@@ -2019,6 +2038,34 @@ mod tests {
         assert_eq!(
             (old.tab_overflow.as_str(), old.tab_fade, old.tab_groups),
             ("scroll", true, false)
+        );
+    }
+
+    #[test]
+    fn tidy_settings_keeps_selection_bar_options_known() {
+        let mut s = Settings::default();
+        assert_eq!(
+            (s.sel_bar.as_str(), s.sel_bar_pos.as_str()),
+            ("always", "above")
+        );
+        assert_eq!(s.sel_bar_items.first().map(String::as_str), Some("block"));
+        s.sel_bar = "sometimes".into();
+        s.sel_bar_pos = "left".into();
+        s.sel_bar_items = vec!["strong".into(), "".into(), "strong".into(), "em".into()];
+        tidy_settings(&mut s);
+        assert_eq!(
+            (s.sel_bar.as_str(), s.sel_bar_pos.as_str()),
+            ("always", "above")
+        );
+        assert_eq!(s.sel_bar_items, vec!["strong", "em"]);
+        s.sel_bar = "nobar".into();
+        tidy_settings(&mut s);
+        assert_eq!(s.sel_bar, "nobar");
+        // 0.3.1 的设置文件里没有这些,读出来是默认值
+        let old: Settings = serde_json::from_str(r#"{"hotkey":"Ctrl+M"}"#).unwrap();
+        assert_eq!(
+            (old.sel_bar.as_str(), old.sel_bar_items.len()),
+            ("always", 9)
         );
     }
 

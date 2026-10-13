@@ -7,7 +7,7 @@ import { flushAll, scheduleMeta } from "./save.js";
 import { mutate } from "./sync.js";
 import { rememberView, showNote } from "./page.js";
 import { openBooks } from "./notebooks.js";
-import { groupsOn, groupOf, tidyGroups, groupChip, groupMenuItems, joinNeighbour, revealNote } from "./groups.js";
+import { groupsOn, groupOf, tidyGroups, groupChip, groupMenuItems, joinNeighbour, revealNote, groupVars } from "./groups.js";
 import { refreshTabBar, afterSwitch, tabsVertical, revealActive } from "./tabbar.js";
 
 // 正在拖动的标签对应的页面
@@ -33,7 +33,7 @@ export function renderTabs() {
     t.className = "tab" + (i === b.active ? " active" : "") + (n.unreadable ? " unreadable" : "");
     if (g) {
       t.classList.add("in-group");
-      t.style.setProperty("--g", g.color);
+      groupVars(t, g.color);
       if (groupOf(b, b.notes[i + 1]) !== g) t.classList.add("group-end");
       // 折叠起来的分组只留当前页面的标签
       if (g.collapsed && i !== b.active) t.classList.add("folded");

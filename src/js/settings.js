@@ -15,6 +15,7 @@ import { applyFindAppearance, findColors } from "./findbar.js";
 import { openImport } from "./importer.js";
 import { applyOutlineSettings, outlineVars } from "./outline.js";
 import { applyTabBarSettings } from "./tabbar.js";
+import { ALL_ITEMS, DEFAULT_SEL_ITEMS, itemChecklist, orderedItems } from "./formatbar.js";
 import { renderTabs } from "./tabs.js";
 
 const REPO_URL = "https://github.com/AlstarKnight/minipad-next";
@@ -175,6 +176,9 @@ export function openSettings() {
   updateEdgeOptions();
   updateOutline();
   updateTabOptions();
+  $("#set-sel-bar").value = ["always", "nobar", "off"].includes(s.sel_bar) ? s.sel_bar : "always";
+  $("#set-sel-pos").value = s.sel_bar_pos === "below" ? "below" : "above";
+  showSelItems(Array.isArray(s.sel_bar_items) ? s.sel_bar_items : DEFAULT_SEL_ITEMS);
   $("#set-nav-pos").value = s.settings_nav === "top" ? "top" : "left";
   applyNavPos(s.settings_nav);
   $("#set-error").hidden = true;
@@ -280,6 +284,39 @@ function updateTabOptions() {
   const off = !$("#set-tab-groups").checked;
   for (const el of document.querySelectorAll(".group-option")) el.classList.toggle("off", off);
   $("#set-group-style").disabled = off;
+}
+
+// 悬浮工具栏的按钮:勾选的按顺序排在前面,没勾的按默认顺序跟在后面
+let selItems = DEFAULT_SEL_ITEMS;
+function showSelItems(items) {
+  selItems = items.slice();
+  const known = new Set(ALL_ITEMS.map((it) => it.id));
+  const order = [...selItems.filter((id) => known.has(id)), ...orderedItems([]).map((it) => it.id).filter((id) => !selItems.includes(id))];
+  const hidden = order.filter((id) => !selItems.includes(id));
+  $("#set-sel-items").replaceChildren(
+    itemChecklist(order, hidden, (ids, off) => {
+      selItems = ids.filter((id) => !off.includes(id));
+      updateSelOptions();
+    }),
+  );
+  updateSelOptions();
+}
+// 不弹出时其他选项变灰;上面是按钮的预览
+function updateSelOptions() {
+  const off = $("#set-sel-bar").value === "off";
+  for (const el of document.querySelectorAll(".sel-option")) el.classList.toggle("off", off);
+  for (const el of document.querySelectorAll(".sel-option input, .sel-option select, .sel-option button")) el.disabled = off;
+  const byId = new Map(ALL_ITEMS.map((it) => [it.id, it]));
+  const parts = [];
+  for (const id of selItems) {
+    const it = byId.get(id);
+    if (!it || (it.sep && (!parts.length || parts.at(-1).sep))) continue;
+    parts.push(it);
+  }
+  while (parts.at(-1)?.sep) parts.pop();
+  $("#set-sel-preview").innerHTML = parts.length
+    ? parts.map((it) => (it.sep ? '<span class="sep"></span>' : `<span class="b">${it.block ? "正文" : it.label}</span>`)).join("")
+    : '<span class="muted">没有按钮</span>';
 }
 
 const ballColor = colorPicker(
@@ -422,6 +459,9 @@ async function submitSettings() {
     tab_drawer_pinned: $("#set-drawer-pinned").checked,
     tab_groups: $("#set-tab-groups").checked,
     tab_group_style: $("#set-group-style").value,
+    sel_bar: $("#set-sel-bar").value,
+    sel_bar_pos: $("#set-sel-pos").value,
+    sel_bar_items: selItems,
     backup_enabled: $("#set-backup").checked,
     backup_keep: Math.min(365, Math.max(1, Math.round(Number($("#set-backup-keep").value)) || 14)),
     backup_dir: $("#set-backup-dir").value.trim(),
@@ -531,6 +571,8 @@ export function bindSettings() {
   for (const id of ["#set-outline-from", "#set-outline-to", "#set-outline-grad"]) $(id).addEventListener("input", outlineColor.custom);
   for (const id of ["#set-outline", "#set-outline-width", "#set-outline-opacity"]) $(id).addEventListener("input", updateOutline);
   for (const id of ["#set-tab-overflow", "#set-tab-fade", "#set-tab-list", "#set-drawer-side", "#set-drawer-width", "#set-tab-groups"]) $(id).addEventListener("input", updateTabOptions);
+  $("#set-sel-bar").addEventListener("input", updateSelOptions);
+  $("#set-sel-reset").addEventListener("click", () => showSelItems(DEFAULT_SEL_ITEMS));
   $("#set-import").addEventListener("click", openImport);
   for (const id of ["#set-ball", "#set-ball-size", "#set-ball-opacity"]) $(id).addEventListener("input", updateBall);
   for (const r of document.querySelectorAll('input[name="set-ball-icon"]')) r.addEventListener("change", updateBall);

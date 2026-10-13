@@ -6,6 +6,7 @@ import { $ } from "./dom.js";
 import { state, book } from "./state.js";
 import { scheduleMeta } from "./save.js";
 import { renderTabs, newNote } from "./tabs.js";
+import { GRADIENTS, gradient, gradientOf, parseAccent, tidyAccent } from "./accent.js";
 
 // 分组的颜色,和 Edge 的差不多
 export const GROUP_COLORS = [
@@ -19,6 +20,22 @@ export const GROUP_COLORS = [
   ["青色", "#2fa8b8"],
   ["橙色", "#e8833a"],
 ];
+
+// 分组的渐变色:和强调色同一套
+export const GROUP_GRADIENTS = GRADIENTS.map((g) => [g.name, gradientOf(g.stops)]);
+
+// 分组的颜色放到元素上:--g 是纯色(渐变取起点),--g-grad 是整条颜色(纯色或渐变),
+// --g-soft / --g-soft2 / --g-tint 是淡一些的同样的颜色(分组名字的底色、鼠标移上去、整个标签染色)
+export function groupVars(el, color) {
+  const a = parseAccent(color) || parseAccent(GROUP_COLORS[0][1]);
+  const stops = a.to ? a.stops : [a.from, a.from];
+  const fade = (p) => `linear-gradient(90deg, ${stops.map((c) => `color-mix(in srgb, ${c} ${p}%, transparent)`).join(", ")})`;
+  el.style.setProperty("--g", a.from);
+  el.style.setProperty("--g-grad", `linear-gradient(90deg, ${stops.join(", ")})`);
+  el.style.setProperty("--g-soft", fade(24));
+  el.style.setProperty("--g-soft2", fade(36));
+  el.style.setProperty("--g-tint", fade(15));
+}
 
 export const groupsOn = () => !!state.settings?.tab_groups;
 
@@ -145,7 +162,7 @@ export function groupChip(b, g, count) {
   c.type = "button";
   c.className = "tab-group" + (g.collapsed ? " collapsed" : "") + (g.name ? "" : " unnamed");
   c.dataset.group = g.id;
-  c.style.setProperty("--g", g.color);
+  groupVars(c, g.color);
   c.setAttribute("aria-expanded", String(!g.collapsed));
   c.title = `${groupLabel(g)}(${count} 页)· 点一下${g.collapsed ? "展开" : "折叠"},右键改名字和颜色`;
   const name = document.createElement("span");
@@ -212,38 +229,62 @@ export function closeGroupEditor() {
 
 function paintColors() {
   const g = editing;
-  const box = $("#ge-colors");
-  box.replaceChildren(
-    ...GROUP_COLORS.map(([label, c]) => {
-      const b = document.createElement("button");
-      b.type = "button";
-      b.className = "ge-color" + (g.color === c ? " on" : "");
-      b.style.setProperty("--c", c);
-      b.title = label;
-      b.setAttribute("role", "radio");
-      b.setAttribute("aria-checked", String(g.color === c));
-      b.addEventListener("click", () => setColor(c));
-      return b;
-    }),
-  );
-  // 自定义颜色
-  const custom = document.createElement("label");
-  const on = !GROUP_COLORS.some(([, c]) => c === g.color);
-  custom.className = "ge-color custom" + (on ? " on" : "");
-  custom.title = "自定义颜色";
-  custom.style.setProperty("--c", on ? g.color : "transparent");
-  const input = document.createElement("input");
-  input.type = "color";
-  input.value = /^#[0-9a-f]{6}$/i.test(g.color) ? g.color : "#4c8bf5";
-  input.addEventListener("input", () => setColor(input.value, false));
-  input.addEventListener("change", () => paintColors());
-  custom.appendChild(input);
-  box.appendChild(custom);
+  const now = tidyAccent(g.color);
+  const swatch = (label, c) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "ge-color" + (now === c ? " on" : "");
+    b.style.setProperty("--c", c);
+    b.title = label;
+    b.setAttribute("role", "radio");
+    b.setAttribute("aria-checked", String(now === c));
+    b.addEventListener("click", () => setColor(c));
+    return b;
+  };
+  const solid = document.createElement("div");
+  solid.className = "ge-row";
+  solid.append(...GROUP_COLORS.map(([label, c]) => swatch(label, c)));
+  const title = document.createElement("div");
+  title.className = "menu-title";
+  title.textContent = "渐变色";
+  const grads = document.createElement("div");
+  grads.className = "ge-row";
+  grads.append(...GROUP_GRADIENTS.map(([label, c]) => swatch(label + "渐变", c)));
+  // 自定义:挑一个颜色,勾上"渐变到"再挑一个就是渐变色
+  const a = parseAccent(now) || parseAccent(GROUP_COLORS[1][1]);
+  const custom = document.createElement("div");
+  custom.className = "ge-custom";
+  const label = document.createElement("span");
+  label.textContent = "自定义";
+  const from = document.createElement("input");
+  from.type = "color";
+  from.value = a.from;
+  from.title = "颜色";
+  const gradBox = document.createElement("label");
+  const grad = document.createElement("input");
+  grad.type = "checkbox";
+  grad.checked = !!a.to;
+  gradBox.append(grad, " 渐变到");
+  const to = document.createElement("input");
+  to.type = "color";
+  to.value = a.to || "#a66bff";
+  to.title = "渐变的另一端";
+  to.disabled = !a.to;
+  const apply = () => {
+    to.disabled = !grad.checked;
+    setColor(grad.checked ? gradient(from.value, to.value) : from.value, false);
+    for (const b of $("#ge-colors").querySelectorAll(".ge-color")) b.classList.remove("on");
+  };
+  from.addEventListener("input", apply);
+  to.addEventListener("input", apply);
+  grad.addEventListener("change", apply);
+  custom.append(label, from, gradBox, to);
+  $("#ge-colors").replaceChildren(solid, title, grads, custom);
 }
 
 function setColor(c, repaint = true) {
   if (!editing) return;
-  editing.color = c;
+  editing.color = tidyAccent(c) || c;
   renderTabs();
   scheduleMeta(book());
   if (repaint) paintColors();

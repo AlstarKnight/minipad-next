@@ -279,6 +279,29 @@
               <span id="set-date-preview" class="muted"></span>
               <span>写法:yyyy 年、M 月、d 日、H 时、mm 分、ss 秒、dddd 星期几</span>
             </div>
+            <h3>悬浮工具栏</h3>
+            <label class="row">
+              <span>选中文字时</span>
+              <select id="set-sel-bar">
+                <option value="always">弹出悬浮按钮</option>
+                <option value="nobar">格式栏收起时才弹出</option>
+                <option value="off">不弹出</option>
+              </select>
+            </label>
+            <label class="row sel-option">
+              <span>位置</span>
+              <select id="set-sel-pos">
+                <option value="above">选中文字的上面</option>
+                <option value="below">选中文字的下面</option>
+              </select>
+            </label>
+            <div class="row col sel-option">
+              <span>按钮(勾选要显示的,拖动调整顺序)</span>
+              <div id="set-sel-preview" class="sel-preview" aria-hidden="true"></div>
+              <div id="set-sel-items" class="sel-items"></div>
+              <div class="row"><button id="set-sel-reset" type="button" class="link">恢复默认按钮</button></div>
+            </div>
+
             <h3>悬浮目录</h3>
             <label class="row check"><input id="set-outline" type="checkbox" /> <span>显示悬浮目录(列出这一页的标题,点一下跳过去)</span></label>
             <div class="row outline-option">

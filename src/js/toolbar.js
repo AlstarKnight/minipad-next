@@ -1,10 +1,7 @@
-// ---------- 选中文字时的小工具栏 ----------
-// 选中一段文字,上方出现一排按钮:粗体、斜体、删除线、行内代码、链接、标题、列表、任务、引用、代码块。
-// 只在格式栏收起来的时候出现
+// ---------- 格式按钮 ----------
+// 粗体、斜体、删除线、行内代码、链接、标题、列表、任务、引用、代码块这些按钮的做法,
+// 格式栏和选中文字时的悬浮工具栏都用(见 formatbar.js)
 import {
-  $prose,
-  Plugin,
-  commandsCtx,
   toggleStrongCommand,
   toggleEmphasisCommand,
   toggleStrikethroughCommand,
@@ -78,70 +75,3 @@ export const BUTTONS = [
   },
   { id: "codeblock", label: "{ }", title: "代码块", run: (c) => c.call(createCodeBlockCommand.key) },
 ];
-
-class Toolbar {
-  constructor(view, ctx) {
-    this.view = view;
-    this.ctx = ctx;
-    this.el = document.createElement("div");
-    this.el.id = "toolbar";
-    this.el.hidden = true;
-    this.el.setAttribute("role", "toolbar");
-    this.buttons = [];
-    for (const b of BUTTONS) {
-      if (b.sep) {
-        const s = document.createElement("span");
-        s.className = "sep";
-        this.el.appendChild(s);
-        continue;
-      }
-      const btn = document.createElement("button");
-      btn.dataset.cmd = b.id;
-      btn.title = b.title;
-      btn.innerHTML = b.label;
-      // 按下鼠标时不让编辑器失去焦点,选区留着
-      btn.addEventListener("mousedown", (e) => e.preventDefault());
-      btn.addEventListener("click", async () => {
-        await b.run(this.ctx.get(commandsCtx), this.view);
-        this.update(this.view);
-      });
-      this.el.appendChild(btn);
-      this.buttons.push([btn, b]);
-    }
-    document.body.appendChild(this.el);
-    this.onBlur = () => setTimeout(() => !this.view.hasFocus() && (this.el.hidden = true), 0);
-    view.dom.addEventListener("blur", this.onBlur);
-  }
-
-  update(view) {
-    this.view = view;
-    const { state } = view;
-    const sel = state.selection;
-    // 格式栏开着时用不着它
-    const show = document.getElementById("format-bar")?.hidden !== false &&
-      !sel.empty && sel.$from.parent.inlineContent && !sel.$from.parent.type.spec.code && view.hasFocus() && view.editable;
-    if (!show) {
-      this.el.hidden = true;
-      return;
-    }
-    for (const [btn, b] of this.buttons) btn.classList.toggle("on", !!b.active?.(state));
-    this.el.hidden = false;
-    const start = view.coordsAtPos(sel.from);
-    const end = view.coordsAtPos(sel.to);
-    const w = this.el.offsetWidth;
-    const h = this.el.offsetHeight;
-    const left = Math.max(6, Math.min(window.innerWidth - w - 6, (start.left + end.left) / 2 - w / 2));
-    // 放在选区上面,上面放不下(会挡住顶栏和格式栏)就放下面
-    let top = start.top - h - 8;
-    if (top < view.dom.parentElement.getBoundingClientRect().top + 4) top = end.bottom + 8;
-    this.el.style.left = `${left}px`;
-    this.el.style.top = `${top}px`;
-  }
-
-  destroy() {
-    this.view.dom.removeEventListener("blur", this.onBlur);
-    this.el.remove();
-  }
-}
-
-export const toolbar = $prose((ctx) => new Plugin({ view: (view) => new Toolbar(view, ctx) }));

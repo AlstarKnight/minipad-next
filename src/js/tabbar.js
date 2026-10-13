@@ -8,7 +8,7 @@ import { $, tabsEl } from "./dom.js";
 import { state, book } from "./state.js";
 import { switchTo } from "./tabs.js";
 import { focusEditor, toast } from "./ui.js";
-import { groupsOn, groupOf } from "./groups.js";
+import { groupsOn, groupOf, groupVars } from "./groups.js";
 import { saveSettings } from "./settings.js";
 
 // 钉住时正文至少要留这么宽,不然按侧拉处理
@@ -208,7 +208,7 @@ function fillPagesMenu() {
     if (g) {
       const dot = document.createElement("i");
       dot.className = "pm-dot";
-      dot.style.setProperty("--g", g.color);
+      groupVars(dot, g.color);
       dot.title = g.name || "未命名分组";
       it.appendChild(dot);
     }

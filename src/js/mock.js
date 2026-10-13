@@ -57,6 +57,9 @@ const DEFAULT_SETTINGS = {
   tab_drawer_pinned: false,
   tab_groups: false,
   tab_group_style: "line",
+  sel_bar: "always",
+  sel_bar_items: ["block", "strong", "em", "strike", "code", "link", "sep3", "color", "bg"],
+  sel_bar_pos: "above",
 };
 
 const has = (obj, key) => Object.prototype.hasOwnProperty.call(obj, key);
@@ -316,6 +319,11 @@ export function mockApi() {
         tab_overflow: pickOne(settings.tab_overflow, ["scroll", "wrap", "drawer"]),
         tab_drawer_side: pickOne(settings.tab_drawer_side, ["left", "right"]),
         tab_group_style: pickOne(settings.tab_group_style, ["line", "tint"]),
+        sel_bar: pickOne(settings.sel_bar, ["always", "nobar", "off"]),
+        sel_bar_pos: pickOne(settings.sel_bar_pos, ["above", "below"]),
+        sel_bar_items: Array.isArray(settings.sel_bar_items)
+          ? settings.sel_bar_items.filter((id, i, a) => typeof id === "string" && id && id.length <= 32 && a.indexOf(id) === i).slice(0, 64)
+          : DEFAULT_SETTINGS.sel_bar_items,
         tab_rows: Math.min(8, Math.max(2, Math.round(Number(settings.tab_rows)) || 4)),
         tab_drawer_width: Math.min(360, Math.max(140, Math.round(Number(settings.tab_drawer_width)) || 200)),
       };

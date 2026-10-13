@@ -1045,7 +1045,7 @@ describe("editor", () => {
     assert.equal(await p.evaluate(() => window.__notReloaded), true, "F5 never reloads the page");
   });
 
-  ui("with the format bar hidden a toolbar formats selected text; Ctrl+B bolds a selection and opens the notebooks without one", { seed: seed({ "": { 页: "一段文字" } }) }, async (h) => {
+  ui("set to show only with the format bar hidden, a toolbar formats selected text; Ctrl+B bolds a selection and opens the notebooks without one", { seed: { ...seed({ "": { 页: "一段文字" } }), settings: { ...SETTINGS, sel_bar: "nobar" } } }, async (h) => {
     const { p } = h;
     await p.click("#editor .ProseMirror p");
     await p.keyboard.press("Shift+Home");
@@ -2119,7 +2119,7 @@ describe("0.3.2: settings in five categories", () => {
     assert.ok(await p.isHidden("#set-hotkey"));
     assert.deepEqual(
       await p.$$eval('.set-page[data-page="edit"] h3', (els) => els.map((e) => e.textContent)),
-      ["编辑器", "悬浮目录", "查找替换"],
+      ["编辑器", "悬浮工具栏", "悬浮目录", "查找替换"],
       "with a small heading for each part",
     );
     await p.keyboard.press("ArrowDown");
@@ -2642,5 +2642,78 @@ describe("0.3.2: tab groups", () => {
     assert.deepEqual(await strip(p), ["a", "[组]", "b", "c", "d", "e"]);
     await p.fill("#dr-filter", "d");
     assert.deepEqual(await p.$$eval("#tabs > :not(.filtered)", (els) => els.map((e) => e.textContent)), ["d"], "a group with no match hides its name too");
+  });
+});
+
+describe("0.3.2: floating format buttons on a selection", () => {
+  const select = async (p) => {
+    await p.click("#editor .ProseMirror p >> nth=-1");
+    await p.keyboard.press("End");
+    await p.keyboard.press("Shift+ArrowLeft");
+    await p.keyboard.press("Shift+ArrowLeft");
+  };
+  const buttons = (p) => p.$$eval("#toolbar > *", (els) => els.map((e) => (e.classList.contains("sep") ? "|" : e.dataset.cmd)));
+
+  ui("selection bar: shows common formats even with the format bar open, including colours", { seed: seed({ "": { 页: "第一段\n\n第二段\n\n一段文字" } }) }, async (h) => {
+    const { p } = h;
+    assert.ok(await p.isVisible("#format-bar"));
+    await p.click("#editor .ProseMirror p >> nth=-1");
+    assert.ok(await p.isHidden("#toolbar"), "nothing without a selection");
+    await select(p);
+    await p.locator("#toolbar").waitFor();
+    assert.deepEqual(await buttons(p), ["block", "strong", "em", "strike", "code", "link", "|", "color", "bg"]);
+    const bar = await p.locator("#toolbar").boundingBox();
+    const sel = await p.evaluate(() => window.getSelection().getRangeAt(0).getBoundingClientRect().top);
+    assert.ok(bar.y + bar.height <= sel, "above the selection");
+    await p.click('#toolbar [data-cmd="strong"]');
+    assert.equal(await h.editor(), "第一段\n\n第二段\n\n一段**文字**");
+    await p.click('#toolbar [data-cmd="color"]');
+    await p.locator(".fb-pop:not([hidden])").waitFor();
+    await p.click('.fb-pop:not([hidden]) .fb-gradients .fb-swatch >> nth=0');
+    await until(async () => (await h.editor()).includes("linear-gradient"), true, "a gradient colour from the floating buttons");
+    assert.ok(await p.isVisible("#toolbar"), "the buttons stay for the selection");
+  });
+
+  ui("selection bar: the buttons, their order, the position, and turning it off are in the settings", { seed: seed({ "": { 页: "一段文字" } }) }, async (h) => {
+    const { p } = h;
+    await p.click("#btn-settings");
+    await settingsPage(p, "edit");
+    assert.equal(await p.inputValue("#set-sel-bar"), "always");
+    await p.uncheck('#set-sel-items input[value="block"]');
+    await p.uncheck('#set-sel-items input[value="link"]');
+    await p.check('#set-sel-items input[value="ol"]');
+    assert.equal(await p.$eval("#set-sel-preview", (el) => el.querySelectorAll(".b").length), 7, "the preview follows");
+    await p.selectOption("#set-sel-pos", "below");
+    await p.click("#set-save");
+    await until(async () => (await h.stored())?.settings?.sel_bar_items, ["strong", "em", "strike", "code", "sep3", "color", "bg", "ol"], "saved in order");
+    await select(p);
+    await p.locator("#toolbar").waitFor();
+    assert.deepEqual(await buttons(p), ["strong", "em", "strike", "code", "|", "color", "bg", "ol"]);
+    const bar = await p.locator("#toolbar").boundingBox();
+    const sel = await p.evaluate(() => window.getSelection().getRangeAt(0).getBoundingClientRect().bottom);
+    assert.ok(bar.y >= sel, "below the selection");
+
+    await p.click("#btn-settings");
+    await settingsPage(p, "edit");
+    await p.selectOption("#set-sel-bar", "off");
+    assert.ok(await p.isDisabled("#set-sel-pos"));
+    await p.click("#set-save");
+    await until(async () => (await h.stored())?.settings?.sel_bar, "off", "saved");
+    await select(p);
+    await sleep(200);
+    assert.ok(await p.isHidden("#toolbar"), "no floating buttons when turned off");
+  });
+
+  ui("groups: a group can be a gradient, from the presets or a custom one", { seed: { ...seed({ "": { a: "a", b: "b" } }), settings: { ...SETTINGS, tab_groups: true } } }, async (h) => {
+    const { p } = h;
+    await p.click("#tabs .tab:nth-child(1)", { button: "right" });
+    await p.click('#ctx button[data-act="group-new"]');
+    await p.click('#ge-colors .ge-color[title="蓝紫渐变"]');
+    await until(async () => (await h.stored())?.books?.[""]?.meta?.groups?.[0]?.color, "linear-gradient(135deg, #5fb4ff, #d66cf0)", "a preset gradient");
+    assert.match(await p.$eval(".tab-group", (c) => c.style.getPropertyValue("--g-grad")), /#5fb4ff, #d66cf0/);
+    await p.check(".ge-custom input[type=checkbox]");
+    await until(async () => (await h.stored())?.books?.[""]?.meta?.groups?.[0]?.color?.startsWith("linear-gradient"), true, "a custom gradient");
+    await p.uncheck(".ge-custom input[type=checkbox]");
+    await until(async () => /^#[0-9a-f]{6}$/.test((await h.stored())?.books?.[""]?.meta?.groups?.[0]?.color), true, "or a single colour");
   });
 });
