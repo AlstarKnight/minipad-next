@@ -413,7 +413,7 @@ async function saveAppearance(b, icon, color) {
   if ((b.icon || "book") === icon && (b.icon_color || "") === color) return;
   appearanceBusy = true;
   $("#bm-error").hidden = true;
-  renderManager();
+  // 保留正在操作的 checkbox/color input 节点，避免点击后立即重绘而重置勾选。
   try {
     await mutate(async () => {
       // 与正常的页面顺序/分组元信息保存串行，避免并发改写 .minipad.json。
