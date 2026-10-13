@@ -499,14 +499,43 @@ pub fn normalized_book_color(value: &str) -> Option<String> {
     if degrees > 360 {
         return None;
     }
-    let stops: Vec<_> = colors.split(',').map(str::trim).collect();
-    if !(2..=7).contains(&stops.len()) || !stops.iter().all(|s| valid_hex(s)) {
+    let raw_stops: Vec<_> = colors.split(',').map(str::trim).collect();
+    if !(2..=7).contains(&raw_stops.len()) {
         return None;
     }
-    Some(format!(
-        "linear-gradient({degrees}deg, {})",
-        stops.join(", ").to_ascii_lowercase()
-    ))
+    let mut stops = Vec::new();
+    let mut positions = Vec::new();
+    for stop in raw_stops {
+        let words: Vec<_> = stop.split_whitespace().collect();
+        if words.is_empty() || words.len() > 2 || !valid_hex(words[0]) {
+            return None;
+        }
+        let pos = if words.len() == 2 {
+            let digits = words[1].strip_suffix('%')?;
+            let value = digits.parse::<u8>().ok()?;
+            if value > 100 {
+                return None;
+            }
+            Some(value)
+        } else {
+            None
+        };
+        positions.push(pos);
+        stops.push(words[0].to_ascii_lowercase());
+    }
+    if positions.iter().any(Option::is_some) {
+        if positions.iter().any(Option::is_none) {
+            return None;
+        }
+        let values: Vec<_> = positions.iter().map(|v| v.unwrap_or(0)).collect();
+        if values.windows(2).any(|w| w[0] > w[1]) {
+            return None;
+        }
+        for (stop, percent) in stops.iter_mut().zip(values) {
+            *stop = format!("{stop} {percent}%");
+        }
+    }
+    Some(format!("linear-gradient({degrees}deg, {})", stops.join(", ")))
 }
 
 /// 笔记本图标与颜色独立保存在对应的 .minipad.json，改页面顺序不会覆盖它。
@@ -1036,6 +1065,25 @@ mod tests {
         set_book_appearance(&root, "工作", "star", "").unwrap();
         assert_eq!(load_book(&root, "工作").unwrap().icon, "star");
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn positioned_gradient_stops_roundtrip_and_validate() {
+        let actual = normalized_book_color(
+            "linear-gradient(90deg, #AABBCC 0%, #112233 45%, #445566 100%)",
+        );
+        assert_eq!(
+            actual.as_deref(),
+            Some("linear-gradient(90deg, #aabbcc 0%, #112233 45%, #445566 100%)")
+        );
+        for bad in [
+            "linear-gradient(90deg, #aabbcc 90%, #112233 10%)",
+            "linear-gradient(90deg, #aabbcc 0%, #112233)",
+            "linear-gradient(90deg, #aabbcc 101%, #112233 100%)",
+            "linear-gradient(90deg, #aabbcc 0%, #112233 var(--x))",
+        ] {
+            assert!(normalized_book_color(bad).is_none(), "{bad}");
+        }
     }
 
     #[test]
