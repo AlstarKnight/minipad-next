@@ -1,6 +1,7 @@
 mod backup;
 mod ball;
 mod edge;
+mod minipad2;
 mod notes;
 
 use edge::{Edge, Rect};
@@ -99,6 +100,14 @@ pub struct Settings {
     ball_open: String,
     /// 悬浮图标上次的位置(物理像素)
     ball_pos: Option<[i32; 2]>,
+    /// Ctrl+F 的作用:page 在当前页面里查找 / all 搜索全部页面
+    ctrl_f: String,
+    /// 查找栏放在哪:top 编辑区上方 / bottom 编辑区下方
+    find_bar_pos: String,
+    /// 查找结果的高亮颜色,写法同 accent;空着跟随强调色
+    find_color: String,
+    /// 同一页在这里和别处(网盘同步)都改过:copy 把那边的版本另存为冲突副本 / overwrite 用这边的覆盖
+    conflict_mode: String,
     window: Option<Geom>,
 }
 
@@ -133,6 +142,10 @@ impl Default for Settings {
             ball_opacity: 100,
             ball_open: "click".into(),
             ball_pos: None,
+            ctrl_f: "page".into(),
+            find_bar_pos: "top".into(),
+            find_color: String::new(),
+            conflict_mode: "copy".into(),
             window: None,
         }
     }
@@ -424,6 +437,13 @@ fn tidy_color(c: &mut String) {
     }
 }
 
+/// 只能是几个选项之一的设置:不认识的值换成第一个(默认的那个)
+fn pick_one(value: &mut String, options: &[&str]) {
+    if !options.contains(&value.as_str()) {
+        *value = options[0].to_string();
+    }
+}
+
 /// 保存前整理前端传来的设置:去掉首尾空格,数字限制在合理范围
 fn tidy_settings(s: &mut Settings) {
     s.hotkey = s.hotkey.trim().to_string();
@@ -433,6 +453,10 @@ fn tidy_settings(s: &mut Settings) {
     tidy_color(&mut s.accent);
     tidy_color(&mut s.edge_color);
     tidy_color(&mut s.ball_color);
+    tidy_color(&mut s.find_color);
+    pick_one(&mut s.ctrl_f, &["page", "all"]);
+    pick_one(&mut s.find_bar_pos, &["top", "bottom"]);
+    pick_one(&mut s.conflict_mode, &["copy", "overwrite"]);
     s.ball_size = s.ball_size.clamp(32, 96);
     if !["app", "custom"].contains(&s.ball_icon.as_str()) {
         s.ball_icon = "app".into();
@@ -492,13 +516,15 @@ const WELCOME: &str = r#"# 欢迎使用 Minipad Next
 
 - 按 **Ctrl+M** 呼出或隐藏这个窗口(可以在设置里改)
 - 把窗口拖到屏幕**上边、左边或右边**,鼠标移开后会自动贴边隐藏,鼠标碰到边缘再滑出来
-- 内容会自动保存,每个页面就是笔记文件夹里的一个 `.md` 文件
+- 内容会自动保存,每个页面就是笔记文件夹里的一个 `.md` 文件;笔记文件夹放在网盘里时,同一页在两边都改过,别处的版本会另存成一页"冲突副本",不会丢
 - 看到的就是排好版的样子:行首打 `# ` 变标题,`- ` 变列表,`> ` 变引用,`**粗体**`、`` `代码` `` 打完就变样;选中文字会出来一排按钮
 - 标签下面的**格式栏**有标题、粗体、列表、表格、<span style="color: #df2a3f">字体颜色</span>和<span style="background-color: #fbe9a6">背景颜色</span>等按钮;右边的按钮可以选显示哪些、拖动排顺序,顶栏的格式栏按钮(像一个带工具条的小窗口)可以收起它
 - 顶栏的太阳 / 月亮按钮切换深色和浅色;设置里可以换<span style="color: #5fb4ff; background-image: linear-gradient(90deg, #5fb4ff, #d66cf0); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent">强调色,也能用渐变色</span>
 - 在列表里按 **Enter** 接着写下一项,**Ctrl+Enter** 勾选任务,**F5** 插入当前日期时间
 - 打 ```` ``` ```` 再按 Enter 插入代码块;代码块顶栏的"添加标题"和语言点一下就能改,右边有"复制"按钮
+- **Ctrl+F** 在这一页里查找,**Ctrl+H** 替换(可以区分大小写、全字匹配、用正则表达式);**Ctrl+Shift+F** 搜索全部笔记本的页面
 - 页面多了可以分**笔记本**:点标签栏最左边的笔记本名字(或按 **Ctrl+B**)新建和切换,每个笔记本就是笔记文件夹里的一个子文件夹
+- 用过 minipad2?在笔记本列表里点"从 minipad2 导入…",原来的分组会变成笔记本
 - 每天第一次保存时会自动把笔记文件夹备份成 zip,默认保留最近 14 份,可以在设置里改
 
 ```python 试试复制
@@ -513,7 +539,10 @@ print("点右上角的复制按钮试试")
 | Ctrl+B | 选中文字时加粗,没选中时切换笔记本 |
 | Ctrl+I | 斜体 |
 | Ctrl+T | 新建页面 |
-| Ctrl+F | 搜索全部笔记本的页面 |
+| Ctrl+F | 在这一页里查找 |
+| Ctrl+H | 查找和替换 |
+| F3 / Shift+F3 | 下一个 / 上一个找到的地方 |
+| Ctrl+Shift+F | 搜索全部笔记本的页面 |
 | Ctrl+Tab | 下一个页面 |
 | Ctrl+1 ~ 9 | 跳到第 N 个页面 |
 | Ctrl+Enter | 勾选 / 取消勾选任务 |
@@ -522,7 +551,7 @@ print("点右上角的复制按钮试试")
 | Ctrl+点击链接 | 用浏览器打开 |
 | 双击标签 | 重命名 |
 | 右键标签 | 重命名、移到别的笔记本、删除 |
-| Esc | 隐藏窗口 |
+| Esc | 隐藏窗口(查找栏开着时先关查找栏) |
 "#;
 
 // ---------- 命令 ----------
@@ -575,11 +604,50 @@ fn book_exists(app: AppHandle, book: String) -> Result<bool, String> {
     }
 }
 
+/// 文件在别处(网盘同步、别的编辑器)也改过时,那边的版本另存成的冲突副本
+#[derive(Serialize)]
+struct ConflictCopy {
+    name: String,
+    content: String,
+}
+
+#[derive(Serialize)]
+struct SavedNote {
+    conflict: Option<ConflictCopy>,
+}
+
+/// 保存页面。`expected` 是前端上次从磁盘读到(或写进去)的内容:
+/// 文件现在的内容和它不一样,说明在别处也改过,先把那边的版本另存成冲突副本再写(设置里可以改成直接覆盖)
 #[tauri::command]
-fn save_note(app: AppHandle, book: String, name: String, content: String) -> Result<(), String> {
-    let path = notes::page_path(&current_notes_dir(&app), &book, &name)?;
+fn save_note(
+    app: AppHandle,
+    book: String,
+    name: String,
+    content: String,
+    expected: Option<String>,
+) -> Result<SavedNote, String> {
+    let root = current_notes_dir(&app);
+    let path = notes::page_path(&root, &book, &name)?;
     maybe_backup(&app);
-    notes::write_atomic(&path, &content)
+    let keep_both = app
+        .state::<AppState>()
+        .settings
+        .lock()
+        .unwrap()
+        .conflict_mode
+        == "copy";
+    let conflict = match expected {
+        Some(expected) if keep_both => {
+            let stamp = chrono::Local::now().format("%Y-%m-%d %H.%M").to_string();
+            let dir = notes::book_dir(&root, &book)?;
+            notes::save_conflict_copy(&dir, &name, &expected, &content, &stamp)?
+        }
+        _ => None,
+    };
+    notes::write_atomic(&path, &content)?;
+    Ok(SavedNote {
+        conflict: conflict.map(|(name, content)| ConflictCopy { name, content }),
+    })
 }
 
 #[tauri::command]
@@ -650,6 +718,23 @@ fn delete_book(app: AppHandle, name: String) -> Result<(), String> {
 #[tauri::command]
 fn set_current_book(app: AppHandle, book: String) -> Result<(), String> {
     notes::set_current_book(&current_notes_dir(&app), &book)
+}
+
+/// 看看选的文件夹里有没有 minipad2 的数据、有多少页面(导入窗口用)
+#[tauri::command]
+async fn minipad2_preview(path: String) -> Result<minipad2::Preview, String> {
+    minipad2::preview(Path::new(&path))
+}
+
+/// 从 minipad2 导入:每个分组建一个新笔记本,不动已有的笔记
+#[tauri::command]
+async fn minipad2_import(
+    app: AppHandle,
+    path: String,
+    options: minipad2::Options,
+) -> Result<minipad2::Imported, String> {
+    maybe_backup(&app);
+    minipad2::import(Path::new(&path), &current_notes_dir(&app), &options)
 }
 
 #[tauri::command]
@@ -1399,6 +1484,8 @@ pub fn run() {
             resume_hotkey,
             note_activity,
             pick_folder,
+            minipad2_preview,
+            minipad2_import,
             hide_window,
             show_window,
             expand_edge,
@@ -1736,6 +1823,54 @@ mod tests {
         assert_eq!(
             (s.ball_size, s.ball_icon.as_str(), s.ball_open.as_str()),
             (32, "custom", "dblclick")
+        );
+    }
+
+    #[test]
+    fn tidy_settings_keeps_find_and_conflict_options_known() {
+        let mut s = Settings::default();
+        assert_eq!(
+            (
+                s.ctrl_f.as_str(),
+                s.find_bar_pos.as_str(),
+                s.find_color.as_str(),
+                s.conflict_mode.as_str()
+            ),
+            ("page", "top", "", "copy")
+        );
+        s.ctrl_f = "all".into();
+        s.find_bar_pos = "bottom".into();
+        s.find_color = " #8b5cf6 ".into();
+        s.conflict_mode = "overwrite".into();
+        tidy_settings(&mut s);
+        assert_eq!(
+            (
+                s.ctrl_f.as_str(),
+                s.find_bar_pos.as_str(),
+                s.find_color.as_str(),
+                s.conflict_mode.as_str()
+            ),
+            ("all", "bottom", "#8b5cf6", "overwrite")
+        );
+        s.ctrl_f = "everything".into();
+        s.find_bar_pos = "left".into();
+        s.find_color = "url(javascript:x)".into();
+        s.conflict_mode = "ask".into();
+        tidy_settings(&mut s);
+        assert_eq!(
+            (
+                s.ctrl_f.as_str(),
+                s.find_bar_pos.as_str(),
+                s.find_color.as_str(),
+                s.conflict_mode.as_str()
+            ),
+            ("page", "top", "", "copy")
+        );
+        // 0.2.9 的设置文件里没有这几项,读出来是默认值
+        let old: Settings = serde_json::from_str(r#"{"hotkey":"Ctrl+M"}"#).unwrap();
+        assert_eq!(
+            (old.ctrl_f.as_str(), old.conflict_mode.as_str()),
+            ("page", "copy")
         );
     }
 

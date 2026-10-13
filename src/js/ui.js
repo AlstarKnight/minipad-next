@@ -95,10 +95,10 @@ export function closeMenu() {
 
 // 关掉弹层,返回原来有没有开着的(Esc 先关弹层,没有弹层才隐藏窗口)
 export function closeOverlays(keepBooks = false) {
-  const wasOpen = !$("#search").hidden || !$("#settings").hidden || (!keepBooks && !$("#books").hidden);
+  const overlays = ["#search", "#settings", "#import"];
+  const wasOpen = overlays.some((sel) => !$(sel).hidden) || (!keepBooks && !$("#books").hidden);
   closeDialog(false);
-  $("#search").hidden = true;
-  $("#settings").hidden = true;
+  for (const sel of overlays) $(sel).hidden = true;
   $("#set-hotkey").classList.remove("recording");
   if (!keepBooks) closeBooks();
   closeMenu();

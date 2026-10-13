@@ -13,6 +13,7 @@ const ICON = {
   ol: '<svg viewBox="0 0 16 16"><path d="M6.5 4h7M6.5 8h7M6.5 12h7"/><path d="M2.3 2.8 3.3 2.3v3.2M2.2 9.3c.2-.6 1.9-.7 1.9.2 0 .8-1.9 1.5-1.9 2.2h2"/></svg>',
   table: '<svg viewBox="0 0 16 16"><rect x="2" y="2.5" width="12" height="11" rx="1.5"/><path d="M2 6.2h12M2 9.8h12M6.2 6.2v7.3M9.8 6.2v7.3"/></svg>',
   hr: '<svg viewBox="0 0 16 16"><path d="M2 8h12"/><path d="M5 4.5h6M5 11.5h6" opacity=".45"/></svg>',
+  find: '<svg viewBox="0 0 16 16"><path d="M2.5 3.5h9M2.5 6.5h5.5M2.5 9.5h3"/><circle cx="10.6" cy="10.4" r="2.7"/><path d="m12.6 12.4 1.9 1.9"/></svg>',
   hide: '<svg viewBox="0 0 16 16"><path d="M4.5 9.5 8 6l3.5 3.5"/></svg>',
   more: '<svg viewBox="0 0 16 16"><path d="M2.5 4.5h6M11.5 4.5h2M2.5 11.5h2M7.5 11.5h6"/><circle cx="10" cy="4.5" r="1.5"/><circle cx="6" cy="11.5" r="1.5"/></svg>',
   color: '<svg viewBox="0 0 16 16" class="fb-color"><path d="M4.5 11 8 2.5 11.5 11M5.7 8h4.6"/><rect class="swatch" x="2.5" y="12.6" width="11" height="2.2" rx=".6"/></svg>',
@@ -106,6 +107,9 @@ const ITEMS = [
   { ...byId.codeblock, active: inCode },
   { id: "table", label: ICON.table, title: "表格", run: (c, v) => insertBlock(v, "table") },
   { id: "hr", label: ICON.hr, title: "分隔线", run: (c, v) => insertBlock(v, "hr") },
+  { sep: true, id: "sep5", title: "竖线分隔" },
+  // 打开查找栏(main.js 接着处理),焦点交给查找框
+  { id: "find", label: ICON.find, title: "查找和替换(这一页)", keepFocus: true, run: (c, v) => v.dom.dispatchEvent(new CustomEvent("open-find", { bubbles: true })) },
 ];
 
 // 默认的顺序
@@ -155,6 +159,7 @@ class FormatBar {
         btn.addEventListener("click", async () => {
           const v = this.view;
           await it.run(this.ctx.get(commandsCtx), v);
+          if (it.keepFocus) return;
           v.focus();
           this.update(v);
         });

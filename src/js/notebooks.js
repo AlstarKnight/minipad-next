@@ -62,6 +62,7 @@ export function openBooks(note = null) {
   $("#books-title").textContent = note ? `把「${note.name}」移到…` : "笔记本";
   $("#books-new").textContent = note ? "新建笔记本并移过去…" : "新建笔记本…";
   $("#books-hint").hidden = !!note;
+  $("#books-import").hidden = !!note;
   renderList();
   const m = $("#books");
   const btn = $("#btn-book");

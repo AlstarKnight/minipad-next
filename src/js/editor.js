@@ -36,6 +36,7 @@ import { codeBlockWithTitle, codeBlockView, codeHighlight } from "./codeblock.js
 import { toolbar } from "./toolbar.js";
 import { formatBar, setFormatBarItems } from "./formatbar.js";
 import { colorSpans, colorHandlers, textColor, textBg } from "./colors.js";
+import { findPlugin, reapplyFind } from "./find.js";
 
 let editor = null;
 let view = null;
@@ -280,6 +281,17 @@ function readSelection(v) {
   } catch (_) {}
 }
 
+// 文字写进文件时怎么转义。Milkdown 自带的写法把「以空白结尾的文字」原样写出、不转义,
+// 行首只有空白的一段(比如几个空格后面紧跟带颜色的字)也原样写出,下次打开时就被吃掉了。
+// 这里:只有空白的一段在行首时把第一个写成字符引用;以空白结尾的,空白前面的部分照常转义
+function writeText(node, _, state, info) {
+  const v = node.value;
+  if (/^[ \t]+$/.test(v)) return /[\r\n]$/.test(info.before ?? "") ? (v[0] === "\t" ? "&#x9;" : "&#x20;") + v.slice(1) : v;
+  const tail = /[ \t]+$/.exec(v);
+  if (!tail) return state.safe(v, { ...info, encode: [] });
+  return state.safe(v.slice(0, tail.index), { ...info, after: tail[0][0], encode: [] }) + tail[0];
+}
+
 // ---------- 编辑器 ----------
 export async function createEditor(opts) {
   onChange = opts.onChange;
@@ -290,7 +302,7 @@ export async function createEditor(opts) {
       c.set(rootCtx, $("#editor"));
       // 写回文件时:列表用 -,分隔线用 ---
       // 字体颜色、背景颜色写成 <span style>(见 colors.js)
-      c.update(remarkStringifyOptionsCtx, (o) => ({ ...o, bullet: "-", rule: "-", handlers: { ...o.handlers, ...colorHandlers } }));
+      c.update(remarkStringifyOptionsCtx, (o) => ({ ...o, bullet: "-", rule: "-", handlers: { ...o.handlers, text: writeText, ...colorHandlers } }));
       c.set(linkAttr.key, () => ({ title: "Ctrl+点击打开链接" }));
     })
     // 自己的按键放在最前面,先于 Milkdown 自带的按键处理(Shift+Enter、Ctrl+B 等)
@@ -300,7 +312,7 @@ export async function createEditor(opts) {
     .use(history)
     .use(clipboard)
     .use([colorSpans, textColor, textBg].flat())
-    .use([lineBreak, codeBlockWithTitle, codeBlockView, codeHighlight, changes, placeholder, afterRule, toolbar, formatBar])
+    .use([lineBreak, codeBlockWithTitle, codeBlockView, codeHighlight, changes, placeholder, afterRule, findPlugin, toolbar, formatBar])
     .create();
   editor.action((c) => {
     ctx = c;
@@ -384,6 +396,8 @@ export function showInEditor(n) {
   view.updateState(st);
   shown = n;
   view.setProps({ editable: () => !shown?.unreadable });
+  // 查找栏开着时,换过来的页面也按同样的条件高亮
+  reapplyFind(view);
   scroller().scrollTop = scroll;
 }
 

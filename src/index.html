@@ -39,6 +39,38 @@
   <!-- 格式栏:按钮由 js/formatbar.js 放进来 -->
   <nav id="format-bar" aria-label="格式"></nav>
 
+  <!-- 查找栏:在当前页面里查找(Ctrl+F)和替换(Ctrl+H),见 js/findbar.js。设置里可以放到编辑区下方 -->
+  <div id="find-bar" role="search" aria-label="查找和替换" hidden>
+    <div class="find-row">
+      <button id="find-toggle" title="显示 / 收起替换 (Ctrl+H)" aria-expanded="false" aria-controls="find-replace">
+        <svg viewBox="0 0 16 16"><path d="M6 3.5 10.5 8 6 12.5"/></svg>
+      </button>
+      <div class="find-field">
+        <input id="find-input" type="text" placeholder="在这一页里查找" spellcheck="false" autocomplete="off" aria-label="查找" />
+        <span id="find-count" aria-live="polite"></span>
+        <button class="opt" data-opt="caseSensitive" title="区分大小写 (Alt+C)" aria-pressed="false">Aa</button>
+        <button class="opt" data-opt="wholeWord" title="全字匹配 (Alt+W)" aria-pressed="false"><span class="ww">ab</span></button>
+        <button class="opt" data-opt="regex" title="正则表达式 (Alt+R)" aria-pressed="false">.*</button>
+      </div>
+      <button id="find-prev" title="上一个 (Shift+Enter)">
+        <svg viewBox="0 0 16 16"><path d="M8 12.5v-9M4 7.5l4-4 4 4"/></svg>
+      </button>
+      <button id="find-next" title="下一个 (Enter)">
+        <svg viewBox="0 0 16 16"><path d="M8 3.5v9M4 8.5l4 4 4-4"/></svg>
+      </button>
+      <button id="find-close" title="关闭 (Esc)">
+        <svg viewBox="0 0 16 16"><path d="M4.5 4.5l7 7M11.5 4.5l-7 7"/></svg>
+      </button>
+    </div>
+    <div id="find-replace" class="find-row" hidden>
+      <div class="find-field">
+        <input id="replace-input" type="text" placeholder="替换成" spellcheck="false" autocomplete="off" aria-label="替换成" />
+      </div>
+      <button id="replace-one" class="text" title="替换当前这个,然后找下一个 (Enter)">替换</button>
+      <button id="replace-all" class="text" title="全部替换 (Ctrl+Enter)">全部替换</button>
+    </div>
+  </div>
+
   <main id="main">
     <!-- 编辑区:Milkdown 编辑器由 js/editor.js 放进来 -->
     <div id="editor" class="code-lines"></div>
@@ -163,6 +195,32 @@
         <span id="set-date-preview" class="muted"></span>
         <span>写法:yyyy 年、M 月、d 日、H 时、mm 分、ss 秒、dddd 星期几</span>
       </div>
+      <h3>查找和替换</h3>
+      <label class="row">
+        <span>Ctrl+F</span>
+        <select id="set-ctrl-f">
+          <option value="page">在当前页面里查找(Ctrl+Shift+F 搜索全部页面)</option>
+          <option value="all">搜索全部页面(Ctrl+Shift+F 在当前页面里查找)</option>
+        </select>
+      </label>
+      <label class="row">
+        <span>查找栏位置</span>
+        <select id="set-find-pos">
+          <option value="top">编辑区上方</option>
+          <option value="bottom">编辑区下方</option>
+        </select>
+      </label>
+      <div class="row col">
+        <span>找到的地方的高亮颜色</span>
+        <div id="set-find-preview" class="find-preview">找到的<span class="find-hit">地方</span>会这样高亮,当前这<span class="find-hit find-current">一处</span>颜色深一些</div>
+        <div id="set-find-color" class="accent-swatches"></div>
+        <div class="accent-custom">
+          <span>自定义</span>
+          <input id="set-find-from" type="color" value="#d9822b" title="颜色" />
+          <label><input id="set-find-grad" type="checkbox" /> 渐变到</label>
+          <input id="set-find-to" type="color" value="#f7c34b" title="渐变的另一端" />
+        </div>
+      </div>
       <h3>每日备份</h3>
       <label class="row check"><input id="set-backup" type="checkbox" /> <span>每天第一次保存时,把笔记文件夹备份成 zip</span></label>
       <label class="row"><span>保留份数</span><input id="set-backup-keep" type="number" min="1" max="365" /></label>
@@ -171,11 +229,67 @@
         <div class="inline"><input id="set-backup-dir" type="text" spellcheck="false" /><button id="set-pick-backup" class="small">选择…</button></div>
       </div>
       <div class="row"><span id="set-backup-info" class="muted"></span><button id="set-open-backup" class="link">打开备份文件夹</button></div>
+      <h3>同步冲突</h3>
+      <div class="row col">
+        <span>笔记文件夹放在网盘里同步时,同一页可能在这里和别处都改过。这时:</span>
+        <select id="set-conflict">
+          <option value="copy">两边都留着:别处的版本另存成一页冲突副本(推荐)</option>
+          <option value="overwrite">只留这里的:用这里的内容覆盖别处的修改</option>
+        </select>
+      </div>
+      <h3>导入</h3>
+      <div class="row">
+        <span class="muted grow">把 minipad2 的笔记导入成新的笔记本,已有的笔记不会被改动</span>
+        <button id="set-import" class="small">从 minipad2 导入…</button>
+      </div>
       <p id="set-error" class="error" hidden></p>
       <div class="actions">
         <span class="about"><span id="set-version">Minipad Next</span> · <button id="set-repo" class="link">GitHub</button></span>
         <button id="set-cancel">取消</button>
         <button id="set-save" class="primary">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 从 minipad2 导入(见 js/importer.js):盖在设置上面,关掉以后回到设置 -->
+  <div id="import" class="overlay" hidden>
+    <div class="panel form">
+      <h2>从 minipad2 导入</h2>
+      <div id="import-setup">
+        <p class="muted import-intro">把 minipad2 3.2 的笔记导入成新的笔记本,已有的笔记不会被改动。</p>
+        <div class="row col">
+          <span>minipad2 的程序文件夹(或者它的 data 文件夹)</span>
+          <div class="inline">
+            <input id="import-path" type="text" spellcheck="false" autocomplete="off" />
+            <button id="import-pick" class="small">选择…</button>
+          </div>
+        </div>
+        <div id="import-found" hidden>
+          <p id="import-summary"></p>
+          <label id="import-layout-row" class="row">
+            <span>分组</span>
+            <select id="import-layout">
+              <option value="groups">每个分组建一个笔记本</option>
+              <option value="single">全部放进一个笔记本</option>
+            </select>
+          </label>
+          <label class="row">
+            <span id="import-base-label">笔记本名字</span>
+            <input id="import-base" type="text" spellcheck="false" autocomplete="off" />
+          </label>
+          <label id="import-highlights-row" class="row check"><input id="import-highlights" type="checkbox" /> <span>保留高亮(画下划线的写成文字颜色,其余写成背景色)</span></label>
+          <label id="import-lists-row" class="row check"><input id="import-lists" type="checkbox" /> <span id="import-lists-text"></span></label>
+          <label id="import-clips-row" class="row check"><input id="import-clips" type="checkbox" /> <span id="import-clips-text"></span></label>
+          <label id="import-recycle-row" class="row check"><input id="import-recycle" type="checkbox" /> <span id="import-recycle-text"></span></label>
+          <label id="import-empty-row" class="row check"><input id="import-skip-empty" type="checkbox" /> <span id="import-empty-text"></span></label>
+        </div>
+      </div>
+      <div id="import-result" hidden></div>
+      <ul id="import-warnings" class="import-warnings" hidden></ul>
+      <p id="import-error" class="error" hidden></p>
+      <div class="actions">
+        <button id="import-cancel">取消</button>
+        <button id="import-ok" class="primary" disabled>导入</button>
       </div>
     </div>
   </div>
@@ -198,6 +312,7 @@
     <div id="books-list"></div>
     <hr />
     <button id="books-new">新建笔记本…</button>
+    <button id="books-import">从 minipad2 导入…</button>
     <div id="books-hint" class="menu-hint">右键笔记本可以改名或删除</div>
   </div>
 
