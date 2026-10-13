@@ -360,6 +360,97 @@ const TWO_BOOKS = seed(
   { active: { "": "乙", 工作: "会议" } },
 );
 
+describe("notebook manager and window movement", () => {
+  ui("topbar uses one colored icon, title reveals notebook name; manager remembers book appearance", {
+    seed: seed({ "": { 欢迎: "默认内容" }, 工作: { 周报: "内容" } }),
+  }, async (h) => {
+    const { p } = h;
+    assert.equal(await p.$eval("#btn-book", (b) => b.title), "默认");
+    assert.equal(await p.isVisible("#book-icon svg"), true);
+    const buttonSize = await p.$eval("#btn-book", (b) => Math.round(b.getBoundingClientRect().width));
+    assert.equal(buttonSize, 32, "topbar keeps a 32px icon instead of notebook name");
+    await h.openBooks();
+    await p.click("#books-manage");
+    assert.equal(await p.isVisible("#book-manager"), true);
+    assert.equal(await p.isHidden("#books"), true);
+    assert.equal(await p.isDisabled("#bm-rename"), true, "default notebook cannot be renamed");
+    assert.equal(await p.isDisabled("#bm-delete"), true, "default notebook cannot be deleted");
+    await p.click('#bm-list [data-book="工作"]');
+    assert.equal(await p.textContent("#bm-selected"), "工作");
+    await p.click('#bm-icons [data-icon="briefcase"]');
+    await until(() => h.stored().then((db) => db.books["工作"].meta.icon), "briefcase");
+    await p.click('#bm-colors [data-color="#5fb4ff"]');
+    await until(() => h.stored().then((db) => db.books["工作"].meta.icon_color), "#5fb4ff");
+    assert.equal(await p.$eval('#bm-list [data-book="工作"] svg', (el) => getComputedStyle(el).color), "rgb(95, 180, 255)");
+    await p.click("#bm-close");
+    await h.switchBook("工作");
+    assert.equal(await p.$eval("#btn-book", (b) => b.title), "工作");
+    assert.equal(await p.$eval("#book-icon svg", (e) => getComputedStyle(e).color), "rgb(95, 180, 255)");
+    await p.reload();
+    await until(h.bookName, "工作", "current notebook is restored");
+    assert.equal(await p.$eval("#btn-book", (b) => b.title), "工作");
+    assert.equal(await p.$eval("#book-icon svg", (e) => getComputedStyle(e).color), "rgb(95, 180, 255)");
+    assert.equal(await h.mockFile("工作", "周报"), "内容", "changing icon does not touch notebook pages");
+  });
+
+  ui("manager lets users set custom colors, rename and keep icon metadata", {
+    seed: seed({ "": { 首页: "Welcome" }, 旅行: { 清单: "passport" } }),
+  }, async (h) => {
+    const { p } = h;
+    await h.openBooks();
+    await p.click("#books-manage");
+    await p.click('#bm-list [data-book="旅行"]');
+    await p.click('#bm-icons [data-icon="heart"]');
+    await until(() => h.stored().then((db) => db.books["旅行"].meta.icon), "heart");
+    await p.$eval("#bm-custom-color", (el) => {
+      el.value = "#1122aa";
+      el.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await until(() => h.stored().then((db) => db.books["旅行"].meta.icon_color), "#1122aa");
+    await p.click("#bm-rename");
+    await h.answer("旅途");
+    await until(() => h.stored().then((db) => db.books["旅途"]?.meta.icon), "heart");
+    assert.equal(await h.mockFile("旅途", "清单"), "passport");
+    assert.equal(await p.$eval('#bm-list [data-book="旅途"] svg', (el) => getComputedStyle(el).color), "rgb(17, 34, 170)");
+    await p.press("#bm-close", "Escape");
+    assert.equal(await p.isHidden("#book-manager"), true, "Escape closes manager before hiding the app");
+  });
+
+  ui("manager refuses invalid native save and does not change local icon", {
+    seed: seed({ "": { 主页: "a" }, 工作: { 日志: "b" } }),
+  }, async (h) => {
+    const { p } = h;
+    await p.evaluate(() => { window.__mockControl = { fail: { set_book_appearance: "拒绝写入" } }; });
+    await h.openBooks();
+    await p.click("#books-manage");
+    await p.click('#bm-list [data-book="工作"]');
+    await p.click('#bm-icons [data-icon="star"]');
+    await until(() => p.textContent("#bm-error"), "保存图标失败：Error: 拒绝写入");
+    assert.equal(await h.stored().then((db) => db.books["工作"].meta.icon || ""), "");
+    assert.equal(await p.$eval('#bm-icons [data-icon="book"]', (b) => b.getAttribute("aria-checked")), "true");
+  });
+
+  ui("free status bar and Alt+left click allow native window dragging without editing", async (h) => {
+    const { p } = h;
+    assert.equal(await p.getAttribute('#status > .spacer', "data-tauri-drag-region"), "");
+    assert.equal(await p.getAttribute("#status", "data-tauri-drag-region"), "");
+    await p.evaluate(() => { window.__mockControl = { dragStarted: 0, calls: [] }; });
+    await p.$eval("#editor", (el) => {
+      el.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0 }));
+    });
+    assert.equal(await p.evaluate(() => window.__mockControl.dragStarted), 0, "normal clicks remain unchanged");
+    await p.$eval("#editor", (el) => {
+      el.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, altKey: true, button: 0 }));
+    });
+    await until(() => p.evaluate(() => window.__mockControl.dragStarted), 1, "Alt-click triggers native drag");
+    await p.click("#btn-settings");
+    await p.$eval("#set-hotkey", (el) => {
+      el.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, altKey: true, button: 0 }));
+    });
+    assert.equal(await p.evaluate(() => window.__mockControl.dragStarted), 1, "modal controls do not trigger drag");
+  });
+});
+
 describe("notebooks", () => {
   ui("the button shows 默认; Ctrl+B lists notebooks with page counts; Esc, Ctrl+B and clicks outside close it", async (h) => {
     const { p } = h;
