@@ -1550,7 +1550,7 @@ describe("shared colors and positioned gradients", () => {
     const tool = p.locator("#set-accent").locator("..").locator(".shared-colors");
     await tool.locator(".uc-actions button").first().click();
     await tool.locator("select").selectOption("gradient");
-    await tool.locator(".uc-actions button").last().filter({ hasText: "添加节点" }).click();
+    await tool.locator(".uc-editor .uc-actions button").first().click();
     assert.equal(await tool.locator(".uc-stop").count(), 3);
     await tool.locator('input[aria-label="渐变角度"]').fill("90");
     await tool.locator('input[aria-label="渐变角度"]').dispatchEvent("change");
