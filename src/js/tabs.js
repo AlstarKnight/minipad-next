@@ -3,7 +3,8 @@ import { api } from "./api.js";
 import { tabsEl } from "./dom.js";
 import { state, book, current, makeNote } from "./state.js";
 import { toast, ask, openMenu, focusEditor } from "./ui.js";
-import { flushAll, scheduleMeta } from "./save.js";
+import { flushAll, holdSaves, scheduleMeta } from "./save.js";
+import { syncContent } from "./editor.js";
 import { mutate } from "./sync.js";
 import { rememberView, showNote } from "./page.js";
 import { openBooks } from "./notebooks.js";
@@ -167,11 +168,10 @@ export function startRename(n) {
     const val = input.value.trim();
     if (commit && val && val !== n.name) {
       try {
-        await mutate(async () => {
-          await flushAll();
+        await mutate(() => holdSaves(async () => {
           n.name = await api.invoke("rename_note", { book: b.name, old: n.name, new: val });
           scheduleMeta(b);
-        });
+        }));
       } catch (e) {
         toast("重命名失败:" + e);
       }
@@ -195,13 +195,13 @@ export function startRename(n) {
 export async function deleteNote(n) {
   const b = state.books.find((x) => x.notes.includes(n));
   if (!b) return;
+  syncContent(n);
   const msg = n.content.trim()
     ? `删除页面「${n.name}」?\n文件会移到笔记文件夹的 .trash 里,需要时可以找回。`
     : `删除空白页面「${n.name}」?`;
   if (!(await ask(msg, "删除", true))) return;
   try {
-    await mutate(async () => {
-      await flushAll();
+    await mutate(() => holdSaves(async () => {
       await api.invoke("delete_note", { book: b.name, name: n.name });
       rememberView();
       removeNote(b, n);
@@ -211,7 +211,7 @@ export async function deleteNote(n) {
         showNote();
       }
       scheduleMeta(b);
-    });
+    }));
   } catch (e) {
     toast("删除失败:" + e);
   }

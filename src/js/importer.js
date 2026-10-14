@@ -160,7 +160,8 @@ async function runImport() {
     // 先把还没保存的修改写进去,导入完从磁盘读回新的笔记本(已有的页面照常合并)
     await flushAll();
     await saveMeta();
-    const r = await api.invoke("minipad2_import", { path: found.path, options: options() });
+    // 导入时不和磁盘同步,免得读到导入了一半的笔记本、把页面顺序打乱
+    const r = await mutate(() => api.invoke("minipad2_import", { path: found.path, options: options() }));
     done = true;
     showResult(r);
     const disk = await api.invoke("read_notes");

@@ -10,7 +10,6 @@ import {
   parserCtx,
   serializerCtx,
   remarkStringifyOptionsCtx,
-  commandsCtx,
   linkAttr,
   hardbreakSchema,
   commonmark,
@@ -52,8 +51,9 @@ const parse = (md) => ctx.get(parserCtx)(md);
 const serialize = (doc) => ctx.get(serializerCtx)(doc);
 
 // ---------- 用户的修改 ----------
-// 每次文档变了,如果不是别处来的修改,就把文档转回 Markdown 存进页面。
-// 转出来和原来一样(比如只是光标动了、或者改了又改回去)就不算修改,文件不会被重写
+// 每次文档变了,如果不是别处来的修改,就记下页面的 Markdown 已经过时(mdStale),通知保存。
+// 整篇转回 Markdown 很慢(十几万字的页面要上百毫秒),所以不在每次按键时转,
+// 等保存、换页、搜索这些要用 n.content 的时候再转(见 syncContent)
 const changeKey = new PluginKey("minipad-change");
 const changes = $prose(
   () =>
@@ -66,15 +66,29 @@ const changes = $prose(
       view: () => ({
         update(v, prev) {
           if (!shown || shown.unreadable || v.state.doc === prev.doc || !changeKey.getState(v.state)) return;
-          let md = serialize(v.state.doc);
-          // 原来的文件末尾没有换行,存的时候也不加
-          if (!shown.stateMd.endsWith("\n")) md = md.replace(/\n$/, "");
-          if (md === shown.stateMd) return;
-          shown.content = shown.stateMd = md;
+          shown.mdStale = true;
           onChange(shown);
         },
       }),
     }),
+);
+
+// 把编辑器里的文档转回 Markdown 存进页面(n.content)。只有编辑器里的页面改过以后才需要转;
+// 转出来和原来一样(比如改了又改回去)就不算修改。返回内容有没有变
+export function syncContent(n = shown) {
+  if (!n || n !== shown || !n.mdStale) return false;
+  n.mdStale = false;
+  let md = serialize(view.state.doc);
+  // 原来的文件末尾没有换行,存的时候也不加
+  if (!n.stateMd.endsWith("\n")) md = md.replace(/\n$/, "");
+  if (md === n.stateMd) return false;
+  n.content = n.stateMd = md;
+  return true;
+}
+
+// 读取失败的页面是只读的:除了键盘输入,F5 插入日期、点任务方框、格式栏这些修改也都不让改
+const readOnly = $prose(
+  () => new Plugin({ filterTransaction: (tr) => !tr.docChanged || !shown?.unreadable || !!tr.getMeta(EXTERNAL) }),
 );
 
 // ---------- 换行 ----------
@@ -312,7 +326,7 @@ export async function createEditor(opts) {
     .use(history)
     .use(clipboard)
     .use([colorSpans, textColor, textBg].flat())
-    .use([lineBreak, codeBlockWithTitle, codeBlockView, codeHighlight, changes, placeholder, afterRule, findPlugin, outlinePlugin, selectionBar, formatBar])
+    .use([lineBreak, codeBlockWithTitle, codeBlockView, codeHighlight, readOnly, changes, placeholder, afterRule, findPlugin, outlinePlugin, selectionBar, formatBar])
     .create();
   editor.action((c) => {
     ctx = c;
@@ -336,19 +350,22 @@ export function editorDebug() {
   };
 }
 
-export function runCommand(cmd, payload) {
-  return ctx.get(commandsCtx).call(cmd.key, payload);
-}
-
 function scroller() {
   return $("#editor");
 }
 
-// 把编辑器里的页面的状态和滚动位置存回页面对象
+// 把编辑器里的页面的状态、内容和滚动位置存回页面对象
 function keep() {
   if (!shown) return;
+  syncContent(shown);
   shown.state = view.state;
   shown.scroll = scroller().scrollTop;
+}
+
+// 状态栏的字数:编辑器里看得到的字,不算 Markdown 的符号和换行(一个 emoji 算一个字)
+export function visibleLength() {
+  const text = view.state.doc.textContent;
+  return text.length - (text.match(/[\uD800-\uDBFF]/g)?.length ?? 0);
 }
 
 function freshState(md) {

@@ -6,11 +6,17 @@ import { scheduleMeta, scheduleBooks } from "./save.js";
 import { rememberView, showNote } from "./page.js";
 import { renderTabs } from "./tabs.js";
 import { renderBook } from "./notebooks.js";
-import { editorSelectionText, selectMatch } from "./editor.js";
+import { editorSelectionText, selectMatch, syncContent } from "./editor.js";
 
 // { b: 笔记本, n: 页面, pos: 匹配位置,-1 表示标题 }
 let results = [];
 let resultSel = 0;
+// 打字时停一下(或者输入法选完字)再搜,不用每个字母都把所有页面搜一遍
+let searchTimer = 0;
+const searchSoon = () => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(runSearch, 120);
+};
 
 export function openSearch() {
   closeOverlays();
@@ -25,6 +31,10 @@ export function openSearch() {
 }
 
 function runSearch() {
+  clearTimeout(searchTimer);
+  searchTimer = 0;
+  // 正在编辑的页面先转成最新的 Markdown
+  syncContent();
   const q = $("#search-input").value;
   const box = $("#search-results");
   results = [];
@@ -54,7 +64,7 @@ function runSearch() {
     const el = document.createElement("button");
     el.className = "result" + (idx === 0 ? " sel" : "");
     if (r.pos === -1) {
-      el.innerHTML = `<div class="where">页面标题${many ? " · " + label : ""}</div><div class="snip">${mark(n.name, ql)}</div>`;
+      el.innerHTML = `<div class="where">页面标题${many ? " · " + label : ""}</div><div class="snip title">${mark(n.name, ql)}</div>`;
     } else {
       const lineNo = n.content.slice(0, r.pos).split("\n").length;
       const ls = n.content.lastIndexOf("\n", r.pos - 1) + 1;
@@ -129,10 +139,15 @@ function openResult(idx) {
 
 export function bindSearch() {
   const input = $("#search-input");
-  input.addEventListener("input", runSearch);
+  input.addEventListener("input", (e) => {
+    if (!e.isComposing) searchSoon();
+  });
+  input.addEventListener("compositionend", searchSoon);
   input.addEventListener("keydown", (e) => {
     // 输入法正在拼字时的回车是给输入法的
     if (e.isComposing || e.keyCode === 229) return;
+    // 刚打的字还没搜:先搜完再选结果
+    if (searchTimer && ["ArrowDown", "ArrowUp", "Enter"].includes(e.key)) runSearch();
     if (e.key === "ArrowDown") (e.preventDefault(), moveResult(1));
     else if (e.key === "ArrowUp") (e.preventDefault(), moveResult(-1));
     else if (e.key === "Enter") (e.preventDefault(), openResult(resultSel));

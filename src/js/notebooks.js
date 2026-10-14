@@ -3,7 +3,7 @@ import { api } from "./api.js";
 import { $ } from "./dom.js";
 import { state, book, bookLabel, makeBook, sortBooks } from "./state.js";
 import { toast, ask, askText, openMenu, closeOverlays, focusEditor } from "./ui.js";
-import { flushAll, saveMeta, scheduleMeta, scheduleBooks } from "./save.js";
+import { holdSaves, saveMeta, scheduleMeta, scheduleBooks } from "./save.js";
 import { mutate } from "./sync.js";
 import { rememberView, showNote } from "./page.js";
 import { renderTabs, ensurePage, removeNote } from "./tabs.js";
@@ -164,12 +164,11 @@ export async function renameBook(b) {
   const name = await askText("笔记本的新名字:", b.name, "改名");
   if (name && name !== b.name) {
     try {
-      await mutate(async () => {
-        await flushAll();
+      await mutate(() => holdSaves(async () => {
         await saveMeta();
         b.name = await api.invoke("rename_book", { old: b.name, new: name });
         sortBooks();
-      });
+      }));
     } catch (e) {
       toast("改名失败:" + e);
     }
@@ -186,8 +185,7 @@ export async function deleteBook(b) {
     "文件夹会移到笔记文件夹的 .trash 里,需要时可以找回。";
   if (await ask(msg, "删除", true)) {
     try {
-      await mutate(async () => {
-        await flushAll();
+      await mutate(() => holdSaves(async () => {
         await saveMeta();
         await api.invoke("delete_book", { name: b.name });
         const wasCurrent = b === book();
@@ -201,7 +199,7 @@ export async function deleteBook(b) {
           renderTabs();
           showNote();
         }
-      });
+      }));
     } catch (e) {
       toast("删除失败:" + e);
     }
@@ -215,8 +213,7 @@ export async function moveNoteTo(n, target) {
   const src = state.books.find((b) => b.notes.includes(n));
   if (!src || src === target || !state.books.includes(target)) return;
   try {
-    await mutate(async () => {
-      await flushAll();
+    await mutate(() => holdSaves(async () => {
       await saveMeta();
       const name = await api.invoke("move_note", { book: src.name, name: n.name, target: target.name });
       rememberView();
@@ -233,7 +230,7 @@ export async function moveNoteTo(n, target) {
       scheduleMeta(src);
       scheduleMeta(target);
       toast(`已把「${name}」移到「${bookLabel(target)}」`);
-    });
+    }));
   } catch (e) {
     toast("移动失败:" + e);
   }

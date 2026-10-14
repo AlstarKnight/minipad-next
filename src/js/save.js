@@ -5,6 +5,7 @@ import { api } from "./api.js";
 import { $ } from "./dom.js";
 import { state, book, current } from "./state.js";
 import { updateCount } from "./page.js";
+import { syncContent } from "./editor.js";
 
 let saveTimer = null;
 let metaTimer = null;
@@ -13,9 +14,14 @@ let inFlightNote = null;
 let metaFlush = null;
 const metaDirty = new Set();
 let bookDirty = false;
+// 一直在打字时也不会一直不存:第一次改动以后最多等这么久就保存
+const MAX_WAIT = 5000;
+let dirtySince = 0;
+// 改名、移动、删除页面或笔记本时先停下自动保存(见 holdSaves)
+let holds = 0;
 
 // 防抖/重试为后台操作，错误由状态栏显示；主动 await 的调用会收到异常。
-const backgroundNotes = () => { void flushAll().catch(() => {}); };
+const backgroundNotes = () => { if (!holds) void flushAll().catch(() => {}); };
 const backgroundMeta = () => { void saveMeta().catch(() => {}); };
 
 export function markDirty(n = current()) {
@@ -24,8 +30,26 @@ export function markDirty(n = current()) {
   setSaveStatus("dirty");
   updateCount();
   noteActivity();
+  const now = Date.now();
+  dirtySince ||= now;
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(backgroundNotes, 500);
+  saveTimer = setTimeout(backgroundNotes, Math.max(0, Math.min(500, dirtySince + MAX_WAIT - now)));
+}
+
+// 改名、移动、删除页面或笔记本:先把修改都存好,做的时候不自动保存,免得按旧名字、旧位置把文件写回来;
+// 做完以后再存这期间的修改
+export async function holdSaves(fn) {
+  holds++;
+  try {
+    await flushAll();
+    return await fn();
+  } finally {
+    holds--;
+    if (!holds && state.books.some((b) => b.notes.some((n) => n.dirty))) {
+      clearTimeout(saveTimer);
+      saveTimer = setTimeout(backgroundNotes, 500);
+    }
+  }
 }
 
 // 不是用户在打字、但这一页需要再存一次(比如在别处也被改过,要留下冲突副本):半秒后保存
@@ -53,6 +77,7 @@ export function pendingNoteCount() {
 }
 
 async function writeDirtyNotes() {
+  dirtySince = 0;
   while (true) {
     const dirty = [];
     for (const b of state.books) for (const n of b.notes) if (n.dirty && !n.unreadable) dirty.push([b, n]);
@@ -66,6 +91,9 @@ async function writeDirtyNotes() {
       if (!n.dirty || n.unreadable || !state.books.includes(b) || !b.notes.includes(n)) continue;
       // 写入中的新编辑会重新标脏；其他页面不因本页失败而停止保存。
       n.dirty = false;
+      syncContent(n);
+      // 改了又改回去:和磁盘上的一样,不用写(也不会把别处刚改过的文件盖掉)
+      if (n.content === n.disk) continue;
       const content = n.content;
       inFlightNote = n;
       try {
