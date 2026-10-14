@@ -258,6 +258,7 @@ export function makeSharedColorTools({ getValue, onApply, defaultColor = "#d9822
     const quick = Math.min(10, Math.max(1, Math.round(Number(state.settings?.quick_color_count) || QUICK)));
     buttons.style.setProperty("--uc-toggle-column",
       String(presets.length ? Math.min(quick, presets.length, 5) + 1 : 6));
+    buttons.style.setProperty("--uc-quick-rows", String(Math.max(1, Math.ceil(Math.min(quick, presets.length) / 6))));
     const remainder = presets.slice(quick);
     const sections = expanded ? [
       { kind: "quick", title: "快捷（收起时显示）", colors: presets.slice(0, quick) },

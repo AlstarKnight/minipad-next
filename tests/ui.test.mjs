@@ -1830,12 +1830,14 @@ describe("v0.3.7 categorized color library", () => {
     ]);
     const positions = await accent.locator(".uc-presets").evaluate((el) => {
       const swatches = el.querySelectorAll(".uc-preset");
-      return { first: swatches[0].getBoundingClientRect().top,
+      return { quickRows: el.style.getPropertyValue("--uc-quick-rows"),
+        first: swatches[0].getBoundingClientRect().top,
         sixth: swatches[5].getBoundingClientRect().top,
         toggle: el.querySelector(".uc-more").getBoundingClientRect().top };
     });
     assert.ok(positions.sixth > positions.first && positions.toggle === positions.first,
       "more button remains on the first row; additional quick colors wrap");
+    assert.equal(positions.quickRows, "2", "expanded palette allows for a second quick row");
     await expandLibrary(p, "#set-accent + .shared-colors");
     assert.deepEqual(await accent.locator(".uc-kind-title").allTextContents(),
       ["快捷（收起时显示）", "纯色", "渐变色"]);
@@ -1853,8 +1855,10 @@ describe("v0.3.7 categorized color library", () => {
     await p.click("#btn-settings");
     await settingsPage(p, "edit");
     const find = p.locator("#set-find-color + .shared-colors");
-    assert.deepEqual(await visible(find), await visible(accent),
-      "other pickers share the persisted quick count and order");
+    assert.deepEqual(await visible(find), [
+      "#111111", "#222222", "#444444", "#555555",
+      "linear-gradient(90deg, #aaaaaa, #bbbbbb)", "#777777", "#888888", "#999999",
+    ], "other pickers share the persisted quick count and order");
   });
 
   ui("quick count one and upper bound ten preserve correct collapsed controls", {
@@ -2187,7 +2191,7 @@ describe("v0.3.4 picker regressions", () => {
     const root = p.locator("#set-accent + .shared-colors");
     assert.equal(await root.locator(".uc-more").getAttribute("aria-expanded"), "false");
     assert.equal(await root.locator(".uc-preset:visible").count(), 5, "five quick colors");
-    assert.equal(await root.locator(".uc-swatch").count(), 40, "full library remains available");
+    assert.equal(await root.locator(".uc-swatch").count(), 5, "collapsed view renders only quick colors");
     await root.locator(".uc-more").click();
     assert.equal(await root.locator(".uc-preset:visible").count(), 40);
     assert.ok(await root.locator(".uc-presets").evaluate((el) => el.scrollHeight <= el.clientHeight + 1),
