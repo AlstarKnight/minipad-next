@@ -1556,16 +1556,17 @@ fn edge_tick(app: &AppHandle) {
                 e.peeking = peek;
                 e.outside_ticks = 0;
             }
-            let (x, y) = edge::hidden_position_with_strip(edge, rect, mon, {
+            // 先取出设置再问窗口缩放:后台线程查询窗口要等主线程,主线程上的命令又会锁设置
+            let (line_width, glow) = {
                 let settings = st.settings.lock().unwrap();
-                scaled_strip(
-                    &win,
-                    "hover",
-                    peek,
-                    settings.edge_line_width,
-                    settings.edge_line_glow,
-                )
-            });
+                (settings.edge_line_width, settings.edge_line_glow)
+            };
+            let (x, y) = edge::hidden_position_with_strip(
+                edge,
+                rect,
+                mon,
+                scaled_strip(&win, "hover", peek, line_width, glow),
+            );
             let _ = win.set_position(PhysicalPosition::new(x, y));
             let _ = app.emit("edge-peek", peek);
         }
