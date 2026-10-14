@@ -1763,7 +1763,7 @@ describe("v0.3.7 categorized color library", () => {
     ], "quick keyboard sorting moves to visually adjacent color even across types");
   });
 
-  ui("drag into quick and out into matching color type; reject different-type drops", {
+  ui("dragging into quick adds one and dragging out removes one; different-type drops are rejected", {
     seed: { ...seed({ "": { 页: "文字" } }), settings: {
       ...SETTINGS, color_library: [
         "#111111", "#222222", "#333333", "#444444", "#555555",
@@ -1778,6 +1778,7 @@ describe("v0.3.7 categorized color library", () => {
     const library = p.locator("#set-accent + .shared-colors");
     await expandLibrary(p, "#set-accent + .shared-colors");
     const stored = async () => (await h.stored()).settings.color_library;
+    const count = async () => (await h.stored()).settings.quick_color_count;
     const before = await stored();
     const firstSolid = library.locator('.uc-preset[data-color="#666666"]');
     const gradient = library.locator('.uc-preset[data-color="linear-gradient(90deg, #aaaaaa, #bbbbbb)"]');
@@ -1786,20 +1787,57 @@ describe("v0.3.7 categorized color library", () => {
     await firstSolid.dragTo(library.locator('.uc-kind-title[data-section="gradient"]'));
     assert.deepEqual(await stored(), before, "solid onto gradient heading is rejected");
     await gradient.dragTo(library.locator('.uc-kind-title[data-section="quick"]'));
-    await until(async () => (await stored())[4], before[5], "dragging to quick heading promotes gradient");
-    assert.equal(await library.locator('.uc-preset[data-color="#555555"]').count(), 1,
-      "displaced fifth quick color is now in the solid section");
-    const quick = library.locator('.uc-kind-title[data-section="quick"]');
-    assert.ok(await quick.isVisible());
+    await until(count, 6, "dragging to the quick heading adds a quick color");
+    assert.deepEqual(await stored(), before, "the gradient was next in line, so no color moves or leaves quick");
+    assert.equal(await p.inputValue("#set-quick-limit"), "", "dragging never changes the limit");
     await library.locator('.uc-preset[data-color="#111111"]').dragTo(
       library.locator('.uc-kind-title[data-section="solid"]'));
-    await until(async () => (await stored()).slice(0, 5).includes("#111111"), false,
-      "dragging quick solid into its category removes it from quick");
+    await until(count, 5, "dragging a quick solid into its category removes a quick color");
+    assert.deepEqual(await stored(), [
+      "#222222", "#333333", "#444444", "#555555", "linear-gradient(90deg, #aaaaaa, #bbbbbb)",
+      "#111111", "#666666", "linear-gradient(45deg, #cccccc, #dddddd)",
+    ], "no other color is pulled into quick, and the dragged one leads its type");
     assert.deepEqual(await library.locator(".uc-kind-title").allTextContents(),
       ["快捷（收起时显示）", "纯色", "渐变色"]);
     await library.locator(".uc-more").click();
     assert.deepEqual(await library.locator(".uc-preset:visible .uc-swatch").evaluateAll((nodes) =>
       nodes.map((node) => node.dataset.color)), (await stored()).slice(0, 5));
+  });
+
+  ui("at the limit picked in the settings, a dropped color takes the last quick place", {
+    seed: { ...seed({ "": { 页: "文字" } }), settings: {
+      ...SETTINGS, quick_color_count: 6, quick_color_limit: 6, color_library: [
+        "#111111", "#222222", "#333333", "#444444", "#555555", "#666666", "#777777", "#888888",
+      ],
+    } },
+  }, async (h) => {
+    const { p } = h;
+    await p.click("#btn-settings");
+    await settingsPage(p, "look");
+    assert.equal(await p.inputValue("#set-quick-limit"), "6");
+    const library = p.locator("#set-accent + .shared-colors");
+    await expandLibrary(p, "#set-accent + .shared-colors");
+    await library.locator('.uc-preset[data-color="#888888"]').dragTo(
+      library.locator('.uc-kind-title[data-section="quick"]'));
+    await until(async () => (await h.stored()).settings.color_library.slice(5), ["#888888", "#666666", "#777777"],
+      "the sixth quick color makes room for the dropped one");
+    assert.equal((await h.stored()).settings.quick_color_count, 6, "quick stays at the limit");
+  });
+
+  ui("with fewer colors than the quick count, dragging one out leaves one less quick color", {
+    seed: { ...seed({ "": { 页: "文字" } }), settings: {
+      ...SETTINGS, quick_color_count: 10, color_library: ["#111111", "#222222", "#333333"],
+    } },
+  }, async (h) => {
+    const { p } = h;
+    await p.click("#btn-settings");
+    await settingsPage(p, "look");
+    const library = p.locator("#set-accent + .shared-colors");
+    await expandLibrary(p, "#set-accent + .shared-colors");
+    await library.locator('.uc-preset[data-color="#111111"]').dragTo(
+      library.locator('.uc-kind-title[data-section="solid"]'));
+    await until(async () => (await h.stored()).settings.quick_color_count, 2);
+    assert.deepEqual((await h.stored()).settings.color_library, ["#222222", "#333333", "#111111"]);
   });
 
   ui("many quick colors still leave the other sections in view", {
@@ -1819,9 +1857,9 @@ describe("v0.3.7 categorized color library", () => {
     assert.ok(inView, "the 纯色 heading shows below ten quick colors without scrolling");
   });
 
-  ui("quick color count previews before saving and cancel restores stored count", {
+  ui("the quick color limit previews before saving, cancel restores it, and it never changes the count", {
     seed: { ...seed({ "": { 页: "文字" } }), settings: {
-      ...SETTINGS, color_library: [
+      ...SETTINGS, quick_color_count: 8, color_library: [
         "#111111", "#222222", "#333333", "#444444", "#555555",
         "#666666", "#777777", "#888888", "#999999", "#aaaaaa",
       ],
@@ -1835,27 +1873,48 @@ describe("v0.3.7 categorized color library", () => {
       "#666666", "#777777", "#888888", "#999999", "#aaaaaa"];
     await p.click("#btn-settings");
     await settingsPage(p, "look");
-    assert.deepEqual(await visible(), colors.slice(0, 5));
-    await p.fill("#set-quick-colors", "8");
-    assert.deepEqual(await visible(), colors.slice(0, 8), "quick swatches update immediately");
-    assert.equal((await h.stored()).settings.quick_color_count, 5, "preview does not save");
+    assert.equal(await p.inputValue("#set-quick-limit"), "", "no limit by default");
+    assert.deepEqual(await visible(), colors.slice(0, 8));
+    await p.fill("#set-quick-limit", "3");
+    assert.deepEqual(await visible(), colors.slice(0, 3), "quick swatches follow the limit immediately");
+    assert.equal((await h.stored()).settings.quick_color_limit, 0, "preview does not save");
 
     await p.click("#set-cancel");
     await p.click("#btn-settings");
     await settingsPage(p, "look");
-    assert.equal(await p.inputValue("#set-quick-colors"), "5", "cancel discards preview count");
-    assert.deepEqual(await visible(), colors.slice(0, 5));
-    await p.fill("#set-quick-colors", "8");
+    assert.equal(await p.inputValue("#set-quick-limit"), "", "cancel discards the previewed limit");
+    assert.deepEqual(await visible(), colors.slice(0, 8));
+    await p.fill("#set-quick-limit", "6");
     await p.click("#set-save");
-    await until(async () => (await h.stored()).settings.quick_color_count, 8);
+    await until(async () => (await h.stored()).settings.quick_color_limit, 6);
+    assert.equal((await h.stored()).settings.quick_color_count, 8, "the limit does not change the count");
     await p.click("#btn-settings");
     await settingsPage(p, "look");
-    assert.deepEqual(await visible(), colors.slice(0, 8), "saved count is used after reopening");
+    assert.deepEqual(await visible(), colors.slice(0, 6), "the saved limit is used after reopening");
   });
 
-  ui("quick color count is configurable and persists across pickers and reloads", {
+  ui("clearing the quick color limit previews and saves no limit", {
     seed: { ...seed({ "": { 页: "文字" } }), settings: {
-      ...SETTINGS, color_library: [
+      ...SETTINGS, quick_color_count: 8, quick_color_limit: 3, color_library: [
+        "#111111", "#222222", "#333333", "#444444", "#555555",
+        "#666666", "#777777", "#888888", "#999999", "#aaaaaa",
+      ],
+    } },
+  }, async (h) => {
+    const { p } = h;
+    await p.click("#btn-settings");
+    await settingsPage(p, "look");
+    const quick = p.locator("#set-accent + .shared-colors .uc-preset:visible");
+    assert.equal(await quick.count(), 3);
+    await p.fill("#set-quick-limit", "");
+    assert.equal(await quick.count(), 8, "an empty field previews no limit");
+    await p.click("#set-save");
+    await until(async () => (await h.stored()).settings.quick_color_limit, 0);
+  });
+
+  ui("eight quick colors wrap, and dragging one out persists across pickers and reloads", {
+    seed: { ...seed({ "": { 页: "文字" } }), settings: {
+      ...SETTINGS, quick_color_count: 8, color_library: [
         "#111111", "#222222", "#333333", "#444444", "#555555",
         "linear-gradient(90deg, #aaaaaa, #bbbbbb)", "#777777", "#888888", "#999999", "#aaaaaa",
       ],
@@ -1864,14 +1923,6 @@ describe("v0.3.7 categorized color library", () => {
     const { p } = h;
     await p.click("#btn-settings");
     await settingsPage(p, "look");
-    assert.equal(await p.inputValue("#set-quick-colors"), "5", "old settings default to five");
-    await p.fill("#set-quick-colors", "8");
-    await p.click("#set-save");
-    await until(async () => (await h.stored()).settings.quick_color_count, 8);
-
-    await p.click("#btn-settings");
-    await settingsPage(p, "look");
-    assert.equal(await p.inputValue("#set-quick-colors"), "8");
     const accent = p.locator("#set-accent + .shared-colors");
     const visible = (root) => root.locator(".uc-preset:visible .uc-swatch").evaluateAll((nodes) =>
       nodes.map((el) => el.dataset.color));
@@ -1894,12 +1945,13 @@ describe("v0.3.7 categorized color library", () => {
       ["快捷（收起时显示）", "纯色", "渐变色"]);
     await accent.locator('.uc-preset[data-color="#333333"]').dragTo(
       accent.locator('.uc-kind-title[data-section="solid"]'));
-    await until(async () => (await h.stored()).settings.color_library[8], "#333333",
-      "dragging out of a longer quick section inserts at the new boundary");
+    await until(async () => (await h.stored()).settings.quick_color_count, 7,
+      "dragging out of a longer quick section removes one quick color");
+    assert.equal((await h.stored()).settings.color_library[7], "#333333", "it leads the solid colors");
     await accent.locator(".uc-more").click();
     assert.deepEqual(await visible(accent), [
       "#111111", "#222222", "#444444", "#555555",
-      "linear-gradient(90deg, #aaaaaa, #bbbbbb)", "#777777", "#888888", "#999999",
+      "linear-gradient(90deg, #aaaaaa, #bbbbbb)", "#777777", "#888888",
     ]);
 
     await p.reload();
@@ -1908,20 +1960,16 @@ describe("v0.3.7 categorized color library", () => {
     const find = p.locator("#set-find-color + .shared-colors");
     assert.deepEqual(await visible(find), [
       "#111111", "#222222", "#444444", "#555555",
-      "linear-gradient(90deg, #aaaaaa, #bbbbbb)", "#777777", "#888888", "#999999",
+      "linear-gradient(90deg, #aaaaaa, #bbbbbb)", "#777777", "#888888",
     ], "other pickers share the persisted quick count and order");
   });
 
-  ui("quick count one and upper bound ten preserve correct collapsed controls", {
+  ui("one quick color can be dragged out for the next, and the limit stops at the library size", {
     seed: { ...seed({ "": { 页: "文字" } }), settings: {
-      ...SETTINGS, color_library: ["#111111", "#222222", "#333333", "#444444"],
+      ...SETTINGS, quick_color_count: 1, color_library: ["#111111", "#222222", "#333333", "#444444"],
     } },
   }, async (h) => {
     const { p } = h;
-    await p.click("#btn-settings");
-    await settingsPage(p, "look");
-    await p.fill("#set-quick-colors", "1");
-    await p.click("#set-save");
     await p.click("#btn-settings");
     await settingsPage(p, "look");
     const palette = p.locator("#set-accent + .shared-colors");
@@ -1929,20 +1977,22 @@ describe("v0.3.7 categorized color library", () => {
       nodes.map((el) => el.dataset.color));
     assert.deepEqual(await visible(), ["#111111"]);
     await expandLibrary(p, "#set-accent + .shared-colors");
-    await palette.locator('.uc-preset[data-color="#222222"]').dragTo(
-      palette.locator('.uc-kind-title[data-section="quick"]'));
-    await until(async () => (await h.stored()).settings.color_library[0], "#222222");
+    await palette.locator('.uc-preset[data-color="#111111"]').dragTo(
+      palette.locator('.uc-kind-title[data-section="solid"]'));
+    await until(async () => (await h.stored()).settings.color_library[0], "#222222",
+      "the only quick color can be dragged out; the next one takes its place");
+    assert.equal((await h.stored()).settings.quick_color_count, 1, "quick never drops below one");
     await palette.locator(".uc-more").click();
     assert.deepEqual(await visible(), ["#222222"]);
 
-    await p.fill("#set-quick-colors", "99");
+    await p.fill("#set-quick-limit", "999");
     await p.click("#set-save");
-    await until(async () => (await h.stored()).settings.quick_color_count, 10,
-      "numeric settings clamp to ten");
+    await until(async () => (await h.stored()).settings.quick_color_limit, 128,
+      "the limit stops at the 128 colors a library can hold");
     await p.click("#btn-settings");
     await settingsPage(p, "look");
-    assert.deepEqual(await visible(), ["#222222", "#111111", "#333333", "#444444"]);
-    assert.equal(await p.inputValue("#set-quick-colors"), "10");
+    assert.equal(await p.inputValue("#set-quick-limit"), "128");
+    assert.deepEqual(await visible(), ["#222222"], "raising the limit does not add quick colors");
   });
 
   ui("dragging a quick color to a type heading inserts it first after interleaved colors", {
@@ -1964,6 +2014,7 @@ describe("v0.3.7 categorized color library", () => {
       "#111111", "#333333", "#444444", "#555555",
       "linear-gradient(90deg, #aaaaaa, #bbbbbb)", "#222222", "#777777", "#888888",
     ], "quick solid inserts at the start of its category even past an interleaved gradient");
+    assert.equal((await h.stored()).settings.quick_color_count, 4, "quick shrinks instead of pulling in the gradient");
     const solids = await library.locator(".uc-presets").evaluate((el) => {
       let section = "";
       return [...el.children].flatMap((node) => {
@@ -1974,9 +2025,7 @@ describe("v0.3.7 categorized color library", () => {
     assert.deepEqual(solids, ["#222222", "#777777", "#888888"]);
     await library.locator(".uc-more").click();
     assert.deepEqual(await library.locator(".uc-preset:visible .uc-swatch").evaluateAll((nodes) =>
-      nodes.map((el) => el.dataset.color)), [
-      "#111111", "#333333", "#444444", "#555555", "linear-gradient(90deg, #aaaaaa, #bbbbbb)",
-    ]);
+      nodes.map((el) => el.dataset.color)), ["#111111", "#333333", "#444444", "#555555"]);
   });
 
   ui("empty libraries show a readable hint in both collapsed and expanded modes", {
@@ -2063,7 +2112,7 @@ describe("v0.3.5 editable color library", () => {
     assert.ok(await p.locator('#set-accent + .shared-colors .uc-swatch[data-color="#123abc"]').isVisible(), "old saved colors remain after migration");
   });
 
-  ui("drag and keyboard sorting choose the five quick colors; deletion can be undone", {
+  ui("drag and keyboard sorting choose the quick colors; deletion can be undone", {
     seed: { ...seed({ "": { 页: "正文" } }), settings: { ...SETTINGS,
       color_library: ["#112233", "#223344", "#334455", "#445566", "#556677", "#667788"] } },
   }, async (h) => {
@@ -2078,8 +2127,8 @@ describe("v0.3.5 editable color library", () => {
     await palette.locator('.uc-preset[data-color="#667788"]').dragTo(palette.locator('.uc-preset[data-color="#112233"]'));
     await until(async () => (await h.stored()).settings.color_library[0], "#667788", "drag changes order");
     await palette.locator(".uc-more").click();
-    assert.deepEqual(await quick(), ["#667788", "#112233", "#223344", "#334455", "#445566"],
-      "new first five become quick colors");
+    assert.deepEqual(await quick(), ["#667788", "#112233", "#223344", "#334455", "#445566", "#556677"],
+      "dragging a color into quick adds it in front without pushing another out");
     await expandLibrary(p, "#set-accent + .shared-colors");
     await palette.locator('.uc-swatch[data-color="#667788"]').focus();
     await p.keyboard.press("Shift+ArrowRight");
@@ -2097,8 +2146,8 @@ describe("v0.3.5 editable color library", () => {
     await settingsPage(p, "window");
     const edge = p.locator("#set-edge-color + .shared-colors");
     assert.deepEqual(await edge.locator(".uc-preset:visible .uc-swatch").evaluateAll((nodes) =>
-      nodes.map((el) => el.dataset.color)), ["#112233", "#667788", "#223344", "#334455", "#445566"],
-      "quick colors persist and are shared across settings entrances");
+      nodes.map((el) => el.dataset.color)), ["#112233", "#667788", "#223344", "#334455", "#445566", "#556677"],
+      "quick colors and their dragged count persist and are shared across settings entrances");
   });
 
   ui("group popup keeps action buttons on-screen with the color library and editor expanded", {
