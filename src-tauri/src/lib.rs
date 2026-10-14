@@ -860,8 +860,6 @@ fn save_note(
     content: String,
     expected: Option<String>,
 ) -> Result<SavedNote, String> {
-    let root = current_notes_dir(&app);
-    let path = notes::page_path(&root, &book, &name)?;
     maybe_backup(&app);
     let keep_both = app
         .state::<AppState>()
@@ -870,15 +868,16 @@ fn save_note(
         .unwrap()
         .conflict_mode
         == "copy";
-    let conflict = match expected {
-        Some(expected) if keep_both => {
-            let stamp = chrono::Local::now().format("%Y-%m-%d %H.%M").to_string();
-            let dir = notes::book_dir(&root, &book)?;
-            notes::save_conflict_copy(&dir, &name, &expected, &content, &stamp)?
-        }
-        _ => None,
-    };
-    notes::write_atomic(&path, &content)?;
+    let stamp = chrono::Local::now().format("%Y-%m-%d %H.%M").to_string();
+    let conflict = notes::save_page(
+        &current_notes_dir(&app),
+        &book,
+        &name,
+        &content,
+        expected.as_deref(),
+        keep_both,
+        &stamp,
+    )?;
     Ok(SavedNote {
         conflict: conflict.map(|(name, content)| ConflictCopy { name, content }),
     })
