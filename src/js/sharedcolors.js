@@ -284,7 +284,9 @@ export function makeSharedColorTools({ getValue, onApply, defaultColor = "#d9822
     };
     if (!presets.length) buttons.append(make("span", "muted", "还没有保存的颜色"));
     for (const section of sections) {
-      if (expanded) {
+      if (expanded && (section.kind === "quick" || section.colors.length ||
+        (presets.length > 5 && presets.slice(0, 5).some((color) =>
+          (parseAccent(color)?.to ? "gradient" : "solid") === section.kind)))) {
         const label = make("div", "uc-kind-title" + (section.kind === "quick" ? " first" : ""),
           section.title);
         label.dataset.section = section.kind;

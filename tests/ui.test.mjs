@@ -1666,16 +1666,13 @@ describe("v0.3.5 remaining color UX details", () => {
 });
 
 describe("v0.3.7 categorized color library", () => {
-  ui("expanded colors are separated into solid and gradient sections without changing quick order", {
+  ui("expanded colors have one quick section and separate remainder types", {
     seed: { ...seed({ "": { 页: "文字" } }), settings: {
       ...SETTINGS,
       color_library: [
         "linear-gradient(90deg, #111111, #eeeeee)",
-        "#334455",
-        "#556677",
-        "linear-gradient(45deg, #ff0000, #0000ff)",
-        "#778899",
-        "#123456",
+        "#334455", "#556677", "linear-gradient(45deg, #ff0000, #0000ff)",
+        "#778899", "#123456", "linear-gradient(180deg, #00ff00, #0000ff)", "#abcdef",
       ],
     } },
   }, async ({ p }) => {
@@ -1683,29 +1680,31 @@ describe("v0.3.7 categorized color library", () => {
     await settingsPage(p, "look");
     const library = p.locator("#set-accent + .shared-colors");
     const original = [
-      "linear-gradient(90deg, #111111, #eeeeee)", "#334455", "#556677",
-      "linear-gradient(45deg, #ff0000, #0000ff)", "#778899", "#123456",
+      "linear-gradient(90deg, #111111, #eeeeee)",
+      "#334455", "#556677", "linear-gradient(45deg, #ff0000, #0000ff)",
+      "#778899", "#123456", "linear-gradient(180deg, #00ff00, #0000ff)", "#abcdef",
     ];
     assert.deepEqual(await library.locator(".uc-preset:visible .uc-swatch").evaluateAll((nodes) =>
-      nodes.map((node) => node.dataset.color)), original.slice(0, 5), "quick colors keep their saved order");
-    assert.equal(await library.locator(".uc-kind-title").count(), 0, "collapsed colors have no section headings");
+      nodes.map((node) => node.dataset.color)), original.slice(0, 5));
+    assert.equal(await library.locator(".uc-kind-title").count(), 0, "collapsed has no section headings");
     await expandLibrary(p, "#set-accent + .shared-colors");
-    assert.deepEqual(await library.locator(".uc-kind-title").allTextContents(), ["纯色", "渐变色"]);
-    const visual = await library.locator(".uc-presets").evaluate((el) => {
-      const entries = [...el.querySelectorAll(".uc-kind-title, .uc-preset")];
-      return entries.map((node) => ({
+    assert.deepEqual(await library.locator(".uc-kind-title").allTextContents(),
+      ["快捷（收起时显示）", "纯色", "渐变色"]);
+    const visual = await library.locator(".uc-presets").evaluate((el) =>
+      [...el.querySelectorAll(".uc-kind-title, .uc-preset")].map((node) => ({
         name: node.classList.contains("uc-kind-title") ? node.textContent : node.dataset.color,
         top: node.getBoundingClientRect().top,
-      }));
-    });
+      })));
     assert.deepEqual(visual.map((item) => item.name), [
-      "纯色", "#334455", "#556677", "#778899", "#123456",
-      "渐变色", original[0], original[3],
-    ], "both sections preserve relative order within each color type");
-    assert.ok(visual[4].top < visual[5].top, "gradient heading starts below all solid swatches");
+      "快捷（收起时显示）", ...original.slice(0, 5),
+      "纯色", "#123456", "#abcdef", "渐变色", original[6],
+    ], "each color appears in exactly one section");
+    assert.ok(visual[5].top < visual[6].top && visual[8].top < visual[9].top,
+      "category headings start below the previous row");
     await library.locator(".uc-more").click();
     assert.deepEqual(await library.locator(".uc-preset:visible .uc-swatch").evaluateAll((nodes) =>
-      nodes.map((node) => node.dataset.color)), original.slice(0, 5), "collapsing restores mixed quick colors");
+      nodes.map((node) => node.dataset.color)), original.slice(0, 5),
+    "collapsed quick colors preserve the stored order");
   });
 
   ui("all-gradient libraries still show a category heading and keep edit actions available", {
@@ -1717,11 +1716,110 @@ describe("v0.3.7 categorized color library", () => {
     await settingsPage(p, "look");
     const library = p.locator("#set-accent + .shared-colors");
     await expandLibrary(p, "#set-accent + .shared-colors");
-    assert.deepEqual(await library.locator(".uc-kind-title").allTextContents(), ["渐变色"]);
+    assert.deepEqual(await library.locator(".uc-kind-title").allTextContents(), ["快捷（收起时显示）"]);
+    assert.equal(await library.locator('.uc-preset[data-color="linear-gradient(135deg, #5fb4ff, #d66cf0)"]').count(), 1);
     const gradient = library.locator(".uc-swatch").first();
     await gradient.click({ button: "right" });
     assert.equal(await library.locator('select[aria-label="颜色类型"]').inputValue(), "gradient");
     assert.ok(await library.locator(".uc-editor").isVisible());
+  });
+  ui("mixed colors reorder visibly within their own keyboard section", {
+    seed: { ...seed({ "": { 页: "文字" } }), settings: {
+      ...SETTINGS, color_library: [
+        "#111111", "linear-gradient(90deg, #123456, #abcdef)", "#222222", "#333333",
+        "linear-gradient(45deg, #111111, #eeeeee)", "#444444",
+        "linear-gradient(180deg, #ffffff, #000000)", "#555555", "#666666",
+      ],
+    } },
+  }, async (h) => {
+    const { p } = h;
+    await p.click("#btn-settings");
+    await settingsPage(p, "look");
+    const library = p.locator("#set-accent + .shared-colors");
+    const values = async (kind) => library.locator(".uc-presets").evaluate((el, section) => {
+      const nodes = [...el.querySelectorAll(".uc-kind-title, .uc-preset")];
+      let active = "";
+      return nodes.flatMap((node) => {
+        if (node.classList.contains("uc-kind-title")) { active = node.dataset.section; return []; }
+        return active === section ? [node.dataset.color] : [];
+      });
+    }, kind);
+    await expandLibrary(p, "#set-accent + .shared-colors");
+    const beforeQuick = await values("quick");
+    assert.deepEqual(await values("solid"), ["#444444", "#555555", "#666666"]);
+    await library.locator('.uc-swatch[data-color="#555555"]').focus();
+    await p.keyboard.press("Shift+ArrowLeft");
+    await until(async () => values("solid"), ["#555555", "#444444", "#666666"],
+      "single keyboard step moves past interleaved gradient");
+    assert.deepEqual((await h.stored()).settings.color_library.slice(0, 5), beforeQuick,
+      "reordering within remainder cannot alter quick colors");
+    await p.keyboard.press("Shift+ArrowLeft");
+    assert.deepEqual(await values("solid"), ["#555555", "#444444", "#666666"],
+      "keyboard stops at section boundary");
+    await library.locator('.uc-swatch[data-color="#222222"]').focus();
+    await p.keyboard.press("Shift+ArrowLeft");
+    await until(async () => values("quick"), [
+      "#111111", "#222222", beforeQuick[1], "#333333", beforeQuick[4],
+    ], "quick keyboard sorting moves to visually adjacent color even across types");
+  });
+
+  ui("drag into quick and out into matching color type; reject different-type drops", {
+    seed: { ...seed({ "": { 页: "文字" } }), settings: {
+      ...SETTINGS, color_library: [
+        "#111111", "#222222", "#333333", "#444444", "#555555",
+        "linear-gradient(90deg, #aaaaaa, #bbbbbb)", "#666666",
+        "linear-gradient(45deg, #cccccc, #dddddd)",
+      ],
+    } },
+  }, async (h) => {
+    const { p } = h;
+    await p.click("#btn-settings");
+    await settingsPage(p, "look");
+    const library = p.locator("#set-accent + .shared-colors");
+    await expandLibrary(p, "#set-accent + .shared-colors");
+    const stored = async () => (await h.stored()).settings.color_library;
+    const before = await stored();
+    const firstSolid = library.locator('.uc-preset[data-color="#666666"]');
+    const gradient = library.locator('.uc-preset[data-color="linear-gradient(90deg, #aaaaaa, #bbbbbb)"]');
+    await gradient.dragTo(firstSolid);
+    assert.deepEqual(await stored(), before, "gradient onto solid is rejected without mutating storage");
+    await firstSolid.dragTo(library.locator('.uc-kind-title[data-section="gradient"]'));
+    assert.deepEqual(await stored(), before, "solid onto gradient heading is rejected");
+    await gradient.dragTo(library.locator('.uc-kind-title[data-section="quick"]'));
+    await until(async () => (await stored())[4], before[5], "dragging to quick heading promotes gradient");
+    assert.equal(await library.locator('.uc-preset[data-color="#555555"]').count(), 1,
+      "displaced fifth quick color is now in the solid section");
+    const quick = library.locator('.uc-kind-title[data-section="quick"]');
+    assert.ok(await quick.isVisible());
+    await library.locator('.uc-preset[data-color="#111111"]').dragTo(
+      library.locator('.uc-kind-title[data-section="solid"]'));
+    await until(async () => (await stored()).slice(0, 5).includes("#111111"), false,
+      "dragging quick solid into its category removes it from quick");
+    assert.deepEqual(await library.locator(".uc-kind-title").allTextContents(),
+      ["快捷（收起时显示）", "纯色", "渐变色"]);
+    await library.locator(".uc-more").click();
+    assert.deepEqual(await library.locator(".uc-preset:visible .uc-swatch").evaluateAll((nodes) =>
+      nodes.map((node) => node.dataset.color)), (await stored()).slice(0, 5));
+  });
+
+  ui("refreshing all color pickers keeps keyboard focus inside the active picker", {
+    seed: { ...seed({ "": { 页: "文字" } }), settings: {
+      ...SETTINGS, color_library: ["#111111", "#222222", "#333333", "#444444", "#555555", "#666666"],
+    } },
+  }, async (h) => {
+    const { p } = h;
+    await p.click("#btn-settings");
+    await settingsPage(p, "window");
+    const library = p.locator("#set-edge-color + .shared-colors");
+    await expandLibrary(p, "#set-edge-color + .shared-colors");
+    await library.locator('.uc-swatch[data-color="#222222"]').focus();
+    await p.keyboard.press("Shift+ArrowLeft");
+    await until(async () => (await h.stored()).settings.color_library[0], "#222222");
+    const focus = await p.evaluate(() => ({
+      color: document.activeElement.dataset.color,
+      picker: document.activeElement.closest(".shared-colors")?.previousElementSibling?.id,
+    }));
+    assert.deepEqual(focus, { color: "#222222", picker: "set-edge-color" });
   });
 });
 
