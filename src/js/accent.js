@@ -8,7 +8,6 @@ const STOP = /^(#[0-9a-f]{6})(?:\s+(\d{1,3})%)?$/i;
 // 兼容旧颜色字符串；0.3.4 新增每个节点的可选位置。
 export const gradientOf = (stops, deg = 135, positions = null) =>
   `linear-gradient(${deg}deg, ${stops.map((s, i) => positions?.[i] != null ? s + " " + positions[i] + "%" : s).join(", ")})`;
-export const gradient = (from, to, deg = 135) => gradientOf([from, to], deg);
 
 // 几种渐变色:强调色和字体颜色共用。蓝色、紫色系的多一些
 export const GRADIENTS = [
@@ -68,7 +67,7 @@ export function applyAccent(value) {
   const root = document.documentElement.style;
   const a = parseAccent(value);
   if (!a) {
-    for (const v of ["--accent", "--accent-grad", "--accent-soft", "--accent-end"]) root.removeProperty(v);
+    for (const v of ["--accent", "--accent-grad", "--accent-soft", "--accent-end", "--accent-fg"]) root.removeProperty(v);
     document.documentElement.classList.remove("accent-gradient");
     return;
   }
@@ -76,12 +75,23 @@ export function applyAccent(value) {
   root.setProperty("--accent-end", a.to || a.from);
   root.setProperty("--accent-grad", a.to ? gradientOf(a.stops, a.deg, a.positions) : a.from);
   root.setProperty("--accent-soft", `color-mix(in srgb, ${a.from} 16%, transparent)`);
+  // 很浅的颜色(比如黄色)上面白字看不清,换成深色的字;渐变色看最浅的那个颜色
+  root.setProperty("--accent-fg", Math.max(...a.stops.map(luminance)) > 0.5 ? "#2b2a26" : "#fff");
   document.documentElement.classList.toggle("accent-gradient", !!a.to);
-  if (a.to) svgGradient(a.stops, a.positions);
+  if (a.to) svgGradient(a.stops, a.positions, a.deg);
+}
+
+// 颜色的亮度(0 是黑,1 是白)
+function luminance(hex) {
+  const [r, g, b] = [1, 3, 5].map((i) => {
+    const c = parseInt(hex.slice(i, i + 2), 16) / 255;
+    return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+  });
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
 }
 
 // 亮起来的图标(比如置顶)是线条画的,渐变色要放进一个 SVG 渐变里,图标的线条再引用它(见 style.css)
-function svgGradient(stops, positions) {
+function svgGradient(stops, positions, deg) {
   let defs = document.getElementById("accent-defs");
   if (!defs) {
     defs = document.createElementNS("http://www.w3.org/2000/svg", "svg");
@@ -91,8 +101,12 @@ function svgGradient(stops, positions) {
     document.body.append(defs);
   }
   const step = (i) => (stops.length > 1 ? (i / (stops.length - 1)) * 100 : 0);
+  // 和 CSS 的渐变一样按角度走(图标在 1~15 的方框里):135deg 是从左上到右下
+  const r = (deg * Math.PI) / 180;
+  const half = 7 * (Math.abs(Math.sin(r)) + Math.abs(Math.cos(r)));
+  const [dx, dy] = [Math.sin(r) * half, -Math.cos(r) * half].map((v) => +v.toFixed(2));
   defs.innerHTML =
-    `<linearGradient id="accent-svg-grad" gradientUnits="userSpaceOnUse" x1="1" y1="1" x2="15" y2="15">` +
+    `<linearGradient id="accent-svg-grad" gradientUnits="userSpaceOnUse" x1="${8 - dx}" y1="${8 - dy}" x2="${8 + dx}" y2="${8 + dy}">` +
     stops.map((c, i) => `<stop offset="${positions?.[i] ?? step(i)}%" stop-color="${c}"/>`).join("") +
     `</linearGradient>`;
 }

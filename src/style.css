@@ -10,6 +10,8 @@
   --accent-soft: #fbe8d0;
   /* 强调色可以在设置里换,换成渐变色时 --accent-grad 是渐变(见 js/accent.js) */
   --accent-grad: var(--accent);
+  /* 强调色上面的字:强调色很浅时换成深色(见 js/accent.js) */
+  --accent-fg: #fff;
   --code-bg: #f4f1e8;
   --code-border: #e6e0cf;
   --selection: #f6d7ae;
@@ -741,7 +743,9 @@ html[data-find-pos="bottom"] #status { order: 2; }
 .result.sel, .result:hover { background: var(--accent-soft); }
 .result .where { font-size: 11.5px; color: var(--muted); }
 .result .snip { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.result mark { background: var(--accent); color: #fff; border-radius: 2px; padding: 0 1px; }
+/* 页面标题整个显示,长了就换行 */
+.result .snip.title { white-space: normal; overflow-wrap: anywhere; }
+.result mark { background: var(--accent); color: var(--accent-fg); border-radius: 2px; padding: 0 1px; }
 
 .form { padding: 14px 16px; }
 .form h2 { margin: 0 0 10px; font-size: 15px; }
@@ -777,7 +781,7 @@ html[data-find-pos="bottom"] #status { order: 2; }
 #set-open-backup { white-space: nowrap; }
 .actions { display: flex; justify-content: flex-end; align-items: center; gap: 8px; margin-top: 14px; }
 .actions > button { padding: 5px 16px; border-radius: 6px; border: 1px solid var(--bar-border); white-space: nowrap; }
-.actions .primary { background: var(--accent-grad); border-color: transparent; color: #fff; }
+.actions .primary { background: var(--accent-grad); border-color: transparent; color: var(--accent-fg); }
 .actions .primary.danger { background: var(--danger); border-color: var(--danger); }
 .actions .about { margin-right: auto; min-width: 0; font-size: 11.5px; color: var(--muted); }
 .actions .about .link { font-size: 11.5px; }
@@ -858,7 +862,7 @@ html[data-find-pos="bottom"] #status { order: 2; }
 .menu .danger { color: var(--danger); }
 .menu hr { margin: 4px 2px; border: none; border-top: 1px solid var(--code-border); }
 .menu-title, .menu-hint { padding: 3px 10px; font-size: 11.5px; color: var(--muted); }
-.menu-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.menu-title { overflow-wrap: anywhere; }
 .menu-hint { font-size: 11px; }
 
 /* 独立的笔记本管理页面，保持在浮窗内完成，无需弹出新的系统窗口。 */
@@ -925,12 +929,17 @@ html[data-find-pos="bottom"] #status { order: 2; }
   background: var(--text);
   color: var(--bg);
   font-size: 12.5px;
+  white-space: pre-line;
   z-index: 30;
 }
 
-/* 背景颜色:深色主题里调淡,不然浅色的底配浅色的字看不清 */
+/* 背景颜色:深色主题里调淡,不然浅色的底配浅色的字看不清。
+   上面盖一层半透明的页面底色,纯色和渐变色都能调淡 */
 #editor span[data-bg] { background: var(--mark-bg); border-radius: 2px; padding: 0 1px; }
-[data-theme="dark"] #editor span[data-bg] { background: var(--mark-bg); }
+[data-theme="dark"] #editor span[data-bg] {
+  --mark-dim: color-mix(in srgb, var(--bg) 58%, transparent);
+  background: linear-gradient(var(--mark-dim), var(--mark-dim)), var(--mark-bg);
+}
 
 /* 格式栏:颜色按钮下面的色条,颜色板,自定义 */
 #format-bar .fb-color .swatch { stroke: none; fill: var(--muted); }
