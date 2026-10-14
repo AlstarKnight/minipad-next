@@ -311,7 +311,6 @@ function renderManager() {
     button.setAttribute("role", "radio");
     button.setAttribute("aria-checked", String((b.icon_color || "") === color));
     button.style.setProperty("--book-swatch", color || "var(--accent-grad)");
-    if (!color) button.textContent = "↻";
     button.addEventListener("click", () => void saveAppearance(b, b.icon || "book", color));
     if (color) container.append(button);
     else {

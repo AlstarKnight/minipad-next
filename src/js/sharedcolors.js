@@ -160,8 +160,9 @@ export function makeSharedColorTools({ getValue, onApply, defaultColor = "#d9822
       editingPreset = null;
       edit.setAttribute("aria-expanded", "false");
     }
-    more.textContent = opened ? "收起" : "＋";
+    more.textContent = opened ? "−" : "＋";
     more.title = opened ? "收起颜色库" : "更多颜色及排序";
+    more.setAttribute("aria-label", more.title);
     more.setAttribute("aria-expanded", String(opened));
   };
   more.addEventListener("click", () => expand(!buttons.classList.contains("expanded")));
@@ -231,6 +232,15 @@ export function makeSharedColorTools({ getValue, onApply, defaultColor = "#d9822
     edit.setAttribute("aria-expanded", "true");
     apply.textContent = preset ? "保存修改" : "应用颜色";
     startEditing(from);
+    const popup = root.closest(".fb-pop");
+    if (popup) requestAnimationFrame(() => {
+      if (popup.hidden || editor.hidden) return;
+      popup.style.top = Math.max(4, Math.min(
+        Number.parseFloat(popup.style.top) || 4,
+        window.innerHeight - popup.offsetHeight - 4
+      )) + "px";
+      popup.scrollTop = popup.scrollHeight;
+    });
   };
   const refreshPresets = () => {
     buttons.replaceChildren();

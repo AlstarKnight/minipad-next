@@ -863,7 +863,7 @@ html[data-find-pos="bottom"] #status { order: 2; }
 
 /* 独立的笔记本管理页面，保持在浮窗内完成，无需弹出新的系统窗口。 */
 .book-manager-panel { max-width: 580px; height: min(530px, 100%); display: flex; flex-direction: column; overflow: hidden; padding: 12px; }
-.bm-head { display: flex; align-items: center; gap: 8px; padding-bottom: 10px; }
+.bm-head { display: flex; align-items: center; gap: 8px; padding-bottom: 10px; border-bottom: 1px solid var(--code-border); }
 .bm-head h2 { margin: 0; font-size: 15px; }
 .bm-head .icon { font-size: 22px; line-height: 1; width: 26px; height: 26px; border-radius: 6px; }
 .bm-head .icon:hover { background: var(--accent-soft); }
@@ -876,7 +876,7 @@ html[data-find-pos="bottom"] #status { order: 2; }
 .bm-list-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
 .bm-list-count { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
 #bm-details { min-width: 0; flex: 1; padding: 12px; overflow-y: auto; }
-#bm-selected { margin: 0 0 12px; font-size: 15px; overflow-wrap: anywhere; }
+#bm-selected { margin: 0 0 12px; padding-top: 0; border-top: none; font-size: 15px; overflow-wrap: anywhere; }
 .bm-field-title { font-size: 12px; font-weight: 600; color: var(--muted); margin: 12px 0 7px; }
 .book-manager-panel .uc-title { font-size: 12px; }
 .bm-icon-grid, .bm-colors { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 7px; }

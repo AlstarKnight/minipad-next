@@ -1603,6 +1603,11 @@ describe("v0.3.5 remaining color UX details", () => {
     await color.click({ button: "right" });
     assert.ok(await library.locator(".uc-editor").isVisible(), "right-click edits a preset");
     assert.equal(await library.locator(".uc-delete").count(), 2, "delete remains available separately");
+    const toggle = library.locator(".uc-more");
+    assert.equal(await toggle.textContent(), "−");
+    assert.equal(await toggle.getAttribute("aria-label"), "收起颜色库");
+    const fits = await toggle.evaluate((node) => node.scrollHeight <= node.clientHeight);
+    assert.ok(fits, "collapse symbol fits the small toggle");
   });
 
   ui("notebook follow-accent is labeled and header styles match the color library", {
@@ -1616,10 +1621,32 @@ describe("v0.3.5 remaining color UX details", () => {
     const appearance = await p.evaluate(() => ({
       defaultWeight: getComputedStyle(document.querySelector("#bm-details .bm-field-title")).fontWeight,
       libraryWeight: getComputedStyle(document.querySelector("#bm-details .uc-title")).fontWeight,
-      divider: getComputedStyle(document.querySelector(".bm-head")).borderBottomWidth,
+      headerDivider: getComputedStyle(document.querySelector(".bm-head")).borderBottomWidth,
+      titleDivider: getComputedStyle(document.querySelector("#bm-selected")).borderTopWidth,
+      titlePadding: getComputedStyle(document.querySelector("#bm-selected")).paddingTop,
+      followText: document.querySelector('#bm-colors [data-color=""]').textContent,
     }));
     assert.equal(appearance.defaultWeight, appearance.libraryWeight);
-    assert.equal(appearance.divider, "0px", "extra notebook header divider is removed");
+    assert.equal(appearance.headerDivider, "1px", "manager header retains its divider");
+    assert.equal(appearance.titleDivider, "0px", "book title has no extra divider");
+    assert.equal(appearance.titlePadding, "0px");
+    assert.equal(appearance.followText, "", "follow-accent swatch has no misleading reset glyph");
+  });
+
+  ui("format color editor scrolls into view inside a short window", {
+    seed: seed({ "": { 页: "文字" } }),
+  }, async ({ p }) => {
+    await p.click('#format-bar [data-cmd="color"]');
+    const palette = p.locator(".fb-pop .shared-colors");
+    await palette.locator(".uc-swatch").first().click({ button: "right" });
+    assert.ok(await palette.locator(".uc-editor").isVisible());
+    await until(async () => p.locator(".fb-pop .uc-editor .primary").evaluate((button) => {
+      const bounds = button.getBoundingClientRect();
+      return bounds.top >= 0 && bounds.bottom <= window.innerHeight - 4;
+    }), true, "editor apply button stays reachable after opening");
+    const toggle = palette.locator(".uc-more");
+    assert.equal(await toggle.textContent(), "−");
+    assert.ok(await toggle.evaluate((el) => el.scrollHeight <= el.clientHeight));
   });
 
   ui("pale font swatches warn about contrast and keep their A preview", {
@@ -1861,9 +1888,16 @@ describe("v0.3.4 picker regressions", () => {
     const placement = await root.locator(".uc-more").evaluate((node) => {
       const root = node.closest(".uc-presets");
       const area = root.getBoundingClientRect(), button = node.getBoundingClientRect();
-      return { right: area.right - button.right, top: button.top - area.top };
+      return {
+        right: area.right - button.right,
+        top: button.top - area.top,
+        fits: node.scrollHeight <= node.clientHeight,
+        text: node.textContent,
+      };
     });
     assert.ok(placement.right < 12 && placement.top < 12, "collapse button stays in the quick row's rightmost slot");
+    assert.equal(placement.text, "−");
+    assert.ok(placement.fits, "the expanded symbol does not wrap or overflow");
     await root.locator(".uc-more").click();
     assert.equal(await root.locator(".uc-preset:visible").count(), 5);
   });
