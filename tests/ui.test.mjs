@@ -1665,6 +1665,66 @@ describe("v0.3.5 remaining color UX details", () => {
   });
 });
 
+describe("v0.3.7 categorized color library", () => {
+  ui("expanded colors are separated into solid and gradient sections without changing quick order", {
+    seed: { ...seed({ "": { 页: "文字" } }), settings: {
+      ...SETTINGS,
+      color_library: [
+        "linear-gradient(90deg, #111111, #eeeeee)",
+        "#334455",
+        "#556677",
+        "linear-gradient(45deg, #ff0000, #0000ff)",
+        "#778899",
+        "#123456",
+      ],
+    } },
+  }, async ({ p }) => {
+    await p.click("#btn-settings");
+    await settingsPage(p, "look");
+    const library = p.locator("#set-accent + .shared-colors");
+    const original = [
+      "linear-gradient(90deg, #111111, #eeeeee)", "#334455", "#556677",
+      "linear-gradient(45deg, #ff0000, #0000ff)", "#778899", "#123456",
+    ];
+    assert.deepEqual(await library.locator(".uc-preset:visible .uc-swatch").evaluateAll((nodes) =>
+      nodes.map((node) => node.dataset.color)), original.slice(0, 5), "quick colors keep their saved order");
+    assert.equal(await library.locator(".uc-kind-title").count(), 0, "collapsed colors have no section headings");
+    await expandLibrary(p, "#set-accent + .shared-colors");
+    assert.deepEqual(await library.locator(".uc-kind-title").allTextContents(), ["纯色", "渐变色"]);
+    const visual = await library.locator(".uc-presets").evaluate((el) => {
+      const entries = [...el.querySelectorAll(".uc-kind-title, .uc-preset")];
+      return entries.map((node) => ({
+        name: node.classList.contains("uc-kind-title") ? node.textContent : node.dataset.color,
+        top: node.getBoundingClientRect().top,
+      }));
+    });
+    assert.deepEqual(visual.map((item) => item.name), [
+      "纯色", "#334455", "#556677", "#778899", "#123456",
+      "渐变色", original[0], original[3],
+    ], "both sections preserve relative order within each color type");
+    assert.ok(visual[4].top < visual[5].top, "gradient heading starts below all solid swatches");
+    await library.locator(".uc-more").click();
+    assert.deepEqual(await library.locator(".uc-preset:visible .uc-swatch").evaluateAll((nodes) =>
+      nodes.map((node) => node.dataset.color)), original.slice(0, 5), "collapsing restores mixed quick colors");
+  });
+
+  ui("all-gradient libraries still show a category heading and keep edit actions available", {
+    seed: { ...seed({ "": { 页: "正文" } }), settings: {
+      ...SETTINGS, color_library: ["linear-gradient(135deg, #5fb4ff, #d66cf0)"],
+    } },
+  }, async ({ p }) => {
+    await p.click("#btn-settings");
+    await settingsPage(p, "look");
+    const library = p.locator("#set-accent + .shared-colors");
+    await expandLibrary(p, "#set-accent + .shared-colors");
+    assert.deepEqual(await library.locator(".uc-kind-title").allTextContents(), ["渐变色"]);
+    const gradient = library.locator(".uc-swatch").first();
+    await gradient.click({ button: "right" });
+    assert.equal(await library.locator('select[aria-label="颜色类型"]').inputValue(), "gradient");
+    assert.ok(await library.locator(".uc-editor").isVisible());
+  });
+});
+
 describe("v0.3.5 editable color library", () => {
   ui("built-in solid and gradient colors can be edited without changing colors already in use", {
     seed: { ...seed({ "": { 页: "正文" } }), settings: { ...SETTINGS, accent: "#3b82f6", color_presets: ["#123abc"] } },

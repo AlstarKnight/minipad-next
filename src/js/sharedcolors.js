@@ -151,6 +151,7 @@ export function makeSharedColorTools({ getValue, onApply, defaultColor = "#d9822
   footer.append(add, apply, reset);
   editor.append(controls, preview, stopList, footer);
   root.append(heading, buttons, actions, editor);
+  let refreshPresets = () => {};
   const expand = (opened) => {
     buttons.classList.toggle("expanded", opened);
     root.classList.toggle("library-open", opened);
@@ -164,6 +165,7 @@ export function makeSharedColorTools({ getValue, onApply, defaultColor = "#d9822
     more.title = opened ? "收起颜色库" : "更多颜色及排序";
     more.setAttribute("aria-label", more.title);
     more.setAttribute("aria-expanded", String(opened));
+    refreshPresets();
   };
   more.addEventListener("click", () => expand(!buttons.classList.contains("expanded")));
   expand(false);
@@ -242,15 +244,34 @@ export function makeSharedColorTools({ getValue, onApply, defaultColor = "#d9822
       popup.scrollTop = popup.scrollHeight;
     });
   };
-  const refreshPresets = () => {
+  refreshPresets = () => {
+    const active = document.activeElement;
+    const focusColor = active?.classList.contains("uc-swatch") ? active.dataset.color : null;
+    const focusMore = active === more;
     buttons.replaceChildren();
     const presets = sharedColorPresets();
+    const expanded = buttons.classList.contains("expanded");
+    // 完整颜色库按类型分区，收起时仍按用户保存的原始顺序显示前五个。
+    const palette = expanded ? [
+      ...presets.filter((color) => !parseAccent(color)?.to),
+      ...presets.filter((color) => parseAccent(color)?.to),
+    ] : presets;
+    let lastKind = "";
     if (!presets.length) {
       const hint = make("span", "muted", "还没有保存的颜色");
       buttons.append(hint);
     }
-    for (const color of presets) {
-      if (!parseAccent(color)) continue;
+    for (const color of palette) {
+      const parsed = parseAccent(color);
+      if (!parsed) continue;
+      const kind = parsed.to ? "gradient" : "solid";
+      if (expanded && kind !== lastKind) {
+        const label = make("div", "uc-kind-title" + (lastKind ? "" : " first"), kind === "solid" ? "纯色" : "渐变色");
+        label.setAttribute("role", "heading");
+        label.setAttribute("aria-level", "3");
+        buttons.append(label);
+        lastKind = kind;
+      }
       const wrap = make("div", "uc-preset");
       wrap.draggable = true;
       wrap.dataset.color = color;
@@ -333,6 +354,9 @@ export function makeSharedColorTools({ getValue, onApply, defaultColor = "#d9822
     }
     buttons.append(more);
     more.hidden = !showPresets;
+    if (focusMore) more.focus();
+    else if (focusColor) [...buttons.querySelectorAll(".uc-swatch")]
+      .find((swatch) => swatch.dataset.color === focusColor)?.focus();
   };
   undo.addEventListener("click", () => {
     if (!lastDeleted) return;

@@ -2101,7 +2101,7 @@ checksum = "6877bb514081ee2a7ff5ef9de3281f14a4dd4bceac4c09388074a6b5df8a139a"
 
 [[package]]
 name = "minipad-next"
-version = "0.3.6"
+version = "0.3.7"
 dependencies = [
  "chrono",
  "encoding_rs",
