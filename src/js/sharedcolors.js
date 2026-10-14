@@ -4,6 +4,14 @@ import { state } from "./state.js";
 import { GRADIENTS, parseAccent, tidyAccent, gradientOf } from "./accent.js";
 import { toast, ask } from "./ui.js";
 
+const QUICK = 5;
+const kindOf = (color) => parseAccent(color)?.to ? "gradient" : "solid";
+// 快捷色上限：正整数，最多和颜色库一样 128 个；0（空着）表示不限。
+export const quickLimit = (value) => {
+  const n = Math.round(Number(value));
+  return n >= 1 ? Math.min(128, n) : 0;
+};
+
 // 精选的默认库：15 个纯色、9 个不重复的渐变。
 export const DEFAULT_COLORS = [
   "#d9822b", "#3b82f6", "#16a34a", "#8b5cf6", "#e5484d",
@@ -22,13 +30,13 @@ export function refreshSharedColors() {
   }
 }
 let presetQueue = Promise.resolve();
-function updateLibrary(change) {
+function updateLibrary(change, extra) {
   // 每次从最新已保存的颜色库计算，快速连续操作不会丢失修改。
   const task = presetQueue.then(async () => {
     const next = change(sharedColorPresets());
     if (next === null) return;
     const { saveSettings } = await import("./settings.js");
-    await saveSettings({ ...state.settings, color_library: next });
+    await saveSettings({ ...state.settings, color_library: next, ...extra });
     refreshSharedColors();
   });
   presetQueue = task.catch(() => {});
@@ -55,13 +63,14 @@ export function replaceSharedPreset(oldValue, newValue) {
   });
 }
 export const resetSharedPresets = () => updateLibrary(() => [...DEFAULT_COLORS]);
-export const moveSharedPreset = (color, target) => updateLibrary((colors) => {
+// quickCount 给出时同时保存新的快捷色数量（颜色不用挪位也要保存）。
+export const moveSharedPreset = (color, target, quickCount) => updateLibrary((colors) => {
   const from = colors.indexOf(color);
-  if (from < 0 || target < 0 || target >= colors.length || from === target) return null;
+  if (from < 0 || target < 0 || target >= colors.length || (from === target && !quickCount)) return null;
   const next = [...colors];
   next.splice(target, 0, ...next.splice(from, 1));
   return next;
-});
+}, quickCount && { quick_color_count: quickCount });
 export const restoreSharedPreset = (color, index) => updateLibrary((colors) => {
   if (colors.includes(color)) return null;
   const next = [...colors];
@@ -88,7 +97,7 @@ const lightText = (value) => (parseAccent(value)?.stops || []).some((hex) => {
 /** 返回可挂到任意容器的通用“我的颜色 + 多节点编辑器”。
  *  onApply 可以是异步函数；只有用户主动点击应用才更新目标设置。
  */
-export function makeSharedColorTools({ getValue, onApply, defaultColor = "#d9822b", allowGradient = true, showPresets = true, compact = false, previewMode = "color" } = {}) {
+export function makeSharedColorTools({ getValue, onApply, defaultColor = "#d9822b", allowGradient = true, showPresets = true, compact = false, previewMode = "color", getQuickLimit } = {}) {
   const root = make("section", compact ? "shared-colors compact" : "shared-colors");
   const heading = make("div", "uc-title", "颜色库");
   const buttons = make("div", "uc-presets");
@@ -151,6 +160,7 @@ export function makeSharedColorTools({ getValue, onApply, defaultColor = "#d9822
   footer.append(add, apply, reset);
   editor.append(controls, preview, stopList, footer);
   root.append(heading, buttons, actions, editor);
+  let refreshPresets = () => {};
   const expand = (opened) => {
     buttons.classList.toggle("expanded", opened);
     root.classList.toggle("library-open", opened);
@@ -164,6 +174,7 @@ export function makeSharedColorTools({ getValue, onApply, defaultColor = "#d9822
     more.title = opened ? "收起颜色库" : "更多颜色及排序";
     more.setAttribute("aria-label", more.title);
     more.setAttribute("aria-expanded", String(opened));
+    refreshPresets();
   };
   more.addEventListener("click", () => expand(!buttons.classList.contains("expanded")));
   expand(false);
@@ -242,97 +253,171 @@ export function makeSharedColorTools({ getValue, onApply, defaultColor = "#d9822
       popup.scrollTop = popup.scrollHeight;
     });
   };
-  const refreshPresets = () => {
+  refreshPresets = () => {
+    const active = document.activeElement;
+    const focusColor = buttons.contains(active) && active.classList.contains("uc-swatch") ? active.dataset.color : null;
+    const focusMore = active === more;
     buttons.replaceChildren();
     const presets = sharedColorPresets();
-    if (!presets.length) {
-      const hint = make("span", "muted", "还没有保存的颜色");
-      buttons.append(hint);
-    }
-    for (const color of presets) {
-      if (!parseAccent(color)) continue;
-      const wrap = make("div", "uc-preset");
-      wrap.draggable = true;
-      wrap.dataset.color = color;
-      wrap.title = "拖动排序；焦点在色块上时可按 Shift+左右箭头排序";
-      const swatch = make("button", "uc-swatch");
-      swatch.dataset.color = color;
-      swatch.type = "button";
-      swatch.classList.toggle("on", color === current());
-      swatch.title = "使用 " + color;
-      swatch.setAttribute("aria-label", "使用保存的颜色 " + color);
-      if (previewMode === "text") {
-        swatch.classList.add("uc-text-swatch");
-        swatch.textContent = "A";
-        if (parseAccent(color)?.to) swatch.style.setProperty("--uc-text-gradient", color);
-        else swatch.style.color = color;
-        if (lightText(color)) {
-          swatch.title += "（浅色主题下文字对比度较低）";
-          swatch.dataset.contrastWarning = "light-text";
-        }
-      } else {
-        swatch.style.background = color;
-        if (previewMode === "background") swatch.title += "（深色背景可能影响文字对比度）";
-      }
-      swatch.addEventListener("click", () => void Promise.resolve(onApply(color)).catch((e) => toast(String(e))));
-      swatch.addEventListener("keydown", (e) => {
-        if (!e.shiftKey || (e.key !== "ArrowLeft" && e.key !== "ArrowRight")) return;
-        e.preventDefault();
-        const index = sharedColorPresets().indexOf(color);
-        void moveSharedPreset(color, index + (e.key === "ArrowLeft" ? -1 : 1))
-          .then(() => [...buttons.querySelectorAll(".uc-swatch")].find((x) => x.dataset.color === color)?.focus())
-          .catch((err) => toast(String(err)));
-      });
-      wrap.addEventListener("dragstart", (e) => {
-        e.dataTransfer.effectAllowed = "move";
-        e.dataTransfer.setData("text/plain", color);
-      });
-      wrap.addEventListener("dragover", (e) => {
-        if (!buttons.classList.contains("expanded")) return;
-        e.preventDefault();
-        e.dataTransfer.dropEffect = "move";
-      });
-      wrap.addEventListener("drop", (e) => {
-        e.preventDefault();
-        if (!buttons.classList.contains("expanded")) return;
-        const dragged = e.dataTransfer.getData("text/plain");
-        if (!sharedColorPresets().includes(dragged)) return;
-        void moveSharedPreset(dragged, sharedColorPresets().indexOf(color))
-          .catch((err) => toast(String(err)));
-      });
-      swatch.title += "；双击或右键编辑，F2 键也可编辑";
-      const editColor = () => {
-        if (!buttons.classList.contains("expanded")) expand(true);
-        openEditor(color, color);
-      };
-      swatch.addEventListener("dblclick", editColor);
-      swatch.addEventListener("contextmenu", (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        editColor();
-      });
-      swatch.addEventListener("keydown", (e) => {
-        if (e.key === "F2") {
+    const expanded = buttons.classList.contains("expanded");
+    // 快捷区取保存顺序的前 quick 个；其余颜色按类型分区，不重复渲染。
+    // 个数随拖动增减，不超过设置里的上限（设置页打开时按正在填的上限预览）。
+    const limit = quickLimit(getQuickLimit?.() ?? state.settings?.quick_color_limit) || Infinity;
+    const quick = Math.max(1, Math.min(limit, Math.round(Number(state.settings?.quick_color_count) || QUICK)));
+    buttons.style.setProperty("--uc-toggle-column",
+      String(presets.length ? Math.min(quick, presets.length, 5) + 1 : 6));
+    buttons.style.setProperty("--uc-quick-rows", String(Math.max(1, Math.ceil(Math.min(quick, presets.length) / 6))));
+    const remainder = presets.slice(quick);
+    const sections = expanded ? [
+      { kind: "quick", title: "快捷（收起时显示）", colors: presets.slice(0, quick) },
+      { kind: "solid", title: "纯色", colors: remainder.filter((color) => kindOf(color) === "solid") },
+      { kind: "gradient", title: "渐变色", colors: remainder.filter((color) => kindOf(color) === "gradient") },
+    ] : [{ kind: "quick", colors: presets.slice(0, quick) }];
+    let draggingColor = null;
+    const sectionOf = (colors, value) => {
+      const index = colors.indexOf(value);
+      if (index < 0) return null;
+      return index < quick ? "quick" : kindOf(value);
+    };
+    const canDrop = (value, targetSection, targetColor = null) => {
+      const colors = sharedColorPresets();
+      const source = sectionOf(colors, value);
+      if (!source || value === targetColor) return false;
+      if (targetSection === "quick") return true;
+      // 分类间的拖放无意义；快捷色只允许退出到自身的颜色类型。
+      return kindOf(value) === targetSection &&
+        (source !== "quick" || colors.length > quick || Math.min(quick, colors.length) > 1);
+    };
+    const dropAt = (value, targetSection, targetColor = null) => {
+      if (!canDrop(value, targetSection, targetColor)) return;
+      const colors = sharedColorPresets();
+      const first = colors.findIndex((color, i) =>
+        i >= quick && kindOf(color) === targetSection);
+      const from = colors.indexOf(value);
+      // 拖进快捷区多一个、拖出少一个，其余颜色不动；到上限或只剩 1 个时才由相邻颜色替换。
+      const count = from >= quick && targetSection === "quick" ? Math.min(limit, quick + 1) :
+        from < quick && targetSection !== "quick" ? Math.max(1, Math.min(quick, colors.length) - 1) : quick;
+      // 从快捷区往后拖时，splice 先移走来源，目标索引会左移一格。
+      const next = targetColor ? colors.indexOf(targetColor) :
+        targetSection === "quick" ? Math.min(count - 1, colors.length - 1) :
+        first < 0 ? count : from < first ? Math.max(count, first - 1) : first;
+      void moveSharedPreset(value, next, count !== quick ? count : undefined)
+        .catch((err) => toast(String(err)));
+    };
+    if (!presets.length) buttons.append(make("span", "muted", "还没有保存的颜色"));
+    for (const section of sections) {
+      if (expanded && (section.kind === "quick" || section.colors.length ||
+        ((presets.length > quick || Math.min(quick, presets.length) > 1) &&
+          presets.slice(0, quick).some((color) => kindOf(color) === section.kind)))) {
+        const label = make("div", "uc-kind-title" + (section.kind === "quick" ? " first" : ""),
+          section.title);
+        label.dataset.section = section.kind;
+        label.setAttribute("role", "heading");
+        label.setAttribute("aria-level", "3");
+        label.title = section.kind === "quick" ? "将颜色拖到此处设为快捷色" : "将同类快捷颜色拖到此处移出快捷栏";
+        label.addEventListener("dragover", (e) => {
+          if (!draggingColor || !canDrop(draggingColor, section.kind)) return;
           e.preventDefault();
-          editColor();
+          e.dataTransfer.dropEffect = "move";
+        });
+        label.addEventListener("drop", (e) => {
+          if (!draggingColor || !canDrop(draggingColor, section.kind)) return;
+          e.preventDefault();
+          dropAt(draggingColor, section.kind);
+        });
+        buttons.append(label);
+      }
+      for (const color of section.colors) {
+        const parsed = parseAccent(color);
+        if (!parsed) continue;
+        const wrap = make("div", "uc-preset");
+        wrap.draggable = true;
+        wrap.dataset.color = color;
+        wrap.title = "拖动排序；焦点在色块上时可按 Shift+左右箭头排序";
+        const swatch = make("button", "uc-swatch");
+        swatch.dataset.color = color;
+        swatch.type = "button";
+        swatch.classList.toggle("on", color === current());
+        swatch.title = "使用 " + color;
+        swatch.setAttribute("aria-label", "使用保存的颜色 " + color);
+        if (previewMode === "text") {
+          swatch.classList.add("uc-text-swatch");
+          swatch.textContent = "A";
+          if (parsed.to) swatch.style.setProperty("--uc-text-gradient", color);
+          else swatch.style.color = color;
+          if (lightText(color)) {
+            swatch.title += "（浅色主题下文字对比度较低）";
+            swatch.dataset.contrastWarning = "light-text";
+          }
+        } else {
+          swatch.style.background = color;
+          if (previewMode === "background") swatch.title += "（深色背景可能影响文字对比度）";
         }
-      });
-      const remove = make("button", "uc-delete", "×");
-      remove.type = "button"; remove.title = "删除颜色预设";
-      remove.setAttribute("aria-label", "删除保存的颜色 " + color);
-      remove.addEventListener("click", () => {
-        const index = sharedColorPresets().indexOf(color);
-        void changeSharedPreset(color, true).then(() => {
-          lastDeleted = { color, index };
-          undo.hidden = false;
-          toast("已删除颜色，可点击“撤销删除”");
-        }).catch((err) => toast(String(err)));
-      });
-      wrap.append(swatch, remove);
-      buttons.append(wrap);
+        swatch.addEventListener("click", () => void Promise.resolve(onApply(color)).catch((e) => toast(String(e))));
+        swatch.addEventListener("keydown", (e) => {
+          if (!e.shiftKey || (e.key !== "ArrowLeft" && e.key !== "ArrowRight")) return;
+          e.preventDefault();
+          const colors = sharedColorPresets();
+          const group = colors.filter((entry) => sectionOf(colors, entry) === section.kind);
+          const next = group[group.indexOf(color) + (e.key === "ArrowLeft" ? -1 : 1)];
+          if (!next) return;
+          void moveSharedPreset(color, colors.indexOf(next))
+            .then(() => [...buttons.querySelectorAll(".uc-swatch")].find((x) => x.dataset.color === color)?.focus())
+            .catch((err) => toast(String(err)));
+        });
+        wrap.addEventListener("dragstart", (e) => {
+          draggingColor = color;
+          e.dataTransfer.effectAllowed = "move";
+          e.dataTransfer.setData("text/plain", color);
+        });
+        wrap.addEventListener("dragend", () => { draggingColor = null; });
+        wrap.addEventListener("dragover", (e) => {
+          if (!buttons.classList.contains("expanded") || !canDrop(draggingColor, section.kind, color)) return;
+          e.preventDefault();
+          e.dataTransfer.dropEffect = "move";
+        });
+        wrap.addEventListener("drop", (e) => {
+          if (!buttons.classList.contains("expanded") || !canDrop(draggingColor, section.kind, color)) return;
+          e.preventDefault();
+          dropAt(draggingColor, section.kind, color);
+        });
+        swatch.title += "；双击或右键编辑，F2 键也可编辑";
+        const editColor = () => {
+          if (!buttons.classList.contains("expanded")) expand(true);
+          openEditor(color, color);
+        };
+        swatch.addEventListener("dblclick", editColor);
+        swatch.addEventListener("contextmenu", (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          editColor();
+        });
+        swatch.addEventListener("keydown", (e) => {
+          if (e.key === "F2") {
+            e.preventDefault();
+            editColor();
+          }
+        });
+        const remove = make("button", "uc-delete", "×");
+        remove.type = "button"; remove.title = "删除颜色预设";
+        remove.setAttribute("aria-label", "删除保存的颜色 " + color);
+        remove.addEventListener("click", () => {
+          const index = sharedColorPresets().indexOf(color);
+          void changeSharedPreset(color, true).then(() => {
+            lastDeleted = { color, index };
+            undo.hidden = false;
+            toast("已删除颜色，可点击“撤销删除”");
+          }).catch((err) => toast(String(err)));
+        });
+        wrap.append(swatch, remove);
+        buttons.append(wrap);
+      }
     }
     buttons.append(more);
     more.hidden = !showPresets;
+    if (focusMore) more.focus();
+    else if (focusColor) [...buttons.querySelectorAll(".uc-swatch")]
+      .find((swatch) => swatch.dataset.color === focusColor)?.focus();
   };
   undo.addEventListener("click", () => {
     if (!lastDeleted) return;

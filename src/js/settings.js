@@ -17,7 +17,7 @@ import { applyOutlineSettings, outlineVars } from "./outline.js";
 import { applyTabBarSettings } from "./tabbar.js";
 import { ALL_ITEMS, DEFAULT_SEL_ITEMS, itemChecklist, orderedItems } from "./formatbar.js";
 import { renderTabs } from "./tabs.js";
-import { makeSharedColorTools } from "./sharedcolors.js";
+import { makeSharedColorTools, refreshSharedColors, quickLimit } from "./sharedcolors.js";
 
 const REPO_URL = "https://github.com/AlstarKnight/minipad-next";
 
@@ -138,6 +138,7 @@ export function openSettings() {
   $("#set-taskbar").checked = s.show_in_taskbar;
   $("#set-autostart").checked = s.autostart;
   $("#set-theme").value = s.theme;
+  $("#set-quick-limit").value = s.quick_color_limit || "";
   accentColor.show(s.accent || "");
   $("#set-ball").checked = !!s.ball_enabled;
   $("#set-ball-size").value = s.ball_size || 48;
@@ -223,6 +224,7 @@ function colorPicker(prefix, box, options, firstSwatch, onChange) {
     sharedTool = makeSharedColorTools({
       getValue: () => picker.value || state.settings?.accent || "#d9822b",
       onApply: (value) => picker.show(value),
+      getQuickLimit: () => $("#settings").hidden ? null : $("#set-quick-limit").value,
       compact: true,
     });
     $(box).after(sharedTool.root);
@@ -465,6 +467,7 @@ export function saveSettings(next, { migrateNotes = false } = {}) {
     }
     state.settings = await api.invoke("save_settings", { settings: merged, migrateNotes: dirChanged && migrateNotes });
     applySettings();
+    if ("quick_color_limit" in changed) refreshSharedColors();
     if (dirChanged) await reload();
     return state.settings;
   };
@@ -496,6 +499,7 @@ async function submitSettings() {
     autostart: $("#set-autostart").checked,
     theme: $("#set-theme").value,
     accent: accentColor.value,
+    quick_color_limit: quickLimit($("#set-quick-limit").value),
     tab_style: $("#set-tab-style").value,
     font_size: Math.min(28, Math.max(10, Number($("#set-font").value) || 14)),
     notes_dir: $("#set-dir").value.trim(),
@@ -598,6 +602,7 @@ export function bindSettings() {
     if (combo) hk.value = combo;
   });
   $("#set-save").addEventListener("click", submitSettings);
+  $("#set-quick-limit").addEventListener("input", refreshSharedColors);
   // 分类:点一下换过去;焦点在分类上时,上下(分类在上面时左右)方向键换到相邻的一类,Home / End 换到第一类和最后一类
   const nav = $("#set-nav");
   nav.addEventListener("click", (e) => {

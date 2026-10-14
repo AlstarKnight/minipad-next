@@ -41,6 +41,8 @@ const DEFAULT_SETTINGS = {
   book_color_presets: [],
   color_presets: null,
   color_library: null,
+  quick_color_count: 5,
+  quick_color_limit: 0,
   backup_enabled: true,
   backup_keep: 14,
   backup_dir: "",
@@ -340,6 +342,8 @@ export function mockApi() {
         color_library: Array.isArray(settings.color_library)
           ? [...new Set(settings.color_library.map((v) => tidyAccent(v)).filter(Boolean))].slice(0, 128)
           : null,
+        quick_color_count: Math.min(128, Math.max(1, Math.round(Number(settings.quick_color_count) || 5))),
+        quick_color_limit: Math.min(128, Math.max(0, Math.round(Number(settings.quick_color_limit) || 0))),
         edge_line_length_unit: settings.edge_line_length_unit === "px" ? "px" : "percent",
         edge_line_length: Math.min(100, Math.max(10, Number(settings.edge_line_length) || 100)),
         edge_line_length_px: Math.min(600, Math.max(24, Number(settings.edge_line_length_px) || 120)),
