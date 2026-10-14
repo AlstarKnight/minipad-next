@@ -1171,7 +1171,7 @@ html[data-edge-style="hover"][data-edge-peek][data-edge="right"] #edge-expand { 
   display: grid; grid-template-columns: repeat(6, 31px); gap: 7px 6px;
   align-items: center; min-height: 25px; min-width: 0;
 }
-.uc-presets:not(.expanded) .uc-preset:nth-child(n+6) { display: none; }
+.uc-presets:not(.expanded) .uc-more { grid-column: var(--uc-toggle-column, 6); grid-row: 1; }
 .uc-presets > .muted { grid-column: 1 / 6; }
 .uc-kind-title {
   grid-column: 1 / -1; padding: 3px 0 1px;
@@ -1247,7 +1247,7 @@ html[data-edge-style="hover"][data-edge-peek][data-edge="right"] #edge-expand { 
 }
 .uc-stop input[type="number"] { width: 63px; min-width: 0; padding: 3px 5px; }
 .uc-stop .uc-remove { margin-left: auto; }
-/* 设置页常驻前五个快捷色块；展开才显示完整库、编辑与保存。 */
+/* 设置页显示设定数量的快捷色块；展开才显示完整库、编辑与保存。 */
 .shared-colors.compact { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 5px; padding: 2px 0; }
 .shared-colors.compact .uc-title { white-space: nowrap; }
 .shared-colors.compact .uc-presets { grid-column: 2; }

@@ -17,7 +17,7 @@ import { applyOutlineSettings, outlineVars } from "./outline.js";
 import { applyTabBarSettings } from "./tabbar.js";
 import { ALL_ITEMS, DEFAULT_SEL_ITEMS, itemChecklist, orderedItems } from "./formatbar.js";
 import { renderTabs } from "./tabs.js";
-import { makeSharedColorTools } from "./sharedcolors.js";
+import { makeSharedColorTools, refreshSharedColors } from "./sharedcolors.js";
 
 const REPO_URL = "https://github.com/AlstarKnight/minipad-next";
 
@@ -139,6 +139,7 @@ export function openSettings() {
   $("#set-autostart").checked = s.autostart;
   $("#set-theme").value = s.theme;
   accentColor.show(s.accent || "");
+  $("#set-quick-colors").value = s.quick_color_count ?? 5;
   $("#set-ball").checked = !!s.ball_enabled;
   $("#set-ball-size").value = s.ball_size || 48;
   $("#set-ball-opacity").value = s.ball_opacity || 100;
@@ -465,6 +466,7 @@ export function saveSettings(next, { migrateNotes = false } = {}) {
     }
     state.settings = await api.invoke("save_settings", { settings: merged, migrateNotes: dirChanged && migrateNotes });
     applySettings();
+    if ("quick_color_count" in changed) refreshSharedColors();
     if (dirChanged) await reload();
     return state.settings;
   };
@@ -496,6 +498,7 @@ async function submitSettings() {
     autostart: $("#set-autostart").checked,
     theme: $("#set-theme").value,
     accent: accentColor.value,
+    quick_color_count: Math.min(10, Math.max(1, Math.round(Number($("#set-quick-colors").value) || 5))),
     tab_style: $("#set-tab-style").value,
     font_size: Math.min(28, Math.max(10, Number($("#set-font").value) || 14)),
     notes_dir: $("#set-dir").value.trim(),

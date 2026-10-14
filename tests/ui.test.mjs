@@ -1802,6 +1802,94 @@ describe("v0.3.7 categorized color library", () => {
       nodes.map((node) => node.dataset.color)), (await stored()).slice(0, 5));
   });
 
+  ui("quick color count is configurable and persists across pickers and reloads", {
+    seed: { ...seed({ "": { 页: "文字" } }), settings: {
+      ...SETTINGS, color_library: [
+        "#111111", "#222222", "#333333", "#444444", "#555555",
+        "linear-gradient(90deg, #aaaaaa, #bbbbbb)", "#777777", "#888888", "#999999", "#aaaaaa",
+      ],
+    } },
+  }, async (h) => {
+    const { p } = h;
+    await p.click("#btn-settings");
+    await settingsPage(p, "look");
+    assert.equal(await p.inputValue("#set-quick-colors"), "5", "old settings default to five");
+    await p.fill("#set-quick-colors", "8");
+    await p.click("#set-save");
+    await until(async () => (await h.stored()).settings.quick_color_count, 8);
+
+    await p.click("#btn-settings");
+    await settingsPage(p, "look");
+    assert.equal(await p.inputValue("#set-quick-colors"), "8");
+    const accent = p.locator("#set-accent + .shared-colors");
+    const visible = (root) => root.locator(".uc-preset:visible .uc-swatch").evaluateAll((nodes) =>
+      nodes.map((el) => el.dataset.color));
+    assert.deepEqual(await visible(accent), [
+      "#111111", "#222222", "#333333", "#444444", "#555555",
+      "linear-gradient(90deg, #aaaaaa, #bbbbbb)", "#777777", "#888888",
+    ]);
+    const positions = await accent.locator(".uc-presets").evaluate((el) => {
+      const swatches = el.querySelectorAll(".uc-preset");
+      return { first: swatches[0].getBoundingClientRect().top,
+        sixth: swatches[5].getBoundingClientRect().top,
+        toggle: el.querySelector(".uc-more").getBoundingClientRect().top };
+    });
+    assert.ok(positions.sixth > positions.first && positions.toggle === positions.first,
+      "more button remains on the first row; additional quick colors wrap");
+    await expandLibrary(p, "#set-accent + .shared-colors");
+    assert.deepEqual(await accent.locator(".uc-kind-title").allTextContents(),
+      ["快捷（收起时显示）", "纯色", "渐变色"]);
+    await accent.locator('.uc-preset[data-color="#333333"]').dragTo(
+      accent.locator('.uc-kind-title[data-section="solid"]'));
+    await until(async () => (await h.stored()).settings.color_library[8], "#333333",
+      "dragging out of a longer quick section inserts at the new boundary");
+    await accent.locator(".uc-more").click();
+    assert.deepEqual(await visible(accent), [
+      "#111111", "#222222", "#444444", "#555555",
+      "linear-gradient(90deg, #aaaaaa, #bbbbbb)", "#777777", "#888888", "#999999",
+    ]);
+
+    await p.reload();
+    await p.click("#btn-settings");
+    await settingsPage(p, "edit");
+    const find = p.locator("#set-find-color + .shared-colors");
+    assert.deepEqual(await visible(find), await visible(accent),
+      "other pickers share the persisted quick count and order");
+  });
+
+  ui("quick count one and upper bound ten preserve correct collapsed controls", {
+    seed: { ...seed({ "": { 页: "文字" } }), settings: {
+      ...SETTINGS, color_library: ["#111111", "#222222", "#333333", "#444444"],
+    } },
+  }, async (h) => {
+    const { p } = h;
+    await p.click("#btn-settings");
+    await settingsPage(p, "look");
+    await p.fill("#set-quick-colors", "1");
+    await p.click("#set-save");
+    await p.click("#btn-settings");
+    await settingsPage(p, "look");
+    const palette = p.locator("#set-accent + .shared-colors");
+    const visible = () => palette.locator(".uc-preset:visible .uc-swatch").evaluateAll((nodes) =>
+      nodes.map((el) => el.dataset.color));
+    assert.deepEqual(await visible(), ["#111111"]);
+    await expandLibrary(p, "#set-accent + .shared-colors");
+    await palette.locator('.uc-preset[data-color="#222222"]').dragTo(
+      palette.locator('.uc-kind-title[data-section="quick"]'));
+    await until(async () => (await h.stored()).settings.color_library[0], "#222222");
+    await palette.locator(".uc-more").click();
+    assert.deepEqual(await visible(), ["#222222"]);
+
+    await p.fill("#set-quick-colors", "99");
+    await p.click("#set-save");
+    await until(async () => (await h.stored()).settings.quick_color_count, 10,
+      "numeric settings clamp to ten");
+    await p.click("#btn-settings");
+    await settingsPage(p, "look");
+    assert.deepEqual(await visible(), ["#222222", "#111111", "#333333", "#444444"]);
+    assert.equal(await p.inputValue("#set-quick-colors"), "10");
+  });
+
   ui("dragging a quick color to a type heading inserts it first after interleaved colors", {
     seed: { ...seed({ "": { 页: "文字" } }), settings: {
       ...SETTINGS, color_library: [

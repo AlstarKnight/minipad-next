@@ -80,6 +80,8 @@ pub struct Settings {
     color_presets: Option<Vec<String>>,
     /// 0.3.5 可编辑的全局颜色库，None 表示沿用内置和旧预设；Some([]) 表示用户已全部删除。
     color_library: Option<Vec<String>>,
+    /// 颜色库收起时显示的快捷色数量，1..=10；旧设置默认 5。
+    quick_color_count: u32,
     /// 活跃标签的高亮:line 顶部线条、fill 整个标签、border 整圈边框
     tab_style: String,
     font_size: u32,
@@ -189,6 +191,7 @@ impl Default for Settings {
             book_color_presets: Vec::new(),
             color_presets: None,
             color_library: None,
+            quick_color_count: 5,
             tab_style: "line".into(),
             font_size: 14,
             notes_dir: String::new(),
@@ -634,6 +637,7 @@ fn tidy_settings(s: &mut Settings) {
     s.notes_dir = s.notes_dir.trim().to_string();
     s.backup_dir = s.backup_dir.trim().to_string();
     s.backup_keep = s.backup_keep.clamp(1, 365);
+    s.quick_color_count = s.quick_color_count.clamp(1, 10);
     s.font_size = s.font_size.clamp(10, 28);
     tidy_color(&mut s.accent);
     let mut seen_colors = std::collections::HashSet::new();
@@ -2194,12 +2198,18 @@ mod tests {
         assert_eq!(s.notes_dir, "D:\\笔记");
         assert_eq!(s.backup_dir, "");
         assert_eq!(s.backup_keep, 1);
+        assert_eq!(s.quick_color_count, 5);
         assert_eq!(s.date_format, "yyyy-MM-dd");
 
         s.backup_keep = 1000;
+        s.quick_color_count = 0;
         s.date_format = " \t ".into();
         tidy_settings(&mut s);
         assert_eq!(s.backup_keep, 365);
+        assert_eq!(s.quick_color_count, 1);
+        s.quick_color_count = 99;
+        tidy_settings(&mut s);
+        assert_eq!(s.quick_color_count, 10);
         assert_eq!(s.date_format, DEFAULT_DATE_FORMAT);
 
         // 字号和前端一样限制在 10..=28;按钮列表最多留 64 项
