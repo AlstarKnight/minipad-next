@@ -8,7 +8,7 @@ import { mutate } from "./sync.js";
 import { rememberView, showNote } from "./page.js";
 import { renderTabs, ensurePage, removeNote } from "./tabs.js";
 import { BOOK_ICONS, bookIcon, iconColor } from "./bookicons.js";
-import { GRADIENTS, gradientOf, tidyAccent } from "./accent.js";
+import { tidyAccent } from "./accent.js";
 import { makeSharedColorTools } from "./sharedcolors.js";
 
 // 为了"移到笔记本…"打开列表时是要移动的页面,平时是 null
@@ -16,8 +16,6 @@ let moving = null;
 let selectedBook = null;
 let appearanceBusy = false;
 let notebookColorEditor = null;
-const BOOK_COLORS = ["", "#d9822b", "#e76f51", "#e0b348", "#5fb4ff", "#9384df", "#67ad87", "#db75a8", "#a5a5ad"];
-const BOOK_GRADIENTS = GRADIENTS.map((g) => ({ name: g.name + "渐变", value: gradientOf(g.stops) }));
 // 列表里的按钮 -> 笔记本
 const itemBook = new WeakMap();
 
@@ -313,22 +311,27 @@ function renderManager() {
     button.setAttribute("role", "radio");
     button.setAttribute("aria-checked", String((b.icon_color || "") === color));
     button.style.setProperty("--book-swatch", color || "var(--accent-grad)");
-    if (!color) button.textContent = "A";
     button.addEventListener("click", () => void saveAppearance(b, b.icon || "book", color));
-    container.append(button);
+    if (color) container.append(button);
+    else {
+      const row = document.createElement("div");
+      row.className = "bm-follow-color";
+      const label = document.createElement("span");
+      label.textContent = "跟随强调色";
+      row.append(button, label);
+      container.append(row);
+    }
     return button;
   };
   const colors = $("#bm-colors");
   colors.replaceChildren();
-  for (const color of BOOK_COLORS) addColorButton(colors, color, color || "跟随强调色");
-  const gradients = $("#bm-gradients");
-  gradients.replaceChildren();
-  for (const g of BOOK_GRADIENTS) addColorButton(gradients, g.value, g.name);
+  // “跟随强调色”保留，其余颜色统一来自可编辑的颜色库。
+  addColorButton(colors, "", "跟随强调色");
   if (!notebookColorEditor) notebookColorEditor = makeSharedColorTools({
     getValue: () => selectedBook?.icon_color || state.settings?.accent || "#d9822b",
     onApply: (value) => selectedBook && saveAppearance(selectedBook, selectedBook.icon || "book", value),
   });
-  $("#bm-gradients").after(notebookColorEditor.root);
+  $("#bm-colors").after(notebookColorEditor.root);
   notebookColorEditor.sync();
   for (const control of notebookColorEditor.root.querySelectorAll("button, input, select")) control.disabled = appearanceBusy;
 }

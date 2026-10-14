@@ -231,7 +231,8 @@ function colorPicker(prefix, box, options, firstSwatch, onChange) {
     picker.value = tidyAccent(value);
     const el = $(box);
     if (!el.childElementCount) {
-      for (const a of options) {
+      // 默认/跟随入口独立保留，其他颜色全部来自可编辑颜色库。
+      for (const a of options.filter((x) => !x.value)) {
         const b = document.createElement("button");
         b.type = "button";
         b.title = a.name;

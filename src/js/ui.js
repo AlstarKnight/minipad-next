@@ -22,14 +22,20 @@ export function toast(msg, ms = 2600) {
 // ---------- 对话框:确认,或者输入一个名字 ----------
 let dialogResolve = null;
 let dialogText = false;
+let dialogReturnFocus = null;
 
 export function dialogOpen() {
   return !!dialogResolve;
 }
 
-function openDialog(message, okLabel, danger, value) {
-  // 笔记本列表留着:在列表里改名、删除笔记本以后还回到列表
-  closeOverlays(true);
+function openDialog(message, okLabel, danger, value, keepOverlays = false) {
+  // 在编辑颜色库时保留正在打开的颜色面板；其他对话框沿用现有行为。
+  if (keepOverlays) dialogReturnFocus = document.activeElement;
+  else {
+    dialogReturnFocus = null;
+    // 笔记本列表留着:在列表里改名、删除笔记本以后还回到列表
+    closeOverlays(true);
+  }
   $("#dialog-msg").textContent = message;
   const ok = $("#dialog-ok");
   ok.textContent = okLabel;
@@ -49,8 +55,8 @@ function openDialog(message, okLabel, danger, value) {
 }
 
 // 得到 true / false
-export function ask(message, okLabel = "确定", danger = false) {
-  return openDialog(message, okLabel, danger, null);
+export function ask(message, okLabel = "确定", danger = false, keepOverlays = false) {
+  return openDialog(message, okLabel, danger, null, keepOverlays);
 }
 
 // 得到去掉首尾空白的文字,取消时得到 null
@@ -64,7 +70,9 @@ export function closeDialog(ok) {
   const resolve = dialogResolve;
   dialogResolve = null;
   resolve(dialogText ? (ok ? $("#dialog-input").value.trim() : null) : ok);
-  focusEditor();
+  if (dialogReturnFocus?.isConnected) dialogReturnFocus.focus();
+  else focusEditor();
+  dialogReturnFocus = null;
   return true;
 }
 

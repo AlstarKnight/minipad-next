@@ -6,24 +6,15 @@ import { $ } from "./dom.js";
 import { state, book } from "./state.js";
 import { scheduleMeta } from "./save.js";
 import { renderTabs, newNote } from "./tabs.js";
-import { GRADIENTS, gradientOf, parseAccent, tidyAccent } from "./accent.js";
+import { gradientOf, parseAccent, tidyAccent } from "./accent.js";
 import { makeSharedColorTools } from "./sharedcolors.js";
 
-// 分组的颜色,和 Edge 的差不多
-export const GROUP_COLORS = [
-  ["灰色", "#8a8f98"],
-  ["蓝色", "#4c8bf5"],
-  ["红色", "#e5534b"],
-  ["黄色", "#d4a72c"],
-  ["绿色", "#3fa66b"],
-  ["粉色", "#e0609e"],
-  ["紫色", "#8e6bf0"],
-  ["青色", "#2fa8b8"],
-  ["橙色", "#e8833a"],
+// 这份颜色用于给新建分组自动分配不重复的默认色，仍有实际调用。
+const GROUP_COLORS = [
+  ["灰色", "#8a8f98"], ["蓝色", "#4c8bf5"], ["红色", "#e5534b"],
+  ["黄色", "#d4a72c"], ["绿色", "#3fa66b"], ["粉色", "#e0609e"],
+  ["紫色", "#8e6bf0"], ["青色", "#2fa8b8"], ["橙色", "#e8833a"],
 ];
-
-// 分组的渐变色:和强调色同一套
-export const GROUP_GRADIENTS = GRADIENTS.map((g) => [g.name, gradientOf(g.stops, 90)]);
 
 // 分组的颜色放到元素上:--g 是纯色(渐变取起点),--g-grad 是整条颜色(纯色或渐变),
 // --g-soft / --g-soft2 / --g-tint 是淡一些的同样的颜色(分组名字的底色、鼠标移上去、整个标签染色)
@@ -219,7 +210,7 @@ export function openGroupEditor(g, { focusName = false } = {}) {
     $("#ge-name").focus();
     $("#ge-name").select();
   } else {
-    box.querySelector(".ge-color.on")?.focus();
+    box.querySelector(".uc-swatch.on, .uc-swatch")?.focus();
   }
 }
 
@@ -232,32 +223,11 @@ export function closeGroupEditor() {
 
 function paintColors() {
   const g = editing;
-  const now = tidyAccent(g.color);
-  const swatch = (label, c) => {
-    const b = document.createElement("button");
-    b.type = "button";
-    b.className = "ge-color" + (now === c ? " on" : "");
-    b.style.setProperty("--c", c);
-    b.title = label;
-    b.setAttribute("role", "radio");
-    b.setAttribute("aria-checked", String(now === c));
-    b.addEventListener("click", () => setColor(c));
-    return b;
-  };
-  const solid = document.createElement("div");
-  solid.className = "ge-row";
-  solid.append(...GROUP_COLORS.map(([label, c]) => swatch(label, c)));
-  const title = document.createElement("div");
-  title.className = "menu-title";
-  title.textContent = "渐变色";
-  const grads = document.createElement("div");
-  grads.className = "ge-row";
-  grads.append(...GROUP_GRADIENTS.map(([label, c]) => swatch(label + "渐变", c)));
   const shared = makeSharedColorTools({
     getValue: () => editing?.color || "#d9822b",
     onApply: (value) => setColor(value),
   });
-  $("#ge-colors").replaceChildren(solid, title, grads, shared.root);
+  $("#ge-colors").replaceChildren(shared.root);
 }
 
 function setColor(c, repaint = true) {
@@ -269,6 +239,12 @@ function setColor(c, repaint = true) {
 }
 
 export function bindGroups() {
+  const panel = $("#group-edit");
+  new ResizeObserver(() => {
+    if (panel.hidden) return;
+    const top = Number.parseFloat(panel.style.top) || 4;
+    panel.style.top = Math.max(4, Math.min(top, window.innerHeight - panel.offsetHeight - 4)) + "px";
+  }).observe(panel);
   $("#ge-name").addEventListener("input", () => {
     if (!editing) return;
     editing.name = $("#ge-name").value.trim();

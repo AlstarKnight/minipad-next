@@ -1,6 +1,6 @@
 {
   "name": "minipad-next",
-  "version": "0.3.4",
+  "version": "0.3.5",
   "private": true,
   "description": "热键呼出的悬浮多标签笔记本,参考 minipad2 的使用体验",
   "scripts": {

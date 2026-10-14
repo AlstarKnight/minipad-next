@@ -876,13 +876,16 @@ html[data-find-pos="bottom"] #status { order: 2; }
 .bm-list-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
 .bm-list-count { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
 #bm-details { min-width: 0; flex: 1; padding: 12px; overflow-y: auto; }
-#bm-selected { margin: 0 0 12px; font-size: 15px; overflow-wrap: anywhere; }
-.bm-field-title { font-size: 12px; color: var(--muted); margin: 12px 0 7px; }
+#bm-selected { margin: 0 0 12px; padding-top: 0; border-top: none; font-size: 15px; overflow-wrap: anywhere; }
+.bm-field-title { font-size: 12px; font-weight: 600; color: var(--muted); margin: 12px 0 7px; }
+.book-manager-panel .uc-title { font-size: 12px; }
 .bm-icon-grid, .bm-colors { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 7px; }
 .bm-icon-grid button { padding: 9px; display: flex; justify-content: center; border: 1px solid var(--bar-border); border-radius: 7px; }
 .bm-icon-grid svg { width: 20px; height: 20px; }
 .bm-icon-grid button:hover, .bm-icon-grid button[aria-checked="true"] { border-color: var(--accent); background: var(--accent-soft); }
 .bm-colors { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+.bm-follow-color { grid-column: 1 / -1; display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
+.bm-follow-color button { flex: none; width: 38px; color: var(--text); font-weight: 600; }
 .bm-colors button { height: 26px; border-radius: 7px; background: var(--book-swatch); border: 1px solid var(--bar-border); color: white; }
 .bm-colors button:hover { border-color: color-mix(in srgb, var(--accent) 70%, var(--bar-border)); }
 .bm-colors button[aria-checked="true"] {
@@ -934,14 +937,6 @@ html[data-find-pos="bottom"] #status { order: 2; }
 #format-bar .fb-more { color: var(--muted); margin-left: 2px; }
 .fb-pop { padding: 6px; min-width: 0; }
 .fb-pop .fb-none { padding: 4px 8px; margin-bottom: 4px; }
-.fb-swatches { display: grid; grid-template-columns: repeat(7, 24px); gap: 4px; padding: 0 2px 2px; }
-.menu .fb-swatch {
-  width: 24px; height: 24px; padding: 0; border-radius: 5px; text-align: center;
-  font-weight: 600; font-size: 13px; color: var(--fg, var(--text));
-  background: var(--sw, transparent); border: 1px solid var(--code-border);
-}
-.menu .fb-swatch:hover { background: var(--sw, var(--accent-soft)); outline: 2px solid var(--accent-soft); }
-.menu .fb-swatch.on { outline: 2px solid var(--accent); }
 /* 自定义格式栏:一行一个按钮,勾选显示,拖动调整顺序 */
 .fb-checks { display: flex; flex-direction: column; min-width: 190px; max-height: calc(100vh - 150px); overflow-y: auto; padding: 2px 2px 4px; font-size: 13px; }
 .fb-check { display: flex; align-items: center; gap: 6px; padding: 2px 6px 2px 2px; border-radius: 5px; white-space: nowrap; cursor: grab; }
@@ -980,16 +975,7 @@ html[data-find-pos="bottom"] #status { order: 2; }
 /* 明暗切换按钮:浅色时显示月亮(点了变深色),深色时显示太阳 */
 #btn-theme .sun, [data-theme="dark"] #btn-theme .moon { display: none; }
 [data-theme="dark"] #btn-theme .sun { display: block; }
-/* 字体颜色板里的渐变色:A 字本身是渐变 */
-.menu .fb-gradients .fb-swatch,
-.menu .fb-gradients .fb-swatch:hover {
-  background: var(--fg);
-  -webkit-background-clip: text;
-  background-clip: text;
-  -webkit-text-fill-color: transparent;
-  font-size: 15px;
-  font-weight: 800;
-}
+
 /* 选中渐变色的字时,字是透明的会看不见,选中的时候先用普通的颜色 */
 #editor .ProseMirror span[data-color^="linear-gradient"]::selection { color: var(--text); -webkit-text-fill-color: var(--text); }
 input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
@@ -1172,19 +1158,55 @@ html[data-edge-style="hover"][data-edge-peek][data-edge="right"] #edge-expand { 
   min-width: 0; width: 100%; color: var(--text); font-size: 12px;
 }
 .uc-title { font-size: 11.5px; font-weight: 600; color: var(--muted); }
-.uc-presets { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; min-height: 23px; }
+.uc-presets {
+  display: grid; grid-template-columns: repeat(6, 31px); gap: 7px 6px;
+  align-items: center; min-height: 25px; min-width: 0;
+}
+.uc-presets:not(.expanded) .uc-preset:nth-child(n+6) { display: none; }
+.uc-presets.expanded {
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  max-height: 130px; overflow-y: auto; padding: 7px 6px;
+  border: 1px solid var(--bar-border); border-radius: 6px; scrollbar-width: thin;
+}
+.uc-more {
+  display: flex; align-items: center; justify-content: center;
+  width: 27px; height: 25px; padding: 0; border: 1px dashed var(--bar-border);
+  border-radius: 6px; color: var(--muted); font-size: 17px;
+}
+.uc-presets.expanded .uc-more {
+  grid-column: 6; grid-row: 1; justify-self: end; position: sticky; top: 0; z-index: 3;
+  width: 27px; font-size: 17px; background: var(--bg);
+}
+.uc-more:hover, .uc-more[aria-expanded="true"] { color: var(--accent); border-color: var(--accent); }
+.uc-actions[hidden] { display: none; }
+.uc-undo[hidden] { display: none !important; }
 .uc-preset { position: relative; display: inline-flex; width: 31px; height: 25px; }
 .uc-swatch {
   display: block; width: 27px; height: 25px;
   border: 1px solid var(--bar-border); border-radius: 6px;
 }
-.uc-swatch:hover, .uc-swatch:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
+.uc-swatch:hover, .uc-swatch:focus-visible, .uc-swatch.on { outline: 1px solid var(--accent); outline-offset: 1px; }
 .uc-delete {
   position: absolute; right: -4px; top: -5px; width: 15px; height: 15px;
   padding: 0; border: 1px solid var(--bar-border); border-radius: 50%;
   color: var(--muted); background: var(--bg); font-size: 12px; line-height: 12px;
 }
 .uc-delete:hover { border-color: var(--danger); color: var(--danger); }
+.uc-delete { opacity: 0; pointer-events: none; transition: opacity .12s; }
+.uc-preset:hover .uc-delete, .uc-preset:focus-within .uc-delete {
+  opacity: 1; pointer-events: auto;
+}
+@media (hover: none) { .uc-delete { opacity: 1; pointer-events: auto; } }
+.uc-presets:not(.expanded) .uc-delete { display: none; }
+.uc-presets.expanded .uc-preset { cursor: grab; }
+.uc-presets.expanded .uc-preset:active { cursor: grabbing; }
+.uc-text-swatch { font-size: 17px; font-weight: 700; background: transparent !important; }
+.uc-text-swatch[style*="--uc-text-gradient"] {
+  background: var(--uc-text-gradient) !important;
+  -webkit-background-clip: text !important; background-clip: text !important;
+  -webkit-text-fill-color: transparent;
+}
+.uc-reset { margin-left: auto; }
 .uc-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .uc-actions .small { font-size: 11.5px; }
 .uc-editor {
@@ -1208,34 +1230,15 @@ html[data-edge-style="hover"][data-edge-peek][data-edge="right"] #edge-expand { 
 }
 .uc-stop input[type="number"] { width: 63px; min-width: 0; padding: 3px 5px; }
 .uc-stop .uc-remove { margin-left: auto; }
-/* 设置页将预设、入口和保存按钮收成一行；展开编辑器时才占用下一行。 */
-.shared-colors.compact {
-  display: grid; grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center; gap: 5px; padding: 2px 0;
-}
+/* 设置页常驻前五个快捷色块；展开才显示完整库、编辑与保存。 */
+.shared-colors.compact { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 5px; padding: 2px 0; }
 .shared-colors.compact .uc-title { white-space: nowrap; }
-.shared-colors.compact .uc-presets {
-  flex-wrap: nowrap; min-width: 0; overflow-x: auto; overflow-y: hidden;
-  padding: 5px 4px; scrollbar-width: thin;
+.shared-colors.compact .uc-presets { grid-column: 2; }
+.shared-colors.compact .uc-presets.expanded {
+  grid-column: 1 / -1; width: 100%; box-sizing: border-box;
+  max-height: none; overflow: visible;
 }
-.shared-colors.compact .uc-preset { flex: 0 0 31px; }
-/* 横向滚动时，仅在还有隐藏色块的边缘显示渐隐提示。 */
-.shared-colors.compact .uc-presets.overflow-left {
-  -webkit-mask-image: linear-gradient(to right, transparent, #000 16px);
-  mask-image: linear-gradient(to right, transparent, #000 16px);
-}
-.shared-colors.compact .uc-presets.overflow-right {
-  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 16px), transparent);
-  mask-image: linear-gradient(to right, #000 calc(100% - 16px), transparent);
-}
-.shared-colors.compact .uc-presets.overflow-left.overflow-right {
-  -webkit-mask-image: linear-gradient(to right, transparent, #000 16px, #000 calc(100% - 16px), transparent);
-  mask-image: linear-gradient(to right, transparent, #000 16px, #000 calc(100% - 16px), transparent);
-}
-.shared-colors.compact .uc-presets .muted { white-space: nowrap; font-size: 11px; }
-.shared-colors.compact .uc-actions { flex-wrap: nowrap; gap: 4px; }
-.shared-colors.compact .uc-actions .small { padding: 3px 6px; white-space: nowrap; }
-.shared-colors.compact .uc-editor { grid-column: 1 / -1; }
+.shared-colors.compact .uc-actions, .shared-colors.compact .uc-editor { grid-column: 1 / -1; }
 /* Reset the broad full-width .menu button styles inside the reusable color palette. */
 .menu .shared-colors button {
   display: inline-flex; align-items: center; justify-content: center;
@@ -1249,9 +1252,11 @@ html[data-edge-style="hover"][data-edge-peek][data-edge="right"] #edge-expand { 
   background: var(--bg); z-index: 1;
 }
 .menu .shared-colors .uc-delete:hover { background: var(--bg); color: var(--danger); }
+.menu .shared-colors .uc-more { width: 27px; height: 25px; min-width: 27px; padding: 0; }
+.menu .shared-colors .uc-presets.expanded .uc-more { width: 27px; }
 .menu .shared-colors .uc-stop .uc-remove { flex: none; width: 24px; height: 24px; padding: 0; }
 .menu .shared-colors .uc-actions button { white-space: normal; border: 1px solid var(--bar-border); border-radius: 5px; }
-.menu :is(.shared-colors button, .fb-swatch, .ge-color):focus-visible {
+.menu .shared-colors button:focus-visible {
   outline: 2px solid var(--accent); outline-offset: 2px;
 }
 .fb-pop { max-height: min(75vh, 570px); overflow-y: auto; }
@@ -1489,22 +1494,12 @@ html[data-unreadable] #format-bar, html[data-unreadable] #toolbar { pointer-even
 [data-group-style="line"] #drawer .tab.in-group { background-size: 2px 100%; background-position: left; }
 
 /* 分组设置:名字、颜色 */
-.group-edit { width: 240px; display: flex; flex-direction: column; gap: 6px; padding: 8px; max-height: calc(100vh - 12px); overflow-y: auto; }
+.group-edit { width: 240px; display: flex; flex-direction: column; gap: 6px; padding: 8px; max-height: calc(100vh - 12px); overflow: hidden; }
+.group-edit > :not(.ge-colors) { flex-shrink: 0; }
+.group-edit .ge-colors { min-height: 0; flex: 0 1 auto; overflow-y: auto; scrollbar-width: thin; }
+.group-edit .uc-presets.expanded { max-height: 107px; }
+.group-edit .uc-editor { max-height: min(200px, 38vh); overflow-y: auto; }
 .ge-colors { display: flex; flex-direction: column; gap: 4px; }
-.ge-row { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 2px; }
-.ge-colors .menu-title { padding: 2px 2px 0; }
-.ge-color {
-  position: relative;
-  width: 20px;
-  height: 20px;
-  padding: 0;
-  border-radius: 50%;
-  background: var(--c);
-  cursor: pointer;
-}
-.menu button.ge-color { width: 20px; padding: 0; }
-.menu button.ge-color:hover, .menu button.ge-color:focus { background: var(--c); }
-.ge-color.on { outline: 1px solid var(--accent); outline-offset: 2px; box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 13%, transparent); }
 .group-edit hr { margin: 2px 0; }
 
 /* 设置里标签栏的预览 */
