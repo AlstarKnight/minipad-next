@@ -6,30 +6,7 @@
 //   <span style="color: #38d6c4; background-image: linear-gradient(90deg, #38d6c4, #7f8ff5); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent">渐变</span>
 // 读文件时把成对的 <span style=…> 和 </span> 收拢成 textColor / textBg 节点,编辑器里就是两种文字标记
 import { $markSchema, $remark } from "../vendor/milkdown.js";
-import { GRADIENTS, gradientOf, parseAccent, tidyAccent } from "./accent.js";
-
-// 颜色板:字体颜色在浅色、深色背景上都看得清;背景色在深色主题里会调淡(见 style.css)
-export const TEXT_COLORS = [
-  { name: "灰色", value: "#8c8c8c" },
-  { name: "红色", value: "#df2a3f" },
-  { name: "橙色", value: "#ed740c" },
-  { name: "黄色", value: "#c99a06" },
-  { name: "绿色", value: "#1f9c58" },
-  { name: "蓝色", value: "#117cee" },
-  { name: "紫色", value: "#8a3fd4" },
-];
-// 字体的渐变色:从左到右
-export const TEXT_GRADIENTS = GRADIENTS.map((g) => ({ name: g.name + "渐变", value: gradientOf(g.stops, 90) }));
-
-export const BG_COLORS = [
-  { name: "灰色", value: "#e4e5e7" },
-  { name: "红色", value: "#fbd4d0" },
-  { name: "橙色", value: "#fde2c4" },
-  { name: "黄色", value: "#fbe9a6" },
-  { name: "绿色", value: "#d2f1d9" },
-  { name: "蓝色", value: "#d3e6fd" },
-  { name: "紫色", value: "#e6dbf8" },
-];
+import { parseAccent, tidyAccent } from "./accent.js";
 
 // 只接受普通的颜色写法,别的(比如 url(...))不当颜色
 const COLOR = /^(#[0-9a-f]{3,8}|[a-z]+|rgba?\([\d\s.,%]+\)|hsla?\([\d\s.,%deg]+\))$/i;

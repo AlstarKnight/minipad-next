@@ -370,7 +370,7 @@ print("hello")
 
 1. **Microsoft C++ 生成工具**:下载 [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/),安装时勾选 **“使用 C++ 的桌面开发”**。
 2. **Rust**:从 [rustup.rs](https://rustup.rs) 下载 `rustup-init.exe` 并运行,一路默认即可。装完重新打开终端,运行 `rustc -V` 能看到版本号就说明装好了。
-3. **Node.js**:安装 [Node.js](https://nodejs.org) 的 LTS 版本(18 或更新)。
+3. **Node.js**:安装 [Node.js](https://nodejs.org) 的 LTS 版本(20 或更新)。
 4. **WebView2**:Windows 10/11 一般已经自带,不用管。
 
 ### 2. 构建
@@ -441,9 +441,9 @@ npx tauri build --target x86_64-pc-windows-gnu
   2. 构建安装包和免安装版;
   3. 真正启动程序做冒烟测试:窗口能不能出来、前端能不能读写笔记、全局热键、贴边隐藏、从 0.1.x 升级时的数据搬迁、空笔记本自动补一页、每日备份、重复启动只保留一个;
   4. 把两个 exe 上传成这次运行的构建结果;
-  5. 合并到 main 时,新版本自动发布 Release(见下)。
+- 上面都通过以后,合并到 main 时新版本自动发布 Release(见下)。
 
-要发布新版本:把 `package.json`、`src-tauri/Cargo.toml`、`src-tauri/tauri.conf.json` 里的版本号改好,在 `CHANGELOG.md` 加上 `## 版本号` 这一节,然后合并到 main。合并后的构建通过以后,如果这个版本还没有 `v` 开头的标签,会自动建标签 `v版本号`、发布 Release,并附上安装版和免安装版,Release 的说明就是 CHANGELOG 里这个版本的那一节。已经发布过的版本不会重复发布。
+要发布新版本:把 `package.json`、`package-lock.json`、`src-tauri/Cargo.toml`、`src-tauri/Cargo.lock` 里的版本号改好(`src-tauri/tauri.conf.json` 直接用 `package.json` 里的版本号,不用改;这几处对不上时构建会失败),在 `CHANGELOG.md` 加上 `## 版本号` 这一节,然后合并到 main。合并后格式检查、界面测试和 Windows 构建都通过了,如果这个版本还没有发布,会自动建标签 `v版本号`、发布 Release,并附上安装版和免安装版,Release 的说明就是 CHANGELOG 里这个版本的那一节。已经发布过的版本不会重复发布;上次发布到一半失败了(比如上传安装包出错),重新运行这次构建就会补上。
 
 `CHANGELOG.md` 里没有这个版本的那一节时,构建会失败,提醒你补上。想手动发布也可以:推送一个 `v` 开头的标签,或者在 GitHub 的 Releases 页面点“Draft a new release”新建标签再发布,构建通过后同样会附上安装包。
 

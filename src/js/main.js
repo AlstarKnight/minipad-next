@@ -4,7 +4,7 @@ import { $ } from "./dom.js";
 import { state, book, current } from "./state.js";
 import { toast, dialogOpen, closeDialog, closeMenu, closeOverlays, focusEditor, ask, askText } from "./ui.js";
 import { markDirty, flushAll, saveMeta, pendingNoteCount, resetActivity } from "./save.js";
-import { reload, syncFromDisk, addConflictCopy } from "./sync.js";
+import { reload, syncFromDisk, addConflictCopy, showPendingNotice } from "./sync.js";
 import { rememberView } from "./page.js";
 import { switchTo, newNote, deleteNote } from "./tabs.js";
 import { bindTabBar } from "./tabbar.js";
@@ -30,10 +30,12 @@ async function init() {
   api.listen("before-quit", (e) => { void handleQuit(e.payload); });
   api.listen("shown", () => {
     focusEditor();
+    showPendingNotice();
     syncFromDisk();
   });
   api.listen("window-focus", () => {
     resetActivity();
+    showPendingNotice();
     syncFromDisk();
   });
   // 贴边隐藏时,在露出来的那一条上显示标识
@@ -291,6 +293,8 @@ if (isMock) {
     state,
     sync: () => syncFromDisk(true),
     editor: editorDebug,
+    // 马上把还没保存的页面和元信息存掉(不等防抖)
+    flush: () => Promise.allSettled([flushAll(), saveMeta()]),
   };
 }
 

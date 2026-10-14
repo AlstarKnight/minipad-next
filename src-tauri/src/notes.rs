@@ -104,12 +104,30 @@ pub fn write_atomic(path: &Path, data: &str) -> Result<(), String> {
         file.write_all(data.as_bytes()).map_err(|e| e.to_string())?;
         file.sync_all().map_err(|e| e.to_string())?;
         drop(file);
-        fs::rename(&tmp, path).map_err(|e| e.to_string())
+        rename_with_retry(|| fs::rename(&tmp, path)).map_err(|e| e.to_string())
     })();
     if result.is_err() {
         let _ = fs::remove_file(&tmp);
     }
     result
+}
+
+/// 杀毒软件、OneDrive、索引服务正打开着目标文件时 Windows 会暂时拒绝改名:
+/// 稍等一下再试几次(临时文件一直留着),还不行才算失败
+fn rename_with_retry(mut rename: impl FnMut() -> std::io::Result<()>) -> std::io::Result<()> {
+    for wait in [10, 50, 100, 200] {
+        match rename() {
+            Err(e) if is_busy(&e) => std::thread::sleep(Duration::from_millis(wait)),
+            result => return result,
+        }
+    }
+    rename()
+}
+
+/// 文件正被别的程序占着:拒绝访问,或者 Windows 的共享冲突(32)、锁定冲突(33)
+fn is_busy(e: &std::io::Error) -> bool {
+    e.kind() == std::io::ErrorKind::PermissionDenied
+        || (cfg!(windows) && matches!(e.raw_os_error(), Some(32 | 33)))
 }
 
 /// 启动时清理笔记文件夹和各笔记本中残留超过一小时的临时文件。
@@ -144,7 +162,7 @@ pub fn cleanup_stale_temps(root: &Path) {
 
 /// 把名字变成合法的 Windows 文件名,清理完是空的就用 `fallback`
 fn clean_name(name: &str, fallback: &str) -> String {
-    let mut s: String = name
+    let s: String = name
         .chars()
         .map(|c| match c {
             '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*' => '_',
@@ -152,26 +170,42 @@ fn clean_name(name: &str, fallback: &str) -> String {
             c => c,
         })
         .collect();
-    s = s.trim().trim_end_matches(['.', ' ']).to_string();
+    let mut s = fit_name(s.trim_start());
     if s.starts_with('.') {
         s = format!("_{}", &s[1..]);
-    }
-    if s.chars().count() > 80 {
-        s = s.chars().take(80).collect();
     }
     if s.is_empty() {
         s = fallback.into();
     }
-    let upper = s.to_uppercase();
-    let reserved = ["CON", "PRN", "AUX", "NUL"];
-    if reserved.contains(&upper.as_str())
-        || ((upper.starts_with("COM") || upper.starts_with("LPT"))
-            && upper.len() == 4
-            && upper.as_bytes()[3].is_ascii_digit())
-    {
-        s.push('_');
+    // 第一个点前面是设备名(CON.txt、aux.1 也不行)时,在设备名后面加 _
+    let stem = s[..s.find('.').unwrap_or(s.len())].trim_end_matches(' ');
+    if is_reserved(stem) {
+        let at = stem.len();
+        s.insert(at, '_');
+        s = fit_name(&s);
     }
     s
+}
+
+/// 最多留 80 个字,先截短再去掉末尾的空白、点和空格:Windows 会悄悄去掉末尾的点和空格,
+/// 不然建出来的文件夹和返回的名字对不上
+fn fit_name(s: &str) -> String {
+    let s: String = s.chars().take(80).collect();
+    s.trim_end().trim_end_matches(['.', ' ']).to_string()
+}
+
+/// Windows 保留的设备名(不分大小写)
+fn is_reserved(stem: &str) -> bool {
+    let upper = stem.to_uppercase();
+    if ["CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$"].contains(&upper.as_str()) {
+        return true;
+    }
+    let mut digit = upper.chars().skip(3);
+    (upper.starts_with("COM") || upper.starts_with("LPT"))
+        && matches!(
+            (digit.next(), digit.next()),
+            (Some('0'..='9' | '¹' | '²' | '³'), None)
+        )
 }
 
 /// 把页面名变成合法的 Windows 文件名
@@ -264,19 +298,49 @@ fn first_free(base: String, taken: impl Fn(&str) -> bool) -> String {
         .unwrap()
 }
 
-/// 生成一个不和已有页面重名的名字;`except` 是重命名时的原名,不算冲突
-pub fn unique_name(dir: &Path, base: &str, except: Option<&str>) -> String {
+/// 生成一个不和已有页面(以及同名的文件夹等)重名的名字;`except` 是重命名时的原名,不算冲突。
+/// 列不出已有的页面就报错,免得挑中一个已经有的名字
+pub fn unique_name(dir: &Path, base: &str, except: Option<&str>) -> Result<String, String> {
     // Windows 文件名不区分大小写,这里也按不区分处理
     let except = except.map(|e| e.to_lowercase());
-    let existing: Vec<String> = list_names(dir)
-        .unwrap_or_default()
+    let existing: Vec<String> = list_names(dir)?
         .into_iter()
         .map(|n| n.to_lowercase())
         .collect();
-    first_free(sanitize_name(base), |n| {
-        let n = n.to_lowercase();
-        Some(&n) != except.as_ref() && existing.contains(&n)
-    })
+    Ok(first_free(sanitize_name(base), |n| {
+        let lower = n.to_lowercase();
+        Some(&lower) != except.as_ref() && (existing.contains(&lower) || note_path(dir, n).exists())
+    }))
+}
+
+/// 新建一个空页面,返回实际用的名字。用 create_new 建文件,绝不会把已有的页面清空:
+/// 挑好的名字刚好被占了(比如网盘同步刚放进来一个同名文件)就换下一个再试
+pub fn create_note(dir: &Path, base: &str) -> Result<String, String> {
+    fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    for _ in 0..5 {
+        let name = unique_name(dir, base, None)?;
+        match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(note_path(dir, &name))
+        {
+            Ok(_) => return Ok(name),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(e) => return Err(format!("新建页面「{name}」失败:{e}")),
+        }
+    }
+    Err("新建页面失败:挑好的名字一直被占用,请稍后再试".into())
+}
+
+/// 页面改名,返回实际用的名字(和别的页面重名时加编号;只改大小写不算重名)
+pub fn rename_note(root: &Path, book: &str, old: &str, new: &str) -> Result<String, String> {
+    let src = page_path(root, book, old)?;
+    let dir = book_dir(root, book)?;
+    let new = unique_name(&dir, new, Some(old))?;
+    if new != old {
+        fs::rename(src, note_path(&dir, &new)).map_err(|e| e.to_string())?;
+    }
+    Ok(new)
 }
 
 /// 生成一个不和已有笔记本(以及同名文件)冲突的笔记本名;「默认」留给根目录
@@ -296,20 +360,44 @@ pub fn unique_book_name(root: &Path, base: &str, except: Option<&str>) -> String
 }
 
 /// 把文件内容解码成文本:认得 UTF-8 / UTF-16 的 BOM;不是合法 UTF-8 时按 GB18030(兼容 GBK)解码,
-/// 这样从老软件里拷过来的中文 txt 也不会乱码。换行统一成 \n。
-pub fn decode_text(bytes: &[u8]) -> String {
-    let text = if let Some((encoding, bom_len)) = Encoding::for_bom(bytes) {
-        encoding
-            .decode_without_bom_handling(&bytes[bom_len..])
-            .0
-            .into_owned()
+/// 这样从老软件里拷过来的中文 txt 也不会乱码;只坏了零星几处的 UTF-8 仍按 UTF-8 解。换行统一成 \n。
+/// 第二个值表示有没有认不出来、被换成 � 的字节。
+fn decode(bytes: &[u8]) -> (String, bool) {
+    let (text, lossy) = if let Some((encoding, bom_len)) = Encoding::for_bom(bytes) {
+        let (text, lossy) = encoding.decode_without_bom_handling(&bytes[bom_len..]);
+        (text.into_owned(), lossy)
     } else {
         match std::str::from_utf8(bytes) {
-            Ok(s) => s.to_owned(),
-            Err(_) => GB18030.decode_without_bom_handling(bytes).0.into_owned(),
+            Ok(s) => (s.to_owned(), false),
+            Err(_) if damaged_utf8(bytes) => (String::from_utf8_lossy(bytes).into_owned(), true),
+            Err(_) => {
+                let (text, lossy) = GB18030.decode_without_bom_handling(bytes);
+                (text.into_owned(), lossy)
+            }
         }
     };
-    text.replace("\r\n", "\n")
+    let text = if text.contains('\r') {
+        text.replace("\r\n", "\n")
+    } else {
+        text
+    };
+    (text, lossy)
+}
+
+/// 大部分是合法的 UTF-8(非 ASCII 的字至少是坏处的 3 倍),只是混进了几个坏字节,
+/// 比如同步时截断了半个字:这是损坏的 UTF-8,不是 GBK
+fn damaged_utf8(bytes: &[u8]) -> bool {
+    let (mut valid, mut invalid) = (0, 0);
+    for chunk in bytes.utf8_chunks() {
+        valid += chunk.valid().chars().filter(|c| !c.is_ascii()).count();
+        invalid += usize::from(!chunk.invalid().is_empty());
+    }
+    valid >= 3 * invalid
+}
+
+/// 解码文件内容,认不出来的字节换成 �(设置、元信息、minipad2 的文件用)
+pub fn decode_text(bytes: &[u8]) -> String {
+    decode(bytes).0
 }
 
 /// 冲突副本的名字,比如「周报 (冲突 2026-10-12 18.30)」;原名太长时截短,保证后缀完整
@@ -320,40 +408,109 @@ pub fn conflict_name(name: &str, stamp: &str) -> String {
     format!("{}{suffix}", base.trim_end())
 }
 
-/// 保存前检查页面文件有没有在别处被改过:现在的内容既不是上次读到的 `expected`,也不是要写的 `content`,
-/// 就把现在的内容另存成同一个笔记本里的冲突副本,返回副本的名字和内容。
-/// 文件不在了(或者读不出来)就没什么可留的,返回 None,照常保存。
-pub fn save_conflict_copy(
+/// 页面文件现在的内容 `current` 既不是上次读到的 `expected`,也不是要写的 `content`,说明在别处被改过:
+/// 把它另存成同一个笔记本里的冲突副本,返回副本的名字和内容。
+fn save_conflict_copy(
     dir: &Path,
     name: &str,
     expected: &str,
     content: &str,
+    current: String,
     stamp: &str,
 ) -> Result<Option<(String, String)>, String> {
-    let Ok(bytes) = fs::read(note_path(dir, name)) else {
-        return Ok(None);
-    };
-    let current = decode_text(&bytes);
     if current == expected || current == content {
         return Ok(None);
     }
-    let copy = unique_name(dir, &conflict_name(name, stamp), None);
+    let copy = unique_name(dir, &conflict_name(name, stamp), None)?;
     write_atomic(&note_path(dir, &copy), &current)
         .map_err(|e| format!("「{name}」在别处也被修改了,但另存那边的版本失败:{e}"))?;
     Ok(Some((copy, current)))
 }
 
-pub fn read_note(dir: &Path, name: &str) -> Result<String, String> {
-    fs::read(note_path(dir, name))
-        .map(|b| decode_text(&b))
-        .map_err(|e| format!("无法读取笔记「{name}」: {e}"))
+/// 保存页面,文件里已经是这些内容就不再写。`expected` 是前端上次从磁盘读到(或写进去)的内容:
+/// `keep_both` 时如果文件在别处被改过,先把那边的版本另存成冲突副本(返回它的名字和内容)再写。
+/// 文件不在了就没什么可留的,照常保存;读不出来就不知道里面是什么,不管是不是直接覆盖都先不保存。
+pub fn save_page(
+    root: &Path,
+    book: &str,
+    name: &str,
+    content: &str,
+    expected: Option<&str>,
+    keep_both: bool,
+    stamp: &str,
+) -> Result<Option<(String, String)>, String> {
+    let path = page_path(root, book, name)?;
+    let expected = expected.filter(|_| keep_both);
+    let current = match fs::read(&path) {
+        Ok(bytes) => Some(bytes),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        // 直接覆盖只是不留别处改过的版本,读不出来的文件也不能盖
+        Err(e) => return Err(format!("读不出「{name}」现在的内容，暂不保存:{e}")),
+    };
+    if current.as_deref() == Some(content.as_bytes()) {
+        return Ok(None);
+    }
+    let conflict = match (expected, current) {
+        (Some(expected), Some(bytes)) => save_conflict_copy(
+            &book_dir(root, book)?,
+            name,
+            expected,
+            content,
+            decode_text(&bytes),
+            stamp,
+        )?,
+        _ => None,
+    };
+    write_atomic(&path, content).map_err(|e| format!("保存「{name}」失败:{e}"))?;
+    Ok(conflict)
 }
 
+/// 读一页。文件里有认不出来的字节(可能已损坏)时内容照常读出来(那几处是 �),另外返回原因:
+/// 这样的页面只能看、不能改,免得编辑后把乱码存回原文件
+fn read_page(dir: &Path, name: &str) -> Result<(String, Option<String>), String> {
+    let bytes =
+        fs::read(note_path(dir, name)).map_err(|e| format!("无法读取笔记「{name}」: {e}"))?;
+    let (text, lossy) = decode(&bytes);
+    let damaged = lossy.then(|| {
+        format!(
+            "「{name}」里有无法识别的字节(文件可能已损坏),为免把乱码存回原文件,只能查看、不能编辑"
+        )
+    });
+    Ok((text, damaged))
+}
+
+/// 读一页的内容,有认不出来的字节时报错
+#[cfg(test)]
+pub fn read_note(dir: &Path, name: &str) -> Result<String, String> {
+    match read_page(dir, name)? {
+        (text, None) => Ok(text),
+        (_, Some(why)) => Err(why),
+    }
+}
+
+/// 只用来显示的读取:读不出来或者内容损坏都当成没有
 pub fn read_meta(dir: &Path) -> Meta {
     fs::read(dir.join(META_FILE))
         .ok()
         .and_then(|b| serde_json::from_str(&decode_text(&b)).ok())
         .unwrap_or_default()
+}
+
+/// 改写 .minipad.json 之前读它:不存在就从默认值开始;读不出来就报错,免得拿默认值把图标、分组、
+/// 当前笔记本这些覆盖掉;内容损坏就把原文件改名留底(.minipad.json.bad-<秒数>),再从默认值开始
+fn read_meta_strict(dir: &Path) -> Result<Meta, String> {
+    let path = dir.join(META_FILE);
+    let bytes = match fs::read(&path) {
+        Ok(bytes) => bytes,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Meta::default()),
+        Err(e) => return Err(format!("笔记本元信息读取失败:{e}")),
+    };
+    if let Ok(meta) = serde_json::from_str(&decode_text(&bytes)) {
+        return Ok(meta);
+    }
+    let bad = free_path(dir, &format!("{META_FILE}.bad-{}", stamp()), "");
+    fs::rename(&path, bad).map_err(|e| format!("笔记本元信息损坏，另存原文件失败:{e}"))?;
+    Ok(Meta::default())
 }
 
 pub fn write_meta(dir: &Path, meta: &Meta) -> Result<(), String> {
@@ -379,7 +536,7 @@ pub fn order_names(names: &[String], saved: &[String]) -> Vec<String> {
 /// 测试可替换读取函数，确保单页失败不会影响其他页。
 fn load_book_with_reader<F>(root: &Path, book: &str, mut read: F) -> Result<Book, String>
 where
-    F: FnMut(&Path, &str) -> Result<String, String>,
+    F: FnMut(&Path, &str) -> Result<(String, Option<String>), String>,
 {
     let dir = book_dir(root, book)?;
     let meta = read_meta(&dir);
@@ -393,7 +550,9 @@ where
         .into_iter()
         .map(|name| {
             let (content, unreadable, reason) = match read(&dir, &name) {
-                Ok(text) => (text, false, None),
+                Ok((text, None)) => (text, false, None),
+                // 文件有损坏:内容照常显示,但和读不出来的页面一样只读
+                Ok((text, Some(why))) => (text, true, Some(why)),
                 Err(e) => (String::new(), true, Some(e)),
             };
             Note {
@@ -433,7 +592,7 @@ where
 
 /// 读出一个笔记本；个别页面无法读取时仍将其保留为不可编辑的占位。
 pub fn load_book(root: &Path, book: &str) -> Result<Book, String> {
-    load_book_with_reader(root, book, read_note)
+    load_book_with_reader(root, book, read_page)
 }
 
 /// 无法读取的子笔记本跳过，不阻断其余笔记本；前端同步必须保留暂时缺失的笔记本。
@@ -461,7 +620,7 @@ pub fn save_book_meta(
     if !dir.is_dir() {
         return Ok(());
     }
-    let mut meta = read_meta(&dir);
+    let mut meta = read_meta_strict(&dir)?;
     meta.order = order;
     meta.active = active;
     meta.modes = modes;
@@ -570,13 +729,7 @@ pub fn set_book_appearance(root: &Path, book: &str, icon: &str, color: &str) -> 
         ));
     }
     // 外观更改不能在元文件暂时不可读时把页面排序等内容覆盖为默认值。
-    let meta_path = dir.join(META_FILE);
-    let mut meta = match fs::read(&meta_path) {
-        Ok(bytes) => serde_json::from_str::<Meta>(&decode_text(&bytes))
-            .map_err(|e| format!("笔记本元信息解析失败:{e}"))?,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Meta::default(),
-        Err(e) => return Err(format!("笔记本元信息读取失败:{e}")),
-    };
+    let mut meta = read_meta_strict(&dir)?;
     meta.icon = if icon == "book" {
         String::new()
     } else {
@@ -588,7 +741,7 @@ pub fn set_book_appearance(root: &Path, book: &str, icon: &str, color: &str) -> 
 
 /// 记住当前打开的笔记本
 pub fn set_current_book(root: &Path, book: &str) -> Result<(), String> {
-    let mut meta = read_meta(root);
+    let mut meta = read_meta_strict(root)?;
     if meta.book != book {
         meta.book = book.to_string();
         write_meta(root, &meta)?;
@@ -649,7 +802,7 @@ pub fn move_note(root: &Path, book: &str, name: &str, target: &str) -> Result<St
         return Err(format!("找不到页面「{name}」"));
     }
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let new = unique_name(&dir, name, None);
+    let new = unique_name(&dir, name, None)?;
     fs::rename(&src, note_path(&dir, &new)).map_err(|e| e.to_string())?;
     Ok(new)
 }
@@ -695,8 +848,27 @@ pub fn migrate_path(old: &Path, new: &Path) -> Result<bool, String> {
     if fs::rename(old, new).is_ok() {
         return Ok(true);
     }
-    copy_recursive(old, new)?;
+    copy_into_place(old, new)?;
     Ok(true)
+}
+
+/// 先复制到 `new` 旁边的临时位置,完整复制完才改成 `new`:中途失败不会留下半截的数据,
+/// 免得下次启动看到 `new` 已经有了就当成真的。失败时删掉临时副本。文件和文件夹都行。
+fn copy_into_place(old: &Path, new: &Path) -> Result<(), String> {
+    let seq = TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let mut name = new.file_name().ok_or("无效的路径")?.to_os_string();
+    name.push(format!(".{}.{seq}.tmp~", std::process::id()));
+    let tmp = new.with_file_name(name);
+    let result =
+        copy_recursive(old, &tmp).and_then(|()| fs::rename(&tmp, new).map_err(|e| e.to_string()));
+    if result.is_err() {
+        let _ = if old.is_dir() {
+            fs::remove_dir_all(&tmp)
+        } else {
+            fs::remove_file(&tmp)
+        };
+    }
+    result
 }
 
 /// 更换笔记目录时安全复制全部内容。新目录必须为空，源目录会保留以便恢复。
@@ -751,7 +923,9 @@ pub fn copy_notes_for_switch(source: &Path, destination: &Path) -> Result<(), St
 fn copy_recursive(src: &Path, dst: &Path) -> Result<(), String> {
     if src.is_dir() {
         fs::create_dir_all(dst).map_err(|e| e.to_string())?;
-        for entry in fs::read_dir(src).map_err(|e| e.to_string())?.flatten() {
+        // 有一项读不出来就算复制失败,不能少复制了还当成功
+        for entry in fs::read_dir(src).map_err(|e| e.to_string())? {
+            let entry = entry.map_err(|e| format!("读不出「{}」里的内容:{e}", src.display()))?;
             copy_recursive(&entry.path(), &dst.join(entry.file_name()))?;
         }
         Ok(())
@@ -807,16 +981,104 @@ mod tests {
     }
 
     #[test]
+    fn names_stay_valid_on_windows_after_truncation_and_with_extensions() {
+        for (given, kept) in [
+            ("CON.txt", "CON_.txt"),
+            ("aux.1", "aux_.1"),
+            ("nul", "nul_"),
+            ("Nul  ", "Nul_"),
+            ("CON .txt", "CON_ .txt"),
+            ("conin$", "conin$_"),
+            ("CONOUT$.log", "CONOUT$_.log"),
+            ("COM¹", "COM¹_"),
+            ("lpt3.md", "lpt3_.md"),
+            ("LPT0", "LPT0_"),
+            ("COMMA.txt", "COMMA.txt"),
+            ("COM10", "COM10"),
+            ("CONSOLE", "CONSOLE"),
+            ("我的CON", "我的CON"),
+        ] {
+            assert_eq!(sanitize_name(given), kept, "{given}");
+        }
+        // 先截短再去掉末尾的点和空格,文件夹名和返回的名字才对得上
+        assert_eq!(
+            sanitize_name(&format!("{} b", "长".repeat(79))),
+            "长".repeat(79)
+        );
+        assert_eq!(
+            sanitize_name(&format!("{}.b", "长".repeat(79))),
+            "长".repeat(79)
+        );
+        let root = temp_dir("long-book");
+        let name = create_book(&root, &format!("{}. x", "本".repeat(78))).unwrap();
+        assert_eq!(name, "本".repeat(78));
+        assert!(list_books(&root).unwrap().contains(&name));
+        fs::remove_dir_all(&root).unwrap();
+        // 加上 _ 以后也不超过 80 个字,再清理一遍不会变
+        let long = sanitize_name(&format!("CON.{}", "长".repeat(90)));
+        assert!(long.starts_with("CON_."));
+        assert_eq!(long.chars().count(), 80);
+        assert_eq!(sanitize_name(&long), long);
+    }
+
+    #[test]
     fn unique_name_avoids_existing_pages_case_insensitively() {
         let dir = temp_dir("unique");
         fs::write(note_path(&dir, "笔记"), "").unwrap();
         fs::write(note_path(&dir, "Todo"), "").unwrap();
-        assert_eq!(unique_name(&dir, "新页面", None), "新页面");
-        assert_eq!(unique_name(&dir, "笔记", None), "笔记 (2)");
-        assert_eq!(unique_name(&dir, "todo", None), "todo (2)");
+        assert_eq!(unique_name(&dir, "新页面", None).unwrap(), "新页面");
+        assert_eq!(unique_name(&dir, "笔记", None).unwrap(), "笔记 (2)");
+        assert_eq!(unique_name(&dir, "todo", None).unwrap(), "todo (2)");
         // 重命名时只改大小写,不算和自己冲突
-        assert_eq!(unique_name(&dir, "TODO", Some("Todo")), "TODO");
+        assert_eq!(unique_name(&dir, "TODO", Some("Todo")).unwrap(), "TODO");
+        // 叫「附件.md」的文件夹不是页面,但这个名字也用不了
+        fs::create_dir(note_path(&dir, "附件")).unwrap();
+        assert_eq!(unique_name(&dir, "附件", None).unwrap(), "附件 (2)");
+        // 列不出已有的页面:报错,不瞎挑一个
+        assert!(unique_name(&dir.join("不在了"), "新页面", None).is_err());
         fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn new_pages_never_replace_existing_files() {
+        let dir = temp_dir("create-note");
+        assert_eq!(create_note(&dir, "新页面").unwrap(), "新页面");
+        assert_eq!(fs::read(note_path(&dir, "新页面")).unwrap(), b"");
+        fs::write(note_path(&dir, "新页面"), "已经写了内容").unwrap();
+        assert_eq!(create_note(&dir, "新页面").unwrap(), "新页面 (2)");
+        assert_eq!(
+            fs::read_to_string(note_path(&dir, "新页面")).unwrap(),
+            "已经写了内容"
+        );
+        // 笔记本文件夹在别处被删了:和以前一样重新建出来
+        let gone = dir.join("工作");
+        assert_eq!(create_note(&gone, "计划").unwrap(), "计划");
+        assert!(note_path(&gone, "计划").is_file());
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn rename_note_keeps_names_unique() {
+        let root = temp_dir("rename-note");
+        fs::write(note_path(&root, "周报"), "本周").unwrap();
+        fs::write(note_path(&root, "计划"), "下周").unwrap();
+        assert_eq!(rename_note(&root, "", "周报", "计划").unwrap(), "计划 (2)");
+        assert_eq!(
+            fs::read_to_string(note_path(&root, "计划 (2)")).unwrap(),
+            "本周"
+        );
+        assert_eq!(
+            fs::read_to_string(note_path(&root, "计划")).unwrap(),
+            "下周"
+        );
+        // 只改大小写、改成清理后一样的名字都行
+        fs::write(note_path(&root, "Todo"), "").unwrap();
+        assert_eq!(rename_note(&root, "", "Todo", "TODO").unwrap(), "TODO");
+        assert_eq!(rename_note(&root, "", "TODO", "TODO.").unwrap(), "TODO");
+        assert!(note_path(&root, "TODO").is_file());
+        assert!(rename_note(&root, "", "../x", "y").is_err());
+        assert!(rename_note(&root, "", "没有这页", "y").is_err());
+        fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]
@@ -832,47 +1094,154 @@ mod tests {
     }
 
     #[test]
+    fn decoding_damage_keeps_the_page_from_being_edited() {
+        let dir = temp_dir("lossy");
+        // UTF-8 的中文里混进一个坏字节(比如同步时截断了半个字):不当成 GBK 解出一整页乱码,也不打开编辑
+        let mut damaged = "中文笔记的内容".as_bytes().to_vec();
+        damaged.insert(6, 0xFF);
+        assert_eq!(decode_text(&damaged), "中文\u{FFFD}笔记的内容");
+        fs::write(note_path(&dir, "坏了"), &damaged).unwrap();
+        assert!(read_note(&dir, "坏了").unwrap_err().contains("「坏了」"));
+        // 打开笔记本时这一页照常显示内容,但只读
+        let book = load_book(&dir, "").unwrap();
+        let page = book.notes.iter().find(|n| n.name == "坏了").unwrap();
+        assert!(page.unreadable);
+        assert_eq!(page.content, "中文\u{FFFD}笔记的内容");
+        assert!(page.reason.as_deref().unwrap().contains("只能查看"));
+        // 真正的 GBK 文件照常打开
+        let gbk = [0xD6, 0xD0, 0xCE, 0xC4, 0xB1, 0xCA, 0xBC, 0xC7];
+        fs::write(note_path(&dir, "gbk"), gbk).unwrap();
+        assert_eq!(read_note(&dir, "gbk").unwrap(), "中文笔记");
+        // GB18030 也解不了的字节、BOM 后面的坏字节:有损失,不打开
+        fs::write(note_path(&dir, "乱码"), [0xD6, 0xD0, 0xFF]).unwrap();
+        assert!(read_note(&dir, "乱码").is_err());
+        fs::write(note_path(&dir, "bom"), [0xEF, 0xBB, 0xBF, b'a', 0xFF]).unwrap();
+        assert!(read_note(&dir, "bom").is_err());
+        assert_eq!(read_note(&dir, "gbk").unwrap(), decode_text(&gbk));
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
     fn conflict_copy_keeps_the_other_version() {
-        let dir = temp_dir("conflict");
+        let root = temp_dir("conflict");
         let stamp = "2026-10-12 18.30";
+        let save =
+            |content: &str| save_page(&root, "", "周报", content, Some("原来的"), true, stamp);
         // 没被别处改过:不留副本
-        fs::write(note_path(&dir, "周报"), "原来的").unwrap();
-        assert_eq!(
-            save_conflict_copy(&dir, "周报", "原来的", "我改的", stamp).unwrap(),
-            None
-        );
+        fs::write(note_path(&root, "周报"), "原来的").unwrap();
+        assert_eq!(save("我改的").unwrap(), None);
+        assert_eq!(read_note(&root, "周报").unwrap(), "我改的");
         // 别处写进去的正好是要保存的内容(比如同步回来的自己的修改):也不算冲突
-        fs::write(note_path(&dir, "周报"), "我改的").unwrap();
-        assert_eq!(
-            save_conflict_copy(&dir, "周报", "原来的", "我改的", stamp).unwrap(),
-            None
-        );
+        assert_eq!(save("我改的").unwrap(), None);
         // 只是换行符不同不算改过
-        fs::write(note_path(&dir, "周报"), "第一行\r\n第二行").unwrap();
+        fs::write(note_path(&root, "周报"), "第一行\r\n第二行").unwrap();
         assert_eq!(
-            save_conflict_copy(&dir, "周报", "第一行\n第二行", "我改的", stamp).unwrap(),
+            save_page(
+                &root,
+                "",
+                "周报",
+                "我改的",
+                Some("第一行\n第二行"),
+                true,
+                stamp
+            )
+            .unwrap(),
             None
         );
-        // 别处改成了别的内容:那边的版本另存一份,文件本身不动(由调用方接着写)
-        fs::write(note_path(&dir, "周报"), "别处改的\r\n").unwrap();
-        let (copy, text) = save_conflict_copy(&dir, "周报", "原来的", "我改的", stamp)
-            .unwrap()
-            .unwrap();
+        // 别处改成了别的内容:那边的版本另存一份,这边的照常写进去
+        fs::write(note_path(&root, "周报"), "别处改的\r\n").unwrap();
+        let (copy, text) = save("我改的").unwrap().unwrap();
         assert_eq!(copy, "周报 (冲突 2026-10-12 18.30)");
         assert_eq!(text, "别处改的\n");
-        assert_eq!(read_note(&dir, &copy).unwrap(), "别处改的\n");
-        assert_eq!(read_note(&dir, "周报").unwrap(), "别处改的\n");
+        assert_eq!(read_note(&root, &copy).unwrap(), "别处改的\n");
+        assert_eq!(read_note(&root, "周报").unwrap(), "我改的");
         // 同一分钟里又冲突一次,副本自动加编号
-        let (again, _) = save_conflict_copy(&dir, "周报", "原来的", "我改的", stamp)
-            .unwrap()
-            .unwrap();
+        fs::write(note_path(&root, "周报"), "别处又改了").unwrap();
+        let (again, _) = save("我改的").unwrap().unwrap();
         assert_eq!(again, "周报 (冲突 2026-10-12 18.30) (2)");
-        // 文件在别处被删了:没什么可留的
+        // 设置成直接覆盖:不留副本
+        fs::write(note_path(&root, "周报"), "别处改的").unwrap();
         assert_eq!(
-            save_conflict_copy(&dir, "没有这页", "原来的", "我改的", stamp).unwrap(),
+            save_page(&root, "", "周报", "覆盖", Some("原来的"), false, stamp).unwrap(),
             None
         );
-        fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(read_note(&root, "周报").unwrap(), "覆盖");
+        // 文件在别处被删了:没什么可留的,照常保存
+        assert_eq!(
+            save_page(&root, "", "没有这页", "新内容", Some("原来的"), true, stamp).unwrap(),
+            None
+        );
+        assert_eq!(read_note(&root, "没有这页").unwrap(), "新内容");
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn saving_skips_unchanged_files_and_never_guesses_after_a_read_error() {
+        let root = temp_dir("save-page");
+        let page = note_path(&root, "同样");
+        fs::write(&page, "内容").unwrap();
+        let past = SystemTime::now() - Duration::from_secs(7200);
+        fs::OpenOptions::new()
+            .write(true)
+            .open(&page)
+            .unwrap()
+            .set_times(fs::FileTimes::new().set_modified(past))
+            .unwrap();
+        // 文件里已经是这些内容:不再写一遍,也不会因为 expected 不同而留冲突副本
+        assert_eq!(
+            save_page(&root, "", "同样", "内容", Some("旧的"), true, "s").unwrap(),
+            None
+        );
+        let modified = fs::metadata(&page).unwrap().modified().unwrap();
+        assert!(modified < SystemTime::now() - Duration::from_secs(3600));
+        assert_eq!(list_names(&root).unwrap(), ["同样"]);
+        // 读不出来(这里页面文件是个文件夹):不知道里面是什么,先不保存,错误里有页面名字。
+        // 设置成直接覆盖、或者没有上次读到的内容时也一样,根本不去写(报的不是写入失败)
+        fs::create_dir(note_path(&root, "坏的")).unwrap();
+        for (expected, keep_both) in [(Some("旧的"), true), (Some("旧的"), false), (None, true)]
+        {
+            let err = save_page(&root, "", "坏的", "新内容", expected, keep_both, "s").unwrap_err();
+            assert!(err.contains("读不出「坏的」"), "{err}");
+        }
+        assert!(note_path(&root, "坏的").is_dir());
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn busy_targets_are_renamed_after_a_short_wait() {
+        let busy = || -> std::io::Result<()> { Err(std::io::ErrorKind::PermissionDenied.into()) };
+        let mut calls = 0;
+        let result = rename_with_retry(|| {
+            calls += 1;
+            if calls < 3 {
+                busy()
+            } else {
+                Ok(())
+            }
+        });
+        assert!(result.is_ok());
+        assert_eq!(calls, 3);
+        calls = 0;
+        assert!(rename_with_retry(|| {
+            calls += 1;
+            busy()
+        })
+        .is_err());
+        assert_eq!(calls, 5);
+        // 别的错误(比如文件不在了)不等,直接报错;Windows 的共享冲突(32)也会再试
+        calls = 0;
+        assert!(rename_with_retry(|| {
+            calls += 1;
+            Err(std::io::ErrorKind::NotFound.into())
+        })
+        .is_err());
+        assert_eq!(calls, 1);
+        calls = 0;
+        let _ = rename_with_retry(|| {
+            calls += 1;
+            Err(std::io::Error::from_raw_os_error(32))
+        });
+        assert_eq!(calls, if cfg!(windows) { 5 } else { 1 });
     }
 
     #[test]
@@ -947,6 +1316,51 @@ mod tests {
         assert!(!new.join("b.md").exists());
         // 旧位置不存在也没关系
         assert!(!migrate_path(&root.join("nothing"), &root.join("x")).unwrap());
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn copied_migration_appears_only_when_complete() {
+        let root = temp_dir("migrate-copy");
+        let leftovers = |dir: &Path| {
+            fs::read_dir(dir)
+                .unwrap()
+                .flatten()
+                .filter(|e| e.file_name().to_string_lossy().ends_with(".tmp~"))
+                .count()
+        };
+        // 文件(settings.json)和文件夹(notes)都是复制完才出现在新位置,旧的留着
+        let old_file = root.join("old").join("settings.json");
+        fs::create_dir_all(old_file.parent().unwrap()).unwrap();
+        fs::write(&old_file, "{}").unwrap();
+        let new_dir = root.join("new");
+        fs::create_dir_all(&new_dir).unwrap();
+        copy_into_place(&old_file, &new_dir.join("settings.json")).unwrap();
+        assert_eq!(
+            fs::read_to_string(new_dir.join("settings.json")).unwrap(),
+            "{}"
+        );
+        let old_notes = root.join("old").join("notes");
+        fs::create_dir_all(old_notes.join("工作")).unwrap();
+        fs::write(old_notes.join("工作").join("周报.md"), "本周").unwrap();
+        copy_into_place(&old_notes, &new_dir.join("notes")).unwrap();
+        assert_eq!(
+            fs::read_to_string(new_dir.join("notes").join("工作").join("周报.md")).unwrap(),
+            "本周"
+        );
+        assert!(old_notes.join("工作").join("周报.md").exists());
+        assert_eq!(leftovers(&new_dir), 0);
+        // 最后一步失败(这里新位置被一个非空文件夹占着):临时副本删掉,新位置不动
+        let taken = root.join("taken");
+        fs::create_dir_all(taken.join("notes")).unwrap();
+        fs::write(taken.join("notes").join("别的.md"), "别动").unwrap();
+        assert!(copy_into_place(&old_notes, &taken.join("notes")).is_err());
+        assert_eq!(leftovers(&taken), 0);
+        assert_eq!(
+            fs::read_to_string(taken.join("notes").join("别的.md")).unwrap(),
+            "别动"
+        );
+        assert!(!taken.join("notes").join("工作").exists());
         fs::remove_dir_all(&root).unwrap();
     }
 
@@ -1113,6 +1527,20 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
+    /// 文件夹里改名留底的损坏元信息
+    fn bad_meta_files(dir: &Path) -> Vec<PathBuf> {
+        fs::read_dir(dir)
+            .unwrap()
+            .flatten()
+            .filter(|e| {
+                e.file_name()
+                    .to_string_lossy()
+                    .starts_with(".minipad.json.bad-")
+            })
+            .map(|e| e.path())
+            .collect()
+    }
+
     #[test]
     fn malformed_metadata_is_not_overwritten_when_changing_book_icon() {
         let root = temp_dir("bad-book-icon-meta");
@@ -1120,8 +1548,40 @@ mod tests {
         let path = root.join("坏的").join(META_FILE);
         let original = b"{ invalid JSON".to_vec();
         fs::write(&path, &original).unwrap();
-        assert!(set_book_appearance(&root, "坏的", "star", "#123456").is_err());
-        assert_eq!(fs::read(&path).unwrap(), original);
+        // 损坏的原文件改名留底(内容不变),再在默认值上改图标
+        set_book_appearance(&root, "坏的", "star", "#123456").unwrap();
+        let kept = bad_meta_files(&root.join("坏的"));
+        assert_eq!(kept.len(), 1);
+        assert_eq!(fs::read(&kept[0]).unwrap(), original);
+        let meta = read_meta(&root.join("坏的"));
+        assert_eq!((&meta.icon[..], &meta.icon_color[..]), ("star", "#123456"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn metadata_updates_never_replace_what_they_could_not_read() {
+        let root = temp_dir("strict-meta");
+        create_book(&root, "工作").unwrap();
+        // 读不出来(这里 .minipad.json 是个文件夹):报错,什么都不写
+        fs::create_dir(root.join("工作").join(META_FILE)).unwrap();
+        assert!(
+            save_book_meta(&root, "工作", vec![], String::new(), HashMap::new(), None).is_err()
+        );
+        assert!(set_book_appearance(&root, "工作", "star", "").is_err());
+        assert!(root.join("工作").join(META_FILE).is_dir());
+        fs::create_dir(root.join(META_FILE)).unwrap();
+        assert!(set_current_book(&root, "工作").is_err());
+        assert!(root.join(META_FILE).is_dir());
+        // 根目录那份损坏了:改名留底,从默认值开始记当前笔记本;改名、删除笔记本照常
+        fs::remove_dir(root.join(META_FILE)).unwrap();
+        fs::write(root.join(META_FILE), "{ broken").unwrap();
+        set_current_book(&root, "工作").unwrap();
+        assert_eq!(read_meta(&root).book, "工作");
+        let kept = bad_meta_files(&root);
+        assert_eq!(kept.len(), 1);
+        assert_eq!(fs::read_to_string(&kept[0]).unwrap(), "{ broken");
+        assert_eq!(rename_book(&root, "工作", "生活").unwrap(), "生活");
+        assert_eq!(read_meta(&root).book, "生活");
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -1224,7 +1684,7 @@ mod tests {
             if name == "坏页面" {
                 Err("模拟访问被拒绝".to_string())
             } else {
-                read_note(dir, name)
+                read_page(dir, name)
             }
         })
         .unwrap();

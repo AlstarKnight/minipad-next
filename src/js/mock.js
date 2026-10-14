@@ -210,6 +210,8 @@ export function mockApi() {
         book: bookNames().includes(db.book) ? db.book : "",
         hotkey_error: null,
         settings_error: null,
+        // 测试用 __mockControl.settingsNotice 模拟后端的提示(比如设置文件损坏、已改名留底)
+        settings_notice: window.__mockControl?.settingsNotice ?? null,
         version: "预览",
         debug: true,
       };

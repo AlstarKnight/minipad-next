@@ -15,6 +15,8 @@ let busy = 0;
 let gen = 0;
 let syncing = false;
 let lastSync = 0;
+// 窗口还没显示时(开机自启时藏在托盘里)的启动提示,等窗口第一次得到焦点再弹,免得没人看见
+let pendingNotice = "";
 
 export async function mutate(fn) {
   busy++;
@@ -43,12 +45,24 @@ export function reload() {
       renderBook();
       renderTabs();
       showNote();
-      if (st.hotkey_error) toast("热键注册失败(" + st.hotkey_error + "),请在设置里换一个", 5000);
-      if (st.settings_error) toast("原设置文件读取失败，已禁用设置写入；请检查 settings.json 后重启：" + st.settings_error, 9000);
+      const notices = [
+        st.hotkey_error && "热键注册失败(" + st.hotkey_error + "),请在设置里换一个",
+        st.settings_error && "原设置文件读取失败，已禁用设置写入；请检查 settings.json 后重启：" + st.settings_error,
+        st.settings_notice,
+      ].filter(Boolean);
+      if (notices.length) {
+        pendingNotice = notices.join("\n");
+        if (document.hasFocus()) showPendingNotice();
+      }
     } catch (e) {
       toast("读取笔记失败:" + e, 5000);
     }
   });
+}
+
+export function showPendingNotice() {
+  if (pendingNotice) toast(pendingNotice, 9000);
+  pendingNotice = "";
 }
 
 export async function syncFromDisk(force = false) {
@@ -61,8 +75,9 @@ export async function syncFromDisk(force = false) {
   try {
     const disk = await api.invoke("read_notes");
     // 读的时候页面或笔记本有变动,这次的结果就不用了
-    if (busy || gen !== g || tabsEl.querySelector("input")) return;
-    await applyDisk(disk);
+    const fresh = () => !busy && gen === g && !tabsEl.querySelector("input");
+    if (!fresh()) return;
+    await applyDisk(disk, fresh);
   } catch (e) {
     console.error(e);
   } finally {
@@ -73,9 +88,8 @@ export async function syncFromDisk(force = false) {
 // 有没有还没保存(或者保存失败)的修改
 const edited = (n) => n.dirty || n.content !== n.disk;
 
-export async function applyDisk(disk) {
-  const cur = book();
-  const before = current();
+// fresh:读回来的结果还能不能用(等后端回话的时候页面或笔记本可能又变了)
+export async function applyDisk(disk, fresh = () => true) {
   const onDisk = new Map(disk.map((d) => [d.name, d]));
   let booksChanged = false;
   let tabsChanged = false;
@@ -93,6 +107,10 @@ export async function applyDisk(disk) {
     if (exists) books.push(b);
     else booksChanged = true;
   }
+  if (!fresh()) return;
+  // 上面等后端回话的时候可能换过笔记本或页面,以现在的为准
+  const cur = book();
+  const before = current();
 
   for (const b of books) {
     const d = onDisk.get(b.name);

@@ -246,6 +246,8 @@ impl Default for Settings {
 struct LoadedState {
     settings: Settings,
     settings_error: Option<String>,
+    /// 设置文件损坏、已改名留底时给用户的提示(启动后只返回一次)
+    settings_notice: Option<String>,
     notes_dir: String,
     /// 全部笔记本,「默认」(名字是空字符串)在最前
     books: Vec<Book>,
@@ -276,9 +278,13 @@ struct QuitState {
 #[derive(Default)]
 struct AppState {
     settings: Mutex<Settings>,
-    /// 配置文件不存在或成功读取时才可以写回。读失败/解析失败时保持原文件。
+    /// 配置文件不存在、成功读取或损坏的原文件已改名留底时才可以写回。读不出来时保持原文件。
     settings_write_allowed: AtomicBool,
     settings_read_error: Mutex<Option<String>>,
+    /// 启动时设置文件损坏、已改名留底的提示,前端读过一次就清掉
+    settings_notice: Mutex<Option<String>>,
+    /// 上次成功写进 settings.json 的内容
+    settings_json: Mutex<String>,
     /// 避免外观更改和页面排序同时改写同一份 .minipad.json。
     meta_io: Mutex<()>,
     quit: Mutex<QuitState>,
@@ -464,42 +470,132 @@ fn pin_default_storage(settings: &mut Settings, notes: &Path, backups: &Path) ->
     changed
 }
 
-/// 区分文件不存在与读取/解析失败；只有前两种可安全写回。
-/// 不可读取的配置本次运行使用默认值，但不得覆盖原有 settings.json。
-fn decode_settings_result(result: std::io::Result<Vec<u8>>) -> (Settings, bool, Option<String>) {
-    match result {
-        Ok(bytes) => match serde_json::from_str::<Settings>(&notes::decode_text(&bytes)) {
-            Ok(settings) => (settings, true, None),
-            Err(e) => (
-                Settings::default(),
-                false,
-                Some(format!("设置文件解析失败:{e}")),
-            ),
-        },
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => (Settings::default(), true, None),
+/// 读取失败(文件不存在除外,比如杀毒软件正占着)时隔 `wait` 再试,最多再试 `retries` 次
+fn read_with_retry(
+    mut read: impl FnMut() -> std::io::Result<Vec<u8>>,
+    retries: u32,
+    wait: Duration,
+) -> std::io::Result<Vec<u8>> {
+    let mut result = read();
+    for _ in 0..retries {
+        match &result {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+                std::thread::sleep(wait);
+                result = read();
+            }
+            _ => break,
+        }
+    }
+    result
+}
+
+/// 损坏的设置文件改名留底:settings.json.bad-20261014-093000,这个名字已经有了就加 -2、-3……,不覆盖任何文件
+fn move_aside(path: &Path, stamp: &str) -> std::io::Result<PathBuf> {
+    let bad = (1..)
+        .map(|i| {
+            let mut name = path.as_os_str().to_os_string();
+            name.push(format!(".bad-{stamp}"));
+            if i > 1 {
+                name.push(format!("-{i}"));
+            }
+            PathBuf::from(name)
+        })
+        .find(|p| !p.exists())
+        .unwrap();
+    fs::rename(path, &bad)?;
+    Ok(bad)
+}
+
+/// 损坏的设置里还能读出的项照常使用:是 JSON 对象就逐项合并到默认值上,
+/// 合并后还能读成 Settings 的才留下,一项写错不会连累笔记文件夹、热键这些
+fn salvage_settings(text: &str) -> Settings {
+    let Ok(serde_json::Value::Object(saved)) = serde_json::from_str(text) else {
+        return Settings::default();
+    };
+    let mut merged = serde_json::to_value(Settings::default()).unwrap_or_default();
+    for (key, value) in saved {
+        let mut trial = merged.clone();
+        trial[key.as_str()] = value;
+        if Settings::deserialize(&trial).is_ok() {
+            merged = trial;
+        }
+    }
+    Settings::deserialize(&merged).unwrap_or_default()
+}
+
+/// 区分文件不存在、读不出来与内容损坏,返回设置、能否写回、读不出来的原因、给用户的提示。
+/// 读不出来时本次运行使用默认值，且不得覆盖原有 settings.json(文件多半是好的)；
+/// 内容损坏时原文件改名留底，能读出的设置照常使用，之后可以正常保存；改名失败就和读不出来一样处理。
+fn decode_settings_result(
+    path: &Path,
+    result: std::io::Result<Vec<u8>>,
+    stamp: &str,
+) -> (Settings, bool, Option<String>, Option<String>) {
+    let (mut settings, allowed, error, notice) = match result {
+        Ok(bytes) => {
+            let text = notes::decode_text(&bytes);
+            match serde_json::from_str::<Settings>(&text) {
+                Ok(settings) => (settings, true, None, None),
+                Err(e) => match move_aside(path, stamp) {
+                    Ok(bad) => (
+                        salvage_settings(&text),
+                        true,
+                        None,
+                        Some(format!(
+                            "设置文件损坏，已另存为 {}；能读出的设置已保留，其余恢复默认",
+                            bad.display()
+                        )),
+                    ),
+                    Err(move_error) => (
+                        Settings::default(),
+                        false,
+                        Some(format!(
+                            "设置文件解析失败:{e}；另存损坏的文件也失败:{move_error}"
+                        )),
+                        None,
+                    ),
+                },
+            }
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            (Settings::default(), true, None, None)
+        }
         Err(e) => (
             Settings::default(),
             false,
             Some(format!("设置文件读取失败:{e}")),
+            None,
         ),
-    }
+    };
+    // 和保存时一样整理一遍:手改过的数值也限制在范围内,旧版的颜色预设迁移到 color_presets 交给前端
+    tidy_settings(&mut settings);
+    (settings, allowed, error, notice)
 }
 
-fn load_settings(app: &AppHandle) -> (Settings, bool, Option<String>) {
-    decode_settings_result(fs::read(config_path(app)))
+fn load_settings(app: &AppHandle) -> (Settings, bool, Option<String>, Option<String>) {
+    let path = config_path(app);
+    let read = read_with_retry(|| fs::read(&path), 3, Duration::from_millis(200));
+    let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S").to_string();
+    decode_settings_result(&path, read, &stamp)
 }
 
+/// `last` 是上次成功写入的内容:每次隐藏窗口都会保存设置,内容没变就不再写盘
 fn write_settings_if_allowed(
     path: &Path,
     settings: &Settings,
     allowed: bool,
+    last: &mut String,
 ) -> Result<(), String> {
     if !allowed {
         // 保护原文件：即使后来暂时恢复可写，也不能用本次运行的默认值覆盖。
         return Ok(());
     }
     let json = serde_json::to_string_pretty(settings).map_err(|e| e.to_string())?;
-    notes::write_atomic(path, &json)
+    if *last != json {
+        notes::write_atomic(path, &json)?;
+        *last = json;
+    }
+    Ok(())
 }
 
 fn persist_settings(app: &AppHandle) {
@@ -511,7 +607,9 @@ fn persist_settings(app: &AppHandle) {
     if let Some(g) = state.geom.lock().unwrap().clone() {
         s.window = Some(g);
     }
-    if let Err(e) = write_settings_if_allowed(&config_path(app), &s, true) {
+    let path = config_path(app);
+    let mut last = state.settings_json.lock().unwrap();
+    if let Err(e) = write_settings_if_allowed(&path, &s, true, &mut last) {
         eprintln!("保存设置失败:{e}");
     }
 }
@@ -530,12 +628,13 @@ fn pick_one(value: &mut String, options: &[&str]) {
     }
 }
 
-/// 保存前整理前端传来的设置:去掉首尾空格,数字限制在合理范围
+/// 启动读取后和保存前整理设置:去掉首尾空格,数字限制在合理范围
 fn tidy_settings(s: &mut Settings) {
     s.hotkey = s.hotkey.trim().to_string();
     s.notes_dir = s.notes_dir.trim().to_string();
     s.backup_dir = s.backup_dir.trim().to_string();
     s.backup_keep = s.backup_keep.clamp(1, 365);
+    s.font_size = s.font_size.clamp(10, 28);
     tidy_color(&mut s.accent);
     let mut seen_colors = std::collections::HashSet::new();
     let source = s.color_presets.as_ref().unwrap_or(&s.book_color_presets);
@@ -578,6 +677,8 @@ fn tidy_settings(s: &mut Settings) {
     s.sel_bar_items
         .retain(|id| !id.is_empty() && id.len() <= 32 && seen.insert(id.clone()));
     s.sel_bar_items.truncate(64);
+    s.format_bar_hidden.truncate(64);
+    s.format_bar_order.truncate(64);
     s.tab_rows = s.tab_rows.clamp(2, 8);
     s.tab_drawer_width = s.tab_drawer_width.clamp(140, 360);
     s.ball_size = s.ball_size.clamp(32, 96);
@@ -707,9 +808,11 @@ fn load_state(app: AppHandle) -> Result<LoadedState, String> {
     };
     let hotkey_error = st.hotkey_error.lock().unwrap().clone();
     let settings_error = st.settings_read_error.lock().unwrap().clone();
+    let settings_notice = st.settings_notice.lock().unwrap().take();
     Ok(LoadedState {
         settings,
         settings_error,
+        settings_notice,
         notes_dir: dir.to_string_lossy().to_string(),
         books,
         book,
@@ -757,8 +860,6 @@ fn save_note(
     content: String,
     expected: Option<String>,
 ) -> Result<SavedNote, String> {
-    let root = current_notes_dir(&app);
-    let path = notes::page_path(&root, &book, &name)?;
     maybe_backup(&app);
     let keep_both = app
         .state::<AppState>()
@@ -767,15 +868,16 @@ fn save_note(
         .unwrap()
         .conflict_mode
         == "copy";
-    let conflict = match expected {
-        Some(expected) if keep_both => {
-            let stamp = chrono::Local::now().format("%Y-%m-%d %H.%M").to_string();
-            let dir = notes::book_dir(&root, &book)?;
-            notes::save_conflict_copy(&dir, &name, &expected, &content, &stamp)?
-        }
-        _ => None,
-    };
-    notes::write_atomic(&path, &content)?;
+    let stamp = chrono::Local::now().format("%Y-%m-%d %H.%M").to_string();
+    let conflict = notes::save_page(
+        &current_notes_dir(&app),
+        &book,
+        &name,
+        &content,
+        expected.as_deref(),
+        keep_both,
+        &stamp,
+    )?;
     Ok(SavedNote {
         conflict: conflict.map(|(name, content)| ConflictCopy { name, content }),
     })
@@ -785,22 +887,13 @@ fn save_note(
 fn create_note(app: AppHandle, book: String, name: String) -> Result<String, String> {
     let dir = notes::book_dir(&current_notes_dir(&app), &book)?;
     maybe_backup(&app);
-    let name = notes::unique_name(&dir, &name, None);
-    notes::write_atomic(&notes::note_path(&dir, &name), "")?;
-    Ok(name)
+    notes::create_note(&dir, &name)
 }
 
 #[tauri::command]
 fn rename_note(app: AppHandle, book: String, old: String, new: String) -> Result<String, String> {
-    let root = current_notes_dir(&app);
-    let src = notes::page_path(&root, &book, &old)?;
-    let dir = notes::book_dir(&root, &book)?;
-    let new = notes::unique_name(&dir, &new, Some(&old));
-    if new != old {
-        maybe_backup(&app);
-        fs::rename(src, notes::note_path(&dir, &new)).map_err(|e| e.to_string())?;
-    }
-    Ok(new)
+    maybe_backup(&app);
+    notes::rename_note(&current_notes_dir(&app), &book, &old, &new)
 }
 
 #[tauri::command]
@@ -1556,16 +1649,17 @@ fn edge_tick(app: &AppHandle) {
                 e.peeking = peek;
                 e.outside_ticks = 0;
             }
-            let (x, y) = edge::hidden_position_with_strip(edge, rect, mon, {
+            // 先取出设置再问窗口缩放:后台线程查询窗口要等主线程,主线程上的命令又会锁设置
+            let (line_width, glow) = {
                 let settings = st.settings.lock().unwrap();
-                scaled_strip(
-                    &win,
-                    "hover",
-                    peek,
-                    settings.edge_line_width,
-                    settings.edge_line_glow,
-                )
-            });
+                (settings.edge_line_width, settings.edge_line_glow)
+            };
+            let (x, y) = edge::hidden_position_with_strip(
+                edge,
+                rect,
+                mon,
+                scaled_strip(&win, "hover", peek, line_width, glow),
+            );
             let _ = win.set_position(PhysicalPosition::new(x, y));
             let _ = app.emit("edge-peek", peek);
         }
@@ -1719,12 +1813,15 @@ pub fn run() {
         .setup(|app| {
             let handle = app.handle().clone();
             migrate_old_data(&handle);
-            let (mut settings, write_allowed, read_error) = load_settings(&handle);
+            let (mut settings, write_allowed, read_error, settings_notice) = load_settings(&handle);
             if let Some(e) = &read_error {
                 eprintln!("{e}；本次运行使用默认值，禁止自动覆盖 settings.json");
             }
+            if let Some(notice) = &settings_notice {
+                eprintln!("{notice}");
+            }
             // 首次解析默认目录时可能把旧数据安全复制到 EXE 同级。
-            // 配置损坏/暂时不可读时，运行中可使用默认目录，但不得将其写回配置文件。
+            // 配置暂时不可读(或损坏的原文件没能改名留底)时，运行中可使用默认目录，但不得将其写回配置文件。
             let default_notes = notes_dir(&handle, &settings);
             let default_backups = backup_dir(&handle, &settings);
             let pinned = pin_default_storage(&mut settings, &default_notes, &default_backups);
@@ -1736,13 +1833,15 @@ pub fn run() {
                 *st.settings_read_error.lock().unwrap() = read_error;
                 *st.settings.lock().unwrap() = settings.clone();
                 *st.geom.lock().unwrap() = settings.window.clone();
-                if pinned && write_allowed {
-                    if let Err(e) =
-                        write_settings_if_allowed(&config_path(&handle), &settings, true)
-                    {
-                        eprintln!("无法记住迁移后的存储路径: {e}");
+                // 损坏的原文件已经改名留底:马上写一份新的,免得没来得及保存就退出、下次启动又回到默认值
+                if (pinned || settings_notice.is_some()) && write_allowed {
+                    let path = config_path(&handle);
+                    let mut last = st.settings_json.lock().unwrap();
+                    if let Err(e) = write_settings_if_allowed(&path, &settings, true, &mut last) {
+                        eprintln!("无法保存设置(迁移后的存储路径或损坏后整理出的设置): {e}");
                     }
                 }
+                *st.settings_notice.lock().unwrap() = settings_notice;
                 if let Err(e) = register_hotkey(&handle, &settings.hotkey) {
                     eprintln!("热键注册失败: {e}");
                     *st.hotkey_error.lock().unwrap() = Some(format!("{}:{e}", settings.hotkey));
@@ -1861,44 +1960,61 @@ pub fn run() {
 mod tests {
     use super::*;
 
+    const STAMP: &str = "20261014-093000";
+
+    fn locked() -> std::io::Result<Vec<u8>> {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "模拟杀毒软件占用",
+        ))
+    }
+
     #[test]
     fn settings_read_states_distinguish_missing_valid_corrupt_and_unreadable() {
         let root = notes::temp_dir("settings-read-guard");
         let path = root.join("settings.json");
 
-        let (missing, can_write, err) = decode_settings_result(fs::read(&path));
+        let (missing, can_write, err, notice) =
+            decode_settings_result(&path, fs::read(&path), STAMP);
         assert!(can_write);
-        assert!(err.is_none());
+        assert!(err.is_none() && notice.is_none());
         assert_eq!(missing.hotkey, "Ctrl+M");
 
         let original = r#"{"hotkey":"Ctrl+Alt+M","notes_dir":"D:\\\\custom","theme":"dark"}"#;
         fs::write(&path, original).unwrap();
-        let (loaded, can_write, err) = decode_settings_result(fs::read(&path));
+        let (loaded, can_write, err, notice) =
+            decode_settings_result(&path, fs::read(&path), STAMP);
         assert!(can_write);
-        assert!(err.is_none());
+        assert!(err.is_none() && notice.is_none());
         assert_eq!(loaded.hotkey, "Ctrl+Alt+M");
         assert_eq!(loaded.theme, "dark");
 
+        // 内容损坏:原文件原样改名留底,本次用默认值,之后可以正常保存
         let corrupt = b"{\"hotkey\": ".to_vec();
         fs::write(&path, &corrupt).unwrap();
-        let (fallback, can_write, err) = decode_settings_result(fs::read(&path));
-        assert!(!can_write);
-        assert!(err.unwrap().contains("解析失败"));
-        write_settings_if_allowed(&path, &fallback, can_write).unwrap();
-        assert_eq!(fs::read(&path).unwrap(), corrupt);
+        let (fallback, can_write, err, notice) =
+            decode_settings_result(&path, fs::read(&path), STAMP);
+        let bad = root.join(format!("settings.json.bad-{STAMP}"));
+        assert!(can_write);
+        assert!(err.is_none());
+        assert!(notice.unwrap().contains(&bad.display().to_string()));
+        assert_eq!(fs::read(&bad).unwrap(), corrupt);
+        assert!(!path.exists());
+        assert_eq!(fallback.hotkey, "Ctrl+M");
+        write_settings_if_allowed(&path, &fallback, can_write, &mut String::new()).unwrap();
+        assert!(path.exists());
 
-        let (fallback, can_write, err) = decode_settings_result(Err(std::io::Error::new(
-            std::io::ErrorKind::PermissionDenied,
-            "模拟杀毒软件占用",
-        )));
+        // 读不出来(比如被独占):用默认值,禁止写回,原文件不动
+        fs::write(&path, original).unwrap();
+        let (fallback, can_write, err, notice) = decode_settings_result(&path, locked(), STAMP);
         assert!(!can_write);
         assert!(err.unwrap().contains("读取失败"));
-        write_settings_if_allowed(&path, &fallback, can_write).unwrap();
-        assert_eq!(fs::read(&path).unwrap(), corrupt);
+        assert!(notice.is_none());
+        write_settings_if_allowed(&path, &fallback, can_write, &mut String::new()).unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), original);
 
-        // 恢复为合法 JSON 后，下次启动可继续读取自定义位置。
-        fs::write(&path, original).unwrap();
-        let (recovered, can_write, err) = decode_settings_result(fs::read(&path));
+        // 能读了以后，下次启动可继续读取自定义位置。
+        let (recovered, can_write, err, _) = decode_settings_result(&path, fs::read(&path), STAMP);
         assert!(can_write);
         assert!(err.is_none());
         assert_eq!(recovered.notes_dir, "D:\\\\custom");
@@ -1911,7 +2027,7 @@ mod tests {
         let path = root.join("settings.json");
         let damaged = b"old settings must survive";
         fs::write(&path, damaged).unwrap();
-        let (mut fallback, can_write, _) = decode_settings_result(fs::read(&path));
+        let (mut fallback, can_write, _, _) = decode_settings_result(&path, locked(), STAMP);
         let pinned = pin_default_storage(
             &mut fallback,
             &root.join("installed").join("notes"),
@@ -1919,9 +2035,118 @@ mod tests {
         );
         assert!(pinned);
         assert!(!can_write);
-        write_settings_if_allowed(&path, &fallback, can_write).unwrap();
+        write_settings_if_allowed(&path, &fallback, can_write, &mut String::new()).unwrap();
         assert_eq!(fs::read(&path).unwrap(), damaged);
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn unchanged_settings_are_not_written_again() {
+        let root = notes::temp_dir("settings-unchanged");
+        let path = root.join("settings.json");
+        let mut last = String::new();
+        let mut s = Settings::default();
+        write_settings_if_allowed(&path, &s, true, &mut last).unwrap();
+        assert!(path.exists());
+        // 内容没变就不写:删掉文件也不会被重新写出来
+        fs::remove_file(&path).unwrap();
+        write_settings_if_allowed(&path, &s, true, &mut last).unwrap();
+        assert!(!path.exists());
+        // 写失败(这里目标是个文件夹)不算写过,下次照样再写
+        s.theme = "dark".into();
+        fs::create_dir(&path).unwrap();
+        assert!(write_settings_if_allowed(&path, &s, true, &mut last).is_err());
+        fs::remove_dir(&path).unwrap();
+        write_settings_if_allowed(&path, &s, true, &mut last).unwrap();
+        let saved: Settings = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(saved.theme, "dark");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn corrupt_settings_keep_every_field_that_still_reads() {
+        let root = notes::temp_dir("settings-salvage");
+        let path = root.join("settings.json");
+        // 合法的 JSON,但字号写成了字符串、窗口位置也坏了:只丢这两项
+        let broken = r#"{"hotkey":"Ctrl+Alt+N","notes_dir":"D:\\笔记","font_size":"18","theme":"dark","window":{"x":"left"}}"#;
+        fs::write(&path, broken).unwrap();
+        let (s, can_write, err, notice) = decode_settings_result(&path, fs::read(&path), STAMP);
+        assert!(can_write && err.is_none() && notice.is_some());
+        assert_eq!(
+            (s.hotkey.as_str(), s.notes_dir.as_str(), s.theme.as_str()),
+            ("Ctrl+Alt+N", "D:\\笔记", "dark")
+        );
+        assert_eq!(s.font_size, 14);
+        assert!(s.window.is_none());
+        // 同一秒里又坏了一次:新留底加 -2,不覆盖上一份
+        fs::write(&path, "不是 JSON").unwrap();
+        let (s, can_write, _, _) = decode_settings_result(&path, fs::read(&path), STAMP);
+        assert!(can_write);
+        assert_eq!(s.hotkey, "Ctrl+M");
+        assert_eq!(
+            fs::read_to_string(root.join(format!("settings.json.bad-{STAMP}"))).unwrap(),
+            broken
+        );
+        assert_eq!(
+            fs::read_to_string(root.join(format!("settings.json.bad-{STAMP}-2"))).unwrap(),
+            "不是 JSON"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn corrupt_settings_stay_protected_when_they_cannot_be_moved_aside() {
+        let root = notes::temp_dir("settings-no-rename");
+        // 改名失败(这里是因为文件夹不存在):和读不出来一样,用默认值、禁止写回
+        let path = root.join("gone").join("settings.json");
+        let (s, can_write, err, notice) =
+            decode_settings_result(&path, Ok(br#"{"hotkey":"#.to_vec()), STAMP);
+        assert!(!can_write);
+        assert!(err.unwrap().contains("解析失败"));
+        assert!(notice.is_none());
+        assert_eq!(s.hotkey, "Ctrl+M");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn settings_reads_are_retried_unless_the_file_is_missing() {
+        let mut calls = 0;
+        let result = read_with_retry(
+            || {
+                calls += 1;
+                if calls < 3 {
+                    locked()
+                } else {
+                    Ok(b"{}".to_vec())
+                }
+            },
+            3,
+            Duration::ZERO,
+        );
+        assert_eq!(result.unwrap(), b"{}");
+        assert_eq!(calls, 3);
+        calls = 0;
+        let result = read_with_retry(
+            || {
+                calls += 1;
+                locked()
+            },
+            3,
+            Duration::ZERO,
+        );
+        assert!(result.is_err());
+        assert_eq!(calls, 4);
+        calls = 0;
+        let result = read_with_retry(
+            || {
+                calls += 1;
+                Err(std::io::ErrorKind::NotFound.into())
+            },
+            3,
+            Duration::ZERO,
+        );
+        assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::NotFound);
+        assert_eq!(calls, 1);
     }
 
     #[test]
@@ -1976,6 +2201,20 @@ mod tests {
         tidy_settings(&mut s);
         assert_eq!(s.backup_keep, 365);
         assert_eq!(s.date_format, DEFAULT_DATE_FORMAT);
+
+        // 字号和前端一样限制在 10..=28;按钮列表最多留 64 项
+        s.font_size = 3;
+        s.format_bar_hidden = vec!["x".into(); 100];
+        s.format_bar_order = vec!["y".into(); 65];
+        tidy_settings(&mut s);
+        assert_eq!(s.font_size, 10);
+        assert_eq!(
+            (s.format_bar_hidden.len(), s.format_bar_order.len()),
+            (64, 64)
+        );
+        s.font_size = 99;
+        tidy_settings(&mut s);
+        assert_eq!(s.font_size, 28);
 
         // 按字截断,不会把中文切坏;截断后末尾的空格也去掉
         s.date_format = "年月日".repeat(30);
@@ -2309,6 +2548,28 @@ mod tests {
         old.color_presets = Some(Vec::new());
         tidy_settings(&mut old);
         assert!(old.color_presets.unwrap().is_empty());
+    }
+
+    #[test]
+    fn old_color_presets_reach_the_frontend_right_after_startup() {
+        // book_color_presets 不写回也不交给前端,所以启动读取时就要迁移到 color_presets
+        let root = notes::temp_dir("settings-old-presets");
+        let path = root.join("settings.json");
+        fs::write(
+            &path,
+            r##"{"book_color_presets":["#123456","linear-gradient(135deg, #ABCDEF, #012345)"],"font_size":40}"##,
+        )
+        .unwrap();
+        let (s, can_write, _, _) = decode_settings_result(&path, fs::read(&path), STAMP);
+        assert!(can_write);
+        assert_eq!(
+            s.color_presets.as_deref().unwrap(),
+            ["#123456", "linear-gradient(135deg, #abcdef, #012345)"]
+        );
+        assert_eq!(s.font_size, 28);
+        let sent = serde_json::to_value(&s).unwrap();
+        assert_eq!(sent["color_presets"].as_array().unwrap().len(), 2);
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

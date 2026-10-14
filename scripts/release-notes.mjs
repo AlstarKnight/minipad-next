@@ -16,4 +16,9 @@ if (start < 0) {
 }
 let end = lines.findIndex((l, i) => i > start && /^## /.test(l));
 if (end < 0) end = lines.length;
-console.log(lines.slice(start + 1, end).join("\n").trim());
+const notes = lines.slice(start + 1, end).join("\n").trim();
+if (!notes) {
+  console.error(`CHANGELOG.md 里 ## ${version} 这一节是空的`);
+  process.exit(1);
+}
+console.log(notes);

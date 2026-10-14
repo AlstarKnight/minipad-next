@@ -1,7 +1,7 @@
 // 界面测试:用 Playwright 在 Chromium 里打开 src/index.html,跑在浏览器预览用的模拟后端上(src/js/mock.js)。
 // 运行:npm run test:ui(会先运行 scripts/prepare.mjs 复制 src/vendor 里的第三方库)
 // 每个测试都用新的浏览器上下文(localStorage 是空的),窗口 440×540,页面报错或输出 console.error 都算失败。
-import { after, before, describe, test } from "node:test";
+import { after, before, describe as suite, test } from "node:test";
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
@@ -11,6 +11,8 @@ import { chromium } from "playwright";
 import { serve } from "../scripts/serve.mjs";
 
 const SRC = fileURLToPath(new URL("../src/", import.meta.url));
+// 每个测试用自己的浏览器上下文,互不影响:同一组里的测试 4 个一起跑
+const describe = (name, fn) => suite(name, { concurrency: 4 }, fn);
 const KEY = "minipad-next-demo";
 
 let server;
@@ -227,8 +229,8 @@ function ui(name, ...args) {
       // 标签收进侧拉列表时看不见,只等它们画出来
       await page.waitForSelector("#tabs .tab", { state: "attached" });
       await fn(h);
-      // 等防抖的保存(500 ms)和 save_meta(300 ms)跑完,它们出的错也要算上
-      await page.waitForTimeout(600);
+      // 不等防抖,马上把保存和 save_meta 跑完,它们出的错也要算上
+      await page.evaluate(() => window.__minipad.flush());
       assert.deepEqual(dialogs, [], "no native dialogs");
       assert.deepEqual(errors, [], "no page errors");
     } catch (e) {
@@ -3451,5 +3453,158 @@ describe("0.3.2: floating format buttons on a selection", () => {
     await editor.locator("select").selectOption("solid");
     await editor.locator(".uc-editor .uc-actions .primary").click();
     await until(async () => /^#[0-9a-f]{6}$/.test((await h.stored())?.books?.[""]?.meta?.groups?.[0]?.color), true, "or a single colour");
+  });
+});
+
+// ---------- 0.3.6:打字更快、改名删除时的保存、启动提示、颜色细节 ----------
+describe("0.3.6: speed and safety", () => {
+  const saves = (p) => p.evaluate(() => window.__mockControl.calls.filter((c) => c === "save_note").length);
+
+  ui("typing then switching pages right away keeps every character", { seed: seed({ "": { 甲: "一", 乙: "二" } }) }, async (h) => {
+    const { p } = h;
+    await p.click("#editor .ProseMirror");
+    await p.keyboard.press("End");
+    await p.keyboard.type("加的字");
+    await h.tab("乙").click();
+    await h.tab("甲").click();
+    assert.equal(await h.editor(), "一加的字", "the text is still there after switching back");
+    await until(() => h.mockFile("", "甲"), "一加的字", "and it is saved");
+  });
+
+  ui("typing then searching right away finds the new text", { seed: seed({ "": { 页: "开头" } }) }, async (h) => {
+    const { p } = h;
+    await p.click("#editor .ProseMirror");
+    await p.keyboard.press("End");
+    await p.keyboard.type("独一无二");
+    await p.keyboard.press("Control+Shift+KeyF");
+    await p.locator("#search-input").waitFor();
+    await p.keyboard.type("独一无二");
+    await until(() => p.$$eval("#search-results .result .where", (els) => els.map((e) => e.textContent.trim())), ["页 · 第 1 行"], "found in the page being edited");
+    await p.keyboard.press("Escape");
+  });
+
+  ui("a page that was just typed into is not deleted as a blank page", { seed: seed({ "": { 甲: "", 乙: "二" } }) }, async (h) => {
+    const { p } = h;
+    await p.click("#editor .ProseMirror");
+    await p.keyboard.type("刚写的");
+    await h.tabMenu("甲");
+    await p.click('#ctx button[data-act="delete"]');
+    await p.locator("#dialog").waitFor();
+    assert.match(await p.textContent("#dialog"), /删除页面「甲」\?/, "asks like for a page with content");
+    await p.keyboard.press("Escape");
+  });
+
+  ui("changing a page and changing it back does not rewrite the file", { seed: seed({ "": { 页: "原样" } }) }, async (h) => {
+    const { p } = h;
+    await p.evaluate(() => { window.__mockControl = { calls: [] }; });
+    await p.click("#editor .ProseMirror");
+    await p.keyboard.press("End");
+    await p.keyboard.type("x");
+    await p.keyboard.press("Backspace");
+    await until(() => p.textContent("#st-save"), "已保存", "nothing left to save");
+    assert.equal(await saves(p), 0, "no save_note call");
+    assert.equal(await h.mockFile("", "页"), "原样");
+  });
+
+  ui("typing without a pause is still saved every few seconds", { seed: seed({ "": { 页: "" } }) }, async (h) => {
+    const { p } = h;
+    await p.click("#editor .ProseMirror");
+    let saved = false;
+    for (let i = 0; i < 30 && !saved; i++) {
+      await p.keyboard.type("字");
+      await sleep(250);
+      saved = !!(await h.mockFile("", "页"));
+    }
+    assert.ok(saved, "saved while still typing");
+  });
+
+  ui("the word count shows the characters you see, not the Markdown marks", { seed: seed({ "": { 页: "**粗体**和`代码`" } }) }, async (h) => {
+    const { p } = h;
+    await until(() => p.textContent("#st-count"), "5 字", "counts 粗体和代码");
+    await p.click("#editor .ProseMirror");
+    await p.keyboard.press("End");
+    await p.keyboard.type("👍");
+    await until(() => p.textContent("#st-count"), "6 字", "an emoji counts as one");
+  });
+
+  ui("a page that can't be read is not changed by F5 or the format bar either", { seed: seed({ "": { 好页: "正常", 坏页: "磁盘原内容" } }) }, async (h) => {
+    const { p } = h;
+    await p.evaluate(() => { window.__mockControl = { unreadable: { "": { 坏页: "模拟访问被拒绝" } }, calls: [] }; });
+    await h.sync();
+    await until(() => p.locator(".tab.unreadable").count(), 1, "warning tab appears");
+    await h.tab("坏页").click();
+    const before = await h.editor();
+    await p.keyboard.press("F5");
+    await p.$eval('#format-bar [data-cmd="hr"]', (b) => b.click());
+    assert.equal(await h.editor(), before, "the content did not change");
+    await p.keyboard.press("Control+s");
+    assert.equal(await saves(p), 0, "nothing is saved");
+  });
+
+  ui("typing during a slow rename is saved under the new name afterwards", { seed: seed({ "": { 甲: "一", 丙: "三" } }) }, async (h) => {
+    const { p } = h;
+    await p.evaluate(() => { window.__mockControl = { delay: { rename_note: 2000 }, calls: [] }; });
+    await h.tab("甲").dblclick();
+    await p.locator("#tabs .tab input").waitFor();
+    await p.fill("#tabs .tab input", "乙");
+    await p.press("#tabs .tab input", "Enter");
+    await p.click("#editor .ProseMirror");
+    await p.keyboard.press("End");
+    await p.keyboard.type("二");
+    await sleep(900);
+    assert.equal(await saves(p), 0, "no save while the page is being renamed");
+    await until(() => h.mockFile("", "乙"), "一二", "saved under the new name once the rename is done");
+    assert.equal(await h.mockFile("", "甲"), null, "the old file is not written back");
+  });
+
+  ui("a notice from startup is shown, and waits until the window is shown", async (h) => {
+    const { p } = h;
+    await p.context().addInitScript(() => { window.__mockControl = { settingsNotice: "设置文件读取失败,已改名留底" }; });
+    await p.reload();
+    await p.waitForSelector("#tabs .tab", { state: "attached" });
+    await until(h.toast, "设置文件读取失败,已改名留底", "shown right away when the window has focus");
+
+    await p.context().addInitScript(() => { document.hasFocus = () => false; });
+    await p.reload();
+    await p.waitForSelector("#tabs .tab", { state: "attached" });
+    await sleep(200);
+    assert.equal(await h.toast(), "", "hidden window: not shown yet");
+    await p.evaluate(() => window.__mockEmit("window-focus"));
+    await until(h.toast, "设置文件读取失败,已改名留底", "shown when the window gets focus");
+  });
+
+  ui("page titles in search results are shown in full", { seed: seed({ "": { 首页: "x", ["很长的页面标题".repeat(8)]: "y" } }) }, async (h) => {
+    const { p } = h;
+    await p.keyboard.press("Control+Shift+KeyF");
+    await p.locator("#search-input").waitFor();
+    await p.keyboard.type("很长的页面标题");
+    const title = p.locator("#search-results .result .snip.title");
+    await title.waitFor();
+    assert.equal(await title.evaluate((e) => e.scrollWidth <= e.clientWidth && e.textContent.length), 56, "the whole title, wrapped");
+    await p.keyboard.press("Escape");
+  });
+
+  const accentFg = (p) => p.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--accent-fg").trim());
+  ui("text on a very light accent color is dark", { seed: { ...seed({ "": { 页: "正文" } }), settings: { ...SETTINGS, accent: "#f5d142" } } }, async ({ p }) => {
+    assert.equal(await accentFg(p), "#2b2a26", "dark text on yellow");
+  });
+
+  ui("text on a darker accent color stays white", { seed: { ...seed({ "": { 页: "正文" } }), settings: { ...SETTINGS, accent: "#3b82f6" } } }, async ({ p }) => {
+    assert.equal(await accentFg(p), "#fff", "white text on blue");
+  });
+
+  ui("lit toolbar icons follow the accent gradient's angle", { seed: { ...seed({ "": { 页: "正文" } }), settings: { ...SETTINGS, accent: "linear-gradient(90deg, #4facfe, #00c6fb)" } } }, async (h) => {
+    const { p } = h;
+    const line = await p.$eval("#accent-svg-grad", (g) => ["x1", "y1", "x2", "y2"].map((a) => g.getAttribute(a)));
+    assert.deepEqual(line, ["1", "8", "15", "8"], "90deg runs from left to right");
+  });
+
+  ui("background colors are toned down in the dark theme, solid or gradient", { seed: { ...seed({ "": { 页: '<span style="background-color: #fbe9a6">黄底</span>' } }), settings: { ...SETTINGS, theme: "dark" } } }, async (h) => {
+    const { p } = h;
+    const span = p.locator("#editor span[data-bg]");
+    await span.waitFor();
+    const bg = await span.evaluate((e) => ({ image: getComputedStyle(e).backgroundImage, color: getComputedStyle(e).backgroundColor }));
+    assert.match(bg.image, /^linear-gradient\(/, "a dimming layer on top");
+    assert.equal(bg.color, "rgb(251, 233, 166)", "over the chosen color");
   });
 });

@@ -1,7 +1,7 @@
 // ---------- 显示当前页面 ----------
 import { $ } from "./dom.js";
 import { current } from "./state.js";
-import { showInEditor, leaveEditor, setEditorText, focusEditorView } from "./editor.js";
+import { showInEditor, leaveEditor, setEditorText, focusEditorView, visibleLength } from "./editor.js";
 
 // 记下当前页面看到哪里:编辑器的状态(光标、撤销记录)和滚动位置
 export function rememberView() {
@@ -14,19 +14,27 @@ export function showNote() {
   showInEditor(n);
   showReadError(n);
   focusEditorView();
-  updateCount();
+  paintCount();
 }
 
 // 当前页面的内容在外面变了(n.content 已经是新内容):换上新内容,尽量保持光标和滚动位置
 export function refreshCurrent() {
   setEditorText(current());
   showReadError(current());
-  updateCount();
+  paintCount();
 }
 
+// 打字时状态栏的字数最多 0.2 秒算一次,很长的页面也不拖慢打字
+let countTimer = 0;
 export function updateCount() {
+  if (!countTimer) countTimer = setTimeout(paintCount, 200);
+}
+
+function paintCount() {
+  clearTimeout(countTimer);
+  countTimer = 0;
   const n = current();
-  $("#st-count").textContent = n && !n.unreadable ? `${[...n.content].length} 字` : "";
+  $("#st-count").textContent = n && !n.unreadable ? `${visibleLength()} 字` : "";
 }
 
 function showReadError(n) {
