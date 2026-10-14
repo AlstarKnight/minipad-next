@@ -400,12 +400,6 @@ pub fn decode_text(bytes: &[u8]) -> String {
     decode(bytes).0
 }
 
-/// 解码有损失就不要:这样的页面编辑后会把乱码存回去
-fn decode_text_checked(bytes: &[u8]) -> Option<String> {
-    let (text, lossy) = decode(bytes);
-    (!lossy).then_some(text)
-}
-
 /// 冲突副本的名字,比如「周报 (冲突 2026-10-12 18.30)」;原名太长时截短,保证后缀完整
 pub fn conflict_name(name: &str, stamp: &str) -> String {
     let suffix = format!(" (冲突 {stamp})");
@@ -475,12 +469,27 @@ pub fn save_page(
     Ok(conflict)
 }
 
-pub fn read_note(dir: &Path, name: &str) -> Result<String, String> {
+/// 读一页。文件里有认不出来的字节(可能已损坏)时内容照常读出来(那几处是 �),另外返回原因:
+/// 这样的页面只能看、不能改,免得编辑后把乱码存回原文件
+fn read_page(dir: &Path, name: &str) -> Result<(String, Option<String>), String> {
     let bytes =
         fs::read(note_path(dir, name)).map_err(|e| format!("无法读取笔记「{name}」: {e}"))?;
-    decode_text_checked(&bytes).ok_or_else(|| {
-        format!("笔记「{name}」里有无法识别的字节(文件可能已损坏),为免乱码写回原文件,暂不打开")
-    })
+    let (text, lossy) = decode(&bytes);
+    let damaged = lossy.then(|| {
+        format!(
+            "「{name}」里有无法识别的字节(文件可能已损坏),为免把乱码存回原文件,只能查看、不能编辑"
+        )
+    });
+    Ok((text, damaged))
+}
+
+/// 读一页的内容,有认不出来的字节时报错
+#[cfg(test)]
+pub fn read_note(dir: &Path, name: &str) -> Result<String, String> {
+    match read_page(dir, name)? {
+        (text, None) => Ok(text),
+        (_, Some(why)) => Err(why),
+    }
 }
 
 /// 只用来显示的读取:读不出来或者内容损坏都当成没有
@@ -531,7 +540,7 @@ pub fn order_names(names: &[String], saved: &[String]) -> Vec<String> {
 /// 测试可替换读取函数，确保单页失败不会影响其他页。
 fn load_book_with_reader<F>(root: &Path, book: &str, mut read: F) -> Result<Book, String>
 where
-    F: FnMut(&Path, &str) -> Result<String, String>,
+    F: FnMut(&Path, &str) -> Result<(String, Option<String>), String>,
 {
     let dir = book_dir(root, book)?;
     let meta = read_meta(&dir);
@@ -545,7 +554,9 @@ where
         .into_iter()
         .map(|name| {
             let (content, unreadable, reason) = match read(&dir, &name) {
-                Ok(text) => (text, false, None),
+                Ok((text, None)) => (text, false, None),
+                // 文件有损坏:内容照常显示,但和读不出来的页面一样只读
+                Ok((text, Some(why))) => (text, true, Some(why)),
                 Err(e) => (String::new(), true, Some(e)),
             };
             Note {
@@ -585,7 +596,7 @@ where
 
 /// 读出一个笔记本；个别页面无法读取时仍将其保留为不可编辑的占位。
 pub fn load_book(root: &Path, book: &str) -> Result<Book, String> {
-    load_book_with_reader(root, book, read_note)
+    load_book_with_reader(root, book, read_page)
 }
 
 /// 无法读取的子笔记本跳过，不阻断其余笔记本；前端同步必须保留暂时缺失的笔记本。
@@ -1093,6 +1104,12 @@ mod tests {
         assert_eq!(decode_text(&damaged), "中文\u{FFFD}笔记的内容");
         fs::write(note_path(&dir, "坏了"), &damaged).unwrap();
         assert!(read_note(&dir, "坏了").unwrap_err().contains("「坏了」"));
+        // 打开笔记本时这一页照常显示内容,但只读
+        let book = load_book(&dir, "").unwrap();
+        let page = book.notes.iter().find(|n| n.name == "坏了").unwrap();
+        assert!(page.unreadable);
+        assert_eq!(page.content, "中文\u{FFFD}笔记的内容");
+        assert!(page.reason.as_deref().unwrap().contains("只能查看"));
         // 真正的 GBK 文件照常打开
         let gbk = [0xD6, 0xD0, 0xCE, 0xC4, 0xB1, 0xCA, 0xBC, 0xC7];
         fs::write(note_path(&dir, "gbk"), gbk).unwrap();
@@ -1668,7 +1685,7 @@ mod tests {
             if name == "坏页面" {
                 Err("模拟访问被拒绝".to_string())
             } else {
-                read_note(dir, name)
+                read_page(dir, name)
             }
         })
         .unwrap();
