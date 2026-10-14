@@ -138,8 +138,8 @@ export function openSettings() {
   $("#set-taskbar").checked = s.show_in_taskbar;
   $("#set-autostart").checked = s.autostart;
   $("#set-theme").value = s.theme;
-  accentColor.show(s.accent || "");
   $("#set-quick-colors").value = s.quick_color_count ?? 5;
+  accentColor.show(s.accent || "");
   $("#set-ball").checked = !!s.ball_enabled;
   $("#set-ball-size").value = s.ball_size || 48;
   $("#set-ball-opacity").value = s.ball_opacity || 100;
@@ -224,6 +224,7 @@ function colorPicker(prefix, box, options, firstSwatch, onChange) {
     sharedTool = makeSharedColorTools({
       getValue: () => picker.value || state.settings?.accent || "#d9822b",
       onApply: (value) => picker.show(value),
+      getQuickCount: () => $("#settings").hidden ? null : $("#set-quick-colors").value || null,
       compact: true,
     });
     $(box).after(sharedTool.root);
@@ -601,6 +602,7 @@ export function bindSettings() {
     if (combo) hk.value = combo;
   });
   $("#set-save").addEventListener("click", submitSettings);
+  $("#set-quick-colors").addEventListener("input", refreshSharedColors);
   // 分类:点一下换过去;焦点在分类上时,上下(分类在上面时左右)方向键换到相邻的一类,Home / End 换到第一类和最后一类
   const nav = $("#set-nav");
   nav.addEventListener("click", (e) => {

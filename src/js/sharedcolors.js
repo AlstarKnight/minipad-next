@@ -91,7 +91,7 @@ const lightText = (value) => (parseAccent(value)?.stops || []).some((hex) => {
 /** 返回可挂到任意容器的通用“我的颜色 + 多节点编辑器”。
  *  onApply 可以是异步函数；只有用户主动点击应用才更新目标设置。
  */
-export function makeSharedColorTools({ getValue, onApply, defaultColor = "#d9822b", allowGradient = true, showPresets = true, compact = false, previewMode = "color" } = {}) {
+export function makeSharedColorTools({ getValue, onApply, defaultColor = "#d9822b", allowGradient = true, showPresets = true, compact = false, previewMode = "color", getQuickCount } = {}) {
   const root = make("section", compact ? "shared-colors compact" : "shared-colors");
   const heading = make("div", "uc-title", "颜色库");
   const buttons = make("div", "uc-presets");
@@ -255,7 +255,7 @@ export function makeSharedColorTools({ getValue, onApply, defaultColor = "#d9822
     const presets = sharedColorPresets();
     const expanded = buttons.classList.contains("expanded");
     // 快捷区取保存顺序的前 quick 个；其余颜色按类型分区，不重复渲染。
-    const quick = Math.min(10, Math.max(1, Math.round(Number(state.settings?.quick_color_count) || QUICK)));
+    const quick = Math.min(10, Math.max(1, Math.round(Number(getQuickCount?.() ?? state.settings?.quick_color_count) || QUICK)));
     buttons.style.setProperty("--uc-toggle-column",
       String(presets.length ? Math.min(quick, presets.length, 5) + 1 : 6));
     buttons.style.setProperty("--uc-quick-rows", String(Math.max(1, Math.ceil(Math.min(quick, presets.length) / 6))));

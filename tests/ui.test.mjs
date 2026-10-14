@@ -1802,6 +1802,57 @@ describe("v0.3.7 categorized color library", () => {
       nodes.map((node) => node.dataset.color)), (await stored()).slice(0, 5));
   });
 
+  ui("many quick colors still leave the other sections in view", {
+    seed: { ...seed({ "": { a: "文字", b: "文本" } }), settings: {
+      ...SETTINGS, tab_groups: true, quick_color_count: 10, color_library: [
+        "#111111", "#222222", "#333333", "#444444", "#555555",
+        "#666666", "#777777", "#888888", "#999999", "#aaaaaa", "#bbbbbb",
+      ],
+    } },
+  }, async ({ p }) => {
+    await p.click("#tabs .tab:nth-child(1)", { button: "right" });
+    await p.click('#ctx button[data-act="group-new"]');
+    await expandLibrary(p, "#ge-colors .shared-colors");
+    const inView = await p.locator("#ge-colors .uc-presets").evaluate((box) =>
+      box.querySelector('.uc-kind-title[data-section="solid"]').getBoundingClientRect().bottom <=
+        box.getBoundingClientRect().bottom);
+    assert.ok(inView, "the 纯色 heading shows below ten quick colors without scrolling");
+  });
+
+  ui("quick color count previews before saving and cancel restores stored count", {
+    seed: { ...seed({ "": { 页: "文字" } }), settings: {
+      ...SETTINGS, color_library: [
+        "#111111", "#222222", "#333333", "#444444", "#555555",
+        "#666666", "#777777", "#888888", "#999999", "#aaaaaa",
+      ],
+    } },
+  }, async (h) => {
+    const { p } = h;
+    const palette = p.locator("#set-accent + .shared-colors");
+    const visible = () => palette.locator(".uc-preset:visible .uc-swatch").evaluateAll((nodes) =>
+      nodes.map((node) => node.dataset.color));
+    const colors = ["#111111", "#222222", "#333333", "#444444", "#555555",
+      "#666666", "#777777", "#888888", "#999999", "#aaaaaa"];
+    await p.click("#btn-settings");
+    await settingsPage(p, "look");
+    assert.deepEqual(await visible(), colors.slice(0, 5));
+    await p.fill("#set-quick-colors", "8");
+    assert.deepEqual(await visible(), colors.slice(0, 8), "quick swatches update immediately");
+    assert.equal((await h.stored()).settings.quick_color_count, 5, "preview does not save");
+
+    await p.click("#set-cancel");
+    await p.click("#btn-settings");
+    await settingsPage(p, "look");
+    assert.equal(await p.inputValue("#set-quick-colors"), "5", "cancel discards preview count");
+    assert.deepEqual(await visible(), colors.slice(0, 5));
+    await p.fill("#set-quick-colors", "8");
+    await p.click("#set-save");
+    await until(async () => (await h.stored()).settings.quick_color_count, 8);
+    await p.click("#btn-settings");
+    await settingsPage(p, "look");
+    assert.deepEqual(await visible(), colors.slice(0, 8), "saved count is used after reopening");
+  });
+
   ui("quick color count is configurable and persists across pickers and reloads", {
     seed: { ...seed({ "": { 页: "文字" } }), settings: {
       ...SETTINGS, color_library: [
