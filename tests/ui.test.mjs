@@ -1802,24 +1802,81 @@ describe("v0.3.7 categorized color library", () => {
       nodes.map((node) => node.dataset.color)), (await stored()).slice(0, 5));
   });
 
-  ui("refreshing all color pickers keeps keyboard focus inside the active picker", {
+  ui("dragging a quick color to a type heading inserts it first after interleaved colors", {
+    seed: { ...seed({ "": { 页: "文字" } }), settings: {
+      ...SETTINGS, color_library: [
+        "#111111", "#222222", "#333333", "#444444", "#555555",
+        "linear-gradient(90deg, #aaaaaa, #bbbbbb)", "#777777", "#888888",
+      ],
+    } },
+  }, async (h) => {
+    const { p } = h;
+    await p.click("#btn-settings");
+    await settingsPage(p, "look");
+    const library = p.locator("#set-accent + .shared-colors");
+    await expandLibrary(p, "#set-accent + .shared-colors");
+    await library.locator('.uc-preset[data-color="#222222"]').dragTo(
+      library.locator('.uc-kind-title[data-section="solid"]'));
+    await until(async () => (await h.stored()).settings.color_library, [
+      "#111111", "#333333", "#444444", "#555555",
+      "linear-gradient(90deg, #aaaaaa, #bbbbbb)", "#222222", "#777777", "#888888",
+    ], "quick solid inserts at the start of its category even past an interleaved gradient");
+    const solids = await library.locator(".uc-presets").evaluate((el) => {
+      let section = "";
+      return [...el.children].flatMap((node) => {
+        if (node.classList.contains("uc-kind-title")) { section = node.dataset.section; return []; }
+        return section === "solid" && node.classList.contains("uc-preset") ? [node.dataset.color] : [];
+      });
+    });
+    assert.deepEqual(solids, ["#222222", "#777777", "#888888"]);
+    await library.locator(".uc-more").click();
+    assert.deepEqual(await library.locator(".uc-preset:visible .uc-swatch").evaluateAll((nodes) =>
+      nodes.map((el) => el.dataset.color)), [
+      "#111111", "#333333", "#444444", "#555555", "linear-gradient(90deg, #aaaaaa, #bbbbbb)",
+    ]);
+  });
+
+  ui("empty libraries show a readable hint in both collapsed and expanded modes", {
+    seed: { ...seed({ "": { 页: "文字" } }), settings: { ...SETTINGS, color_library: [] } },
+  }, async ({ p }) => {
+    await p.click("#btn-settings");
+    await settingsPage(p, "look");
+    const library = p.locator("#set-accent + .shared-colors");
+    const check = async () => library.locator(".uc-presets > .muted").evaluate((el) => {
+      const hint = el.getBoundingClientRect(), grid = el.parentElement.getBoundingClientRect();
+      return { text: el.textContent, hintWidth: hint.width, gridWidth: grid.width,
+        height: hint.height, lineHeight: Number.parseFloat(getComputedStyle(el).lineHeight) };
+    });
+    const collapsed = await check();
+    assert.equal(collapsed.text, "还没有保存的颜色");
+    assert.ok(collapsed.hintWidth > 100 && collapsed.hintWidth <= collapsed.gridWidth,
+      "empty hint uses most of the row instead of a 31px cell");
+    await library.locator(".uc-more").click();
+    const expanded = await check();
+    assert.ok(expanded.hintWidth > 100 && expanded.height < expanded.lineHeight * 2.5,
+      "expanded hint remains readable without vertical word wrapping");
+  });
+
+  ui("drag reordering in find color does not steal focus into the outline picker", {
     seed: { ...seed({ "": { 页: "文字" } }), settings: {
       ...SETTINGS, color_library: ["#111111", "#222222", "#333333", "#444444", "#555555", "#666666"],
     } },
   }, async (h) => {
     const { p } = h;
     await p.click("#btn-settings");
-    await settingsPage(p, "window");
-    const library = p.locator("#set-edge-color + .shared-colors");
-    await expandLibrary(p, "#set-edge-color + .shared-colors");
-    await library.locator('.uc-swatch[data-color="#222222"]').focus();
-    await p.keyboard.press("Shift+ArrowLeft");
+    await settingsPage(p, "edit");
+    const library = p.locator("#set-find-color + .shared-colors");
+    await expandLibrary(p, "#set-find-color + .shared-colors");
+    const dragged = library.locator('.uc-preset[data-color="#222222"]');
+    await dragged.locator(".uc-swatch").focus();
+    await dragged.dragTo(library.locator('.uc-preset[data-color="#111111"]'));
     await until(async () => (await h.stored()).settings.color_library[0], "#222222");
     const focus = await p.evaluate(() => ({
       color: document.activeElement.dataset.color,
       picker: document.activeElement.closest(".shared-colors")?.previousElementSibling?.id,
     }));
-    assert.deepEqual(focus, { color: "#222222", picker: "set-edge-color" });
+    assert.deepEqual(focus, { color: "#222222", picker: "set-find-color" },
+      "refreshSharedColors must not move focus to the later outline picker");
   });
 });
 

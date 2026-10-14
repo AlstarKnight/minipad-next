@@ -276,10 +276,13 @@ export function makeSharedColorTools({ getValue, onApply, defaultColor = "#d9822
     const dropAt = (value, targetSection, targetColor = null) => {
       if (!canDrop(value, targetSection, targetColor)) return;
       const colors = sharedColorPresets();
+      const first = colors.findIndex((color, i) =>
+        i >= 5 && (parseAccent(color)?.to ? "gradient" : "solid") === targetSection);
+      const from = colors.indexOf(value);
+      // 从快捷区往后拖时，splice 先移走来源，目标索引会左移一格。
       const next = targetColor ? colors.indexOf(targetColor) :
         targetSection === "quick" ? Math.min(4, colors.length - 1) :
-        Math.max(5, colors.findIndex((color, i) =>
-          i >= 5 && (parseAccent(color)?.to ? "gradient" : "solid") === targetSection));
+        first < 0 ? 5 : from < first ? Math.max(5, first - 1) : first;
       void moveSharedPreset(value, next).catch((err) => toast(String(err)));
     };
     if (!presets.length) buttons.append(make("span", "muted", "还没有保存的颜色"));
