@@ -1844,8 +1844,10 @@ describe("v0.3.7 categorized color library", () => {
     const library = p.locator("#set-accent + .shared-colors");
     const check = async () => library.locator(".uc-presets > .muted").evaluate((el) => {
       const hint = el.getBoundingClientRect(), grid = el.parentElement.getBoundingClientRect();
+      const computed = getComputedStyle(el);
       return { text: el.textContent, hintWidth: hint.width, gridWidth: grid.width,
-        height: hint.height, lineHeight: Number.parseFloat(getComputedStyle(el).lineHeight) };
+        height: hint.height, lineHeight: Number.parseFloat(computed.lineHeight) ||
+          Number.parseFloat(computed.fontSize) * 1.4 };
     });
     const collapsed = await check();
     assert.equal(collapsed.text, "还没有保存的颜色");
