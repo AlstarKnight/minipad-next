@@ -887,22 +887,13 @@ fn save_note(
 fn create_note(app: AppHandle, book: String, name: String) -> Result<String, String> {
     let dir = notes::book_dir(&current_notes_dir(&app), &book)?;
     maybe_backup(&app);
-    let name = notes::unique_name(&dir, &name, None);
-    notes::write_atomic(&notes::note_path(&dir, &name), "")?;
-    Ok(name)
+    notes::create_note(&dir, &name)
 }
 
 #[tauri::command]
 fn rename_note(app: AppHandle, book: String, old: String, new: String) -> Result<String, String> {
-    let root = current_notes_dir(&app);
-    let src = notes::page_path(&root, &book, &old)?;
-    let dir = notes::book_dir(&root, &book)?;
-    let new = notes::unique_name(&dir, &new, Some(&old));
-    if new != old {
-        maybe_backup(&app);
-        fs::rename(src, notes::note_path(&dir, &new)).map_err(|e| e.to_string())?;
-    }
-    Ok(new)
+    maybe_backup(&app);
+    notes::rename_note(&current_notes_dir(&app), &book, &old, &new)
 }
 
 #[tauri::command]

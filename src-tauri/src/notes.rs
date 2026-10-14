@@ -162,7 +162,7 @@ pub fn cleanup_stale_temps(root: &Path) {
 
 /// 把名字变成合法的 Windows 文件名,清理完是空的就用 `fallback`
 fn clean_name(name: &str, fallback: &str) -> String {
-    let mut s: String = name
+    let s: String = name
         .chars()
         .map(|c| match c {
             '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*' => '_',
@@ -170,26 +170,42 @@ fn clean_name(name: &str, fallback: &str) -> String {
             c => c,
         })
         .collect();
-    s = s.trim().trim_end_matches(['.', ' ']).to_string();
+    let mut s = fit_name(s.trim_start());
     if s.starts_with('.') {
         s = format!("_{}", &s[1..]);
-    }
-    if s.chars().count() > 80 {
-        s = s.chars().take(80).collect();
     }
     if s.is_empty() {
         s = fallback.into();
     }
-    let upper = s.to_uppercase();
-    let reserved = ["CON", "PRN", "AUX", "NUL"];
-    if reserved.contains(&upper.as_str())
-        || ((upper.starts_with("COM") || upper.starts_with("LPT"))
-            && upper.len() == 4
-            && upper.as_bytes()[3].is_ascii_digit())
-    {
-        s.push('_');
+    // 第一个点前面是设备名(CON.txt、aux.1 也不行)时,在设备名后面加 _
+    let stem = s[..s.find('.').unwrap_or(s.len())].trim_end_matches(' ');
+    if is_reserved(stem) {
+        let at = stem.len();
+        s.insert(at, '_');
+        s = fit_name(&s);
     }
     s
+}
+
+/// 最多留 80 个字,先截短再去掉末尾的空白、点和空格:Windows 会悄悄去掉末尾的点和空格,
+/// 不然建出来的文件夹和返回的名字对不上
+fn fit_name(s: &str) -> String {
+    let s: String = s.chars().take(80).collect();
+    s.trim_end().trim_end_matches(['.', ' ']).to_string()
+}
+
+/// Windows 保留的设备名(不分大小写)
+fn is_reserved(stem: &str) -> bool {
+    let upper = stem.to_uppercase();
+    if ["CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$"].contains(&upper.as_str()) {
+        return true;
+    }
+    let mut digit = upper.chars().skip(3);
+    (upper.starts_with("COM") || upper.starts_with("LPT"))
+        && matches!(
+            (digit.next(), digit.next()),
+            (Some('0'..='9' | '¹' | '²' | '³'), None)
+        )
 }
 
 /// 把页面名变成合法的 Windows 文件名
@@ -282,19 +298,49 @@ fn first_free(base: String, taken: impl Fn(&str) -> bool) -> String {
         .unwrap()
 }
 
-/// 生成一个不和已有页面重名的名字;`except` 是重命名时的原名,不算冲突
-pub fn unique_name(dir: &Path, base: &str, except: Option<&str>) -> String {
+/// 生成一个不和已有页面(以及同名的文件夹等)重名的名字;`except` 是重命名时的原名,不算冲突。
+/// 列不出已有的页面就报错,免得挑中一个已经有的名字
+pub fn unique_name(dir: &Path, base: &str, except: Option<&str>) -> Result<String, String> {
     // Windows 文件名不区分大小写,这里也按不区分处理
     let except = except.map(|e| e.to_lowercase());
-    let existing: Vec<String> = list_names(dir)
-        .unwrap_or_default()
+    let existing: Vec<String> = list_names(dir)?
         .into_iter()
         .map(|n| n.to_lowercase())
         .collect();
-    first_free(sanitize_name(base), |n| {
-        let n = n.to_lowercase();
-        Some(&n) != except.as_ref() && existing.contains(&n)
-    })
+    Ok(first_free(sanitize_name(base), |n| {
+        let lower = n.to_lowercase();
+        Some(&lower) != except.as_ref() && (existing.contains(&lower) || note_path(dir, n).exists())
+    }))
+}
+
+/// 新建一个空页面,返回实际用的名字。用 create_new 建文件,绝不会把已有的页面清空:
+/// 挑好的名字刚好被占了(比如网盘同步刚放进来一个同名文件)就换下一个再试
+pub fn create_note(dir: &Path, base: &str) -> Result<String, String> {
+    fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    for _ in 0..5 {
+        let name = unique_name(dir, base, None)?;
+        match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(note_path(dir, &name))
+        {
+            Ok(_) => return Ok(name),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(e) => return Err(format!("新建页面「{name}」失败:{e}")),
+        }
+    }
+    Err("新建页面失败:挑好的名字一直被占用,请稍后再试".into())
+}
+
+/// 页面改名,返回实际用的名字(和别的页面重名时加编号;只改大小写不算重名)
+pub fn rename_note(root: &Path, book: &str, old: &str, new: &str) -> Result<String, String> {
+    let src = page_path(root, book, old)?;
+    let dir = book_dir(root, book)?;
+    let new = unique_name(&dir, new, Some(old))?;
+    if new != old {
+        fs::rename(src, note_path(&dir, &new)).map_err(|e| e.to_string())?;
+    }
+    Ok(new)
 }
 
 /// 生成一个不和已有笔记本(以及同名文件)冲突的笔记本名;「默认」留给根目录
@@ -381,7 +427,7 @@ fn save_conflict_copy(
     if current == expected || current == content {
         return Ok(None);
     }
-    let copy = unique_name(dir, &conflict_name(name, stamp), None);
+    let copy = unique_name(dir, &conflict_name(name, stamp), None)?;
     write_atomic(&note_path(dir, &copy), &current)
         .map_err(|e| format!("「{name}」在别处也被修改了,但另存那边的版本失败:{e}"))?;
     Ok(Some((copy, current)))
@@ -749,7 +795,7 @@ pub fn move_note(root: &Path, book: &str, name: &str, target: &str) -> Result<St
         return Err(format!("找不到页面「{name}」"));
     }
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let new = unique_name(&dir, name, None);
+    let new = unique_name(&dir, name, None)?;
     fs::rename(&src, note_path(&dir, &new)).map_err(|e| e.to_string())?;
     Ok(new)
 }
@@ -795,8 +841,27 @@ pub fn migrate_path(old: &Path, new: &Path) -> Result<bool, String> {
     if fs::rename(old, new).is_ok() {
         return Ok(true);
     }
-    copy_recursive(old, new)?;
+    copy_into_place(old, new)?;
     Ok(true)
+}
+
+/// 先复制到 `new` 旁边的临时位置,完整复制完才改成 `new`:中途失败不会留下半截的数据,
+/// 免得下次启动看到 `new` 已经有了就当成真的。失败时删掉临时副本。文件和文件夹都行。
+fn copy_into_place(old: &Path, new: &Path) -> Result<(), String> {
+    let seq = TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let mut name = new.file_name().ok_or("无效的路径")?.to_os_string();
+    name.push(format!(".{}.{seq}.tmp~", std::process::id()));
+    let tmp = new.with_file_name(name);
+    let result =
+        copy_recursive(old, &tmp).and_then(|()| fs::rename(&tmp, new).map_err(|e| e.to_string()));
+    if result.is_err() {
+        let _ = if old.is_dir() {
+            fs::remove_dir_all(&tmp)
+        } else {
+            fs::remove_file(&tmp)
+        };
+    }
+    result
 }
 
 /// 更换笔记目录时安全复制全部内容。新目录必须为空，源目录会保留以便恢复。
@@ -907,16 +972,104 @@ mod tests {
     }
 
     #[test]
+    fn names_stay_valid_on_windows_after_truncation_and_with_extensions() {
+        for (given, kept) in [
+            ("CON.txt", "CON_.txt"),
+            ("aux.1", "aux_.1"),
+            ("nul", "nul_"),
+            ("Nul  ", "Nul_"),
+            ("CON .txt", "CON_ .txt"),
+            ("conin$", "conin$_"),
+            ("CONOUT$.log", "CONOUT$_.log"),
+            ("COM¹", "COM¹_"),
+            ("lpt3.md", "lpt3_.md"),
+            ("LPT0", "LPT0_"),
+            ("COMMA.txt", "COMMA.txt"),
+            ("COM10", "COM10"),
+            ("CONSOLE", "CONSOLE"),
+            ("我的CON", "我的CON"),
+        ] {
+            assert_eq!(sanitize_name(given), kept, "{given}");
+        }
+        // 先截短再去掉末尾的点和空格,文件夹名和返回的名字才对得上
+        assert_eq!(
+            sanitize_name(&format!("{} b", "长".repeat(79))),
+            "长".repeat(79)
+        );
+        assert_eq!(
+            sanitize_name(&format!("{}.b", "长".repeat(79))),
+            "长".repeat(79)
+        );
+        let root = temp_dir("long-book");
+        let name = create_book(&root, &format!("{}. x", "本".repeat(78))).unwrap();
+        assert_eq!(name, "本".repeat(78));
+        assert!(list_books(&root).unwrap().contains(&name));
+        fs::remove_dir_all(&root).unwrap();
+        // 加上 _ 以后也不超过 80 个字,再清理一遍不会变
+        let long = sanitize_name(&format!("CON.{}", "长".repeat(90)));
+        assert!(long.starts_with("CON_."));
+        assert_eq!(long.chars().count(), 80);
+        assert_eq!(sanitize_name(&long), long);
+    }
+
+    #[test]
     fn unique_name_avoids_existing_pages_case_insensitively() {
         let dir = temp_dir("unique");
         fs::write(note_path(&dir, "笔记"), "").unwrap();
         fs::write(note_path(&dir, "Todo"), "").unwrap();
-        assert_eq!(unique_name(&dir, "新页面", None), "新页面");
-        assert_eq!(unique_name(&dir, "笔记", None), "笔记 (2)");
-        assert_eq!(unique_name(&dir, "todo", None), "todo (2)");
+        assert_eq!(unique_name(&dir, "新页面", None).unwrap(), "新页面");
+        assert_eq!(unique_name(&dir, "笔记", None).unwrap(), "笔记 (2)");
+        assert_eq!(unique_name(&dir, "todo", None).unwrap(), "todo (2)");
         // 重命名时只改大小写,不算和自己冲突
-        assert_eq!(unique_name(&dir, "TODO", Some("Todo")), "TODO");
+        assert_eq!(unique_name(&dir, "TODO", Some("Todo")).unwrap(), "TODO");
+        // 叫「附件.md」的文件夹不是页面,但这个名字也用不了
+        fs::create_dir(note_path(&dir, "附件")).unwrap();
+        assert_eq!(unique_name(&dir, "附件", None).unwrap(), "附件 (2)");
+        // 列不出已有的页面:报错,不瞎挑一个
+        assert!(unique_name(&dir.join("不在了"), "新页面", None).is_err());
         fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn new_pages_never_replace_existing_files() {
+        let dir = temp_dir("create-note");
+        assert_eq!(create_note(&dir, "新页面").unwrap(), "新页面");
+        assert_eq!(fs::read(note_path(&dir, "新页面")).unwrap(), b"");
+        fs::write(note_path(&dir, "新页面"), "已经写了内容").unwrap();
+        assert_eq!(create_note(&dir, "新页面").unwrap(), "新页面 (2)");
+        assert_eq!(
+            fs::read_to_string(note_path(&dir, "新页面")).unwrap(),
+            "已经写了内容"
+        );
+        // 笔记本文件夹在别处被删了:和以前一样重新建出来
+        let gone = dir.join("工作");
+        assert_eq!(create_note(&gone, "计划").unwrap(), "计划");
+        assert!(note_path(&gone, "计划").is_file());
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn rename_note_keeps_names_unique() {
+        let root = temp_dir("rename-note");
+        fs::write(note_path(&root, "周报"), "本周").unwrap();
+        fs::write(note_path(&root, "计划"), "下周").unwrap();
+        assert_eq!(rename_note(&root, "", "周报", "计划").unwrap(), "计划 (2)");
+        assert_eq!(
+            fs::read_to_string(note_path(&root, "计划 (2)")).unwrap(),
+            "本周"
+        );
+        assert_eq!(
+            fs::read_to_string(note_path(&root, "计划")).unwrap(),
+            "下周"
+        );
+        // 只改大小写、改成清理后一样的名字都行
+        fs::write(note_path(&root, "Todo"), "").unwrap();
+        assert_eq!(rename_note(&root, "", "Todo", "TODO").unwrap(), "TODO");
+        assert_eq!(rename_note(&root, "", "TODO", "TODO.").unwrap(), "TODO");
+        assert!(note_path(&root, "TODO").is_file());
+        assert!(rename_note(&root, "", "../x", "y").is_err());
+        assert!(rename_note(&root, "", "没有这页", "y").is_err());
+        fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]
@@ -1147,6 +1300,51 @@ mod tests {
         assert!(!new.join("b.md").exists());
         // 旧位置不存在也没关系
         assert!(!migrate_path(&root.join("nothing"), &root.join("x")).unwrap());
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn copied_migration_appears_only_when_complete() {
+        let root = temp_dir("migrate-copy");
+        let leftovers = |dir: &Path| {
+            fs::read_dir(dir)
+                .unwrap()
+                .flatten()
+                .filter(|e| e.file_name().to_string_lossy().ends_with(".tmp~"))
+                .count()
+        };
+        // 文件(settings.json)和文件夹(notes)都是复制完才出现在新位置,旧的留着
+        let old_file = root.join("old").join("settings.json");
+        fs::create_dir_all(old_file.parent().unwrap()).unwrap();
+        fs::write(&old_file, "{}").unwrap();
+        let new_dir = root.join("new");
+        fs::create_dir_all(&new_dir).unwrap();
+        copy_into_place(&old_file, &new_dir.join("settings.json")).unwrap();
+        assert_eq!(
+            fs::read_to_string(new_dir.join("settings.json")).unwrap(),
+            "{}"
+        );
+        let old_notes = root.join("old").join("notes");
+        fs::create_dir_all(old_notes.join("工作")).unwrap();
+        fs::write(old_notes.join("工作").join("周报.md"), "本周").unwrap();
+        copy_into_place(&old_notes, &new_dir.join("notes")).unwrap();
+        assert_eq!(
+            fs::read_to_string(new_dir.join("notes").join("工作").join("周报.md")).unwrap(),
+            "本周"
+        );
+        assert!(old_notes.join("工作").join("周报.md").exists());
+        assert_eq!(leftovers(&new_dir), 0);
+        // 最后一步失败(这里新位置被一个非空文件夹占着):临时副本删掉,新位置不动
+        let taken = root.join("taken");
+        fs::create_dir_all(taken.join("notes")).unwrap();
+        fs::write(taken.join("notes").join("别的.md"), "别动").unwrap();
+        assert!(copy_into_place(&old_notes, &taken.join("notes")).is_err());
+        assert_eq!(leftovers(&taken), 0);
+        assert_eq!(
+            fs::read_to_string(taken.join("notes").join("别的.md")).unwrap(),
+            "别动"
+        );
+        assert!(!taken.join("notes").join("工作").exists());
         fs::remove_dir_all(&root).unwrap();
     }
 
