@@ -429,7 +429,7 @@ fn save_conflict_copy(
 
 /// 保存页面,文件里已经是这些内容就不再写。`expected` 是前端上次从磁盘读到(或写进去)的内容:
 /// `keep_both` 时如果文件在别处被改过,先把那边的版本另存成冲突副本(返回它的名字和内容)再写。
-/// 文件不在了就没什么可留的,照常保存;读不出来就没法确认,先不保存(直接覆盖时照常写)。
+/// 文件不在了就没什么可留的,照常保存;读不出来就不知道里面是什么,不管是不是直接覆盖都先不保存。
 pub fn save_page(
     root: &Path,
     book: &str,
@@ -444,12 +444,8 @@ pub fn save_page(
     let current = match fs::read(&path) {
         Ok(bytes) => Some(bytes),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-        Err(e) if expected.is_some() => {
-            return Err(format!(
-                "无法确认「{name}」有没有在别处被修改，暂不保存:{e}"
-            ))
-        }
-        Err(_) => None,
+        // 直接覆盖只是不留别处改过的版本,读不出来的文件也不能盖
+        Err(e) => return Err(format!("读不出「{name}」现在的内容，暂不保存:{e}")),
     };
     if current.as_deref() == Some(content.as_bytes()) {
         return Ok(None);
@@ -927,7 +923,9 @@ pub fn copy_notes_for_switch(source: &Path, destination: &Path) -> Result<(), St
 fn copy_recursive(src: &Path, dst: &Path) -> Result<(), String> {
     if src.is_dir() {
         fs::create_dir_all(dst).map_err(|e| e.to_string())?;
-        for entry in fs::read_dir(src).map_err(|e| e.to_string())?.flatten() {
+        // 有一项读不出来就算复制失败,不能少复制了还当成功
+        for entry in fs::read_dir(src).map_err(|e| e.to_string())? {
+            let entry = entry.map_err(|e| format!("读不出「{}」里的内容:{e}", src.display()))?;
             copy_recursive(&entry.path(), &dst.join(entry.file_name()))?;
         }
         Ok(())
@@ -1197,13 +1195,14 @@ mod tests {
         let modified = fs::metadata(&page).unwrap().modified().unwrap();
         assert!(modified < SystemTime::now() - Duration::from_secs(3600));
         assert_eq!(list_names(&root).unwrap(), ["同样"]);
-        // 读不出来(这里页面文件是个文件夹):要留冲突副本时没法确认,先不保存,错误里有页面名字
+        // 读不出来(这里页面文件是个文件夹):不知道里面是什么,先不保存,错误里有页面名字。
+        // 设置成直接覆盖、或者没有上次读到的内容时也一样,根本不去写(报的不是写入失败)
         fs::create_dir(note_path(&root, "坏的")).unwrap();
-        let err = save_page(&root, "", "坏的", "新内容", Some("旧的"), true, "s").unwrap_err();
-        assert!(err.contains("无法确认「坏的」"), "{err}");
-        // 直接覆盖时读不出来不拦着写(这里写也会失败,报的就是保存失败)
-        let err = save_page(&root, "", "坏的", "新内容", Some("旧的"), false, "s").unwrap_err();
-        assert!(err.contains("保存「坏的」失败"), "{err}");
+        for (expected, keep_both) in [(Some("旧的"), true), (Some("旧的"), false), (None, true)]
+        {
+            let err = save_page(&root, "", "坏的", "新内容", expected, keep_both, "s").unwrap_err();
+            assert!(err.contains("读不出「坏的」"), "{err}");
+        }
         assert!(note_path(&root, "坏的").is_dir());
         fs::remove_dir_all(&root).unwrap();
     }
