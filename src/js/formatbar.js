@@ -2,7 +2,7 @@
 // 一排常用的格式按钮(像语雀的工具栏),跟着光标显示当前的格式;顶栏的格式栏按钮可以把它收起来。
 // 右边的"自定义"可以选保留哪些按钮、拖动调整顺序,记在设置的 format_bar_hidden 和 format_bar_order 里
 import { $prose, Plugin, commandsCtx, undo, redo, liftListItem, TextSelection, wrapInOrderedListCommand, wrapInBulletListCommand, turnIntoTextCommand, wrapInHeadingCommand } from "../vendor/milkdown.js";
-import { BUTTONS, headingLevel } from "./toolbar.js";
+import { BUTTONS, headingLevel, codeToText } from "./toolbar.js";
 import { openMenu, closeMenu } from "./ui.js";
 import { setColor, colorAt } from "./colors.js";
 import { parseAccent } from "./accent.js";
@@ -311,8 +311,9 @@ class Bar {
       BLOCKS.map((b) => ({
         id: `h${b.level}`,
         label: (b.level === now ? "✓ " : " ") + b.label,
-        disabled: inCode(v.state),
+        disabled: inCode(v.state) && b.level !== 0,
         act: () => {
+          if (!b.level && codeToText(v.state, v.dispatch)) return v.focus();
           c.call(b.level ? wrapInHeadingCommand.key : turnIntoTextCommand.key, b.level || undefined);
           v.focus();
         },
@@ -342,7 +343,6 @@ class Bar {
       if (it.block) {
         const level = headingLevel(state);
         btn.firstChild.textContent = code ? "代码" : BLOCKS.find((b) => b.level === level)?.label || `标题 ${level}`;
-        btn.disabled = code;
         continue;
       }
       if (it.palette) {
