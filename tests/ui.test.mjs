@@ -1856,6 +1856,64 @@ describe("fold edge regressions", () => {
   });
 });
 
+// ---------- 第四轮复查与复制文本 ----------
+describe("fourth review and copy text", () => {
+  ui("format bar cancels code blocks without losing text", { seed: seed({ "": { 页: "```python 标题\\nprint(1)\\n```" } }) }, async (h) => {
+    const { p } = h;
+    await p.locator("#editor .codeblock code").click();
+    await p.click('#format-bar [data-cmd="codeblock"]');
+    await until(h.editor, "print(1)", "code button converts to paragraph");
+    await p.keyboard.press("Control+z");
+    await until(h.editor, "```python 标题\\nprint(1)\\n```", "undo restores language and title");
+    await p.click('#format-bar [data-cmd="block"]');
+    await p.click('#ctx [data-act="h0"]');
+    await until(h.editor, "print(1)", "body dropdown converts code to text");
+  });
+
+  ui("Ctrl+Alt+0 preserves code lines", { seed: seed({ "": { 页: "```python\\nprint(1)\\nprint(2)\\n```" } }) }, async (h) => {
+    const { p } = h;
+    await p.locator("#editor .codeblock code").click();
+    await p.keyboard.press("Control+Alt+0");
+    assert.ok((await h.editor()).includes("print(1)"));
+    assert.ok((await h.editor()).includes("print(2)"));
+    assert.ok(!(await h.editor()).includes("print(1) print(2)"));
+  });
+
+  ui("Backspace cancels code fence input rule cleanly", { seed: seed({ "": { 页: "" } }) }, async (h) => {
+    const { p } = h;
+    await p.click("#editor");
+    await p.keyboard.type("```");
+    await p.keyboard.press("Enter");
+    await p.keyboard.press("Backspace");
+    await until(h.editor, "```", "no stray newline after input-rule undo");
+  });
+
+  ui("deleting final paragraph after a closed fold persists", {
+    seed: seed({ "": { 页: "前文\\n\\n> [!fold]- 标题\\n>\\n> 内容\\n\\n后文" } }),
+  }, async (h) => {
+    const { p } = h;
+    await p.locator("#editor .ProseMirror > p").last().click({ button: "right" });
+    await p.click('#ctx [data-act="block-delete"]');
+    await until(async () => (await h.editor()).includes("后文"), false, "paragraph removed from editor");
+    await until(async () => (await h.mockFile("", "页")).includes("后文"), false, "paragraph removal saved");
+  });
+
+  ui("copy text has a compact toolbar action, clipboard and Markdown persistence", {
+    seed: seed({ "": { 页: "npm install" } }),
+  }, async (h) => {
+    const { p } = h;
+    await p.locator("#editor .ProseMirror > p").click();
+    await p.click('#format-bar [data-cmd="copytext"]');
+    await until(h.editor, "```copy\\nnpm install\\n```", "copy block persists in Markdown");
+    assert.equal(await p.locator("#editor .codeblock.copyline").count(), 1);
+    await p.locator("#editor .codeblock.copyline .copy").click();
+    await until(() => p.evaluate(() => navigator.clipboard.readText()), "npm install", "one-click copy");
+    await until(() => h.mockFile("", "页"), "```copy\\nnpm install\\n```", "saved to file");
+    await p.click('#format-bar [data-cmd="copytext"]');
+    await until(h.editor, "npm install", "copy block can be turned into text");
+  });
+});
+
 // ---------- 代码块 ----------
 const CODE_PAGE = {
   "": {
