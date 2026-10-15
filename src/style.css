@@ -358,7 +358,8 @@ html[data-find-pos="bottom"] #status { order: 2; }
 #main[data-ol-side="right"] #outline { right: calc(var(--sbw, 0px) + 4px); }
 #main[data-ol-side="left"] #outline { left: 4px; }
 #main[data-outline="hover"][data-ol-side="right"] #editor .ProseMirror { padding-right: 30px; }
-#main[data-outline="hover"][data-ol-side="left"] #editor .ProseMirror { padding-left: 44px; }
+/* 左边要同时放下目录短线和块手柄，手柄不能盖住正文开头 */
+#main[data-outline="hover"][data-ol-side="left"] #editor .ProseMirror { padding-left: 56px; }
 .ol-strip {
   display: flex;
   flex-direction: column;

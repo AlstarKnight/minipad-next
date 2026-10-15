@@ -124,15 +124,20 @@ class BlockHandles {
 
     this.onMove = (e) => {
       if (!blockEnabled || this.dragging !== -1 || this.pointerDown) return;
-      const index = this.indexOf(e.target);
-      const loc = blockLocation(this.view, e.target);
-      const cell = e.target.closest?.("td,th");
+      // 从块往左移向手柄时，途经列表缩进、引用边距和编辑区留白都还算这个块，手柄不跳也不消失
+      if (this.besideActive(e.clientX, e.clientY)) return;
+      const target = e.target === this.view.dom ? this.rowTarget(e.clientY) : e.target;
+      const index = this.indexOf(target);
+      const loc = blockLocation(this.view, target);
+      const cell = target?.closest?.("td,th");
       if (cell) this.cellLoc = this.cellPosition(cell);
       else if (loc?.node.type.name !== "table") this.cellLoc = null;
       this.show(index, loc);
     };
     this.onLeave = (e) => {
-      if (this.dragging === -1 && !this.pointerDown && e.relatedTarget !== this.handle) this.show(-1);
+      // 从手柄回到编辑区时交给 onMove 判断，真正离开编辑区和手柄才隐藏
+      if (this.dragging === -1 && !this.pointerDown && e.relatedTarget !== this.handle &&
+        !this.view.dom.contains(e.relatedTarget)) this.show(-1);
     };
     // 按住手柄到 dragstart 之间保留 DOM，否则浏览器会取消拖动。
     this.onPress = (e) => { if (e.button === 0) this.pointerDown = true; };
@@ -164,9 +169,11 @@ class BlockHandles {
       e.preventDefault();
       e.stopImmediatePropagation();
       e.dataTransfer.dropEffect = "move";
-      const index = this.indexOf(e.target);
-      const loc = blockLocation(this.view, e.target);
-      const inside = !!e.target.closest?.(".fold-heading");
+      // 拖到块间空隙或左边栏时按高度找块，不再当成拖到文末
+      const target = e.target === this.view.dom ? this.rowTarget(e.clientY) : e.target;
+      const index = this.indexOf(target);
+      const loc = blockLocation(this.view, target);
+      const inside = !!target?.closest?.(".fold-heading");
       if (loc && (inside || loc.parent.type.name !== "doc" || this.draggingLoc?.parent.type.name !== "doc")) {
         const rect = loc.el.getBoundingClientRect();
         this.dropLoc = { loc, after: e.clientY >= rect.top + rect.height / 2, inside };
@@ -237,6 +244,44 @@ class BlockHandles {
     return index < this.view.state.doc.childCount ? index : -1;
   }
 
+  // 指针在当前块左侧，高度落在这个块或它的手柄范围内
+  besideActive(x, y) {
+    const el = this.activeLoc?.el;
+    if (this.handle.hidden || !el?.isConnected) return false;
+    const rect = el.getBoundingClientRect();
+    const handle = this.handle.getBoundingClientRect();
+    return x < rect.left && y >= Math.min(rect.top, handle.top) && y < Math.max(rect.bottom, handle.bottom);
+  }
+
+  // 编辑区自身的留白（左边栏、右侧空白、块间空隙）按高度找这一行最里层的元素，
+  // 和指着这一行文字时得到同一个块；空隙归近的一边，最后一块下面不算。
+  rowTarget(y) {
+    // 顶层块从上到下排列，二分查找，长文档里也不卡
+    const blocks = this.view.dom.children;
+    let lo = 0, hi = blocks.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (blocks[mid].getBoundingClientRect().bottom <= y) lo = mid + 1;
+      else hi = mid;
+    }
+    if (lo === blocks.length) return null;
+    let el = blocks[lo];
+    const top = el.getBoundingClientRect().top;
+    if (lo > 0 && y < top && y - blocks[lo - 1].getBoundingClientRect().bottom < top - y) el = blocks[lo - 1];
+    // 再往里找到这一行最里层的元素；折叠起来的内容高度为 0，不算
+    while (el.firstElementChild) {
+      let near = null, best = Infinity;
+      for (const child of el.children) {
+        const rect = child.getBoundingClientRect();
+        const away = Math.max(rect.top - y, y - rect.bottom, 0);
+        if (rect.height && away < best) { near = child; best = away; }
+      }
+      if (!near) break;
+      el = near;
+    }
+    return el;
+  }
+
   show(index, loc = null) {
     this.index = index;
     this.activeLoc = loc;
@@ -255,8 +300,7 @@ class BlockHandles {
     if (rect.bottom <= host.top || rect.top >= host.bottom) { this.handle.hidden = true; return; }
     this.handle.style.top = Math.max(0, rect.top - host.top + 2) + "px";
     // 列表项的勾选框位于左侧约 20px；拖动柄再向左挪，避免挡住任务方框。
-    const side = this.host.dataset.olSide === "left" ? 12 : 0;
-    this.handle.style.left = Math.max(2, rect.left - host.left - (this.activeLoc.node.type.name === "list_item" ? 54 : 27) + side) + "px";
+    this.handle.style.left = Math.max(2, rect.left - host.left - (this.activeLoc.node.type.name === "list_item" ? 54 : 27)) + "px";
     this.handle.hidden = false;
   }
 
