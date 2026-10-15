@@ -1885,7 +1885,11 @@ describe("fourth review and copy text", () => {
     await p.keyboard.type("```");
     await p.keyboard.press("Enter");
     await p.keyboard.press("Backspace");
-    await until(h.editor, "```", "no stray newline after input-rule undo");
+    await until(() => p.locator("#editor .ProseMirror > p").textContent(), "```",
+      "undo restores the three literal backticks");
+    const escaped = "\\`\\`\\`";
+    await until(h.editor, escaped, "Markdown escapes the backticks without adding a newline");
+    await until(() => h.mockFile("", "页"), escaped, "saved text has no invisible newline");
   });
 
   ui("deleting final paragraph after a closed fold persists", {
@@ -2096,7 +2100,8 @@ describe("format bar", () => {
   const fb = (cmd) => `#format-bar [data-cmd="${cmd}"]`;
   // 0.2.9 的按钮;0.3.0 在最后加了竖线和查找
   const OLD_BAR = "undo redo sep1 block sep2 strong em strike code link color bg sep3 list ol task sep4 quote codeblock table hr".split(" ");
-  const DEFAULT_BAR = [...OLD_BAR, "sep5", "find"];
+  const DEFAULT_BAR = [...OLD_BAR.slice(0, OLD_BAR.indexOf("codeblock")), "copytext",
+    ...OLD_BAR.slice(OLD_BAR.indexOf("codeblock")), "sep5", "find"];
 
   ui("the format bar formats text, follows the cursor and can be hidden", { seed: seed({ "": { 页: "一段文字\n\n第二段" } }) }, async (h) => {
     const { p } = h;
@@ -2233,7 +2238,8 @@ describe("format bar", () => {
     const { p } = h;
     const bar = await p.$$eval("#format-bar .fb-items > [data-cmd]", (els) => els.map((e) => e.dataset.cmd));
     assert.equal(bar[0], "hr", "the saved order is used");
-    assert.equal(bar.indexOf("table"), bar.indexOf("codeblock") + 1, "the new button sits after the one it follows by default");
+    assert.equal(bar.indexOf("copytext"), bar.indexOf("quote") + 1, "the copy-text button is restored next to quote");
+    assert.equal(bar.indexOf("table"), bar.indexOf("codeblock") + 1, "table stays after codeblock");
     assert.deepEqual(bar.slice(1, 3), ["sep5", "find"], "so do the find button and its divider from 0.3.0");
     assert.equal(bar.filter((id) => id === "strong").length, 1, "no duplicates");
     assert.ok(!bar.includes("nope"), "unknown names are dropped");
