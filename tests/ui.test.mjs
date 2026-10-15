@@ -1493,7 +1493,13 @@ describe("block editor review regressions", () => {
   }, async (h) => {
     const { p } = h;
     const before = await h.mockFile("", "页");
-    await p.evaluate(() => window.__minipad.editor().view.setProps({ editable: () => false }));
+    await p.evaluate(() => {
+      window.__mockControl = { unreadable: { "": { 页: "模拟读取失败" } },
+        keepUnreadableContent: true, calls: [] };
+    });
+    await h.sync();
+    await until(async () => p.locator(".tab.unreadable").count(), 1, "unreadable page remains open");
+    assert.equal(await p.getAttribute("#editor .ProseMirror", "contenteditable"), "false");
     const fold = p.locator("#editor blockquote.fold-block");
     assert.equal(await fold.locator(".fold-toggle").getAttribute("aria-expanded"), "false");
     await fold.locator(".fold-toggle").click();

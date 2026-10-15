@@ -191,7 +191,8 @@ export function mockApi() {
         const reason = window.__mockControl?.unreadable?.[name]?.[n] || null;
         const g = meta.note_groups?.[n];
         const group = g && (meta.groups || []).some((x) => x.id === g) ? g : "";
-        return { name: n, content: reason ? "" : files[n], mode: meta.modes[n] || "edit", unreadable: !!reason, reason, group };
+        return { name: n, content: reason && !window.__mockControl?.keepUnreadableContent ? "" : files[n],
+          mode: meta.modes[n] || "edit", unreadable: !!reason, reason, group };
       }),
       active: order.includes(meta.active) ? meta.active : (order[0] ?? ""),
       groups: (meta.groups || []).filter((x) => order.some((n) => meta.note_groups?.[n] === x.id)),
