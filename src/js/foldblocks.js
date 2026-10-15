@@ -17,13 +17,13 @@ export function newFold(schema, source = null) {
   if (!source) return schema.nodes.blockquote.create(null, [heading, schema.nodes.paragraph.create()]);
   // 引用转折叠保留全部子节点；普通块整体放入折叠块，不扁平化列表/表格。
   const content = source.type.name === "blockquote" && !foldInfo(source)
-    ? [...source.content] : [source];
+    ? Array.from({ length: source.childCount }, (_, i) => source.child(i)) : [source];
   return schema.nodes.blockquote.create(null, [heading, ...content]);
 }
 
 export function unfoldQuote(schema, node) {
-  return schema.nodes.blockquote.create(null, [...node.content].slice(1).length
-    ? [...node.content].slice(1) : [schema.nodes.paragraph.create()]);
+  return schema.nodes.blockquote.create(null, Array.from({ length: node.childCount }, (_, i) => node.child(i)).slice(1).length
+    ? Array.from({ length: node.childCount }, (_, i) => node.child(i)).slice(1) : [schema.nodes.paragraph.create()]);
 }
 
 export function setFold(view, pos, options = {}) {

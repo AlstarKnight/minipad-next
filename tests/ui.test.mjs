@@ -1393,6 +1393,70 @@ describe("advanced blocks", () => {
   });
 });
 
+describe("nested drag and complex tables", () => {
+  ui("dragging individual list items changes their order and supports indent/outdent", {
+    seed: seed({ "": { 页: "- 第一\n- 第二\n- 第三" } }),
+  }, async (h) => {
+    const { p } = h;
+    const list = p.locator("#editor .ProseMirror > ul > li");
+    await list.first().hover();
+    assert.ok(await p.locator(".block-handle").isVisible(), "nested list item has a handle");
+    const box = await list.last().boundingBox();
+    await p.locator(".block-handle").dragTo(list.last(), {
+      targetPosition: { x: box.width / 2, y: box.height - 2 },
+    });
+    await until(async () => list.allTextContents(), ["第二", "第三", "第一"], "reorder list items");
+    await list.last().click({ button: "right" });
+    await p.click('#ctx button[data-act="block-indent"]');
+    assert.equal(await p.locator("#editor ul ul > li").textContent(), "第一");
+    await p.locator("#editor ul ul > li").click({ button: "right" });
+    await p.click('#ctx button[data-act="block-outdent"]');
+    await until(async () => list.allTextContents(), ["第二", "第三", "第一"], "outdent restores sibling");
+    await until(async () => (await h.mockFile("", "页")).includes("第一"), true, "nested edits save");
+  });
+
+  ui("a paragraph can be dragged into a fold and moved back out without losing text", {
+    seed: seed({ "": { 页: "> [!fold]+ 学习资料\n>\n> 里面\n\n外部" } }),
+  }, async (h) => {
+    const { p } = h;
+    const external = p.locator("#editor .ProseMirror > p").last();
+    await external.hover();
+    await p.locator(".block-handle").dragTo(p.locator("#editor .fold-heading"));
+    await until(async () => p.locator("#editor .fold-block > p").allTextContents(),
+      ["[!fold]+ 学习资料", "里面", "外部"], "cross-level drop moves the whole paragraph into a fold");
+    await p.locator("#editor .fold-block > p").last().click({ button: "right" });
+    await p.click('#ctx button[data-act="block-outdent"]');
+    await until(async () => p.locator("#editor .ProseMirror > p").last().textContent(),
+      "外部", "outdent moves the paragraph back to the document");
+    assert.ok((await h.editor()).includes("[!fold]+ 学习资料"), "fold metadata survives movement");
+  });
+
+  ui("table rows and columns can be inserted, duplicated, deleted and undone", {
+    seed: seed({ "": { 页: "| A | B |\n| --- | --- |\n| 1 | 2 |" } }),
+  }, async (h) => {
+    const { p } = h;
+    const table = p.locator("#editor table");
+    await table.locator("tr").last().locator("td").first().click({ button: "right" });
+    await p.click('#ctx button[data-act="block-table-col-right"]');
+    assert.equal(await table.locator("tr").first().locator("th").count(), 3);
+    assert.equal(await table.locator("tr").last().locator("td").count(), 3);
+    await table.locator("tr").last().locator("td").first().click({ button: "right" });
+    await p.click('#ctx button[data-act="block-table-row-below"]');
+    assert.equal(await table.locator("tr").count(), 3);
+    await table.locator("tr").last().locator("td").first().click({ button: "right" });
+    await p.click('#ctx button[data-act="block-table-row-duplicate"]');
+    assert.equal(await table.locator("tr").count(), 4);
+    await table.locator("tr").last().locator("td").first().click({ button: "right" });
+    await p.click('#ctx button[data-act="block-table-row-delete"]');
+    assert.equal(await table.locator("tr").count(), 3);
+    await p.keyboard.press("Control+z");
+    await until(async () => table.locator("tr").count(), 4, "undo restores deleted row");
+    await until(async () => (await h.editor()).includes("| A |"), true, "GFM table still serializes");
+    await p.reload();
+    assert.equal(await p.locator("#editor table tr").count(), 4, "table structure survives reload");
+  });
+});
+
 // ---------- 代码块 ----------
 const CODE_PAGE = {
   "": {

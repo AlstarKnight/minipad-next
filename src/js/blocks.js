@@ -3,6 +3,9 @@
 import { $prose, Plugin, TextSelection, closeHistory } from "../vendor/milkdown.js";
 import { openMenu } from "./ui.js";
 import { foldInfo, newFold, unfoldQuote, setFold } from "./foldblocks.js";
+import { blockLocation, moveNested, changeNested, listLevel } from "./nestedblocks.js";
+import { tableItems } from "./tableblocks.js";
+import { toast } from "./ui.js";
 
 const TYPES = [
   ["paragraph", "正文"], ["heading1", "标题 1"], ["heading2", "标题 2"],
@@ -67,6 +70,9 @@ class BlockHandles {
     this.dragging = -1;
     this.pointerDown = false;
     this.dropIndex = -1;
+    this.activeLoc = null;
+    this.draggingLoc = null;
+    this.dropLoc = null;
     this.handle = document.createElement("button");
     this.handle.type = "button";
     this.handle.className = "block-handle";
@@ -83,7 +89,8 @@ class BlockHandles {
     this.onMove = (e) => {
       if (this.dragging !== -1 || this.pointerDown) return;
       const index = this.indexOf(e.target);
-      this.show(index);
+      const loc = blockLocation(this.view, e.target);
+      this.show(index, loc);
     };
     this.onLeave = (e) => {
       if (this.dragging === -1 && !this.pointerDown && e.relatedTarget !== this.handle) this.show(-1);
@@ -94,48 +101,67 @@ class BlockHandles {
     this.onContext = (e) => {
       if (e.shiftKey || e.target.closest?.("input, textarea")) return;
       const index = this.indexOf(e.target);
-      if (index < 0 || !this.view.editable) return;
+      const loc = blockLocation(this.view, e.target);
+      if (!loc || !this.view.editable) return;
       e.preventDefault();
-      this.show(index);
-      this.menu(index, e.clientX, e.clientY);
+      this.show(index, loc);
+      const cell = e.target.closest?.("td,th");
+      const row = cell ? Array.prototype.indexOf.call(cell.closest("table").querySelectorAll("tr"), cell.parentElement) : 0;
+      const col = cell ? Array.prototype.indexOf.call(cell.parentElement.children, cell) : 0;
+      if (loc.parent.type.name === "doc") this.menu(index, e.clientX, e.clientY, row, col);
+      else this.menuNested(loc, e.clientX, e.clientY, row, col);
     };
     this.onScroll = () => this.position();
     this.onStart = (e) => {
       if (this.index < 0 || !this.view.editable) return;
       this.pointerDown = false;
-      this.dragging = this.index;
+      this.dragging = this.index >= 0 && this.activeLoc?.parent.type.name === "doc" ? this.index : -2;
+      this.draggingLoc = this.activeLoc;
       e.dataTransfer.effectAllowed = "move";
       e.dataTransfer.setData("text/plain", "minipad-block");
     };
     this.onOver = (e) => {
-      if (this.dragging < 0) return;
+      if (this.dragging === -1) return;
       e.preventDefault();
       e.stopImmediatePropagation();
       e.dataTransfer.dropEffect = "move";
       const index = this.indexOf(e.target);
-      if (index < 0) {
-        this.dropIndex = this.view.state.doc.childCount;
+      const loc = blockLocation(this.view, e.target);
+      const inside = !!e.target.closest?.(".fold-heading");
+      if (loc && (inside || loc.parent.type.name !== "doc" || this.draggingLoc?.parent.type.name !== "doc")) {
+        const rect = loc.el.getBoundingClientRect();
+        this.dropLoc = { loc, after: e.clientY >= rect.top + rect.height / 2, inside };
+        this.dropIndex = -1;
       } else {
-        const rect = this.view.dom.children[index].getBoundingClientRect();
-        this.dropIndex = index + (e.clientY >= rect.top + rect.height / 2 ? 1 : 0);
+        this.dropLoc = null;
+        if (index < 0) this.dropIndex = this.view.state.doc.childCount;
+        else {
+          const rect = this.view.dom.children[index].getBoundingClientRect();
+          this.dropIndex = index + (e.clientY >= rect.top + rect.height / 2 ? 1 : 0);
+        }
       }
       this.marker.hidden = false;
       this.positionMarker();
     };
     this.onDrop = (e) => {
-      if (this.dragging < 0) return;
+      if (this.dragging === -1) return;
       e.preventDefault();
       e.stopImmediatePropagation();
       const from = this.dragging;
       const to = this.dropIndex;
+      const source = this.draggingLoc;
+      const nested = this.dropLoc;
       this.finishDrag();
-      this.move(from, to);
+      if (nested) {
+        if (!moveNested(this.view, source, nested.loc, nested.after, nested.inside)) toast("不能把这个块移动到该位置");
+      } else if (from >= 0) this.move(from, to);
     };
     this.onEnd = () => this.finishDrag();
     this.handle.addEventListener("click", () => {
-      if (this.index < 0) return;
+      if (!this.activeLoc) return;
       const rect = this.handle.getBoundingClientRect();
-      this.menu(this.index, rect.right, rect.bottom);
+      if (this.activeLoc.parent.type.name === "doc") this.menu(this.index, rect.right, rect.bottom);
+      else this.menuNested(this.activeLoc, rect.right, rect.bottom);
     });
     this.handle.addEventListener("mousedown", this.onPress);
     document.addEventListener("mouseup", this.onRelease);
@@ -159,17 +185,18 @@ class BlockHandles {
     return index < this.view.state.doc.childCount ? index : -1;
   }
 
-  show(index) {
+  show(index, loc = null) {
     this.index = index;
+    this.activeLoc = loc;
     this.position();
   }
 
   position() {
-    if (this.index < 0 || !this.view.editable || this.index >= this.view.state.doc.childCount) {
+    if (!this.activeLoc || !this.view.editable) {
       this.handle.hidden = true;
       return;
     }
-    const el = this.view.dom.children[this.index];
+    const el = this.activeLoc.el;
     if (!el) { this.handle.hidden = true; return; }
     const rect = el.getBoundingClientRect();
     const host = this.host.getBoundingClientRect();
@@ -180,6 +207,16 @@ class BlockHandles {
   }
 
   positionMarker() {
+    if (this.dropLoc) {
+      const { loc, after, inside } = this.dropLoc;
+      const rect = loc.el.getBoundingClientRect();
+      const host = this.host.getBoundingClientRect();
+      const y = inside ? rect.bottom - 8 : after ? rect.bottom : rect.top;
+      this.marker.style.top = y - host.top + "px";
+      this.marker.style.left = Math.max(4, rect.left - host.left + (inside ? 18 : 0)) + "px";
+      this.marker.style.width = Math.max(20, Math.min(rect.width - (inside ? 18 : 0), host.width - 45)) + "px";
+      return;
+    }
     const index = this.dropIndex;
     if (index < 0) return;
     const el = this.view.dom.children[Math.min(index, this.view.state.doc.childCount - 1)];
@@ -194,6 +231,8 @@ class BlockHandles {
 
   finishDrag() {
     this.dragging = -1;
+    this.draggingLoc = null;
+    this.dropLoc = null;
     this.dropIndex = -1;
     this.marker.hidden = true;
   }
@@ -245,7 +284,7 @@ class BlockHandles {
     this.show(-1);
   }
 
-  menu(index, x, y) {
+  menu(index, x, y, row = 0, col = 0) {
     x = Math.max(4, Math.min(x, window.innerWidth - 190));
     y = Math.max(4, Math.min(y, window.innerHeight - 340));
     const node = this.view.state.doc.child(index);
@@ -264,12 +303,78 @@ class BlockHandles {
       { id: "block-down", label: "下移一块", disabled: index === this.view.state.doc.childCount - 1, act: () => this.move(index, index + 2) },
       { id: "block-duplicate", label: "复制块", act: () => this.change(index, "duplicate") },
       { id: "block-delete", label: "删除块", danger: true, act: () => this.change(index, "delete") },
+      ...tableItems(this.view, blockAt(this.view.state.doc, index), row, col),
     ], x, y);
   }
 
-  update(view) {
+
+  menuNested(loc, x, y, row = 0, col = 0) {
+    const { state } = this.view;
+    const node = state.doc.nodeAt(loc.pos);
+    if (!node || !this.view.editable) return;
+    const listItem = node.type.name === "list_item";
+    const siblings = loc.parent;
+    const convert = (action) => openMenu((listItem ? [["list_item", "列表项"]] : TYPES).map(([kind, name]) => ({
+      id: "block-type-" + kind, label: name,
+      disabled: action === "convert" && (listItem || !makeBlock(this.view.state.schema, kind, node)),
+      act: () => {
+        if (!changeNested(this.view, loc, action, kind, makeBlock)) toast("此位置不能执行该块操作");
+        this.show(-1);
+      },
+    })), x, y);
+    const siblingLoc = (index) => {
+      if (index < 0 || index >= siblings.childCount) return null;
+      let pos = loc.pos;
+      if (index < loc.index) for (let k = index; k < loc.index; k++) pos -= siblings.child(k).nodeSize;
+      else for (let k = loc.index; k < index; k++) pos += siblings.child(k).nodeSize;
+      const $at = state.doc.resolve(pos);
+      return { pos, node: state.doc.nodeAt(pos), parent: $at.parent, parentPos: $at.depth ? $at.before() : null,
+        index, el: this.view.nodeDOM(pos) };
+    };
+    const parentLoc = loc.parentPos == null ? null : (() => {
+      const pos = loc.parentPos;
+      const $at = state.doc.resolve(pos);
+      return { pos, node: state.doc.nodeAt(pos), parent: $at.parent, parentPos: $at.depth ? $at.before() : null,
+        index: $at.index(), el: this.view.nodeDOM(pos) };
+    })();
+    const prev = siblingLoc(loc.index - 1);
+    const lift = () => {
+      const okay = listItem ? listLevel(this.view, loc, true)
+        : parentLoc && moveNested(this.view, loc, parentLoc, true);
+      if (!okay) toast("不能将此块提升一层");
+    };
+    const indent = () => {
+      const okay = listItem ? listLevel(this.view, loc, false)
+        : prev?.node.type.name === "blockquote" && moveNested(this.view, loc, prev, true, true);
+      if (!okay) toast("上一个块不是可嵌套的引用或折叠块");
+    };
+    openMenu([
+      { id: "block-insert-before", label: "在上方插入块 ›", act: () => convert("insert-before") },
+      { id: "block-insert-after", label: "在下方插入块 ›", act: () => convert("insert-after") },
+      { id: "block-convert", label: "转换块类型 ›", disabled: listItem, act: () => convert("convert") },
+      { id: "block-up", label: "在当前层级上移", disabled: loc.index === 0, act: () => {
+        if (!moveNested(this.view, loc, siblingLoc(loc.index - 1), false)) toast("不能上移此块");
+      } },
+      { id: "block-down", label: "在当前层级下移", disabled: loc.index === siblings.childCount - 1, act: () => {
+        if (!moveNested(this.view, loc, siblingLoc(loc.index + 1), true)) toast("不能下移此块");
+      } },
+      { id: "block-indent", label: "缩进／移入上一块", disabled: !listItem && prev?.node.type.name !== "blockquote", act: indent },
+      { id: "block-outdent", label: "减少缩进／提升一层", disabled: !parentLoc, act: lift },
+      { id: "block-duplicate", label: "复制块", act: () => {
+        if (!changeNested(this.view, loc, "duplicate", null, makeBlock)) toast("不能复制此块");
+      } },
+      { id: "block-delete", label: "删除块", danger: true, act: () => {
+        if (!changeNested(this.view, loc, "delete", null, makeBlock)) toast("不能删除此块");
+      } },
+      ...tableItems(this.view, loc.pos, row, col),
+    ], Math.max(4, Math.min(x, window.innerWidth - 205)),
+      Math.max(4, Math.min(y, window.innerHeight - 340)));
+  }
+
+  update(view, previous) {
     this.view = view;
-    this.position();
+    if (previous.doc !== view.state.doc) this.show(-1);
+    else this.position();
   }
 
   destroy() {

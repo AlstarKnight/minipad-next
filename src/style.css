@@ -510,6 +510,9 @@ html[data-find-pos="bottom"] #status { order: 2; }
 .block-handle:active { cursor: grabbing; }
 .block-drop-line { position: absolute; z-index: 5; height: 2px; border-radius: 2px; background: var(--accent); pointer-events: none; }
 .block-handle[hidden], .block-drop-line[hidden] { display: none; }
+/* 表格行列操作多时菜单允许滚动，避免操作被窗口底部遮挡。 */
+#ctx { max-height: calc(100vh - 12px); overflow-y: auto; }
+
 #editor .ProseMirror ::selection { background: var(--selection); }
 #editor .ProseMirror > :first-child { margin-top: 0; }
 #editor .is-empty::before {
