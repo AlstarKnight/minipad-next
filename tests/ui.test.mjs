@@ -2016,23 +2016,33 @@ describe("fourth review and copy text", () => {
     assert.equal(await p.locator("#editor .ProseMirror > p").count(), 1);
   });
 
-  ui("copy text to paragraph keeps trailing blank lines, including after reopen", {
+  ui("copy text with trailing blank lines refuses unsafe conversions and preserves saved data", {
     seed: seed({ "": { 页: "```copy\n第一行\n第二行\n\n```" } }),
   }, async (h) => {
     const { p } = h;
-    await p.locator("#editor .codeblock.copyline code").click();
-    await p.click('#format-bar [data-cmd="copytext"]');
-    const paragraphText = () => p.evaluate(() => {
-      const node = window.__minipad.editor().view.state.doc.firstChild;
-      return node.textBetween(0, node.content.size, "\n", "\n");
-    });
-    await until(paragraphText, "第一行\n第二行\n\n", "both trailing newlines survive conversion");
     const before = await h.editor();
-    assert.ok(before.includes("&#xA;"), "trailing newlines get durable Markdown encoding: " + before);
-    await until(() => h.mockFile("", "页"), before, "all line breaks are saved");
+    const originalText = await p.locator("#editor .codeblock code").textContent();
+    assert.equal(originalText, "第一行\n第二行\n\n");
+    await p.locator("#editor .codeblock code").click();
+    await p.click('#format-bar [data-cmd="copytext"]');
+    assert.match(await h.toast(), /末尾有换行/);
+    assert.equal(await h.editor(), before, "copy button refuses to discard trailing lines");
+    await p.click('#format-bar [data-cmd="codeblock"]');
+    assert.equal(await h.editor(), before, "code button does not bypass safety");
+    await p.click('#format-bar [data-cmd="block"]');
+    await p.click('#ctx [data-act="h0"]');
+    assert.equal(await h.editor(), before, "body dropdown does not bypass safety");
+    await p.keyboard.press("Control+Alt+0");
+    assert.equal(await h.editor(), before, "keyboard shortcut does not bypass safety");
+    await p.locator("#editor .codeblock code").click({ button: "right" });
+    await p.click('#ctx [data-act="block-convert"]');
+    assert.ok(await p.isDisabled('#ctx [data-act="block-type-paragraph"]'),
+      "block menu cannot discard trailing lines either");
+    await h.sync();
+    await until(() => h.mockFile("", "页"), before, "the complete source is saved");
     await p.reload();
-    await until(paragraphText, "第一行\n第二行\n\n", "reopening must preserve all line breaks");
-    assert.equal(await h.editor(), before, "the Markdown remains stable after reopening");
+    assert.equal(await p.locator("#editor .codeblock code").textContent(), originalText,
+      "every trailing blank line survives reopening");
   });
 
   ui("block menu preserves soft breaks when converting plain paragraph to code", {
