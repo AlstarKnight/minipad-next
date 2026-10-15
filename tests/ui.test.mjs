@@ -2023,7 +2023,12 @@ describe("fourth review and copy text", () => {
     await p.locator("#editor .codeblock.copyline code").click();
     await p.click('#format-bar [data-cmd="copytext"]');
     const textBefore = await p.locator("#editor .ProseMirror > p").textContent();
-    assert.ok(textBefore.endsWith("\n\n"), "both trailing newlines survive conversion");
+    const details = await p.evaluate(() => ({
+      node: window.__minipad.editor().view.state.doc.firstChild.toJSON(),
+      html: document.querySelector("#editor .ProseMirror > p")?.outerHTML,
+    }));
+    assert.ok(textBefore.endsWith("\n\n"), "both trailing newlines survive conversion: " +
+      JSON.stringify({ textBefore, markdown: await h.editor(), details }));
     const before = await h.editor();
     assert.ok(before.includes("&#xA;"), "trailing newlines get durable Markdown encoding: " + before);
     await until(() => h.mockFile("", "页"), before, "all line breaks are saved");
