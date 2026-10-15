@@ -45,6 +45,7 @@ const SETTINGS = {
   show_in_taskbar: false,
   autostart: false,
   theme: "system",
+  block_context_menu: "block", // 既有块管理测试仍使用右键块菜单；实际默认改回系统右键
   font_size: 14,
   notes_dir: "",
   backup_enabled: true,
@@ -1237,8 +1238,11 @@ describe("editor", () => {
     await p.keyboard.press("Control+b");
     await until(h.editor, "一段[文字](https://example.com)", "Ctrl+B with a selection toggles bold");
     assert.ok(await p.isHidden("#books"), "and does not open the notebook list");
-    await p.keyboard.press("End");
-    await until(h.selection, "", "nothing selected");
+    // 无界面的 Chromium 偶尔会吞掉紧跟在 Ctrl+B 后面的 End（选区还是链接文字），没取消选中就再按一次
+    await until(async () => {
+      await p.keyboard.press("End");
+      return h.selection();
+    }, "", "nothing selected");
     await p.keyboard.press("Control+b");
     await p.locator("#books").waitFor();
     await p.keyboard.press("Escape");
@@ -1258,6 +1262,1037 @@ describe("editor", () => {
     assert.equal(await h.selection(), "一些文字");
     await p.keyboard.press("Escape");
     await until(async () => (await h.toast()).includes("隐藏"), true, "Esc hides the window");
+  });
+});
+
+// ---------- 顶层块管理 ----------
+
+describe("block management", () => {
+  ui("right-click inserts a paragraph below a trailing code block and converts it to a heading", {
+    seed: seed({ "": { 页: "~~~js\nconsole.log(1)\n~~~" } }),
+  }, async (h) => {
+    const { p } = h;
+    await p.locator("#editor .codeblock code").click({ button: "right" });
+    assert.ok(await p.locator('#ctx button[data-act="block-insert-after"]').isVisible());
+    await p.click('#ctx button[data-act="block-insert-after"]');
+    await p.click('#ctx button[data-act="block-type-paragraph"]');
+    await p.keyboard.type("下一段");
+    assert.equal(await p.locator("#editor .ProseMirror > p").last().textContent(), "下一段");
+    assert.equal(await p.locator("#editor .codeblock code").textContent(), "console.log(1)");
+    await p.locator("#editor .ProseMirror > p").last().click({ button: "right" });
+    await p.click('#ctx button[data-act="block-convert"]');
+    await p.click('#ctx button[data-act="block-type-heading2"]');
+    assert.equal(await p.locator("#editor .ProseMirror > h2").textContent(), "下一段");
+    assert.match(await h.editor(), /## 下一段$/, "converted heading is stored in Markdown");
+    await until(async () => (await h.mockFile("", "页")).includes("## 下一段"), true,
+      "converted heading is saved");
+  });
+
+  ui("drag, duplicate, delete and undo manage whole Markdown blocks", {
+    seed: seed({ "": { 页: "甲\n\n乙\n\n丙" } }),
+  }, async (h) => {
+    const { p } = h;
+    const blocks = p.locator("#editor .ProseMirror > p");
+    await blocks.first().hover();
+    assert.ok(await p.locator(".block-handle").isVisible(), "hover shows a grab handle");
+    const lastBox = await blocks.last().boundingBox();
+    await p.locator(".block-handle").dragTo(blocks.last(), {
+      targetPosition: { x: lastBox.width / 2, y: lastBox.height - 2 },
+    });
+    await until(h.editor, "乙\n\n丙\n\n甲", "drag moves a paragraph below the last block");
+
+    await blocks.last().click({ button: "right" });
+    await p.click('#ctx button[data-act="block-duplicate"]');
+    await until(h.editor, "乙\n\n丙\n\n甲\n\n甲", "duplicate copies the complete block");
+
+    await blocks.last().click({ button: "right" });
+    await p.click('#ctx button[data-act="block-delete"]');
+    await until(h.editor, "乙\n\n丙\n\n甲", "delete removes just the target block");
+    await p.keyboard.press("Control+z");
+    await until(h.editor, "乙\n\n丙\n\n甲\n\n甲", "Ctrl+Z restores deleted block");
+  });
+
+  ui("blocks can convert among text, quote, list and code without losing their text", {
+    seed: seed({ "": { 页: "保留这段文字" } }),
+  }, async (h) => {
+    const { p } = h;
+    const convert = async (kind) => {
+      await p.locator("#editor .ProseMirror > :first-child").click({ button: "right" });
+      // 右键会优先选中嵌套块；需要操作整个引用块时明确进入外层菜单。
+      const outer = p.locator('#ctx button[data-act="block-outer"]');
+      if (await outer.isVisible()) await outer.click();
+      await p.click('#ctx button[data-act="block-convert"]');
+      await p.click('#ctx button[data-act="block-type-' + kind + '"]');
+    };
+    await convert("blockquote");
+    assert.equal(await p.locator("#editor blockquote").textContent(), "保留这段文字");
+    assert.equal(await p.locator("#editor .ProseMirror > blockquote").count(), 1);
+    await convert("bullet_list");
+    assert.equal(await p.locator("#editor ul > li").textContent(), "保留这段文字");
+    assert.equal(await p.locator("#editor .ProseMirror > ul").count(), 1);
+    await convert("code_block");
+    assert.equal(await p.locator("#editor .codeblock code").textContent(), "保留这段文字");
+    assert.equal(await p.locator("#editor .ProseMirror > .codeblock").count(), 1,
+      "converting a single-item list places the code block at the document root");
+
+    await p.locator("#editor .codeblock code").click({ button: "right" });
+    await p.click('#ctx button[data-act="block-insert-before"]');
+    await p.click('#ctx button[data-act="block-type-paragraph"]');
+    assert.equal(await p.locator("#editor .ProseMirror > p").count(), 1,
+      "insert-before creates a top-level paragraph");
+    await p.keyboard.type("前面的正文");
+    assert.equal(await p.locator("#editor .ProseMirror > p").first().textContent(), "前面的正文");
+    assert.equal(await p.locator("#editor .codeblock code").textContent(), "保留这段文字");
+  });
+});
+
+// ---------- 第二阶段：折叠、嵌套与表格 ----------
+
+describe("advanced blocks", () => {
+  ui("folded Markdown persists its title, children and collapsed state", {
+    seed: seed({ "": { 页: "> [!fold]- 课件总结\n>\n> 第一段\n>\n> - 清单\n>\n> 第二段" } }),
+  }, async (h) => {
+    const { p } = h;
+    const fold = p.locator("#editor .fold-block").first();
+    await fold.waitFor();
+    assert.equal(await fold.locator(".fold-title").textContent(), "课件总结");
+    assert.equal(await fold.locator(".fold-toggle").getAttribute("aria-expanded"), "false");
+    assert.ok(await fold.locator("ul").isHidden(), "collapsed children are hidden");
+    await fold.locator(".fold-toggle").click();
+    assert.ok(await fold.locator("ul").isVisible(), "expanding reveals nested Markdown blocks");
+    await until(async () => (await h.editor()).includes("[!fold]+ 课件总结"), true,
+      "expanded state is stored as Markdown");
+    await p.reload();
+    const restored = p.locator("#editor .fold-block").first();
+    assert.equal(await restored.locator(".fold-toggle").getAttribute("aria-expanded"), "true");
+    assert.ok(await restored.locator("ul").isVisible());
+    await restored.locator(".fold-title").click();
+    await p.locator("#dialog-input").fill("新标题");
+    await p.locator("#dialog-ok").click();
+    await until(async () => (await h.editor()).includes("[!fold]+ 新标题"), true, "title persists");
+  });
+
+  ui("turning a multi-block quote into a fold preserves all child blocks", {
+    seed: seed({ "": { 页: "> 段落甲\n>\n> - 列表甲\n>\n> 段落乙" } }),
+  }, async (h) => {
+    const { p } = h;
+    await p.locator("#editor blockquote li").first().click({ button: "right" });
+    await p.click('#ctx button[data-act="block-outer"]');
+    await p.click('#ctx button[data-act="block-convert"]');
+    await p.click('#ctx button[data-act="block-type-fold"]');
+    assert.equal(await p.locator("#editor .fold-block > ul li").textContent(), "列表甲");
+    assert.equal(await p.locator("#editor .fold-block > p").count(), 3);
+    assert.ok((await h.editor()).includes("[!fold]+ 折叠块"), "converted block has a Markdown marker");
+    await p.locator("#editor .fold-block .fold-title").click();
+    await p.click("#dialog-cancel");
+    await p.locator("#editor .fold-heading").click({ button: "right" });
+    await p.click('#ctx button[data-act="block-convert"]');
+    assert.ok(await p.locator('#ctx button[data-act="block-type-paragraph"]').isDisabled(),
+      "multi-child fold cannot be destructively flattened");
+    await p.click('#ctx button[data-act="block-type-blockquote"]');
+    assert.equal(await p.locator("#editor blockquote > ul li").textContent(), "列表甲");
+    assert.ok(!(await h.editor()).includes("[!fold]"), "convert to quote removes marker");
+  });
+
+  ui("block menu inserts an editable table without changing nearby code", {
+    seed: seed({ "": { 页: "~~~js\nconsole.log(1)\n~~~" } }),
+  }, async (h) => {
+    const { p } = h;
+    await p.locator("#editor .codeblock code").click({ button: "right" });
+    await p.click('#ctx button[data-act="block-insert-after"]');
+    await p.click('#ctx button[data-act="block-type-table"]');
+    assert.equal(await p.locator("#editor table tr").count(), 3);
+    assert.equal(await p.locator("#editor table tr").first().locator("th").count(), 3);
+    assert.equal(await p.locator("#editor .codeblock code").textContent(), "console.log(1)");
+  });
+});
+
+describe("nested drag and complex tables", () => {
+  ui("dragging individual list items changes their order and supports indent/outdent", {
+    seed: seed({ "": { 页: "- 第一\n- 第二\n- 第三" } }),
+  }, async (h) => {
+    const { p } = h;
+    const list = p.locator("#editor .ProseMirror > ul > li");
+    await list.first().hover();
+    assert.ok(await p.locator(".block-handle").isVisible(), "nested list item has a handle");
+    const box = await list.last().boundingBox();
+    await p.locator(".block-handle").dragTo(list.last(), {
+      targetPosition: { x: box.width / 2, y: box.height - 2 },
+    });
+    await until(async () => list.allTextContents(), ["第二", "第三", "第一"], "reorder list items");
+    await list.last().click({ button: "right" });
+    await p.click('#ctx button[data-act="block-indent"]');
+    assert.equal(await p.locator("#editor ul ul > li").textContent(), "第一");
+    await p.locator("#editor ul ul > li").click({ button: "right" });
+    await p.click('#ctx button[data-act="block-outdent"]');
+    await until(async () => list.allTextContents(), ["第二", "第三", "第一"], "outdent restores sibling");
+    await until(async () => (await h.mockFile("", "页")).includes("第一"), true, "nested edits save");
+  });
+
+  ui("a paragraph can be dragged into a fold and moved back out without losing text", {
+    seed: seed({ "": { 页: "> [!fold]+ 学习资料\n>\n> 里面\n\n外部" } }),
+  }, async (h) => {
+    const { p } = h;
+    const external = p.locator("#editor .ProseMirror > p").last();
+    await external.hover();
+    await p.locator(".block-handle").dragTo(p.locator("#editor .fold-heading"));
+    await until(async () => p.locator("#editor .fold-block > p").allTextContents(),
+      ["[!fold]+ 学习资料", "里面", "外部"], "cross-level drop moves the whole paragraph into a fold");
+    await p.locator("#editor .fold-block > p").last().click({ button: "right" });
+    await p.click('#ctx button[data-act="block-outdent"]');
+    await until(async () => p.locator("#editor .ProseMirror > p").last().textContent(),
+      "外部", "outdent moves the paragraph back to the document");
+    assert.ok((await h.editor()).includes("[!fold]+ 学习资料"), "fold metadata survives movement");
+  });
+
+  ui("table rows and columns can be inserted, duplicated, deleted and undone", {
+    seed: seed({ "": { 页: "| A | B |\n| --- | --- |\n| 1 | 2 |" } }),
+  }, async (h) => {
+    const { p } = h;
+    const table = p.locator("#editor table");
+    await table.locator("tr").last().locator("td").first().click({ button: "right" });
+    await p.click('#ctx button[data-act="block-table-col-right"]');
+    assert.equal(await table.locator("tr").first().locator("th").count(), 3);
+    assert.equal(await table.locator("tr").last().locator("td").count(), 3);
+    await table.locator("tr").last().locator("td").first().click({ button: "right" });
+    await p.click('#ctx button[data-act="block-table-row-below"]');
+    assert.equal(await table.locator("tr").count(), 3);
+    await table.locator("tr").last().locator("td").first().click({ button: "right" });
+    await p.click('#ctx button[data-act="block-table-row-duplicate"]');
+    assert.equal(await table.locator("tr").count(), 4);
+    await table.locator("tr").last().locator("td").first().click({ button: "right" });
+    await p.click('#ctx button[data-act="block-table-row-delete"]');
+    assert.equal(await table.locator("tr").count(), 3);
+    await p.keyboard.press("Control+z");
+    await until(async () => table.locator("tr").count(), 4, "undo restores deleted row");
+    await until(async () => (await h.editor()).includes("| A |"), true, "GFM table still serializes");
+    await p.reload();
+    assert.equal(await p.locator("#editor table tr").count(), 4, "table structure survives reload");
+  });
+});
+
+
+describe("block editor review regressions", () => {
+  ui("Ctrl+End and clicking below a closed final fold append text after it", {
+    seed: seed({ "": { 页: "前文\n\n> [!fold]- 标题\n>\n> 隐藏内容" } }),
+  }, async (h) => {
+    const { p } = h;
+    await p.locator("#editor .ProseMirror > p").first().click();
+    await p.keyboard.press("Control+End");
+    await p.keyboard.type("Z");
+    assert.equal(await p.locator("#editor .ProseMirror > p").last().textContent(), "Z", await h.editor());
+    assert.equal(await p.locator("#editor .ProseMirror > p").first().textContent(), "前文");
+    await p.keyboard.press("Control+z");
+    const box = await p.locator("#editor .ProseMirror > blockquote.fold-closed").boundingBox();
+    const area = await p.locator("#editor").boundingBox();
+    await p.mouse.click(area.x + area.width / 2, Math.min(area.y + area.height - 5, box.y + box.height + 12));
+    await p.keyboard.type("B");
+    assert.equal(await p.locator("#editor .ProseMirror > p").last().textContent(), "B");
+    assert.equal(await p.locator("#editor .ProseMirror > p").first().textContent(), "前文");
+  });
+
+  ui("read-only folds expand without changing the document or file", {
+    seed: seed({ "": { 页: "> [!fold]- 标题\n>\n> 隐藏内容" } }),
+  }, async (h) => {
+    const { p } = h;
+    const before = await h.mockFile("", "页");
+    await p.evaluate(() => {
+      window.__mockControl = { unreadable: { "": { 页: "模拟读取失败" } },
+        keepUnreadableContent: true, calls: [] };
+    });
+    await h.sync();
+    await until(async () => p.locator(".tab.unreadable").count(), 1, "unreadable page remains open");
+    assert.equal(await p.getAttribute("#editor .ProseMirror", "contenteditable"), "false");
+    const fold = p.locator("#editor blockquote.fold-block");
+    assert.equal(await fold.locator(".fold-toggle").getAttribute("aria-expanded"), "false");
+    await fold.locator(".fold-toggle").click();
+    assert.equal(await fold.locator(".fold-toggle").getAttribute("aria-expanded"), "true");
+    assert.ok(await fold.getByText("隐藏内容").isVisible());
+    assert.equal(await h.mockFile("", "页"), before);
+  });
+
+  ui("system right-click and block manager off both preserve ordinary editing", {
+    seed: { ...seed({ "": { 页: "正常正文" } }), settings: { ...SETTINGS,
+      block_context_menu: "system", block_enabled: false } },
+  }, async (h) => {
+    const { p } = h;
+    await p.locator("#editor .ProseMirror > p").click({ button: "right" });
+    assert.ok(await p.locator("#ctx").isHidden(), "system context menu is not intercepted");
+    await p.locator("#editor .ProseMirror > p").hover();
+    assert.ok(await p.locator(".block-handle").isHidden(), "no block handle when disabled");
+    const padding = await p.locator("#editor .ProseMirror").evaluate((el) => getComputedStyle(el).paddingLeft);
+    assert.equal(padding, "14px", "original editor margin restored");
+    await p.locator("#editor .ProseMirror > p").click();
+    await p.keyboard.press("Control+End");
+    await p.keyboard.type("继续");
+    assert.equal(await h.editor(), "正常正文继续");
+    await p.click("#btn-settings");
+    await settingsPage(p, "edit");
+    assert.equal(await p.isChecked("#set-block-enabled"), false);
+    await p.check("#set-block-enabled");
+    await p.click("#set-save");
+    await p.locator("#editor .ProseMirror > p").hover();
+    assert.ok(await p.locator(".block-handle").isVisible(), "turning blocks on restores handle");
+    await p.locator(".block-handle").click();
+    assert.ok(await p.locator('#ctx button[data-act="block-insert-after"]').isVisible());
+  });
+
+  ui("three-Enter code exit preserves a blank line during coding", {
+    seed: seed({ "": { 页: "```python\ndef a():\n    pass\n```" } }),
+  }, async (h) => {
+    const { p } = h;
+    await p.locator("#editor .codeblock code").click();
+    await p.keyboard.press("Control+End");
+    await p.keyboard.press("Enter");
+    await p.keyboard.press("Enter");
+    await p.keyboard.type("def b():");
+    assert.equal(await p.locator("#editor .codeblock code").textContent(),
+      "def a():\n    pass\n\ndef b():");
+    await p.keyboard.press("Enter");
+    await p.keyboard.press("Enter");
+    await p.keyboard.press("Enter");
+    await p.keyboard.type("正文");
+    assert.equal(await p.locator("#editor .ProseMirror > p").last().textContent(), "正文");
+  });
+
+  ui("find reveals closed folds and serialized markers have no backslash", {
+    seed: seed({ "": { 页: "前文\n\n> [!fold]- 标题\n>\n> 秘密内容" } }),
+  }, async (h) => {
+    const { p } = h;
+    const fold = p.locator("#editor blockquote.fold-block");
+    await fold.locator(".fold-toggle").click();
+    await until(async () => (await h.mockFile("", "页")).includes("> [!fold]+ 标题"), true,
+      "serialized fold marker is unescaped");
+    assert.equal(await h.mockFile("", "页"), "前文\n\n> [!fold]+ 标题\n>\n> 秘密内容",
+      "the complete saved Markdown preserves the unescaped fold marker");
+    await fold.locator(".fold-toggle").click();
+    await p.locator("#editor .ProseMirror > p").first().click();
+    await p.keyboard.press("Control+f");
+    await p.fill("#find-input", "秘密");
+    await until(async () => fold.locator(".fold-toggle").getAttribute("aria-expanded"), "true",
+      "searching hidden content reveals its fold");
+  });
+
+  ui("table handle hides cell operations; header actions are disabled", {
+    seed: seed({ "": { 页: "| A | B |\n| --- | --- |\n| 1 | 2 |" } }),
+  }, async (h) => {
+    const { p } = h;
+    const table = p.locator("#editor table");
+    await table.locator("td").last().hover();
+    await p.locator(".block-handle").click();
+    assert.equal(await p.locator('#ctx button[data-act="block-table-col-delete"]').count(), 1,
+      "handle menu targets the last hovered table cell");
+    await p.click("#editor .ProseMirror");
+    await table.locator("th").first().click({ button: "right" });
+    assert.equal(await p.locator('#ctx button[data-act="block-table-row-delete"]').isDisabled(), true);
+    assert.equal(await p.locator('#ctx button[data-act="block-table-row-above"]').isDisabled(), true);
+  });
+
+  ui("a fold cannot convert into itself and can disable persistence", {
+    seed: { ...seed({ "": { 页: "> [!fold]- 标题\n>\n> 隐藏内容" } }), settings: { ...SETTINGS, fold_save_state: false } },
+  }, async (h) => {
+    const { p } = h;
+    const fold = p.locator("#editor blockquote.fold-block");
+    const before = await h.mockFile("", "页");
+    await fold.locator(".fold-toggle").click();
+    assert.equal(await fold.locator(".fold-toggle").getAttribute("aria-expanded"), "true");
+    assert.equal(await h.mockFile("", "页"), before, "UI-only unfolding leaves file unchanged");
+    await fold.locator(".fold-heading").click({ button: "right" });
+    await p.click('#ctx button[data-act="block-convert"]');
+    assert.equal(await p.locator('#ctx button[data-act="block-type-fold"]').isDisabled(), true);
+  });
+});
+
+describe("fold boundary safety", () => {
+  ui("collapse followed by typing preserves the entire fold", {
+    seed: seed({ "": { 页: "前文\n\n> [!fold]+ 标题\n>\n> 内容\n\n后文" } }),
+  }, async (h) => {
+    const { p } = h;
+    await p.locator("#editor .fold-block > p").last().click();
+    await p.locator("#editor .fold-toggle").click();
+    await p.keyboard.type("Z");
+    assert.ok((await h.editor()).includes("> 内容"), "the fold contents must survive");
+    assert.ok((await h.editor()).includes("[!fold]- 标题"), "the fold marker must survive");
+    assert.ok((await h.editor()).includes("Z后文"), "typing goes into the following visible text");
+  });
+
+  ui("Backspace and Delete cannot corrupt fold boundaries", {
+    seed: seed({ "": { 页: "前文\n\n> [!fold]- 标题\n>\n> 隐藏内容\n\n后文" } }),
+  }, async (h) => {
+    const { p } = h;
+    const original = await h.editor();
+    await p.locator("#editor .ProseMirror > p").last().click();
+    await p.keyboard.press("Home");
+    await p.keyboard.press("Backspace");
+    assert.equal(await h.editor(), original, "Backspace leaves preceding fold intact");
+    await p.locator("#editor .ProseMirror > p").first().click();
+    await p.keyboard.press("End");
+    await p.keyboard.press("Delete");
+    assert.equal(await h.editor(), original, "Delete cannot pull the marker outside the fold");
+    await p.locator("#editor .fold-toggle").click();
+    await p.locator("#editor .fold-block > p").last().click();
+    await p.keyboard.press("Home");
+    const expanded = await h.editor();
+    await p.keyboard.press("Backspace");
+    assert.equal(await h.editor(), expanded, "first visible content cannot join hidden marker");
+  });
+});
+
+describe("nested fold cursor", () => {
+  ui("Ctrl+End after a nested closed fold leaves file unchanged until typing", {
+    seed: seed({ "": { 页: "前文\n\n> 外层\n>\n> > [!fold]- 内层\n> >\n> > 隐藏内容" } }),
+  }, async (h) => {
+    const { p } = h;
+    const before = await h.mockFile("", "页");
+    await p.locator("#editor .ProseMirror > p").first().click();
+    await p.keyboard.press("Control+End");
+    await sleep(350);
+    assert.equal(await h.mockFile("", "页"), before, "cursor navigation should not save");
+    await p.keyboard.type("Z");
+    assert.equal(await p.locator("#editor .ProseMirror > p").last().textContent(), "Z");
+    assert.equal(await p.locator("#editor .ProseMirror > p").first().textContent(), "前文");
+    assert.ok((await h.editor()).includes("[!fold]- 内层"));
+  });
+
+  ui("fold serialization preserves nested marker and code backslash", {
+    seed: seed({ "": { 页: "> 外层\n>\n> > [!fold]- 内层\n> >\n> > 内容\n\n~~~text\n> \\[!fold]+ 示例\n~~~" } }),
+  }, async (h) => {
+    const { p } = h;
+    assert.ok(await p.locator("#editor .fold-toggle").count(),
+      JSON.stringify(await p.evaluate(() => window.__minipad.editor().view.state.doc.toJSON())));
+    await p.locator("#editor .fold-toggle").click();
+    const md = await h.editor();
+    assert.ok(md.includes("> > [!fold]+ 内层"), "nested marker is not escaped");
+    assert.ok(md.includes("> \\[!fold]+ 示例"), "code backslash remains intact");
+    await until(async () => (await h.mockFile("", "页")).includes("> > [!fold]+ 内层"), true);
+    await p.reload();
+    assert.equal(await p.locator("#editor .fold-toggle").getAttribute("aria-expanded"), "true");
+  });
+});
+
+describe("fold menus and tables", () => {
+  ui("find expansion, collapse and re-expansion work on the first click", {
+    seed: seed({ "": { 页: "前文\n\n> [!fold]- 标题\n>\n> 秘密内容\n\n后文" } }),
+  }, async (h) => {
+    const { p } = h;
+    const fold = p.locator("#editor .fold-block");
+    await p.locator("#editor .ProseMirror > p").first().click();
+    await p.keyboard.press("Control+f");
+    await p.fill("#find-input", "秘密");
+    await until(async () => fold.locator(".fold-toggle").getAttribute("aria-expanded"), "true");
+    await p.keyboard.press("Escape");
+    await fold.locator(".fold-toggle").click();
+    assert.equal(await fold.locator(".fold-toggle").getAttribute("aria-expanded"), "false");
+    await fold.locator(".fold-toggle").click();
+    assert.equal(await fold.locator(".fold-toggle").getAttribute("aria-expanded"), "true");
+    await p.click("#btn-settings");
+    await settingsPage(p, "edit");
+    await p.uncheck("#set-fold-save");
+    await p.click("#set-save");
+    await fold.locator(".fold-toggle").click();
+    await fold.locator(".fold-title").click();
+    await p.fill("#dialog-input", "新标题");
+    await p.click("#dialog-ok");
+    assert.ok((await h.editor()).includes("[!fold]+ 新标题"),
+      "renaming preserves the saved state instead of the temporary collapsed state");
+  });
+
+  ui("table handle uses hovered column under default system menu", {
+    seed: { ...seed({ "": { 页: "| A | B | C |\n| --- | --- | --- |\n| 1 | 2 | 3 |" } }),
+      settings: { ...SETTINGS, block_context_menu: "system" } },
+  }, async (h) => {
+    const { p } = h;
+    const table = p.locator("#editor table");
+    await table.locator("td").nth(1).hover();
+    await p.locator(".block-handle").click();
+    assert.ok(await p.locator('#ctx button[data-act="block-table-col-delete"]').isVisible());
+    await p.click('#ctx button[data-act="block-table-col-delete"]');
+    assert.deepEqual(await table.locator("th").allTextContents(), ["A", "C"]);
+  });
+});
+
+describe("fold edge regressions", () => {
+  ui("undo inside a fold after collapsing never mismatches transactions", {
+    seed: seed({ "": { 页: "前文\n\n> [!fold]+ 标题\n>\n> 内容\n\n后文" } }),
+  }, async ({ p, editor }) => {
+    const content = p.locator("#editor .fold-block > p").last();
+    await content.click();
+    await p.keyboard.press("End");
+    await p.keyboard.type("X");
+    assert.ok((await editor()).includes("内容X"));
+    await p.locator(".fold-toggle").click();
+    await p.keyboard.press("Control+z");
+    assert.ok(!(await editor()).includes("内容X"), "the latest text edit is undone");
+    assert.ok((await editor()).includes("[!fold]- 标题"), "fold remains intact");
+  });
+
+  ui("external sync collapsing edited content does not discard the incoming version", {
+    seed: seed({ "": { 页: "前文\n\n> [!fold]+ 标题\n>\n> 内容\n\n后文" } }),
+  }, async (h) => {
+    const { p } = h;
+    await p.locator("#editor .fold-block > p").last().click();
+    await p.evaluate(() => { window.__mockFiles["页"] = "前文\n\n> [!fold]- 标题\n>\n> 内容改\n\n后文"; });
+    await h.sync();
+    await until(async () => (await h.editor()).includes("内容改"), true, "incoming edited content is displayed");
+    assert.ok((await h.editor()).includes("[!fold]- 标题"));
+    await p.keyboard.type("Z");
+    assert.ok((await h.editor()).includes("内容改"), "typing never discards the external edit");
+  });
+
+  ui("fold boundary protects list and quote starts from Backspace", {
+    seed: seed({ "": {
+      列表: "前文\n\n> [!fold]- 标题\n>\n> 隐藏内容\n\n- 列表项",
+      引用: "前文\n\n> [!fold]- 标题\n>\n> 隐藏内容\n\n> 普通引用",
+    } }),
+  }, async (h) => {
+    const { p } = h;
+    const listBefore = await h.editor();
+    await p.locator("#editor .ProseMirror > ul li p").first().click();
+    await p.keyboard.press("Home");
+    await p.keyboard.press("Backspace");
+    assert.equal(await h.editor(), listBefore, "the preceding closed fold remains intact");
+    await h.tab("引用").click();
+    const quoteBefore = await h.editor();
+    await p.locator("#editor .ProseMirror > blockquote:not(.fold-block) p").first().click();
+    await p.keyboard.press("Home");
+    await p.keyboard.press("Backspace");
+    assert.equal(await h.editor(), quoteBefore, "the closed fold is not merged into a quote");
+  });
+
+  ui("Delete between adjacent folds never merges marker paragraphs", {
+    seed: seed({ "": { 页: "> [!fold]+ 一\n>\n> 内容一\n\n> [!fold]- 二\n>\n> 内容二" } }),
+  }, async (h) => {
+    const { p } = h;
+    await p.locator("#editor .fold-block").first().locator("p").last().click();
+    await p.keyboard.press("End");
+    const before = await h.editor();
+    await p.keyboard.press("Delete");
+    assert.equal(await h.editor(), before);
+    assert.equal(await p.locator(".fold-block").count(), 2);
+  });
+
+  ui("fold without a title stays untitled and writes after the visible next paragraph", {
+    seed: seed({ "": { 页: "前文\n\n> [!fold]+\n>\n> 内容\n\n后文" } }),
+  }, async (h) => {
+    const { p } = h;
+    await p.locator("#editor .fold-block > p").last().click();
+    await p.locator(".fold-toggle").click();
+    await p.keyboard.type("Z");
+    assert.ok((await h.editor()).includes("[!fold]-\n"), "the original empty title is preserved");
+    assert.ok(!(await h.editor()).includes("[!fold]- 折叠块"), "no default title is inserted");
+    assert.ok((await h.editor()).includes("Z后文"), "typing continues at the following paragraph");
+  });
+
+  ui("Ctrl+End uses an actual position for paste and find after a closed final fold", {
+    seed: seed({ "": { 页: "前文\n\n> [!fold]- 标题\n>\n> 内容" } }),
+  }, async (h) => {
+    const { p } = h;
+    const before = await h.mockFile("", "页");
+    await p.locator("#editor .ProseMirror > p").first().click();
+    await p.keyboard.press("Control+End");
+    await sleep(400);
+    assert.equal(await h.mockFile("", "页"), before, "navigation does not persist an empty paragraph");
+    await p.keyboard.insertText("粘贴内容");
+    assert.ok((await h.editor()).endsWith("粘贴内容"));
+    assert.ok((await h.editor()).includes("[!fold]- 标题"));
+    await p.locator("#editor .ProseMirror > p").first().click();
+    await p.keyboard.press("Control+End");
+    await p.keyboard.press("Control+f");
+    await p.fill("#find-input", "前文");
+    await p.keyboard.press("Escape");
+    await p.keyboard.type("X");
+    assert.ok(!(await h.editor()).startsWith("X前文"), "find resets the navigation cursor");
+  });
+
+  ui("IME composition at the document end does not leave stray Latin letters", {
+    seed: seed({ "": { 页: "前文\n\n> [!fold]- 标题\n>\n> 内容" } }),
+  }, async (h) => {
+    const { p } = h;
+    await p.locator("#editor .ProseMirror > p").first().click();
+    await p.keyboard.press("Control+End");
+    const cdp = await p.context().newCDPSession(p);
+    try {
+      await cdp.send("Input.imeSetComposition", {
+        text: "zhong", selectionStart: 5, selectionEnd: 5,
+      });
+      await cdp.send("Input.insertText", { text: "中文" });
+    } finally { await cdp.detach(); }
+    const md = await h.editor();
+    assert.ok(md.endsWith("中文"), md);
+    assert.ok(!md.includes("z中文"), "IME initial composition letter must not leak");
+  });
+
+  ui("email auto-link setting also refreshes previously opened pages", {
+    seed: seed({ "": { 甲: "name@example.com", 乙: "other@example.com" } }),
+  }, async ({ p }) => {
+    assert.equal(await p.locator("#editor .ProseMirror a").count(), 0);
+    await p.locator("#tabs .tab").nth(1).click();
+    assert.equal(await p.locator("#editor .ProseMirror a").count(), 0);
+    await p.locator("#tabs .tab").first().click();
+    await p.click("#btn-settings");
+    await settingsPage(p, "edit");
+    await p.check("#set-email-links");
+    await p.click("#set-save");
+    await until(() => p.locator("#editor .ProseMirror a").count(), 1);
+    await p.locator("#tabs .tab").nth(1).click();
+    await until(() => p.locator("#editor .ProseMirror a").count(), 1,
+      "switching back uses the latest email parsing setting");
+  });
+
+  ui("read error alert shows all text in narrow windows and can be copied", {
+    seed: seed({ "": { "2026年10月 项目周报（草稿）": "内容" } }),
+  }, async (h) => {
+    const { p } = h;
+    await p.evaluate(() => { window.__mockControl = { unreadable: { "": {
+      "2026年10月 项目周报（草稿）": "读取失败：原文件有无法转换的内容，建议先备份再修复，请勿覆盖原文件。"
+    } }, keepUnreadableContent: true }; });
+    await h.sync();
+    await until(() => p.isVisible("#read-error"), true);
+    const sizes = await p.locator("#read-error").evaluate((el) => ({
+      scroll: el.scrollHeight, visible: el.clientHeight, userSelect: getComputedStyle(el).userSelect,
+      paddingTop: parseFloat(getComputedStyle(document.querySelector("#editor .ProseMirror")).paddingTop),
+      alertHeight: el.getBoundingClientRect().height,
+    }));
+    assert.ok(sizes.visible >= sizes.scroll - 1, JSON.stringify(sizes));
+    assert.equal(sizes.userSelect, "text");
+    assert.ok(sizes.paddingTop >= sizes.alertHeight, JSON.stringify(sizes));
+  });
+});
+
+// ---------- 第四轮复查与复制文本 ----------
+describe("fourth review and copy text", () => {
+  ui("format bar cancels code blocks without losing text", { seed: seed({ "": { 页: "```python 标题\nprint(1)\n```" } }) }, async (h) => {
+    const { p } = h;
+    await p.locator("#editor .codeblock code").click();
+    await p.click('#format-bar [data-cmd="codeblock"]');
+    await until(h.editor, "print(1)", "code button converts to paragraph");
+    await p.keyboard.press("Control+z");
+    await until(h.editor, "```python 标题\nprint(1)\n```", "undo restores language and title");
+    await p.click('#format-bar [data-cmd="block"]');
+    await p.click('#ctx [data-act="h0"]');
+    await until(h.editor, "print(1)", "body dropdown converts code to text");
+  });
+
+  ui("Ctrl+Alt+0 preserves code lines", { seed: seed({ "": { 页: "```python\nprint(1)\nprint(2)\n```" } }) }, async (h) => {
+    const { p } = h;
+    await p.locator("#editor .codeblock code").click();
+    await p.keyboard.press("Control+Alt+0");
+    assert.ok((await h.editor()).includes("print(1)"));
+    assert.ok((await h.editor()).includes("print(2)"));
+    assert.ok(!(await h.editor()).includes("print(1) print(2)"));
+  });
+
+  ui("Backspace cancels code fence input rule cleanly", { seed: seed({ "": { 页: "" } }) }, async (h) => {
+    const { p } = h;
+    await p.click("#editor");
+    await p.keyboard.type("```");
+    await p.keyboard.press("Enter");
+    await p.keyboard.press("Backspace");
+    await until(() => p.locator("#editor .ProseMirror > p").textContent(), "```",
+      "undo restores the three literal backticks");
+    const escaped = "\\`\\`\\`";
+    await until(h.editor, escaped, "Markdown escapes the backticks without adding a newline");
+    await until(() => h.mockFile("", "页"), escaped, "saved text has no invisible newline");
+  });
+
+  ui("deleting final paragraph after a closed fold persists", {
+    seed: seed({ "": { 页: "前文\n\n> [!fold]- 标题\n>\n> 内容\n\n后文" } }),
+  }, async (h) => {
+    const { p } = h;
+    await p.locator("#editor .ProseMirror > p").last().click({ button: "right" });
+    await p.click('#ctx [data-act="block-delete"]');
+    await until(async () => (await h.editor()).includes("后文"), false, "paragraph removed from editor");
+    await until(async () => (await h.mockFile("", "页")).includes("后文"), false, "paragraph removal saved");
+  });
+
+  ui("a multiline paragraph becomes one copy block and retains both lines after reload", {
+    seed: seed({ "": { 页: "第一行\n第二行" } }),
+  }, async (h) => {
+    const { p } = h;
+    await p.locator("#editor .ProseMirror > p").click();
+    await p.click('#format-bar [data-cmd="copytext"]');
+    const copy = p.locator("#editor .codeblock.copyline");
+    await until(() => copy.locator("code").textContent(), "第一行\n第二行", "both lines stay inside one block");
+    await copy.locator(".copy").click();
+    await until(() => p.evaluate(() => navigator.clipboard.readText()), "第一行\n第二行", "copies the complete multiline text");
+    await until(async () => (await h.mockFile("", "页")).includes("```copy\n第一行\n第二行\n```"), true, "saved as multiline copy");
+    await p.reload();
+    await p.locator("#editor .codeblock.copyline code").click();
+    await p.click('#format-bar [data-cmd="copytext"]');
+    assert.equal(await p.locator("#editor .ProseMirror > p").textContent(), "第一行第二行",
+      "restored paragraph retains both visual lines");
+    const value = await h.editor();
+    assert.ok(value.includes("第一行") && value.includes("第二行"), value);
+    assert.ok(!value.includes("第一行第二行"), "line separation survives round-trip");
+  });
+
+  ui("plain code can become multiline copy and revert to code after reopening", {
+    seed: seed({ "": { 页: "```\n第一行\n第二行\n```" } }),
+  }, async (h) => {
+    const { p } = h;
+    await p.locator("#editor .codeblock code").click();
+    await p.click('#format-bar [data-cmd="copytext"]');
+    await until(async () => (await h.editor()).startsWith("```copy minipad-original-code"), true,
+      "origin marker is saved");
+    await p.reload();
+    await p.locator("#editor .codeblock code").click();
+    await p.click('#format-bar [data-cmd="copytext"]');
+    await until(h.editor, "```\n第一行\n第二行\n```", "the original code block is restored");
+    assert.equal(await p.locator("#editor .codeblock:not(.copyline)").count(), 1);
+  });
+
+  ui("language-tagged code rejects copy with a specific message", {
+    seed: seed({ "": { 页: "```js\nconst a = 1\n```" } }),
+  }, async (h) => {
+    const { p } = h;
+    const before = await h.editor();
+    await p.locator("#editor .codeblock code").click();
+    await p.click('#format-bar [data-cmd="copytext"]');
+    assert.match(await h.toast(), /带语言的代码块不能转成复制文本/);
+    assert.equal(await h.editor(), before);
+  });
+
+  ui("selection across paragraphs is rejected with an explanation", {
+    seed: seed({ "": { 页: "第一段\n\n第二段" } }),
+  }, async (h) => {
+    const { p } = h;
+    const before = await h.editor();
+    await p.locator("#editor .ProseMirror > p").first().click();
+    await p.keyboard.press("Control+a");
+    await p.click('#format-bar [data-cmd="copytext"]');
+    assert.match(await h.toast(), /请在同一个段落中选择文字/);
+    assert.equal(await h.editor(), before);
+  });
+
+  ui("empty paragraph cannot become a copy block and empty copy does not clear clipboard", {
+    seed: seed({ "": { 空白: "", 空复制: "```copy\n```", 空代码: "```\n```" } }),
+  }, async (h) => {
+    const { p } = h;
+    await p.click("#editor");
+    await p.click('#format-bar [data-cmd="copytext"]');
+    assert.equal(await p.locator("#editor .codeblock").count(), 0);
+    assert.match(await h.toast(), /空段落不能转成复制文本/);
+    await h.tab("空代码").click();
+    await p.locator("#editor .codeblock code").click();
+    await p.click('#format-bar [data-cmd="copytext"]');
+    assert.match(await h.toast(), /空代码块不能转成复制文本/);
+    assert.equal(await p.locator("#editor .codeblock.copyline").count(), 0);
+    await h.tab("空复制").click();
+    await p.evaluate(() => navigator.clipboard.writeText("保留剪贴板"));
+    assert.ok(await p.locator("#editor .codeblock.copyline .copy").isDisabled());
+    assert.equal(await p.evaluate(() => navigator.clipboard.readText()), "保留剪贴板");
+  });
+
+  ui("copy blocks keep their own toolbar state and allow Enter to create new lines", {
+    seed: seed({ "": { 页: "```copy\n第一行\n```" } }),
+  }, async (h) => {
+    const { p } = h;
+    await p.locator("#editor .codeblock code").click();
+    assert.ok(await p.locator('#format-bar [data-cmd="copytext"]').evaluate((el) => el.classList.contains("on")));
+    assert.ok(!(await p.locator('#format-bar [data-cmd="codeblock"]').evaluate((el) => el.classList.contains("on"))));
+    assert.equal((await p.textContent('#format-bar [data-cmd="block"]')).trim(), "复制文本");
+    assert.equal(await p.locator('#format-bar [data-cmd="copytext"] svg').count(), 1);
+    await p.keyboard.press("End");
+    await p.keyboard.press("Enter");
+    await p.keyboard.type("第二行");
+    await until(async () => (await h.editor()).includes("第一行\n第二行"), true,
+      "Enter adds another line instead of exiting copy");
+  });
+
+  ui("quotation button unwraps normal quotes but does not nest inside folds", {
+    seed: seed({ "": { 引用: "> 普通引用", 折叠: "> [!fold]+ 标题\n>\n> 内容" } }),
+  }, async (h) => {
+    const { p } = h;
+    await p.locator("#editor blockquote p").click();
+    await p.click('#format-bar [data-cmd="quote"]');
+    await until(h.editor, "普通引用", "another quote click exits the quote");
+    await h.tab("折叠").click();
+    await p.locator("#editor .fold-block p").last().click();
+    assert.ok(!(await p.locator('#format-bar [data-cmd="quote"]').evaluate((el) => el.classList.contains("on"))));
+    const before = await h.editor();
+    await p.click('#format-bar [data-cmd="quote"]');
+    assert.equal(await h.editor(), before, "clicking quote in a fold does not add nested quotes");
+    assert.match(await h.toast(), /折叠块里不能再加引用/);
+  });
+
+  ui("Backspace removes an empty first code block", {
+    seed: seed({ "": { 页: "```\n```" } }),
+  }, async (h) => {
+    const { p } = h;
+    await p.locator("#editor .codeblock code").click();
+    await p.keyboard.press("Backspace");
+    await until(() => p.locator("#editor .codeblock").count(), 0, "empty first code is removed");
+    assert.equal(await p.locator("#editor .ProseMirror > p").count(), 1);
+  });
+
+  ui("copy text with trailing blank lines refuses unsafe conversions and preserves saved data", {
+    seed: seed({ "": { 页: "```copy\n第一行\n第二行\n\n\n```" } }),
+  }, async (h) => {
+    const { p } = h;
+    const before = await h.editor();
+    const originalText = await p.locator("#editor .codeblock code").textContent();
+    assert.equal(originalText, "第一行\n第二行\n\n");
+    await p.locator("#editor .codeblock code").click();
+    await p.click('#format-bar [data-cmd="copytext"]');
+    assert.match(await h.toast(), /末尾有换行/);
+    assert.equal(await h.editor(), before, "copy button refuses to discard trailing lines");
+    await p.click('#format-bar [data-cmd="block"]');
+    await p.click('#ctx [data-act="h0"]');
+    assert.equal(await h.editor(), before, "body dropdown does not bypass safety");
+    await p.keyboard.press("Control+Alt+0");
+    assert.equal(await h.editor(), before, "keyboard shortcut does not bypass safety");
+    await p.locator("#editor .codeblock code").click({ button: "right" });
+    await p.click('#ctx [data-act="block-convert"]');
+    assert.ok(await p.isDisabled('#ctx [data-act="block-type-paragraph"]'),
+      "block menu cannot discard trailing lines either");
+    await h.sync();
+    await until(() => h.mockFile("", "页"), before, "the complete source is saved");
+    await p.reload();
+    assert.equal(await p.locator("#editor .codeblock code").textContent(), originalText,
+      "every trailing blank line survives reopening");
+    await p.locator("#editor .codeblock code").click();
+    await p.click('#format-bar [data-cmd="codeblock"]');
+    await until(h.editor, "```\n第一行\n第二行\n\n\n```", "the code button turns copy text into normal code with every line");
+  });
+
+  ui("block menu preserves soft breaks when converting plain paragraph to code", {
+    seed: seed({ "": { 页: "第一行\n第二行" } }),
+  }, async (h) => {
+    const { p } = h;
+    await p.locator("#editor .ProseMirror > p").click({ button: "right" });
+    await p.click('#ctx [data-act="block-convert"]');
+    assert.equal(await p.isDisabled('#ctx [data-act="block-type-code_block"]'), false);
+    await p.click('#ctx [data-act="block-type-code_block"]');
+    assert.equal(await p.locator("#editor .codeblock code").textContent(), "第一行\n第二行",
+      "Shift+Enter line break is kept inside the code block");
+    await until(h.editor, "```\n第一行\n第二行\n```");
+  });
+
+  ui("block menu rejects converting rich text or links into plain code", {
+    seed: seed({ "": { 页: "前文 **粗体** [链接](https://example.com) 尾" } }),
+  }, async (h) => {
+    const { p } = h;
+    const before = await h.editor();
+    await p.locator("#editor .ProseMirror > p").click({ button: "right" });
+    await p.click('#ctx [data-act="block-convert"]');
+    assert.ok(await p.isDisabled('#ctx [data-act="block-type-code_block"]'));
+    assert.equal(await h.editor(), before, "links and formatting stay intact");
+    await h.sync();
+    assert.equal(await h.mockFile("", "页"), before);
+  });
+
+  ui("block menu converting existing code to code keeps language and title", {
+    seed: seed({ "": { 页: "```python 打招呼\nprint(1)\n```" } }),
+  }, async (h) => {
+    const { p } = h;
+    const before = await h.editor();
+    await p.locator("#editor .codeblock code").click({ button: "right" });
+    await p.click('#ctx [data-act="block-convert"]');
+    await p.click('#ctx [data-act="block-type-code_block"]');
+    assert.equal(await h.editor(), before, "converting a code block to itself is lossless");
+    assert.equal(await p.locator("#editor .cb-lang").inputValue(), "python");
+    assert.equal(await p.locator("#editor .cb-title").inputValue(), "打招呼");
+    await h.sync();
+    assert.equal(await h.mockFile("", "页"), before);
+  });
+
+  ui("nonempty blocks cannot be converted to a horizontal rule but empty paragraphs can", {
+    seed: seed({ "": { 有内容: "重要原文", 空白: "" } }),
+  }, async (h) => {
+    const { p } = h;
+    await p.locator("#editor .ProseMirror > p").click({ button: "right" });
+    await p.click('#ctx [data-act="block-convert"]');
+    assert.ok(await p.isDisabled('#ctx [data-act="block-type-hr"]'));
+    assert.equal(await h.editor(), "重要原文");
+    await h.tab("空白").click();
+    await p.locator("#editor .ProseMirror > p").click({ button: "right" });
+    await p.click('#ctx [data-act="block-convert"]');
+    assert.equal(await p.isDisabled('#ctx [data-act="block-type-hr"]'), false);
+    await p.click('#ctx [data-act="block-type-hr"]');
+    assert.equal(await p.locator("#editor .ProseMirror > hr").count(), 1);
+  });
+
+  ui("a literal [!fold] prefix in an ordinary quote can still be unwrapped", {
+    seed: seed({ "": { 页: "> [!fold]普通引用" } }),
+  }, async (h) => {
+    const { p } = h;
+    await p.locator("#editor blockquote p").click();
+    await p.click('#format-bar [data-cmd="quote"]');
+    await until(() => p.locator("#editor .ProseMirror > p").textContent(), "[!fold]普通引用",
+      "only valid folding markers suppress quote unwrapping");
+    assert.equal(await p.locator("#editor blockquote").count(), 0);
+  });
+
+  ui("copy text has a compact toolbar action, clipboard and Markdown persistence", {
+    seed: seed({ "": { 页: "npm install" } }),
+  }, async (h) => {
+    const { p } = h;
+    await p.locator("#editor .ProseMirror > p").click();
+    await p.click('#format-bar [data-cmd="copytext"]');
+    await until(h.editor, "```copy\nnpm install\n```", "copy block persists in Markdown");
+    assert.equal(await p.locator("#editor .codeblock.copyline").count(), 1);
+    await p.locator("#editor .codeblock.copyline .copy").click();
+    await until(() => p.evaluate(() => navigator.clipboard.readText()), "npm install", "one-click copy");
+    await until(() => h.mockFile("", "页"), "```copy\nnpm install\n```", "saved to file");
+    await p.click('#format-bar [data-cmd="copytext"]');
+    await until(h.editor, "npm install", "copy block can be turned into text");
+  });
+
+  ui("copy text refuses a table cell without splitting the table or saving", {
+    seed: seed({ "": { 页: "| A | B |\n| --- | --- |\n| 单元格 | 另一格 |\n| 下行 | 数据 |" } }),
+  }, async (h) => {
+    const { p } = h;
+    const before = await h.editor();
+    const file = await h.mockFile("", "页");
+    await p.locator("#editor table td").first().click();
+    await p.click('#format-bar [data-cmd="copytext"]');
+    assert.match(await h.toast(), /复制文本只能放没有格式的文字/);
+    assert.equal(await h.editor(), before, "table Markdown stays unchanged");
+    assert.equal(await p.locator("#editor table").count(), 1, "one intact table");
+    assert.equal(await p.locator("#editor table tr").count(), 3, "all rows remain");
+    await h.sync();
+    assert.equal(await h.mockFile("", "页"), file, "the file is unchanged");
+  });
+
+  ui("copy text refuses the first paragraph in a list and a task", {
+    seed: seed({ "": { 列表: "- 列表项", 任务: "- [ ] 任务项" } }),
+  }, async (h) => {
+    const { p } = h;
+    for (const [name, expected] of [["列表", "- 列表项"], ["任务", "- [ ] 任务项"]]) {
+      if (name === "任务") await h.tab(name).click();
+      await p.locator("#editor ul li p").first().click();
+      await p.click('#format-bar [data-cmd="copytext"]');
+      assert.match(await h.toast(), /复制文本只能放没有格式的文字/);
+      assert.equal(await h.editor(), expected, "list or task stays intact");
+      assert.equal(await p.locator("#editor ul li p").count(), 1, "no extra paragraph inserted");
+      await h.sync();
+      assert.equal(await h.mockFile("", name), expected, "no change to the file");
+    }
+  });
+
+  ui("copy text rejects a formatted paragraph in the bar and block menu", {
+    seed: seed({ "": { 页: '前文 **粗体** [链接](https://example.com) <span style="color: #df2a3f">红字</span> 尾' } }),
+  }, async (h) => {
+    const { p } = h;
+    const before = await h.editor();
+    const file = await h.mockFile("", "页");
+    const para = p.locator("#editor .ProseMirror > p");
+    await para.click();
+    await p.click('#format-bar [data-cmd="copytext"]');
+    assert.match(await h.toast(), /复制文本只能放没有格式的文字/);
+    assert.equal(await h.editor(), before, "marks and links are retained");
+    await para.click({ button: "right" });
+    await p.click('#ctx [data-act="block-convert"]');
+    assert.ok(await p.isDisabled('#ctx [data-act="block-type-copytext"]'), "block menu rejects the same source");
+    assert.equal(await h.editor(), before);
+    await h.sync();
+    assert.equal(await h.mockFile("", "页"), file);
+  });
+
+  ui("selected text can become a copy line from the floating toolbar", {
+    seed: { ...seed({ "": { 页: "选中的纯文字" } }), settings: { ...SETTINGS, sel_bar_items: ["copytext"] } },
+  }, async (h) => {
+    const { p } = h;
+    await p.locator("#editor .ProseMirror > p").click();
+    await p.keyboard.press("End");
+    await p.keyboard.press("Shift+ArrowLeft");
+    await p.keyboard.press("Shift+ArrowLeft");
+    await p.locator('#toolbar [data-cmd="copytext"]').click();
+    await until(() => p.locator("#editor .codeblock.copyline").count(), 1,
+      "floating toolbar converts the full paragraph");
+    assert.equal(await p.locator("#editor .codeblock code").textContent(), "选中的纯文字");
+    await until(async () => (await h.mockFile("", "页")).includes("copy"),
+      true, "the converted paragraph is saved");
+  });
+
+  ui("block menu refuses titled or multiline code and headings without data loss", {
+    seed: seed({ "": { 代码: "~~~python 标题\nprint(1)\nprint(2)\n~~~", 标题: "## 二级标题" } }),
+  }, async (h) => {
+    const { p } = h;
+    const before = await h.editor();
+    await p.locator("#editor .codeblock code").click({ button: "right" });
+    await p.click('#ctx [data-act="block-convert"]');
+    assert.ok(await p.isDisabled('#ctx [data-act="block-type-copytext"]'));
+    assert.equal(await h.editor(), before);
+    await h.tab("标题").click();
+    const heading = await h.editor();
+    await p.locator("#editor h2").click();
+    await p.click('#format-bar [data-cmd="copytext"]');
+    assert.match(await h.toast(), /复制文本只能放没有格式的文字/);
+    assert.equal(await h.editor(), heading, "heading level is preserved");
+  });
+
+  ui("the quote button moves a whole list out of a quote instead of unwrapping one item", {
+    seed: seed({ "": { 页: "> - 列表项\n> - 第二项\n\n> 第一段\n>\n> 第二段" } }),
+  }, async (h) => {
+    const { p } = h;
+    await p.locator("#editor blockquote li p").first().click();
+    await p.click('#format-bar [data-cmd="quote"]');
+    await until(h.editor, "- 列表项\n- 第二项\n\n> 第一段\n>\n> 第二段", "the list leaves the quote with both items");
+    await p.locator("#editor blockquote p").first().click();
+    await p.click('#format-bar [data-cmd="quote"]');
+    await until(h.editor, "- 列表项\n- 第二项\n\n第一段\n\n> 第二段", "a paragraph still leaves a longer quote on its own");
+  });
+
+  ui("in a copy block the code button and the block menu make normal code", {
+    seed: seed({ "": { 按钮: "```copy\nnpm i\n```", 菜单: "```copy minipad-original-code\nnpm i\n```" } }),
+  }, async (h) => {
+    const { p } = h;
+    await p.locator("#editor .codeblock code").click();
+    await p.click('#format-bar [data-cmd="codeblock"]');
+    await until(h.editor, "```\nnpm i\n```", "the code button gives normal code");
+    assert.ok(await p.locator('#format-bar [data-cmd="codeblock"]').evaluate((el) => el.classList.contains("on")));
+    await h.tab("菜单").click();
+    await p.locator("#editor .codeblock code").click({ button: "right" });
+    await p.click('#ctx [data-act="block-convert"]');
+    await p.click('#ctx [data-act="block-type-code_block"]');
+    await until(h.editor, "```\nnpm i\n```", "the block menu gives normal code");
+    assert.equal(await p.locator("#editor .codeblock.copyline").count(), 0);
+  });
+
+  ui("block menu keeps the trailing lines of a copy block inside a quote or a fold", {
+    seed: seed({ "": { 引用: "> ```copy\n> npm i\n>\n> ```", 折叠: "> [!fold]+ 标题\n>\n> ```copy\n> npm i\n>\n> ```" } }),
+  }, async (h) => {
+    const { p } = h;
+    for (const name of ["引用", "折叠"]) {
+      if (name === "折叠") await h.tab(name).click();
+      const before = await h.editor();
+      await p.locator("#editor .ProseMirror > blockquote").click({ button: "right", position: { x: 4, y: 4 } });
+      await p.click('#ctx [data-act="block-convert"]');
+      assert.ok(await p.isDisabled('#ctx [data-act="block-type-paragraph"]'), `${name}: no plain text that drops the blank line`);
+      await p.keyboard.press("Escape");
+      assert.equal(await h.editor(), before);
+    }
+  });
+
+  ui("the third Enter at the end of a copy block leaves it like a code block", {
+    seed: seed({ "": { 页: "```copy\nnpm i\n```\n\n尾" } }),
+  }, async (h) => {
+    const { p } = h;
+    await p.locator("#editor .codeblock code").click();
+    await p.keyboard.press("End");
+    for (let i = 0; i < 3; i++) await p.keyboard.press("Enter");
+    await p.keyboard.type("x");
+    await until(h.editor, "```copy\nnpm i\n```\n\nx\n\n尾", "no blank lines are left in the copy block");
+  });
+
+  ui("a line break at the end of a paragraph is dropped when it becomes copy text", {
+    seed: seed({ "": { 页: "abc" } }),
+  }, async (h) => {
+    const { p } = h;
+    await p.locator("#editor .ProseMirror > p").click();
+    await p.keyboard.press("End");
+    await p.keyboard.press("Shift+Enter");
+    await p.click('#format-bar [data-cmd="copytext"]');
+    await until(h.editor, "```copy\nabc\n```", "the format bar drops the trailing break");
+    await p.click('#format-bar [data-cmd="copytext"]');
+    await until(h.editor, "abc", "and the copy text turns back into the paragraph");
+    await p.keyboard.press("End");
+    await p.keyboard.press("Shift+Enter");
+    await p.locator("#editor .ProseMirror > p").click({ button: "right" });
+    await p.click('#ctx [data-act="block-convert"]');
+    await p.click('#ctx [data-act="block-type-copytext"]');
+    await until(h.editor, "```copy\nabc\n```", "the block menu drops it too");
   });
 });
 
@@ -1358,6 +2393,63 @@ describe("code blocks", () => {
     assert.equal(await h.editor(), "```js\nlet a = 1\n```");
   });
 
+  ui("Enter at a blank final code line opens a normal paragraph with heading formatting", {
+    seed: seed({ "": { 页: "```js\nconst a = 1\n```" } }),
+  }, async (h) => {
+    const { p } = h;
+    await p.click("#editor .codeblock code");
+    await p.keyboard.press("Control+End");
+    await p.keyboard.press("Enter");
+    await p.keyboard.type("const b = 2");
+    assert.equal(await h.editor(), "```js\nconst a = 1\nconst b = 2\n```",
+      "an ordinary Enter still adds a line inside the code");
+    await p.keyboard.press("Enter");
+    await p.keyboard.press("Enter");
+    await p.keyboard.press("Enter");
+    await p.keyboard.type("正文");
+    assert.equal(await h.editor(), "```js\nconst a = 1\nconst b = 2\n```\n\n正文");
+    assert.equal(await p.locator("#editor .ProseMirror > p").count(), 1,
+      "the cursor exits the code block into a paragraph");
+    await p.click('#format-bar [data-cmd="block"]');
+    await p.click('#ctx button[data-act="h2"]');
+    assert.equal(await h.editor(), "```js\nconst a = 1\nconst b = 2\n```\n\n## 正文",
+      "the following paragraph can become a heading");
+    await until(() => h.mockFile("", "页"), "```js\nconst a = 1\nconst b = 2\n```\n\n## 正文",
+      "new heading is saved as Markdown");
+  });
+
+  ui("Ctrl+Enter exits a code block with following content; task shortcut still works", {
+    seed: seed({ "": { 页: "```python\nprint(1)\n```\n\n后段" } }),
+  }, async (h) => {
+    const { p } = h;
+    await p.click("#editor .codeblock code");
+    await p.keyboard.press("Control+Home");
+    await p.keyboard.press("Control+Enter");
+    await p.keyboard.type("新正文");
+    assert.equal(await h.editor(), "```python\nprint(1)\n```\n\n新正文\n\n后段",
+      "Ctrl+Enter adds a paragraph after the code block without changing its content");
+    await p.keyboard.press("Control+Enter");
+    assert.match(await h.editor(), /- \[ \] 新正文/, "Ctrl+Enter still creates a task outside code blocks");
+  });
+
+  ui("block menu and code keyboard exit work together", {
+    seed: seed({ "": { 页: "```js\nconst a = 1\n```" } }),
+  }, async (h) => {
+    const { p } = h;
+    await p.locator("#editor .codeblock code").click({ button: "right" });
+    await p.click('#ctx button[data-act="block-insert-after"]');
+    await p.click('#ctx button[data-act="block-type-paragraph"]');
+    await p.keyboard.type("菜单段落");
+    assert.equal(await h.editor(), "```js\nconst a = 1\n```\n\n菜单段落",
+      "the block menu adds a paragraph");
+
+    await p.locator("#editor .codeblock code").click();
+    await p.keyboard.press("Control+Enter");
+    await p.keyboard.type("快捷段落");
+    assert.equal(await h.editor(), "```js\nconst a = 1\n```\n\n快捷段落\n\n菜单段落",
+      "keyboard exit inserts another paragraph without replacing the menu-created one");
+  });
+
   ui("code line numbers can be turned off in the settings", { seed: seed(CODE_PAGE) }, async (h) => {
     const { p } = h;
     await p.locator("#editor .codeblock").first().waitFor();
@@ -1386,7 +2478,8 @@ describe("format bar", () => {
   const fb = (cmd) => `#format-bar [data-cmd="${cmd}"]`;
   // 0.2.9 的按钮;0.3.0 在最后加了竖线和查找
   const OLD_BAR = "undo redo sep1 block sep2 strong em strike code link color bg sep3 list ol task sep4 quote codeblock table hr".split(" ");
-  const DEFAULT_BAR = [...OLD_BAR, "sep5", "find"];
+  const DEFAULT_BAR = [...OLD_BAR.slice(0, OLD_BAR.indexOf("codeblock")), "copytext",
+    ...OLD_BAR.slice(OLD_BAR.indexOf("codeblock")), "sep5", "find"];
 
   ui("the format bar formats text, follows the cursor and can be hidden", { seed: seed({ "": { 页: "一段文字\n\n第二段" } }) }, async (h) => {
     const { p } = h;
@@ -1523,7 +2616,8 @@ describe("format bar", () => {
     const { p } = h;
     const bar = await p.$$eval("#format-bar .fb-items > [data-cmd]", (els) => els.map((e) => e.dataset.cmd));
     assert.equal(bar[0], "hr", "the saved order is used");
-    assert.equal(bar.indexOf("table"), bar.indexOf("codeblock") + 1, "the new button sits after the one it follows by default");
+    assert.equal(bar.indexOf("copytext"), bar.indexOf("quote") + 1, "the copy-text button is restored next to quote");
+    assert.equal(bar.indexOf("table"), bar.indexOf("codeblock") + 1, "table stays after codeblock");
     assert.deepEqual(bar.slice(1, 3), ["sep5", "find"], "so do the find button and its divider from 0.3.0");
     assert.equal(bar.filter((id) => id === "strong").length, 1, "no duplicates");
     assert.ok(!bar.includes("nope"), "unknown names are dropped");
@@ -3086,6 +4180,62 @@ const MINIPAD2_ESCAPES = [
   ["www.a.com/b_c*d 和 www.。", "www.a.com/b_c*d 和 www.。"],
 ];
 
+describe("email link recognition", () => {
+  const MD = "写信给 name@example.com，访问 https://example.com\n\n[手动邮箱](mailto:contact@example.com)";
+
+  ui("bare email stays plain; URL and explicit mailto links remain clickable", {
+    seed: seed({ "": { 页: MD } }),
+  }, async (h) => {
+    const { p } = h;
+    const links = p.locator("#editor .ProseMirror a");
+    assert.equal(await links.count(), 2);
+    assert.deepEqual(await links.evaluateAll((els) => els.map((el) => el.getAttribute("href"))),
+      ["https://example.com", "mailto:contact@example.com"]);
+    assert.ok(await p.locator("#editor .ProseMirror > p").first().textContent().then((text) =>
+      text.includes("name@example.com")), "email remains visible as text");
+    assert.ok(!(await h.editor()).includes("<name@example.com>"), "bare email is not serialized as a link");
+    assert.equal(await h.mockFile("", "页"), MD, "opening the note does not rewrite it");
+  });
+
+  ui("typing and reopening an email keeps it as ordinary text", {
+    seed: seed({ "": { 页: "联系：" } }),
+  }, async (h) => {
+    const { p } = h;
+    await p.locator("#editor .ProseMirror > p").click();
+    await p.keyboard.press("Control+End");
+    await p.keyboard.type("name@example.com");
+    await p.keyboard.press("Space");
+    assert.equal(await p.locator("#editor .ProseMirror a").count(), 0);
+    const markdown = await h.editor();
+    assert.ok(markdown.includes("name@example.com"), JSON.stringify({markdown,
+      text: await p.locator("#editor .ProseMirror").textContent()}));
+    await until(async () => (await h.mockFile("", "页")).includes("name@example.com"), true);
+    await p.reload();
+    assert.equal(await p.locator("#editor .ProseMirror a").count(), 0,
+      "a saved bare email stays plain after reloading");
+  });
+
+  ui("the email link setting toggles recognition without rewriting the note", {
+    seed: seed({ "": { 页: MD } }),
+  }, async (h) => {
+    const { p } = h;
+    const links = p.locator("#editor .ProseMirror a");
+    await p.click("#btn-settings");
+    await settingsPage(p, "edit");
+    assert.equal(await p.isChecked("#set-email-links"), false);
+    await p.check("#set-email-links");
+    await p.click("#set-save");
+    await until(async () => links.count(), 3, "turning on recognition updates current note");
+    assert.equal(await h.mockFile("", "页"), MD, "changing settings does not rewrite notes");
+    await p.click("#btn-settings");
+    await settingsPage(p, "edit");
+    await p.uncheck("#set-email-links");
+    await p.click("#set-save");
+    await until(async () => links.count(), 2, "turning it back off preserves explicit mailto links");
+    assert.equal(await h.mockFile("", "页"), MD);
+  });
+});
+
 describe("0.3.0: import from minipad2", () => {
   const MP2 = {
     pickFolder: "D:\\Tools\\minipad2",
@@ -3205,7 +4355,7 @@ describe("0.3.2: settings in five categories", () => {
     assert.ok(await p.isHidden("#set-hotkey"));
     assert.deepEqual(
       await p.$$eval('.set-page[data-page="edit"] h3', (els) => els.map((e) => e.textContent)),
-      ["编辑器", "悬浮工具栏", "悬浮目录", "查找替换"],
+      ["编辑器", "块管理", "悬浮工具栏", "悬浮目录", "查找替换"],
       "with a small heading for each part",
     );
     await p.keyboard.press("ArrowDown");

@@ -103,6 +103,9 @@ class CodeBlockView {
     this.contentDOM = document.createElement("code");
     pre.append(this.gutter, this.contentDOM);
     this.dom.append(head, pre);
+    this.dom.addEventListener("click", (e) => {
+      if (this.node.attrs.language === "copy" && !view.editable && !e.target.closest("button,input")) this.copyCode();
+    });
     this.resize = new ResizeObserver(() => this.layoutLines());
     this.resize.observe(this.contentDOM);
     this.sync();
@@ -193,13 +196,14 @@ class CodeBlockView {
   }
 
   async copyCode() {
+    if (!this.node.textContent) return;
     const ok = await copyText(this.node.textContent);
     this.copy.innerHTML = ok ? ICON_DONE : ICON_COPY;
     this.copy.title = ok ? "已复制" : "复制失败";
     this.copy.classList.toggle("done", ok);
     setTimeout(() => {
       this.copy.innerHTML = ICON_COPY;
-      this.copy.title = "复制代码";
+      this.copy.title = this.node.attrs.language === "copy" ? "复制文本" : "复制代码";
       this.copy.classList.remove("done");
     }, 1400);
   }
@@ -212,6 +216,9 @@ class CodeBlockView {
     this.fit(this.title);
     this.fit(this.lang);
     this.dom.classList.toggle("no-title", !title);
+    this.dom.classList.toggle("copyline", language === "copy");
+    this.copy.title = language === "copy" ? "复制文本" : "复制代码";
+    this.copy.disabled = language === "copy" && !this.node.textContent;
     const lines = lineCount(this.node);
     this.count.textContent = `${lines} 行`;
     this.dom.style.setProperty("--digits", String(String(lines).length));
@@ -271,12 +278,12 @@ export function highlightLanguage(lang) {
 function highlightRanges(node) {
   if (cache.has(node)) return cache.get(node);
   const text = node.textContent;
-  const lang = highlightLanguage(node.attrs.language);
+  const lang = node.attrs.language === "copy" ? null : highlightLanguage(node.attrs.language);
   let html = null;
   try {
     if (lang) html = hljs.highlight(text, { language: lang, ignoreIllegals: true }).value;
     // 没写语言(或者语言不认识)时猜一个来上色,猜的不一定对,所以不显示猜出来的语言名
-    else if (text.length < 20000) html = hljs.highlightAuto(text).value;
+    else if (node.attrs.language !== "copy" && text.length < 20000) html = hljs.highlightAuto(text).value;
   } catch (_) {}
   const ranges = [];
   if (html) {

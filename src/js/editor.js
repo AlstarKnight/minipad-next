@@ -17,6 +17,7 @@ import {
   history,
   clipboard,
   $prose,
+  $remark,
   Plugin,
   PluginKey,
   Decoration,
@@ -32,10 +33,13 @@ import {
 } from "../vendor/milkdown.js";
 import { $ } from "./dom.js";
 import { codeBlockWithTitle, codeBlockView, codeHighlight } from "./codeblock.js";
+import { blockManager, applyBlockSettings } from "./blocks.js";
+import { foldBlocks, revealFolds, safeDocumentEnd, setFoldPersistence } from "./foldblocks.js";
 import { formatBar, selectionBar, setFormatBarItems, setSelectionBar } from "./formatbar.js";
 import { colorSpans, colorHandlers, textColor, textBg } from "./colors.js";
 import { findPlugin, reapplyFind } from "./find.js";
 import { outlinePlugin } from "./outline.js";
+import { codeToText } from "./toolbar.js";
 
 let editor = null;
 let view = null;
@@ -47,7 +51,35 @@ let onChange = () => {};
 // 别处来的修改(换页、文件在别处被改过):不算用户的修改,不触发保存
 const EXTERNAL = "minipad-external";
 
+// 邮箱默认按普通文字显示，保留手动指定的 mailto 链接与网址自动识别。
+let autoEmailLinks = false;
+let emailLinkVersion = 0;
+// GFM 会把裸邮箱解析成 mailto 链接。对照原始 Markdown 的源码区间，仅还原
+// 裸邮箱生成的链接，避免误伤 [标题](mailto:...) 或 <name@example.com>。
+const plainEmails = $remark("plainEmails", () => () => (tree, file) => {
+  if (autoEmailLinks) return;
+  const markdown = String(file.value ?? "");
+  const walk = (parent) => {
+    if (!Array.isArray(parent.children)) return;
+    parent.children = parent.children.map((child) => {
+      const text = child.children?.length === 1 && child.children[0].type === "text"
+        ? child.children[0].value : null;
+      const start = child.position?.start?.offset;
+      const end = child.position?.end?.offset;
+      if (child.type === "link" && typeof text === "string" &&
+        child.url?.toLowerCase() === ("mailto:" + text).toLowerCase() &&
+        Number.isInteger(start) && Number.isInteger(end) &&
+        markdown.slice(start, end) === text) {
+        return { type: "text", value: text, position: child.position };
+      }
+      walk(child);
+      return child;
+    });
+  };
+  walk(tree);
+});
 const parse = (md) => ctx.get(parserCtx)(md);
+// 保留引用块的 [!fold] 识别标记，避免 remark-stringify 逃逸 '['。
 const serialize = (doc) => ctx.get(serializerCtx)(doc);
 
 // ---------- 用户的修改 ----------
@@ -212,6 +244,28 @@ function enterInTask(state, dispatch) {
   return splitListItem(item.type, { ...item.attrs, checked: false })(state, dispatch);
 }
 
+// 代码块最后一行留空后再按 Enter,从代码块退出到普通段落。
+// Ctrl+Enter 可以在代码块的任意位置直接退出,不影响其它地方的任务快捷键。
+let codeExitMode = "blank3";
+function exitCodeBlock(state, dispatch, afterBlank = false) {
+  const { $from, empty } = state.selection;
+  if (!empty || !$from.parent.type.spec.code) return false;
+  const count = codeExitMode === "blank2" ? 1 : 2;
+  if (afterBlank && (codeExitMode === "ctrl" || $from.parentOffset !== $from.parent.content.size ||
+    !$from.parent.textContent.endsWith("\n".repeat(count)))) return false;
+  if (dispatch) {
+    const tr = state.tr;
+    const end = $from.after();
+    // 退出时删除专门用于退出的末尾空行，保留代码中间的空白行。
+    const remove = afterBlank ? (codeExitMode === "blank2" ? 1 : 2) : 0;
+    if (remove) tr.delete($from.pos - remove, $from.pos);
+    const at = end - remove;
+    tr.insert(at, state.schema.nodes.paragraph.create());
+    dispatch(tr.setSelection(TextSelection.create(tr.doc, at + 1)).scrollIntoView());
+  }
+  return true;
+}
+
 // 在最后一个代码块(或表格)的最后一行按 ↓:后面补一个空段落,好接着往下写
 function downOutOfBlock(state, dispatch) {
   const { $from, empty } = state.selection;
@@ -254,6 +308,31 @@ function clickLink(v, e) {
   return true;
 }
 
+// 回退 Markdown 代码围栏输入规则时，不保留触发规则的 Enter 换行。
+function undoCodeRule(state, dispatch) {
+  const undoable = state.plugins.find((p) => p.spec.isInputRules)?.getState(state);
+  if (!undoable || undoable.text !== "\n") return false;
+  if (dispatch) {
+    const tr = state.tr;
+    const steps = undoable.transform.steps;
+    for (let i = steps.length - 1; i >= 0; i--) tr.step(steps[i].invert(undoable.transform.docs[i]));
+    dispatch(tr);
+  }
+  return true;
+}
+
+// 页首空代码块可以退格回到正文，避免只能依赖格式栏解除。
+function removeEmptyFirstCode(state, dispatch) {
+  const { $from, empty } = state.selection;
+  if (!empty || $from.depth !== 1 || $from.before() !== 0 ||
+    !$from.parent.type.spec.code || $from.parent.content.size) return false;
+  if (dispatch) {
+    const tr = state.tr.replaceWith(0, $from.parent.nodeSize, state.schema.nodes.paragraph.create());
+    dispatch(tr.setSelection(TextSelection.create(tr.doc, 1)));
+  }
+  return true;
+}
+
 // Ctrl+B:选中了文字就加粗;没选中时留给窗口(打开笔记本列表)
 let emptyBold = () => {};
 
@@ -265,12 +344,23 @@ const keys = $prose(
           if (e.isComposing || e.keyCode === 229) return false;
           if (e.key === "Tab" || e.key === "Enter" || e.key === "ArrowDown" || e.key.toLowerCase() === "b") readSelection(v);
           const mod = e.ctrlKey || e.metaKey;
+          // 编辑器里明确处理 Ctrl+End，避免换页后浏览器原生选区偶尔跳到段落开头。
+          if (mod && e.key === "End" && !e.shiftKey && !e.altKey) {
+            v.dispatch(safeDocumentEnd(v));
+            e.preventDefault();
+            return true;
+          }
           let run = null;
           if (e.key === "Tab" && !mod && !e.altKey) run = e.shiftKey ? untab : tab;
-          else if (e.key === "Enter" && mod && !e.shiftKey && !e.altKey) run = toggleTask;
+          else if (e.key === "Enter" && mod && !e.shiftKey && !e.altKey) run = (state, dispatch) =>
+            exitCodeBlock(state, dispatch) || toggleTask(state, dispatch);
           else if (e.key === "Enter" && e.shiftKey && !mod && !e.altKey) run = softBreak;
-          else if (e.key === "Enter" && !e.shiftKey && !mod && !e.altKey) run = enterInTask;
+          else if (e.key === "Enter" && !e.shiftKey && !mod && !e.altKey) run = (state, dispatch) =>
+            exitCodeBlock(state, dispatch, true) || enterInTask(state, dispatch);
           else if (e.key === "ArrowDown" && !e.shiftKey && !mod && !e.altKey) run = downOutOfBlock;
+          else if (mod && e.altKey && !e.shiftKey && e.key === "0") run = codeToText;
+          else if (e.key === "Backspace" && !mod && !e.altKey && !e.shiftKey) run = (state, dispatch) =>
+            undoCodeRule(state, dispatch) || removeEmptyFirstCode(state, dispatch);
           else if (mod && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "b" && v.state.selection.empty) {
             e.preventDefault();
             emptyBold();
@@ -298,12 +388,24 @@ function readSelection(v) {
 // 文字写进文件时怎么转义。Milkdown 自带的写法把「以空白结尾的文字」原样写出、不转义,
 // 行首只有空白的一段(比如几个空格后面紧跟带颜色的字)也原样写出,下次打开时就被吃掉了。
 // 这里:只有空白的一段在行首时把第一个写成字符引用;以空白结尾的,空白前面的部分照常转义
-function writeText(node, _, state, info) {
+function unescapePlainEmail(markdown) {
+  // GFM 会把文字节点里的邮箱 @ 转义成 \@，但我们自己的解析器已能区分
+  // 裸邮箱与显式 mailto 链接，所以无需为防止自动链接而额外转义。
+  return autoEmailLinks ? markdown :
+    markdown.replace(/([A-Za-z0-9._%+-]+)\\@([A-Za-z0-9.-]+\.[A-Za-z]{2,})/g, "$1@$2");
+}
+
+function writeText(node, parent, state, info) {
   const v = node.value;
+  // 只在引用块内的标记段保留 [!fold] 原文，避免触碰代码块中的反斜杠。
+  if (/^\[!fold\][+-](?: |$)/.test(v) && parent?.type === "paragraph" &&
+      parent.children?.[0] === node && state.stack?.includes("blockquote")) {
+    return "[!fold]" + v[7] + (v.length > 8 ? " " + state.safe(v.slice(9), { ...info, encode: [] }) : "");
+  }
   if (/^[ \t]+$/.test(v)) return /[\r\n]$/.test(info.before ?? "") ? (v[0] === "\t" ? "&#x9;" : "&#x20;") + v.slice(1) : v;
   const tail = /[ \t]+$/.exec(v);
-  if (!tail) return state.safe(v, { ...info, encode: [] });
-  return state.safe(v.slice(0, tail.index), { ...info, after: tail[0][0], encode: [] }) + tail[0];
+  if (!tail) return unescapePlainEmail(state.safe(v, { ...info, encode: [] }));
+  return unescapePlainEmail(state.safe(v.slice(0, tail.index), { ...info, after: tail[0][0], encode: [] })) + tail[0];
 }
 
 // ---------- 编辑器 ----------
@@ -323,10 +425,11 @@ export async function createEditor(opts) {
     .use(keys)
     .use(commonmark)
     .use(gfm)
+    .use(plainEmails)
     .use(history)
     .use(clipboard)
     .use([colorSpans, textColor, textBg].flat())
-    .use([lineBreak, codeBlockWithTitle, codeBlockView, codeHighlight, readOnly, changes, placeholder, afterRule, findPlugin, outlinePlugin, selectionBar, formatBar])
+    .use([lineBreak, codeBlockWithTitle, codeBlockView, codeHighlight, readOnly, changes, placeholder, afterRule, findPlugin, outlinePlugin, selectionBar, formatBar, foldBlocks, blockManager])
     .create();
   editor.action((c) => {
     ctx = c;
@@ -404,12 +507,14 @@ export function showInEditor(n) {
   if (!st) {
     st = freshState(n.content);
     n.stateMd = n.content;
-  } else if (n.stateMd !== n.content) {
+  } else if (n.stateMd !== n.content || n.emailLinkVersion !== emailLinkVersion) {
+    const changed = n.stateMd !== n.content;
     const tr = replaceTr(st, n.content);
-    if (tr) st = st.apply(tr);
+    if (tr) st = st.apply(changed ? tr : tr.setMeta("addToHistory", false));
     n.stateMd = n.content;
-    scroll = 0;
+    if (changed) scroll = 0;
   }
+  n.emailLinkVersion = emailLinkVersion;
   view.updateState(st);
   shown = n;
   view.setProps({ editable: () => !shown?.unreadable });
@@ -468,6 +573,7 @@ export function selectMatch(query, nth = 0) {
   const hit = found[nth] || found[0];
   if (!hit) return;
   const { state } = view;
+  revealFolds(view, hit[0]);
   view.dispatch(state.tr.setSelection(TextSelection.create(state.doc, hit[0], hit[1])));
   view.focus();
   // 滚到窗口中间
@@ -485,6 +591,21 @@ export function insertText(text) {
 }
 
 export function applyEditorSettings(s) {
+  const wasEnabled = autoEmailLinks;
+  autoEmailLinks = s.email_auto_link === true;
+  // 切换选项时重新读取当前 Markdown，仅更新编辑器状态，不当作一次编辑保存。
+  if (wasEnabled !== autoEmailLinks) {
+    emailLinkVersion++;
+    if (view && shown) {
+      syncContent(shown);
+      const tr = replaceTr(view.state, shown.content);
+      if (tr) view.dispatch(tr.setMeta("addToHistory", false));
+      shown.emailLinkVersion = emailLinkVersion;
+    }
+  }
+  codeExitMode = ["blank2", "blank3", "ctrl"].includes(s.code_exit_mode) ? s.code_exit_mode : "blank3";
+  setFoldPersistence(s.fold_save_state !== false);
+  applyBlockSettings(s);
   $("#editor").classList.toggle("code-lines", s.code_line_numbers !== false);
   const bar = s.format_bar !== false;
   $("#format-bar").hidden = !bar;

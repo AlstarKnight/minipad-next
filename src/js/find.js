@@ -3,6 +3,7 @@
 // 图片这类不是文字的东西算一个 "￼",跨过它的匹配不算。可以区分大小写、全字匹配、用正则表达式。
 // 这里不引用 editor.js(editor.js 要用这里的插件),对编辑器的操作都通过传进来的 view。
 import { $prose, Plugin, PluginKey, Decoration, DecorationSet, TextSelection, closeHistory } from "../vendor/milkdown.js";
+import { revealFolds } from "./foldblocks.js";
 
 const OBJECT = "￼";
 // 匹配太多时只算前面这些,免得卡住
@@ -144,6 +145,7 @@ function select(view, i) {
   const st = findState(view);
   const hit = st.matches[i];
   if (!hit) return;
+  revealFolds(view, hit.from);
   const tr = view.state.tr.setSelection(TextSelection.create(view.state.doc, hit.from, hit.to)).setMeta(key, { current: i });
   view.dispatch(tr.scrollIntoView());
   // 滚到中间附近,上下文更清楚

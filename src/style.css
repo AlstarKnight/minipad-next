@@ -358,7 +358,7 @@ html[data-find-pos="bottom"] #status { order: 2; }
 #main[data-ol-side="right"] #outline { right: calc(var(--sbw, 0px) + 4px); }
 #main[data-ol-side="left"] #outline { left: 4px; }
 #main[data-outline="hover"][data-ol-side="right"] #editor .ProseMirror { padding-right: 30px; }
-#main[data-outline="hover"][data-ol-side="left"] #editor .ProseMirror { padding-left: 30px; }
+#main[data-outline="hover"][data-ol-side="left"] #editor .ProseMirror { padding-left: 44px; }
 .ol-strip {
   display: flex;
   flex-direction: column;
@@ -490,7 +490,7 @@ html[data-find-pos="bottom"] #status { order: 2; }
 #editor .milkdown { min-height: 100%; display: flex; flex-direction: column; }
 #editor .ProseMirror {
   flex: 1;
-  padding: 10px 14px 24px;
+  padding: 10px 14px 24px 38px;
   outline: none;
   color: var(--text);
   font-family: var(--sans);
@@ -499,6 +499,28 @@ html[data-find-pos="bottom"] #status { order: 2; }
   white-space: pre-wrap;
   caret-color: var(--text);
 }
+/* 拖动手柄始终位于正文左侧，不参与 Markdown 文档内容。 */
+.block-handle {
+  position: absolute; z-index: 6; display: flex; align-items: center; justify-content: center;
+  width: 24px; height: 25px; padding: 0; border-radius: 5px;
+  color: var(--muted); background: var(--panel); cursor: grab;
+  font-size: 20px; line-height: 1; user-select: none;
+}
+.block-handle:hover, .block-handle:focus { color: var(--accent); background: var(--accent-soft); }
+.block-handle:active { cursor: grabbing; }
+.block-drop-line { position: absolute; z-index: 5; height: 2px; border-radius: 2px; background: var(--accent); pointer-events: none; }
+.block-handle[hidden], .block-drop-line[hidden] { display: none; }
+/* 关闭块管理时恢复原有的正文边距和原生右键行为。 */
+#main[data-blocks="off"] #editor .ProseMirror { padding-left: 14px; }
+#main[data-blocks="off"] .block-handle, #main[data-blocks="off"] .block-drop-line { display: none !important; }
+#main[data-blocks="off"][data-outline="hover"][data-ol-side="left"] #editor .ProseMirror { padding-left: 30px; }
+@media (max-width: 520px) {
+  #main[data-blocks="on"] #editor .ProseMirror { padding-left: 30px; }
+}
+
+/* 表格行列操作多时菜单允许滚动，避免操作被窗口底部遮挡。 */
+#ctx { max-height: calc(100vh - 12px); overflow-y: auto; }
+
 #editor .ProseMirror ::selection { background: var(--selection); }
 #editor .ProseMirror > :first-child { margin-top: 0; }
 #editor .is-empty::before {
@@ -518,6 +540,16 @@ html[data-find-pos="bottom"] #status { order: 2; }
 #editor li > p { margin: 0.1em 0; }
 #editor a { color: var(--accent); cursor: text; }
 #editor blockquote { margin: 0.5em 0; padding: 0.1em 0.9em; color: var(--muted); border-left: 3px solid var(--bar-border); }
+/* 折叠块保存成带 [!fold] 标记的普通 Markdown 引用；折叠仅控制编辑界面的可见性。 */
+#editor blockquote.fold-block { background: var(--code-bg); border: 1px solid var(--code-border); border-radius: 7px; padding: 5px 10px; color: var(--text); }
+#editor blockquote.fold-block > p:first-of-type { display: none; }
+#editor blockquote.fold-block.fold-closed > :not(.fold-heading) { display: none; }
+.fold-heading { display: flex; align-items: center; gap: 6px; min-height: 30px; }
+.fold-heading button { color: var(--text); padding: 4px; border-radius: 4px; }
+.fold-heading button:hover { background: var(--accent-soft); }
+.fold-heading .fold-toggle { flex: none; width: 24px; font-size: 15px; }
+.fold-heading .fold-title { flex: 1; text-align: left; font-weight: 600; overflow-wrap: anywhere; }
+#editor blockquote.fold-block > :last-child:not(.fold-heading) { margin-bottom: 0.1em; }
 #editor hr { border: none; border-top: 1px solid var(--code-border); margin: 1em 0; }
 #editor hr.ProseMirror-selectednode { border-top-color: var(--accent); }
 #editor img { max-width: 100%; }
@@ -634,6 +666,14 @@ html[data-find-pos="bottom"] #status { order: 2; }
   overflow-wrap: anywhere;
 }
 .codeblock pre code { display: block; background: none; padding: 0; font: inherit; }
+/* 复制文本沿用 Markdown 代码围栏，编辑时仍可定位光标，查看时点击整行复制。 */
+.codeblock.copyline { position: relative; }
+.codeblock.copyline .cb-head { position: absolute; z-index: 2; right: 5px; top: 3px; padding: 0; background: transparent; border: 0; }
+.codeblock.copyline .cb-toggle, .codeblock.copyline .cb-title, .codeblock.copyline .cb-count, .codeblock.copyline .cb-lang { display: none !important; }
+.codeblock.copyline pre { padding: 10px 44px 10px 12px !important; }
+.codeblock.copyline .cb-gutter { display: none !important; }
+.codeblock.copyline .copy { width: 28px; height: 28px; }
+#editor .ProseMirror[contenteditable="false"] .codeblock.copyline { cursor: copy; }
 /* 行号:代码左边单独一栏,每个行号按那一行在屏幕上的位置摆;设置里关掉时藏起来 */
 .codeblock pre { position: relative; }
 .cb-gutter { display: none; }
@@ -1314,8 +1354,12 @@ html[data-edge-style="hover"][data-edge-peek][data-edge="right"] #edge-expand { 
 #import-result p { margin: 4px 0; }
 .import-warnings { margin: 8px 0 0; padding: 6px 10px 6px 26px; max-height: 120px; overflow-y: auto; border: 1px solid var(--code-border); border-radius: 6px; color: var(--muted); font-size: 12px; line-height: 1.6; }
 
-/* 读取失败页面只显示告警，不提供编辑与格式操作。 */
-#read-error { position: absolute; inset: 0; z-index: 11; padding: 18px; background: var(--bg); color: var(--text); white-space: pre-wrap; overflow: auto; }
+/* 读取失败时显示告警横幅，保留只读内容与折叠箭头可见、可点。 */
+#read-error { position: absolute; top: 0; left: 0; right: 0; z-index: 11;
+  padding: 8px 14px; background: var(--bg); color: var(--text);
+  border-bottom: 1px solid var(--bar-border); white-space: pre-wrap;
+  overflow-wrap: anywhere; user-select: text; }
+html[data-unreadable] #editor .ProseMirror { padding-top: var(--read-error-height, 64px); }
 #read-error[hidden] { display: none; }
 .tab.unreadable { opacity: .55; }
 .tab.unreadable::after { content: "⚠"; color: #ba772d; font-size: 12px; margin-left: 3px; }

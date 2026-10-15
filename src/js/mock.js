@@ -33,6 +33,11 @@ const DEFAULT_SETTINGS = {
   line_numbers: false,
   date_format: DEFAULT_DATE_FORMAT,
   code_line_numbers: true,
+  email_auto_link: false,
+  block_enabled: true,
+  block_context_menu: "system",
+  code_exit_mode: "blank3",
+  fold_save_state: true,
   format_bar: true,
   format_bar_hidden: [],
   format_bar_order: [],
@@ -187,7 +192,8 @@ export function mockApi() {
         const reason = window.__mockControl?.unreadable?.[name]?.[n] || null;
         const g = meta.note_groups?.[n];
         const group = g && (meta.groups || []).some((x) => x.id === g) ? g : "";
-        return { name: n, content: reason ? "" : files[n], mode: meta.modes[n] || "edit", unreadable: !!reason, reason, group };
+        return { name: n, content: reason && !window.__mockControl?.keepUnreadableContent ? "" : files[n],
+          mode: meta.modes[n] || "edit", unreadable: !!reason, reason, group };
       }),
       active: order.includes(meta.active) ? meta.active : (order[0] ?? ""),
       groups: (meta.groups || []).filter((x) => order.some((n) => meta.note_groups?.[n] === x.id)),
@@ -332,6 +338,8 @@ export function mockApi() {
         date_format: tidyDateFormat(settings.date_format),
         ctrl_f: pickOne(settings.ctrl_f, ["page", "all"]),
         find_bar_pos: pickOne(settings.find_bar_pos, ["top", "bottom"]),
+        block_context_menu: pickOne(settings.block_context_menu, ["system", "block"]),
+        code_exit_mode: pickOne(settings.code_exit_mode, ["blank3", "blank2", "ctrl"]),
         conflict_mode: pickOne(settings.conflict_mode, ["copy", "overwrite"]),
         settings_nav: pickOne(settings.settings_nav, ["left", "top"]),
         color_presets: [...new Set(

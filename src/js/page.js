@@ -37,9 +37,19 @@ function paintCount() {
   $("#st-count").textContent = n && !n.unreadable ? `${visibleLength()} 字` : "";
 }
 
+// 只读横幅在窄窗口换行后高度可能继续变化。
+const readErrorObserver = new ResizeObserver(() => {
+  const box = $("#read-error");
+  $("#main").style.setProperty("--read-error-height", box.hidden ? "0px" : box.getBoundingClientRect().height + 12 + "px");
+});
+readErrorObserver.observe($("#read-error"));
+
 function showReadError(n) {
   const box = $("#read-error");
   box.hidden = !n?.unreadable;
   box.textContent = n?.unreadable ? "这一页读取失败:" + (n.reason || "未知错误") : "";
   document.documentElement.toggleAttribute("data-unreadable", !!n?.unreadable);
+  // 告警可换行、选择复制；用实际高度挪开正文，避免长文件名截断提示。
+  $("#main").style.setProperty("--read-error-height",
+    n?.unreadable ? box.getBoundingClientRect().height + 12 + "px" : "0px");
 }

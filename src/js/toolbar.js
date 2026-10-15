@@ -12,7 +12,10 @@ import {
   wrapInBulletListCommand,
   wrapInBlockquoteCommand,
   createCodeBlockCommand,
+  TextSelection,
 } from "../vendor/milkdown.js";
+import { foldInfo } from "./foldblocks.js";
+import { toast } from "./ui.js";
 
 // 点"链接"时问链接地址;由 main.js 设置(用程序自己的输入框)
 let askLink = async () => null;
@@ -33,6 +36,73 @@ export const headingLevel = (state) => {
   const p = state.selection.$from.parent;
   return p.type.name === "heading" ? p.attrs.level : 0;
 };
+
+// 将代码块的换行转成段内软换行；普通代码退出沿用原来的末尾空行处理。
+export function codeLines(schema, text) {
+  const parts = [];
+  text.replace(/\n+$/, "").split("\n").forEach((line, i) => {
+    if (i) parts.push(schema.nodes.hardbreak.create({ isInline: true }));
+    if (line) parts.push(schema.text(line));
+  });
+  return parts;
+}
+
+// 多行纯文本也可复制；只容纳无标记文字和段内换行，拒绝链接、样式及标题元数据。
+export const COPY_CODE_ORIGIN = "minipad-original-code";
+export function plainText(node) {
+  if (!node?.isTextblock || node.attrs.title || !node.content.size) return false;
+  let plain = true;
+  node.forEach((child) => {
+    if (!(child.isText && !child.marks.length) && child.type.name !== "hardbreak") plain = false;
+  });
+  return plain;
+}
+
+export function codeToText(state, dispatch) {
+  const { $from } = state.selection;
+  if (!$from.parent.type.spec.code) return false;
+  // 正文 Markdown 无法持久化尾部空行，拦截所有退出入口避免悄悄丢内容。
+  if ($from.parent.attrs.language === "copy" && $from.parent.textContent.endsWith("\n")) {
+    if (dispatch) toast("复制文本末尾有换行，请先删掉末尾空行再转成正文");
+    return true;
+  }
+  if (dispatch) {
+    const start = $from.before();
+    const paragraph = state.schema.nodes.paragraph.create(null,
+      codeLines(state.schema, $from.parent.textContent));
+    const tr = state.tr.replaceWith(start, start + $from.parent.nodeSize, paragraph);
+    const at = start + 1 + Math.min($from.parentOffset, paragraph.content.size);
+    dispatch(tr.setSelection(TextSelection.create(tr.doc, at)).scrollIntoView());
+  }
+  return true;
+}
+
+// 普通引用再点一次退出；折叠块标记引用不参与，也不重复套一层引用。
+function toggleQuote(state, dispatch) {
+  const { $from, $to } = state.selection;
+  // 移出的是引用里含光标的整个子块（比如整张列表），不是最里层的列表项
+  const range = $from.blockRange($to, (node) => node.type.name === "blockquote");
+  if (!range) return false;
+  if (foldInfo(range.parent)) {
+    if (dispatch) toast("折叠块里不能再加引用");
+    return true;
+  }
+  try {
+    const tr = state.tr.lift(range, range.depth - 1);
+    if (dispatch) dispatch(tr.scrollIntoView());
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// 复制文本块里代码块按钮不亮，点它变成普通代码块
+function copyToCode(state, dispatch) {
+  const { $from } = state.selection;
+  if (!$from.parent.type.spec.code || $from.parent.attrs.language !== "copy") return false;
+  if (dispatch) dispatch(state.tr.setNodeMarkup($from.before(), null, { ...$from.parent.attrs, language: "", title: "" }).scrollIntoView());
+  return true;
+}
 
 export const BUTTONS = [
   { id: "strong", label: "<b>B</b>", title: "粗体 (Ctrl+B)", active: (s) => markActive(s, "strong"), run: (c) => c.call(toggleStrongCommand.key) },
@@ -71,7 +141,7 @@ export const BUTTONS = [
     id: "quote",
     label: '<svg viewBox="0 0 16 16"><path d="M3 4v8M6.5 5.5h7M6.5 8h7M6.5 10.5h5"/></svg>',
     title: "引用",
-    run: (c) => c.call(wrapInBlockquoteCommand.key),
+    run: (c, v) => toggleQuote(v.state, v.dispatch) || c.call(wrapInBlockquoteCommand.key),
   },
-  { id: "codeblock", label: "{ }", title: "代码块", run: (c) => c.call(createCodeBlockCommand.key) },
+  { id: "codeblock", label: "{ }", title: "代码块", run: (c, v) => copyToCode(v.state, v.dispatch) || codeToText(v.state, v.dispatch) || c.call(createCodeBlockCommand.key) },
 ];
