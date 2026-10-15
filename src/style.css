@@ -666,6 +666,14 @@ html[data-find-pos="bottom"] #status { order: 2; }
   overflow-wrap: anywhere;
 }
 .codeblock pre code { display: block; background: none; padding: 0; font: inherit; }
+/* 复制文本沿用 Markdown 代码围栏，编辑时仍可定位光标，查看时点击整行复制。 */
+.codeblock.copyline { position: relative; }
+.codeblock.copyline .cb-head { position: absolute; z-index: 2; right: 5px; top: 3px; padding: 0; background: transparent; border: 0; }
+.codeblock.copyline .cb-toggle, .codeblock.copyline .cb-title, .codeblock.copyline .cb-count, .codeblock.copyline .cb-lang { display: none !important; }
+.codeblock.copyline pre { padding: 10px 44px 10px 12px !important; }
+.codeblock.copyline .cb-gutter { display: none !important; }
+.codeblock.copyline .copy { width: 28px; height: 28px; }
+#editor .ProseMirror[contenteditable="false"] .codeblock.copyline { cursor: copy; }
 /* 行号:代码左边单独一栏,每个行号按那一行在屏幕上的位置摆;设置里关掉时藏起来 */
 .codeblock pre { position: relative; }
 .cb-gutter { display: none; }
