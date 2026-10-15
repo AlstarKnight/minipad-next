@@ -358,6 +358,13 @@ function readSelection(v) {
 // 文字写进文件时怎么转义。Milkdown 自带的写法把「以空白结尾的文字」原样写出、不转义,
 // 行首只有空白的一段(比如几个空格后面紧跟带颜色的字)也原样写出,下次打开时就被吃掉了。
 // 这里:只有空白的一段在行首时把第一个写成字符引用;以空白结尾的,空白前面的部分照常转义
+function unescapePlainEmail(markdown) {
+  // GFM 会把文字节点里的邮箱 @ 转义成 \@，但我们自己的解析器已能区分
+  // 裸邮箱与显式 mailto 链接，所以无需为防止自动链接而额外转义。
+  return autoEmailLinks ? markdown :
+    markdown.replace(/([A-Za-z0-9._%+-]+)\\@([A-Za-z0-9.-]+\.[A-Za-z]{2,})/g, "$1@$2");
+}
+
 function writeText(node, parent, state, info) {
   const v = node.value;
   // 只在引用块内的标记段保留 [!fold] 原文，避免触碰代码块中的反斜杠。
@@ -367,8 +374,8 @@ function writeText(node, parent, state, info) {
   }
   if (/^[ \t]+$/.test(v)) return /[\r\n]$/.test(info.before ?? "") ? (v[0] === "\t" ? "&#x9;" : "&#x20;") + v.slice(1) : v;
   const tail = /[ \t]+$/.exec(v);
-  if (!tail) return state.safe(v, { ...info, encode: [] });
-  return state.safe(v.slice(0, tail.index), { ...info, after: tail[0][0], encode: [] }) + tail[0];
+  if (!tail) return unescapePlainEmail(state.safe(v, { ...info, encode: [] }));
+  return unescapePlainEmail(state.safe(v.slice(0, tail.index), { ...info, after: tail[0][0], encode: [] })) + tail[0];
 }
 
 // ---------- 编辑器 ----------
