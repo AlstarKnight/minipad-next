@@ -37,6 +37,13 @@ function paintCount() {
   $("#st-count").textContent = n && !n.unreadable ? `${visibleLength()} 字` : "";
 }
 
+// 只读横幅在窄窗口换行后高度可能继续变化。
+const readErrorObserver = new ResizeObserver(() => {
+  const box = $("#read-error");
+  $("#main").style.setProperty("--read-error-height", box.hidden ? "0px" : box.getBoundingClientRect().height + 12 + "px");
+});
+readErrorObserver.observe($("#read-error"));
+
 function showReadError(n) {
   const box = $("#read-error");
   box.hidden = !n?.unreadable;
