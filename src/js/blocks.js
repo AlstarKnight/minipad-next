@@ -1,11 +1,20 @@
 // ---------- 顶层 Markdown 块的菜单与拖放 ----------
 // 直接操作 ProseMirror 节点；笔记仍用原有 Markdown 读写，不另存块结构。
 import { $prose, Plugin, TextSelection, closeHistory } from "../vendor/milkdown.js";
-import { openMenu } from "./ui.js";
+import { openMenu, toast } from "./ui.js";
 import { foldInfo, newFold, unfoldQuote, setFold } from "./foldblocks.js";
 import { blockLocation, moveNested, changeNested, listLevel } from "./nestedblocks.js";
 import { tableItems } from "./tableblocks.js";
-import { toast } from "./ui.js";
+
+
+let blockEnabled = true;
+let contextMode = "system";
+export function applyBlockSettings(settings) {
+  blockEnabled = settings.block_enabled !== false;
+  contextMode = settings.block_context_menu === "block" ? "block" : "system";
+  document.querySelector("#main")?.setAttribute("data-blocks", blockEnabled ? "on" : "off");
+  if (!blockEnabled) document.querySelector(".block-handle")?.setAttribute("hidden", "");
+}
 
 const TYPES = [
   ["paragraph", "正文"], ["heading1", "标题 1"], ["heading2", "标题 2"],
@@ -87,7 +96,7 @@ class BlockHandles {
     this.host.append(this.handle, this.marker);
 
     this.onMove = (e) => {
-      if (this.dragging !== -1 || this.pointerDown) return;
+      if (!blockEnabled || this.dragging !== -1 || this.pointerDown) return;
       const index = this.indexOf(e.target);
       const loc = blockLocation(this.view, e.target);
       this.show(index, loc);
@@ -99,7 +108,8 @@ class BlockHandles {
     this.onPress = (e) => { if (e.button === 0) this.pointerDown = true; };
     this.onRelease = () => { this.pointerDown = false; };
     this.onContext = (e) => {
-      if (e.shiftKey || e.target.closest?.("input, textarea")) return;
+      if (!blockEnabled || contextMode !== "block" || e.shiftKey || e.target.closest?.("input, textarea")) return;
+      if (!this.view.state.selection.empty) return; // 有文字选区时保留系统剪切/复制菜单
       const index = this.indexOf(e.target);
       const loc = blockLocation(this.view, e.target);
       if (!loc || !this.view.editable) return;
@@ -113,7 +123,7 @@ class BlockHandles {
     };
     this.onScroll = () => this.position();
     this.onStart = (e) => {
-      if (this.index < 0 || !this.view.editable) return;
+      if (!blockEnabled || this.index < 0 || !this.view.editable) return;
       this.pointerDown = false;
       this.dragging = this.index >= 0 && this.activeLoc?.parent.type.name === "doc" ? this.index : -2;
       this.draggingLoc = this.activeLoc;
@@ -121,7 +131,7 @@ class BlockHandles {
       e.dataTransfer.setData("text/plain", "minipad-block");
     };
     this.onOver = (e) => {
-      if (this.dragging === -1) return;
+      if (!blockEnabled || this.dragging === -1) return;
       e.preventDefault();
       e.stopImmediatePropagation();
       e.dataTransfer.dropEffect = "move";
@@ -158,10 +168,14 @@ class BlockHandles {
     };
     this.onEnd = () => this.finishDrag();
     this.handle.addEventListener("click", () => {
-      if (!this.activeLoc) return;
+      if (!blockEnabled || !this.activeLoc) return;
       const rect = this.handle.getBoundingClientRect();
       if (this.activeLoc.parent.type.name === "doc") this.menu(this.index, rect.right, rect.bottom);
       else this.menuNested(this.activeLoc, rect.right, rect.bottom);
+    });
+    this.handle.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      this.handle.click();
     });
     this.handle.addEventListener("mousedown", this.onPress);
     document.addEventListener("mouseup", this.onRelease);
@@ -192,7 +206,7 @@ class BlockHandles {
   }
 
   position() {
-    if (!this.activeLoc || !this.view.editable) {
+    if (!blockEnabled || !this.activeLoc || !this.view.editable) {
       this.handle.hidden = true;
       return;
     }
@@ -203,7 +217,8 @@ class BlockHandles {
     if (rect.bottom <= host.top || rect.top >= host.bottom) { this.handle.hidden = true; return; }
     this.handle.style.top = Math.max(0, rect.top - host.top + 2) + "px";
     // 列表项的勾选框位于左侧约 20px；拖动柄再向左挪，避免挡住任务方框。
-    this.handle.style.left = Math.max(2, rect.left - host.left - (this.activeLoc.node.type.name === "list_item" ? 54 : 27)) + "px";
+    const side = this.host.dataset.olSide === "left" ? 12 : 0;
+    this.handle.style.left = Math.max(2, rect.left - host.left - (this.activeLoc.node.type.name === "list_item" ? 54 : 27) + side) + "px";
     this.handle.hidden = false;
   }
 
@@ -285,7 +300,8 @@ class BlockHandles {
     this.show(-1);
   }
 
-  menu(index, x, y, row = 0, col = 0) {
+  menu(index, x, y, row = null, col = null) {
+    if (!blockEnabled) return;
     x = Math.max(4, Math.min(x, window.innerWidth - 190));
     y = Math.max(4, Math.min(y, window.innerHeight - 340));
     const node = this.view.state.doc.child(index);
@@ -302,14 +318,15 @@ class BlockHandles {
       ...(foldInfo(node) ? [{ id: "block-fold-toggle", label: foldInfo(node).closed ? "展开折叠块" : "收起折叠块", act: () => setFold(this.view, blockAt(this.view.state.doc, index), { closed: !foldInfo(node).closed }) }] : []),
       { id: "block-up", label: "上移一块", disabled: index === 0, act: () => this.move(index, index - 1) },
       { id: "block-down", label: "下移一块", disabled: index === this.view.state.doc.childCount - 1, act: () => this.move(index, index + 2) },
-      { id: "block-duplicate", label: "复制块", act: () => this.change(index, "duplicate") },
+      { id: "block-duplicate", label: "创建副本", act: () => this.change(index, "duplicate") },
       { id: "block-delete", label: "删除块", danger: true, act: () => this.change(index, "delete") },
       ...tableItems(this.view, blockAt(this.view.state.doc, index), row, col),
     ], x, y);
   }
 
 
-  menuNested(loc, x, y, row = 0, col = 0) {
+  menuNested(loc, x, y, row = null, col = null) {
+    if (!blockEnabled) return;
     const { state } = this.view;
     const node = state.doc.nodeAt(loc.pos);
     if (!node || !this.view.editable) return;
@@ -387,7 +404,7 @@ class BlockHandles {
       } },
       { id: "block-indent", label: "缩进／移入上一块", disabled: !listItem && prev?.node.type.name !== "blockquote", act: indent },
       { id: "block-outdent", label: "减少缩进／提升一层", disabled: !parentLoc, act: lift },
-      { id: "block-duplicate", label: "复制块", act: () => {
+      { id: "block-duplicate", label: "创建副本", act: () => {
         if (!changeNested(this.view, loc, "duplicate", null, makeBlock)) toast("不能复制此块");
       } },
       { id: "block-delete", label: "删除块", danger: true, act: () => {

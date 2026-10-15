@@ -22,6 +22,7 @@ export function tableAction(view, pos, command, row = 0, col = 0) {
 
   if (command === "row-above" || command === "row-below") {
     // 表头只能保持在第一行；在表头之上插普通行会破坏 GFM schema。
+    if (row === 0 && command === "row-above") return false;
     const at = command === "row-above" ? Math.max(1, row) : row + 1;
     const template = rows[Math.min(Math.max(1, row), rows.length - 1)] || rows[0];
     let next = blankRow(state.schema, template);
@@ -31,7 +32,7 @@ export function tableAction(view, pos, command, row = 0, col = 0) {
     }
     rows.splice(at, 0, next);
   } else if (command === "row-delete") {
-    if (rows.length <= 1) return false;
+    if (row === 0 || rows.length <= 1) return false;
     rows.splice(row, 1);
   } else if (command === "row-duplicate") {
     // 复制表头时以普通行插入，保持表头唯一。
@@ -65,7 +66,7 @@ export function tableAction(view, pos, command, row = 0, col = 0) {
 
 export function tableItems(view, pos, row, col) {
   const table = view.state.doc.nodeAt(pos);
-  if (table?.type.name !== "table") return [];
+  if (table?.type.name !== "table" || row == null || col == null) return [];
   const command = (id, label, disabled = false) => ({
     id: "block-table-" + id,
     label,
@@ -73,10 +74,10 @@ export function tableItems(view, pos, row, col) {
     act: () => tableAction(view, pos, id, row, col),
   });
   return [
-    command("row-above", "表格：上方插入行"),
+    command("row-above", "表格：上方插入行", row === 0),
     command("row-below", "表格：下方插入行"),
     command("row-duplicate", "表格：复制此行"),
-    command("row-delete", "表格：删除此行", table.childCount <= 1),
+    command("row-delete", "表格：删除此行", row === 0 || table.childCount <= 1),
     command("row-up", "表格：此行上移", row < 2),
     command("row-down", "表格：此行下移", row === 0 || row >= table.childCount - 1),
     command("col-left", "表格：左侧插入列"),

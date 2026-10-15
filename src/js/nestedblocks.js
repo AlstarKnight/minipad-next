@@ -58,7 +58,9 @@ export function changeNested(view, loc, action, kind, makeBlock) {
   try {
     if (action === "insert-before" || action === "insert-after") {
       let added = parent.type.name === "bullet_list" || parent.type.name === "ordered_list"
-        ? state.schema.nodes.list_item.create(null, state.schema.nodes.paragraph.create())
+        ? state.schema.nodes.list_item.create(
+          parent.firstChild?.attrs.checked == null ? null : { checked: false },
+          state.schema.nodes.paragraph.create())
         : makeBlock(state.schema, kind);
       if (!added) return false;
       at = action === "insert-before" ? pos : end;

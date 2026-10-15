@@ -94,6 +94,14 @@ pub struct Settings {
     date_format: String,
     /// 代码块显示行号
     code_line_numbers: bool,
+    /// 块管理手柄与块操作菜单的开关。
+    block_enabled: bool,
+    /// system / block，选中文字仍使用系统右键菜单。
+    block_context_menu: String,
+    /// blank3 / blank2 / ctrl
+    code_exit_mode: String,
+    /// 是否将折叠状态写入 Markdown；关闭时只调整界面显示。
+    fold_save_state: bool,
     /// 标签下面显示格式栏
     format_bar: bool,
     /// 格式栏里不显示的按钮
@@ -201,6 +209,10 @@ impl Default for Settings {
             line_numbers: false,
             date_format: DEFAULT_DATE_FORMAT.into(),
             code_line_numbers: true,
+            block_enabled: true,
+            block_context_menu: "system".into(),
+            code_exit_mode: "blank3".into(),
+            fold_save_state: true,
             format_bar: true,
             format_bar_hidden: Vec::new(),
             format_bar_order: Vec::new(),
@@ -669,6 +681,8 @@ fn tidy_settings(s: &mut Settings) {
     tidy_color(&mut s.outline_color);
     pick_one(&mut s.ctrl_f, &["page", "all"]);
     pick_one(&mut s.find_bar_pos, &["top", "bottom"]);
+    pick_one(&mut s.block_context_menu, &["system", "block"]);
+    pick_one(&mut s.code_exit_mode, &["blank3", "blank2", "ctrl"]);
     pick_one(&mut s.conflict_mode, &["copy", "overwrite"]);
     pick_one(&mut s.settings_nav, &["left", "top"]);
     pick_one(&mut s.outline_mode, &["hover", "pinned"]);

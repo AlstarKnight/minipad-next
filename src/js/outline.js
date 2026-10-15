@@ -5,6 +5,7 @@
 import { $prose, Plugin, TextSelection } from "../vendor/milkdown.js";
 import { $ } from "./dom.js";
 import { parseAccent, gradientOf } from "./accent.js";
+import { revealFolds } from "./foldblocks.js";
 
 // 一直展开时,正文至少要留这么宽,不然收起成短线(默认的窗口宽 440,目录宽 200 时刚好放得下)
 const MIN_TEXT = 220;
@@ -180,6 +181,7 @@ function setActive(i) {
 // 点目录里的标题:滚到这个标题,光标放在标题末尾
 function jump(i) {
   const h = headings[i];
+  if (h && view) revealFolds(view, h.pos);
   const dom = h && view?.nodeDOM(h.pos);
   if (!dom) return;
   const sc = $("#editor");

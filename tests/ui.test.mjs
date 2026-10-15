@@ -45,6 +45,7 @@ const SETTINGS = {
   show_in_taskbar: false,
   autostart: false,
   theme: "system",
+  block_context_menu: "block", // 既有块管理测试仍使用右键块菜单；实际默认改回系统右键
   font_size: 14,
   notes_dir: "",
   backup_enabled: true,
@@ -1467,6 +1468,131 @@ describe("nested drag and complex tables", () => {
   });
 });
 
+
+describe("block editor review regressions", () => {
+  ui("Ctrl+End and clicking below a closed final fold append text after it", {
+    seed: seed({ "": { 页: "前文\n\n> [!fold]- 标题\n>\n> 隐藏内容" } }),
+  }, async (h) => {
+    const { p } = h;
+    await p.locator("#editor .ProseMirror > p").first().click();
+    await p.keyboard.press("Control+End");
+    await p.keyboard.type("Z");
+    assert.equal(await p.locator("#editor .ProseMirror > p").last().textContent(), "Z");
+    assert.equal(await p.locator("#editor .ProseMirror > p").first().textContent(), "前文");
+    await p.keyboard.press("Control+z");
+    const box = await p.locator("#editor .ProseMirror > blockquote.fold-closed").boundingBox();
+    const area = await p.locator("#editor").boundingBox();
+    await p.mouse.click(area.x + area.width / 2, Math.min(area.y + area.height - 5, box.y + box.height + 12));
+    await p.keyboard.type("B");
+    assert.equal(await p.locator("#editor .ProseMirror > p").last().textContent(), "B");
+    assert.equal(await p.locator("#editor .ProseMirror > p").first().textContent(), "前文");
+  });
+
+  ui("read-only folds expand without changing the document or file", {
+    seed: seed({ "": { 页: "> [!fold]- 标题\n>\n> 隐藏内容" } }),
+  }, async (h) => {
+    const { p } = h;
+    const before = await h.mockFile("", "页");
+    await p.evaluate(() => window.__minipad.editor().view.setProps({ editable: () => false }));
+    const fold = p.locator("#editor blockquote.fold-block");
+    assert.equal(await fold.locator(".fold-toggle").getAttribute("aria-expanded"), "false");
+    await fold.locator(".fold-toggle").click();
+    assert.equal(await fold.locator(".fold-toggle").getAttribute("aria-expanded"), "true");
+    assert.ok(await fold.getByText("隐藏内容").isVisible());
+    assert.equal(await h.mockFile("", "页"), before);
+  });
+
+  ui("system right-click and block manager off both preserve ordinary editing", {
+    seed: { ...seed({ "": { 页: "正常正文" } }), settings: { ...SETTINGS,
+      block_context_menu: "system", block_enabled: false } },
+  }, async (h) => {
+    const { p } = h;
+    await p.locator("#editor .ProseMirror > p").click({ button: "right" });
+    assert.ok(await p.locator("#ctx").isHidden(), "system context menu is not intercepted");
+    await p.locator("#editor .ProseMirror > p").hover();
+    assert.ok(await p.locator(".block-handle").isHidden(), "no block handle when disabled");
+    const padding = await p.locator("#editor .ProseMirror").evaluate((el) => getComputedStyle(el).paddingLeft);
+    assert.equal(padding, "14px", "original editor margin restored");
+    await p.locator("#editor .ProseMirror > p").click();
+    await p.keyboard.press("Control+End");
+    await p.keyboard.type("继续");
+    assert.equal(await h.editor(), "正常正文继续");
+    await p.click("#btn-settings");
+    await settingsPage(p, "edit");
+    assert.equal(await p.isChecked("#set-block-enabled"), false);
+    await p.check("#set-block-enabled");
+    await p.click("#set-save");
+    await p.locator("#editor .ProseMirror > p").hover();
+    assert.ok(await p.locator(".block-handle").isVisible(), "turning blocks on restores handle");
+    await p.locator(".block-handle").click();
+    assert.ok(await p.locator('#ctx button[data-act="block-insert-after"]').isVisible());
+  });
+
+  ui("three-Enter code exit preserves a blank line during coding", {
+    seed: seed({ "": { 页: "```python\ndef a():\n    pass\n```" } }),
+  }, async (h) => {
+    const { p } = h;
+    await p.locator("#editor .codeblock code").click();
+    await p.keyboard.press("Control+End");
+    await p.keyboard.press("Enter");
+    await p.keyboard.press("Enter");
+    await p.keyboard.type("def b():");
+    assert.equal(await p.locator("#editor .codeblock code").textContent(),
+      "def a():\n    pass\n\ndef b():");
+    await p.keyboard.press("Enter");
+    await p.keyboard.press("Enter");
+    await p.keyboard.press("Enter");
+    await p.keyboard.type("正文");
+    assert.equal(await p.locator("#editor .ProseMirror > p").last().textContent(), "正文");
+  });
+
+  ui("find reveals closed folds and serialized markers have no backslash", {
+    seed: seed({ "": { 页: "前文\n\n> [!fold]- 标题\n>\n> 秘密内容" } }),
+  }, async (h) => {
+    const { p } = h;
+    const fold = p.locator("#editor blockquote.fold-block");
+    await fold.locator(".fold-toggle").click();
+    await until(async () => (await h.mockFile("", "页")).includes("> [!fold]+ 标题"), true,
+      "serialized fold marker is unescaped");
+    assert.ok(!(await h.mockFile("", "页")).includes("\\[!fold]"));
+    await fold.locator(".fold-toggle").click();
+    await p.locator("#editor .ProseMirror > p").first().click();
+    await p.keyboard.press("Control+f");
+    await p.fill("#find-input", "秘密");
+    await until(async () => fold.locator(".fold-toggle").getAttribute("aria-expanded"), "true",
+      "searching hidden content reveals its fold");
+  });
+
+  ui("table handle hides cell operations; header actions are disabled", {
+    seed: seed({ "": { 页: "| A | B |\n| --- | --- |\n| 1 | 2 |" } }),
+  }, async (h) => {
+    const { p } = h;
+    const table = p.locator("#editor table");
+    await table.locator("td").last().hover();
+    await p.locator(".block-handle").click();
+    assert.equal(await p.locator('#ctx button[data-act="block-table-col-delete"]').count(), 0,
+      "handle menu cannot delete an unspecified first column");
+    await p.click("#editor .ProseMirror");
+    await table.locator("th").first().click({ button: "right" });
+    assert.equal(await p.locator('#ctx button[data-act="block-table-row-delete"]').isDisabled(), true);
+    assert.equal(await p.locator('#ctx button[data-act="block-table-row-above"]').isDisabled(), true);
+  });
+
+  ui("a fold cannot convert into itself and can disable persistence", {
+    seed: { ...seed({ "": { 页: "> [!fold]- 标题\n>\n> 隐藏内容" } }), settings: { ...SETTINGS, fold_save_state: false } },
+  }, async (h) => {
+    const { p } = h;
+    const fold = p.locator("#editor blockquote.fold-block");
+    const before = await h.mockFile("", "页");
+    await fold.locator(".fold-toggle").click();
+    assert.equal(await fold.locator(".fold-toggle").getAttribute("aria-expanded"), "true");
+    assert.equal(await h.mockFile("", "页"), before, "UI-only unfolding leaves file unchanged");
+    await fold.locator(".fold-heading").click({ button: "right" });
+    await p.click('#ctx button[data-act="block-convert"]');
+    assert.equal(await p.locator('#ctx button[data-act="block-type-fold"]').isDisabled(), true);
+  });
+});
+
 // ---------- 代码块 ----------
 const CODE_PAGE = {
   "": {
@@ -1574,6 +1700,7 @@ describe("code blocks", () => {
     await p.keyboard.type("const b = 2");
     assert.equal(await h.editor(), "```js\nconst a = 1\nconst b = 2\n```",
       "an ordinary Enter still adds a line inside the code");
+    await p.keyboard.press("Enter");
     await p.keyboard.press("Enter");
     await p.keyboard.press("Enter");
     await p.keyboard.type("正文");

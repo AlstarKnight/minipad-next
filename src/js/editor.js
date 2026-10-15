@@ -32,8 +32,8 @@ import {
 } from "../vendor/milkdown.js";
 import { $ } from "./dom.js";
 import { codeBlockWithTitle, codeBlockView, codeHighlight } from "./codeblock.js";
-import { blockManager } from "./blocks.js";
-import { foldBlocks } from "./foldblocks.js";
+import { blockManager, applyBlockSettings } from "./blocks.js";
+import { foldBlocks, foldInfo, foldIsClosed, selectionAfterFold, revealFolds, setFoldPersistence } from "./foldblocks.js";
 import { formatBar, selectionBar, setFormatBarItems, setSelectionBar } from "./formatbar.js";
 import { colorSpans, colorHandlers, textColor, textBg } from "./colors.js";
 import { findPlugin, reapplyFind } from "./find.js";
@@ -50,7 +50,8 @@ let onChange = () => {};
 const EXTERNAL = "minipad-external";
 
 const parse = (md) => ctx.get(parserCtx)(md);
-const serialize = (doc) => ctx.get(serializerCtx)(doc);
+// 保留引用块的 [!fold] 识别标记，避免 remark-stringify 逃逸 '['。
+const serialize = (doc) => ctx.get(serializerCtx)(doc).replace(/^(\s*>\s*)\\\[(?=!fold\][+-])/gm, "$1[");
 
 // ---------- 用户的修改 ----------
 // 每次文档变了,如果不是别处来的修改,就记下页面的 Markdown 已经过时(mdStale),通知保存。
@@ -216,16 +217,20 @@ function enterInTask(state, dispatch) {
 
 // 代码块最后一行留空后再按 Enter,从代码块退出到普通段落。
 // Ctrl+Enter 可以在代码块的任意位置直接退出,不影响其它地方的任务快捷键。
+let codeExitMode = "blank3";
 function exitCodeBlock(state, dispatch, afterBlank = false) {
   const { $from, empty } = state.selection;
   if (!empty || !$from.parent.type.spec.code) return false;
-  if (afterBlank && ($from.parentOffset !== $from.parent.content.size || !$from.parent.textContent.endsWith("\n"))) return false;
+  const count = codeExitMode === "blank2" ? 1 : 2;
+  if (afterBlank && (codeExitMode === "ctrl" || $from.parentOffset !== $from.parent.content.size ||
+    !$from.parent.textContent.endsWith("\n".repeat(count)))) return false;
   if (dispatch) {
     const tr = state.tr;
     const end = $from.after();
-    // 退出时去掉为了离开代码块而输入的最后一个换行,避免代码末尾多出空行。
-    if (afterBlank) tr.delete($from.pos - 1, $from.pos);
-    const at = end - (afterBlank ? 1 : 0);
+    // 退出时删除专门用于退出的末尾空行，保留代码中间的空白行。
+    const remove = afterBlank ? (codeExitMode === "blank2" ? 1 : 2) : 0;
+    if (remove) tr.delete($from.pos - remove, $from.pos);
+    const at = end - remove;
     tr.insert(at, state.schema.nodes.paragraph.create());
     dispatch(tr.setSelection(TextSelection.create(tr.doc, at + 1)).scrollIntoView());
   }
@@ -289,7 +294,12 @@ const keys = $prose(
           if (mod && e.key === "End" && !e.shiftKey && !e.altKey) {
             const { state } = v;
             const end = state.doc.content.size;
-            v.dispatch(state.tr.setSelection(TextSelection.near(state.doc.resolve(end), -1)).scrollIntoView());
+            const last = state.doc.lastChild;
+            const start = end - last.nodeSize;
+            const tr = foldInfo(last) && foldIsClosed(v, start) && v.editable
+              ? selectionAfterFold(state, end)
+              : state.tr.setSelection(TextSelection.near(state.doc.resolve(end), -1)).scrollIntoView();
+            v.dispatch(tr);
             e.preventDefault();
             return true;
           }
@@ -498,6 +508,7 @@ export function selectMatch(query, nth = 0) {
   const hit = found[nth] || found[0];
   if (!hit) return;
   const { state } = view;
+  revealFolds(view, hit[0]);
   view.dispatch(state.tr.setSelection(TextSelection.create(state.doc, hit[0], hit[1])));
   view.focus();
   // 滚到窗口中间
@@ -515,6 +526,9 @@ export function insertText(text) {
 }
 
 export function applyEditorSettings(s) {
+  codeExitMode = ["blank2", "blank3", "ctrl"].includes(s.code_exit_mode) ? s.code_exit_mode : "blank3";
+  setFoldPersistence(s.fold_save_state !== false);
+  applyBlockSettings(s);
   $("#editor").classList.toggle("code-lines", s.code_line_numbers !== false);
   const bar = s.format_bar !== false;
   $("#format-bar").hidden = !bar;

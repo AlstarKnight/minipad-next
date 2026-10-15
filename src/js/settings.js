@@ -164,6 +164,11 @@ export function openSettings() {
   $("#set-date-format").value = s.date_format;
   updateDatePreview();
   $("#set-code-lines").checked = s.code_line_numbers;
+  $("#set-block-enabled").checked = s.block_enabled !== false;
+  $("#set-block-context").value = s.block_context_menu === "block" ? "block" : "system";
+  $("#set-code-exit").value = ["blank2", "blank3", "ctrl"].includes(s.code_exit_mode) ? s.code_exit_mode : "blank3";
+  $("#set-fold-save").checked = s.fold_save_state !== false;
+  $("#set-block-context").disabled = !$("#set-block-enabled").checked;
   $("#set-format-bar").checked = s.format_bar !== false;
   $("#set-outline").checked = !!s.outline_enabled;
   $("#set-outline-mode").value = s.outline_mode === "pinned" ? "pinned" : "hover";
@@ -505,6 +510,10 @@ async function submitSettings() {
     notes_dir: $("#set-dir").value.trim(),
     date_format: $("#set-date-format").value.trim(),
     code_line_numbers: $("#set-code-lines").checked,
+    block_enabled: $("#set-block-enabled").checked,
+    block_context_menu: $("#set-block-context").value,
+    code_exit_mode: $("#set-code-exit").value,
+    fold_save_state: $("#set-fold-save").checked,
     format_bar: $("#set-format-bar").checked,
     outline_enabled: $("#set-outline").checked,
     outline_mode: $("#set-outline-mode").value,
@@ -602,6 +611,7 @@ export function bindSettings() {
     if (combo) hk.value = combo;
   });
   $("#set-save").addEventListener("click", submitSettings);
+  $("#set-block-enabled").addEventListener("change", () => { $("#set-block-context").disabled = !$("#set-block-enabled").checked; });
   $("#set-quick-limit").addEventListener("input", refreshSharedColors);
   // 分类:点一下换过去;焦点在分类上时,上下(分类在上面时左右)方向键换到相邻的一类,Home / End 换到第一类和最后一类
   const nav = $("#set-nav");
