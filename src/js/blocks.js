@@ -1,6 +1,6 @@
 // ---------- 顶层 Markdown 块的菜单与拖放 ----------
 // 直接操作 ProseMirror 节点；笔记仍用原有 Markdown 读写，不另存块结构。
-import { $prose, Plugin, TextSelection } from "../vendor/milkdown.js";
+import { $prose, Plugin, TextSelection, closeHistory } from "../vendor/milkdown.js";
 import { openMenu } from "./ui.js";
 
 const TYPES = [
@@ -174,7 +174,7 @@ class BlockHandles {
     const node = state.doc.child(from);
     const start = blockAt(state.doc, from);
     const boundary = blockAt(state.doc, to);
-    const tr = state.tr.delete(start, start + node.nodeSize);
+    const tr = closeHistory(state.tr).delete(start, start + node.nodeSize);
     const at = boundary - (to > from ? node.nodeSize : 0);
     tr.insert(at, node);
     this.view.dispatch(tr.setSelection(TextSelection.near(tr.doc.resolve(at + 1))).scrollIntoView());
@@ -188,7 +188,7 @@ class BlockHandles {
     const node = state.doc.child(index);
     const start = blockAt(state.doc, index);
     const end = start + node.nodeSize;
-    let tr = state.tr;
+    let tr = closeHistory(state.tr);
     let at = start;
     if (action === "insert-before" || action === "insert-after") {
       const added = makeBlock(state.schema, kind);
