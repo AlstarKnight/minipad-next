@@ -196,13 +196,14 @@ class CodeBlockView {
   }
 
   async copyCode() {
+    if (!this.node.textContent) return;
     const ok = await copyText(this.node.textContent);
     this.copy.innerHTML = ok ? ICON_DONE : ICON_COPY;
     this.copy.title = ok ? "已复制" : "复制失败";
     this.copy.classList.toggle("done", ok);
     setTimeout(() => {
       this.copy.innerHTML = ICON_COPY;
-      this.copy.title = this.node.attrs.language === "copy" ? "复制这行文字" : "复制代码";
+      this.copy.title = this.node.attrs.language === "copy" ? "复制文本" : "复制代码";
       this.copy.classList.remove("done");
     }, 1400);
   }
@@ -216,7 +217,8 @@ class CodeBlockView {
     this.fit(this.lang);
     this.dom.classList.toggle("no-title", !title);
     this.dom.classList.toggle("copyline", language === "copy");
-    this.copy.title = language === "copy" ? "复制这行文字" : "复制代码";
+    this.copy.title = language === "copy" ? "复制文本" : "复制代码";
+    this.copy.disabled = language === "copy" && !this.node.textContent;
     const lines = lineCount(this.node);
     this.count.textContent = `${lines} 行`;
     this.dom.style.setProperty("--digits", String(String(lines).length));
