@@ -1477,7 +1477,7 @@ describe("block editor review regressions", () => {
     await p.locator("#editor .ProseMirror > p").first().click();
     await p.keyboard.press("Control+End");
     await p.keyboard.type("Z");
-    assert.equal(await p.locator("#editor .ProseMirror > p").last().textContent(), "Z");
+    assert.equal(await p.locator("#editor .ProseMirror > p").last().textContent(), "Z", await h.editor());
     assert.equal(await p.locator("#editor .ProseMirror > p").first().textContent(), "前文");
     await p.keyboard.press("Control+z");
     const box = await p.locator("#editor .ProseMirror > blockquote.fold-closed").boundingBox();
@@ -1571,8 +1571,8 @@ describe("block editor review regressions", () => {
     const table = p.locator("#editor table");
     await table.locator("td").last().hover();
     await p.locator(".block-handle").click();
-    assert.equal(await p.locator('#ctx button[data-act="block-table-col-delete"]').count(), 0,
-      "handle menu cannot delete an unspecified first column");
+    assert.equal(await p.locator('#ctx button[data-act="block-table-col-delete"]').count(), 1,
+      "handle menu targets the last hovered table cell");
     await p.click("#editor .ProseMirror");
     await table.locator("th").first().click({ button: "right" });
     assert.equal(await p.locator('#ctx button[data-act="block-table-row-delete"]').isDisabled(), true);
@@ -1649,6 +1649,8 @@ describe("nested fold cursor", () => {
     seed: seed({ "": { 页: "> 外层\n> > [!fold]- 内层\n> > 内容\n\n~~~text\n> \\[!fold]+ 示例\n~~~" } }),
   }, async (h) => {
     const { p } = h;
+    assert.ok(await p.locator("#editor .fold-toggle").count(),
+      JSON.stringify(await p.evaluate(() => window.__minipad.editor().view.state.doc.toJSON())));
     await p.locator("#editor .fold-toggle").click();
     const md = await h.editor();
     assert.ok(md.includes("> > [!fold]+ 内层"), "nested marker is not escaped");
