@@ -1858,19 +1858,19 @@ describe("fold edge regressions", () => {
 
 // ---------- 第四轮复查与复制文本 ----------
 describe("fourth review and copy text", () => {
-  ui("format bar cancels code blocks without losing text", { seed: seed({ "": { 页: "```python 标题\\nprint(1)\\n```" } }) }, async (h) => {
+  ui("format bar cancels code blocks without losing text", { seed: seed({ "": { 页: "```python 标题\nprint(1)\n```" } }) }, async (h) => {
     const { p } = h;
     await p.locator("#editor .codeblock code").click();
     await p.click('#format-bar [data-cmd="codeblock"]');
     await until(h.editor, "print(1)", "code button converts to paragraph");
     await p.keyboard.press("Control+z");
-    await until(h.editor, "```python 标题\\nprint(1)\\n```", "undo restores language and title");
+    await until(h.editor, "```python 标题\nprint(1)\n```", "undo restores language and title");
     await p.click('#format-bar [data-cmd="block"]');
     await p.click('#ctx [data-act="h0"]');
     await until(h.editor, "print(1)", "body dropdown converts code to text");
   });
 
-  ui("Ctrl+Alt+0 preserves code lines", { seed: seed({ "": { 页: "```python\\nprint(1)\\nprint(2)\\n```" } }) }, async (h) => {
+  ui("Ctrl+Alt+0 preserves code lines", { seed: seed({ "": { 页: "```python\nprint(1)\nprint(2)\n```" } }) }, async (h) => {
     const { p } = h;
     await p.locator("#editor .codeblock code").click();
     await p.keyboard.press("Control+Alt+0");
@@ -1889,7 +1889,7 @@ describe("fourth review and copy text", () => {
   });
 
   ui("deleting final paragraph after a closed fold persists", {
-    seed: seed({ "": { 页: "前文\\n\\n> [!fold]- 标题\\n>\\n> 内容\\n\\n后文" } }),
+    seed: seed({ "": { 页: "前文\n\n> [!fold]- 标题\n>\n> 内容\n\n后文" } }),
   }, async (h) => {
     const { p } = h;
     await p.locator("#editor .ProseMirror > p").last().click({ button: "right" });
@@ -1904,11 +1904,11 @@ describe("fourth review and copy text", () => {
     const { p } = h;
     await p.locator("#editor .ProseMirror > p").click();
     await p.click('#format-bar [data-cmd="copytext"]');
-    await until(h.editor, "```copy\\nnpm install\\n```", "copy block persists in Markdown");
+    await until(h.editor, "```copy\nnpm install\n```", "copy block persists in Markdown");
     assert.equal(await p.locator("#editor .codeblock.copyline").count(), 1);
     await p.locator("#editor .codeblock.copyline .copy").click();
     await until(() => p.evaluate(() => navigator.clipboard.readText()), "npm install", "one-click copy");
-    await until(() => h.mockFile("", "页"), "```copy\\nnpm install\\n```", "saved to file");
+    await until(() => h.mockFile("", "页"), "```copy\nnpm install\n```", "saved to file");
     await p.click('#format-bar [data-cmd="copytext"]');
     await until(h.editor, "npm install", "copy block can be turned into text");
   });
