@@ -250,6 +250,8 @@ let codeExitMode = "blank3";
 function exitCodeBlock(state, dispatch, afterBlank = false) {
   const { $from, empty } = state.selection;
   if (!empty || !$from.parent.type.spec.code) return false;
+  // 复制文本允许连续空行；只保留 Ctrl+Enter 作为离开块的快捷键。
+  if (afterBlank && $from.parent.attrs.language === "copy") return false;
   const count = codeExitMode === "blank2" ? 1 : 2;
   if (afterBlank && (codeExitMode === "ctrl" || $from.parentOffset !== $from.parent.content.size ||
     !$from.parent.textContent.endsWith("\n".repeat(count)))) return false;
