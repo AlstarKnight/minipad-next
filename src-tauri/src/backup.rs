@@ -46,9 +46,17 @@ pub fn list(dest: &Path) -> Vec<(String, PathBuf)> {
     found
 }
 
+/// 打好的一份备份
+#[derive(Debug, PartialEq)]
+pub struct Made {
+    pub path: PathBuf,
+    /// 读不了、没装进去的文件和文件夹(相对笔记文件夹,用 / 分隔,文件夹以 / 结尾)
+    pub skipped: Vec<String>,
+}
+
 /// 今天还没有备份就打一个,再删掉超出 `keep` 份的旧备份。
-/// 返回新备份的路径;今天已经备份过就什么都不做,返回 None。
-pub fn run(notes: &Path, dest: &Path, day: &str, keep: usize) -> Result<Option<PathBuf>, String> {
+/// 返回新备份;今天已经备份过就什么都不做,返回 None。
+pub fn run(notes: &Path, dest: &Path, day: &str, keep: usize) -> Result<Option<Made>, String> {
     let target = dest.join(file_name(day));
     if target.exists() {
         return Ok(None);
@@ -57,14 +65,23 @@ pub fn run(notes: &Path, dest: &Path, day: &str, keep: usize) -> Result<Option<P
     fs::create_dir_all(dest).map_err(|e| format!("无法创建备份文件夹 {}:{e}", dest.display()))?;
     // 先写到临时文件,写完再改名,半截的 zip 不会被当成备份
     let tmp = dest.join(format!("{}.tmp~", file_name(day)));
-    let written = write_zip(notes, &tmp, dest)
-        .and_then(|_| fs::rename(&tmp, &target).map_err(|e| e.to_string()));
-    if let Err(e) = written {
-        let _ = fs::remove_file(&tmp);
-        return Err(format!("打包时出错:{e}"));
-    }
+    let written = write_zip(notes, &tmp, dest).and_then(|skipped| {
+        fs::rename(&tmp, &target)
+            .map(|_| skipped)
+            .map_err(|e| e.to_string())
+    });
+    let skipped = match written {
+        Ok(skipped) => skipped,
+        Err(e) => {
+            let _ = fs::remove_file(&tmp);
+            return Err(format!("打包时出错:{e}"));
+        }
+    };
     prune(dest, keep);
-    Ok(Some(target))
+    Ok(Some(Made {
+        path: target,
+        skipped,
+    }))
 }
 
 /// 只留最近 `keep` 份(至少一份),多出来的从最旧的删起。
@@ -79,30 +96,35 @@ pub fn prune(dest: &Path, keep: usize) {
     }
 }
 
-fn write_zip(notes: &Path, out: &Path, dest: &Path) -> Result<(), String> {
+/// 返回跳过的文件
+fn write_zip(notes: &Path, out: &Path, dest: &Path) -> Result<Vec<String>, String> {
     let file = fs::File::create(out).map_err(|e| e.to_string())?;
     let mut zip = ZipWriter::new(BufWriter::new(file));
     // 备份文件夹万一放在笔记文件夹里面,不能把自己也装进去
     let skip = fs::canonicalize(dest).ok();
-    add_dir(&mut zip, notes, "", skip.as_deref()).map_err(|e| e.to_string())?;
+    let mut skipped = Vec::new();
+    add_dir(&mut zip, notes, "", skip.as_deref(), &mut skipped).map_err(|e| e.to_string())?;
     zip.finish()
         .map_err(|e| e.to_string())?
         .into_inner()
         .map_err(|e| e.to_string())?
         .sync_all()
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    Ok(skipped)
 }
 
 /// 把 `dir` 里的东西放进 zip 的 `prefix` 下面。
 /// `.git` 这类点开头的文件夹不备份,`.trash` 里是删掉的页面,要备份;正在写的临时文件跳过。
-/// 读不了的文件(比如被别的程序独占打开)跳过,不让整个备份失败。
+/// 读不了的文件(比如被别的程序独占打开)跳过,不让整个备份失败,记在 `skipped` 里。
 fn add_dir<W: Write + Seek>(
     zip: &mut ZipWriter<W>,
     dir: &Path,
     prefix: &str,
     skip: Option<&Path>,
+    skipped: &mut Vec<String>,
 ) -> ZipResult<()> {
     let Ok(entries) = fs::read_dir(dir) else {
+        skipped.push(format!("{prefix}/"));
         return Ok(());
     };
     let mut entries: Vec<fs::DirEntry> = entries.flatten().collect();
@@ -116,6 +138,7 @@ fn add_dir<W: Write + Seek>(
             format!("{prefix}/{name}")
         };
         let Ok(kind) = entry.file_type() else {
+            skipped.push(rel);
             continue;
         };
         if kind.is_dir() {
@@ -124,9 +147,10 @@ fn add_dir<W: Write + Seek>(
                 continue;
             }
             zip.add_directory(rel.as_str(), options(&path))?;
-            add_dir(zip, &path, &rel, skip)?;
+            add_dir(zip, &path, &rel, skip, skipped)?;
         } else if kind.is_file() && !name.ends_with(".tmp~") {
             let Ok(mut file) = fs::File::open(&path) else {
+                skipped.push(rel);
                 continue;
             };
             zip.start_file(rel.as_str(), options(&path))?;
@@ -210,7 +234,9 @@ mod tests {
         fs::write(notes.join("正在写.tmp~"), "").unwrap();
 
         let made = run(&notes, &dest, "2026-10-11", 14).unwrap().unwrap();
-        assert_eq!(made, dest.join("笔记备份 2026-10-11.zip"));
+        assert_eq!(made.path, dest.join("笔记备份 2026-10-11.zip"));
+        assert!(made.skipped.is_empty());
+        let made = made.path;
         let entries = read_zip(&made);
         let names: Vec<&str> = entries.iter().map(|(n, _)| n.as_str()).collect();
         assert_eq!(
@@ -236,7 +262,7 @@ mod tests {
         assert_eq!(read_zip(&made).len(), 7);
         // 第二天第一次保存会生成新的备份
         let next = run(&notes, &dest, "2026-10-12", 14).unwrap().unwrap();
-        let entries = read_zip(&next);
+        let entries = read_zip(&next.path);
         assert_eq!(
             entries.iter().find(|(n, _)| n == "欢迎.md").unwrap().1,
             "改过了"
@@ -280,8 +306,32 @@ mod tests {
         fs::write(notes.join("a.md"), "a").unwrap();
         run(&notes, &dest, "2026-10-11", 14).unwrap();
         let second = run(&notes, &dest, "2026-10-12", 14).unwrap().unwrap();
-        let names: Vec<String> = read_zip(&second).into_iter().map(|(n, _)| n).collect();
+        let names: Vec<String> = read_zip(&second.path).into_iter().map(|(n, _)| n).collect();
         assert_eq!(names, vec!["a.md"]);
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// 被别的程序独占打开的文件:备份照常完成,跳过的文件列出来
+    #[cfg(windows)]
+    #[test]
+    fn lists_files_it_could_not_read() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let root = temp_dir("backup-locked");
+        let notes = root.join("notes");
+        let dest = root.join("backups");
+        fs::create_dir_all(notes.join("工作")).unwrap();
+        fs::write(notes.join("a.md"), "a").unwrap();
+        fs::write(notes.join("工作").join("锁着.md"), "x").unwrap();
+        let lock = fs::OpenOptions::new()
+            .read(true)
+            .share_mode(0)
+            .open(notes.join("工作").join("锁着.md"))
+            .unwrap();
+        let made = run(&notes, &dest, "2026-10-11", 14).unwrap().unwrap();
+        drop(lock);
+        assert_eq!(made.skipped, vec!["工作/锁着.md"]);
+        let names: Vec<String> = read_zip(&made.path).into_iter().map(|(n, _)| n).collect();
+        assert_eq!(names, vec!["a.md", "工作/"]);
         fs::remove_dir_all(&root).unwrap();
     }
 

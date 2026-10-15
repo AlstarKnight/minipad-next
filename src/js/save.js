@@ -157,6 +157,7 @@ async function writeDirtyMeta() {
           modes,
           groups: b.groups.filter((g) => b.notes.some((n) => n.group === g.id)),
           note_groups: noteGroups,
+          pinned: b.notes.filter((n) => n.pinned).map((n) => n.name),
         });
       } catch (e) {
         metaDirty.add(b);

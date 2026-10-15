@@ -13,9 +13,9 @@ export const state = {
 // 页面:{ name, content, mode, dirty, scroll, disk, state, snap, group }
 // disk 是最近一次从磁盘读到或写到磁盘的内容,用来判断文件有没有在别处被改过;
 // scroll 是阅读模式的滚动位置;state / snap 是编辑器的状态(光标、撤销记录)和滚动位置,第一次编辑时才有;
-// group 是所在标签分组的 id,不在分组里是空的
+// group 是所在标签分组的 id,不在分组里是空的;pinned 是固定在标签栏最前面
 export function makeNote(name, content, mode = "edit", unreadable = false, reason = null, group = "") {
-  return { name, content, mode, unreadable, reason, dirty: false, scroll: 0, disk: content, state: null, snap: null, group };
+  return { name, content, mode, unreadable, reason, dirty: false, scroll: 0, disk: content, state: null, snap: null, group, pinned: false };
 }
 
 // 笔记本:「默认」的 name 是空字符串,active 是当前页面在 notes 里的位置;
@@ -26,7 +26,9 @@ export function makeBook(name, notes = [], active = 0, groups = [], icon = "", i
 
 // 后端读出来的笔记本 { name, notes, active: 页面名, groups } 换成界面用的
 export function noteFromDisk(n) {
-  return makeNote(n.name, n.content, n.mode, !!n.unreadable, n.reason ?? null, n.group || "");
+  const note = makeNote(n.name, n.content, n.mode, !!n.unreadable, n.reason ?? null, n.group || "");
+  note.pinned = !!n.pinned;
+  return note;
 }
 export function bookFromDisk(d) {
   const notes = d.notes.map(noteFromDisk);

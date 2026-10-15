@@ -13,7 +13,9 @@ import { toggleBooks, closeBooks, bindBooks } from "./notebooks.js";
 import { openSearch, bindSearch } from "./search.js";
 import { openFind, closeFind, findAgain, bindFind } from "./findbar.js";
 import { bindImport, closeImport } from "./importer.js";
-import { openSettings, saveSettings, applyEdgeAppearance, bindSettings } from "./settings.js";
+import { bindTrash, closeTrash } from "./trash.js";
+import { bindQuick } from "./quickswitch.js";
+import { openSettings, saveSettings, applyEdgeAppearance, bindSettings, skippedText } from "./settings.js";
 import { bindOutline } from "./outline.js";
 import { createEditor, editorDebug, insertText, toggleTask } from "./editor.js";
 import { setLinkPrompt, setTaskCommand } from "./toolbar.js";
@@ -54,6 +56,8 @@ async function init() {
     delete document.documentElement.dataset.edgePeek;
   });
   api.listen("backup-error", (e) => toast("自动备份失败:" + e.payload, 5000));
+  // 今天的备份里有读不了的文件(比如被别的程序独占打开)没装进去
+  api.listen("backup-skipped", (e) => toast(skippedText(e.payload), 9000));
 }
 
 // 托盘退出确认后，给正常保存最多 10 秒。超时只弹确认，不直接退出。
@@ -111,7 +115,7 @@ function openLink(href) {
 
 // 有没有开着的弹层、菜单或对话框
 function anyOverlay() {
-  return dialogOpen() || ["#search", "#settings", "#import", "#books", "#book-manager", "#ctx"].some((sel) => !$(sel).hidden);
+  return dialogOpen() || ["#search", "#quick", "#settings", "#import", "#trash", "#books", "#book-manager", "#ctx"].some((sel) => !$(sel).hidden);
 }
 
 // 顶栏的 Aa 按钮、格式栏右边的收起按钮:显示 / 收起格式栏,记在设置里
@@ -158,6 +162,15 @@ function bindUi() {
   document.addEventListener("format-bar-items", (e) =>
     saveSettings({ ...state.settings, ...e.detail }).catch((err) => toast(String(err)))
   );
+  // 贴边隐藏的开关:关掉就一直显示(正贴边藏着时马上放出来),再点一下恢复
+  $("#btn-edge").addEventListener("click", async () => {
+    try {
+      await saveSettings({ ...state.settings, edge_hide: !state.settings.edge_hide });
+      toast(state.settings.edge_hide ? "已打开贴边隐藏" : "一直显示,靠边也不隐藏");
+    } catch (e) {
+      toast(String(e));
+    }
+  });
   $("#btn-pin").addEventListener("click", async () => {
     try {
       await saveSettings({ ...state.settings, always_on_top: !state.settings.always_on_top });
@@ -178,6 +191,8 @@ function bindUi() {
   bindFind();
   bindSettings();
   bindImport();
+  bindTrash();
+  bindQuick();
   bindOutline();
   bindTabBar();
   bindGroups();
@@ -195,6 +210,7 @@ function bindUi() {
       // 点对话框外面只取消对话框,底下的笔记本列表留着;导入窗口也只关它自己,底下的设置留着
       if (o.id === "dialog") closeDialog(false);
       else if (o.id === "import") closeImport();
+      else if (o.id === "trash") closeTrash();
       else closeOverlays();
     })
   );
@@ -244,7 +260,7 @@ function bindUi() {
       e.preventDefault();
       // 一次关一层:先关右键菜单,再关弹层,然后是查找栏,都没有才隐藏窗口
       if (!$("#ctx").hidden) closeMenu();
-      else if (!closeImport() && !closeOverlays() && !closeFind()) hideWindow();
+      else if (!closeImport() && !closeTrash() && !closeOverlays() && !closeFind()) hideWindow();
       return;
     }
     // 编辑器自己处理过的快捷键(Ctrl+Z、Ctrl+B 加粗……)不再算窗口的

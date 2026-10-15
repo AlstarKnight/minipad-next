@@ -708,6 +708,7 @@ describe("notebooks", () => {
         await p.$$eval("#ctx button", (bs) => bs.map((b) => [b.dataset.act, b.textContent.trim()])),
         [
           ["rename", "重命名"],
+          ["pin", "固定标签"],
           ["move", "移到笔记本…"],
           ["delete", "删除页面"],
         ],
@@ -4354,6 +4355,16 @@ describe("0.3.0: import from minipad2", () => {
     await p.fill("#import-base", "旧笔记");
     await p.check("#import-clips");
     await p.uncheck("#import-highlights");
+    assert.equal(await p.textContent("#import-ok"), "预览");
+    await p.click("#import-ok");
+    // 先进暂存区:列出会建的笔记本和页面,还没写进去
+    await p.locator("#import-stage").waitFor();
+    assert.ok(await p.isHidden("#import-setup"));
+    assert.deepEqual(await p.$$eval("#import-stage .st-book > summary .st-name", (els) => els.map((e) => e.textContent)), ["旧笔记", "工作"]);
+    assert.deepEqual(await p.$$eval("#import-stage .st-page-row .st-name", (els) => els.map((e) => e.textContent)), ["随手记", "周报", "计划"]);
+    assert.match(await p.textContent("#import-stage-summary"), /会新建 2 个笔记本、3 页/);
+    assert.equal(await p.textContent("#import-ok"), "导入 3 页");
+    assert.deepEqual(await p.evaluate(() => Object.keys(window.__mockBooks).sort()), ["", "工作"], "nothing is written while staged");
     await p.click("#import-ok");
     await p.locator("#import-result").waitFor();
     assert.deepEqual(
@@ -4371,6 +4382,40 @@ describe("0.3.0: import from minipad2", () => {
     const books = await h.listBooks();
     assert.deepEqual(books.map((b) => [b.name, b.count]), [["默认", 1], ["工作", 1], ["工作 (2)", 2], ["旧笔记", 1]], "new notebooks next to the old ones");
     assert.equal(await h.mockFile("工作", "旧的"), "保留", "existing notes are untouched");
+  });
+
+  ui("0.3.10: unticked notebooks and pages in the staging area are left out; back returns to the options", { seed: seed({ "": { 首页: "hello" } }) }, async (h) => {
+    const { p } = h;
+    await p.evaluate((c) => (window.__mockControl = c), MP2);
+    await h.openBooks();
+    await p.click("#books-import");
+    await p.locator("#import-found").waitFor();
+    await p.click("#import-ok");
+    await p.locator("#import-stage").waitFor();
+    // 上一步回到选项,改了再预览
+    await p.click("#import-back");
+    assert.ok(await p.isVisible("#import-setup"));
+    assert.ok(await p.isHidden("#import-stage"));
+    assert.equal(await p.textContent("#import-ok"), "预览");
+    await p.click("#import-ok");
+    await p.locator("#import-stage").waitFor();
+    // 整个「旧笔记」不要,「工作」里不要「计划」
+    await p.locator(".st-book >> nth=0").locator("summary input").uncheck();
+    await p.locator(".st-book >> nth=1").evaluate((d) => (d.open = true));
+    await p.locator('.st-page-row:has-text("计划") input').uncheck();
+    assert.ok(await p.locator(".st-book >> nth=1").locator("summary input").evaluate((c) => c.indeterminate), "partly ticked notebook");
+    assert.equal(await p.textContent("#import-ok"), "导入 1 页");
+    assert.match(await p.textContent("#import-stage-summary"), /会新建 1 个笔记本、1 页/);
+    // 全都不勾就不能导入
+    await p.locator('.st-page-row:has-text("周报") input').uncheck();
+    assert.ok(await p.isDisabled("#import-ok"));
+    assert.ok(!(await p.locator(".st-book >> nth=1").locator("summary input").isChecked()));
+    await p.locator('.st-page-row:has-text("周报") input').check();
+    await p.click("#import-ok");
+    await p.locator("#import-result").waitFor();
+    assert.deepEqual(await p.evaluate(() => window.__mockControl.minipad2.leave), { books: [0], pages: [[1, 1]] });
+    assert.equal(await p.textContent("#import-result p >> nth=0"), "导入了 1 页,新建了 1 个笔记本:「工作」。");
+    assert.deepEqual(await h.tabs(), ["周报"]);
   });
 
   ui("import from the settings: a folder without minipad2 data says so; Esc closes only the import window", { seed: seed({ "": { 首页: "hello" } }) }, async (h) => {
@@ -4872,13 +4917,13 @@ describe("0.3.2: tab groups", () => {
   ui("groups: off by default, so the tab menu has no group items", { seed: books() }, async (h) => {
     const { p } = h;
     await p.click("#tabs .tab:nth-child(2)", { button: "right" });
-    assert.deepEqual(await menu(p), ["重命名", "移到笔记本…", "删除页面"]);
+    assert.deepEqual(await menu(p), ["重命名", "固定标签", "移到笔记本…", "删除页面"]);
   });
 
   ui("groups: a tab goes into a new group, which gets a name and colour, folds, and is saved with the notebook", { seed: books({ tab_groups: true }) }, async (h) => {
     const { p } = h;
     await p.click("#tabs .tab:nth-child(2)", { button: "right" });
-    assert.deepEqual(await menu(p), ["重命名", "移到笔记本…", "添加到新分组", "删除页面"]);
+    assert.deepEqual(await menu(p), ["重命名", "固定标签", "移到笔记本…", "添加到新分组", "删除页面"]);
     await p.click('#ctx button[data-act="group-new"]');
     assert.ok(await p.isVisible("#group-edit"), "the group settings open");
     assert.equal(await p.evaluate(() => document.activeElement.id), "ge-name");
@@ -4949,7 +4994,7 @@ describe("0.3.2: tab groups", () => {
     await p.click("#set-save");
     await until(() => strip(p), ["a", "b", "c", "d", "e"], "no groups shown");
     await p.click("#tabs .tab:nth-child(2)", { button: "right" });
-    assert.deepEqual(await menu(p), ["重命名", "移到笔记本…", "删除页面"]);
+    assert.deepEqual(await menu(p), ["重命名", "固定标签", "移到笔记本…", "删除页面"]);
     await p.keyboard.press("Escape");
     await p.waitForTimeout(500);
     assert.equal((await stored(h)).groups.length, 1, "the group is still saved");
@@ -5250,5 +5295,257 @@ describe("0.3.6: speed and safety", () => {
     const bg = await span.evaluate((e) => ({ image: getComputedStyle(e).backgroundImage, color: getComputedStyle(e).backgroundColor }));
     assert.match(bg.image, /^linear-gradient\(/, "a dimming layer on top");
     assert.equal(bg.color, "rgb(251, 233, 166)", "over the chosen color");
+  });
+});
+
+describe("0.3.10: trash, backup notes, import staging, quick switch, pinned tabs, edge button", () => {
+  ui("trash: deleted pages and notebooks are listed, restored to where they were, or deleted for good", { seed: seed({ "": { 首页: "hello", 草稿: "第一行\n第二行" }, 工作: { 周报: "本周", 计划: "下周" }, 旧的: { a: "1", b: "2" } }) }, async (h) => {
+    const { p } = h;
+    await h.tab("草稿").click();
+    await p.keyboard.press("Control+w");
+    await p.locator("#dialog").waitFor();
+    assert.match(await p.textContent("#dialog-msg"), /回收站/);
+    await p.click("#dialog-ok");
+    await until(h.tabs, ["首页"], "page deleted");
+    await h.bookMenu("旧的");
+    await p.click('#ctx button[data-act="delete"]');
+    await p.click("#dialog-ok");
+    await until(async () => (await h.listBooks()).map((b) => b.name), ["默认", "工作"], "notebook deleted");
+
+    await h.openBooks();
+    await p.click("#books-trash");
+    await p.locator("#trash").waitFor();
+    assert.ok(await p.isHidden("#books"));
+    const rows = () => p.$$eval("#trash-list .trash-item", (els) => els.map((e) => [e.dataset.kind, e.querySelector(".ti-name").textContent]));
+    await until(async () => (await rows()).sort(), [["book", "旧的"], ["page", "草稿"]], "both are in the trash");
+    assert.equal(await p.textContent("#trash-count"), "2 项");
+    const draft = p.locator('.trash-item:has-text("草稿")');
+    assert.match(await draft.locator(".ti-meta").textContent(), /^来自「默认」 · .+ 删除$/);
+    assert.equal(await draft.locator(".ti-preview").textContent(), "第一行 第二行");
+    assert.match(await p.locator('.trash-item:has-text("旧的") .ti-meta').textContent(), /^笔记本 · 2 页/);
+    // 筛选
+    await p.fill("#trash-filter", "旧");
+    assert.deepEqual(await rows(), [["book", "旧的"]]);
+    await p.fill("#trash-filter", "");
+
+    // 页面回到原来的笔记本,打开它
+    await draft.locator('button[data-act="restore"]').click();
+    await until(h.tabs, ["首页", "草稿"], "page is back");
+    assert.equal(await h.mockFile("", "草稿"), "第一行\n第二行");
+    await until(rows, [["book", "旧的"]], "only the notebook is left");
+    assert.match(await h.toast(), /已恢复「默认」里的「草稿」/);
+    // 彻底删除要先确认
+    await p.click('.trash-item:has-text("旧的") button[data-act="purge"]');
+    await p.locator("#dialog").waitFor();
+    assert.match(await p.textContent("#dialog-msg"), /彻底删除笔记本「旧的」和里面的 2 页/);
+    assert.ok(await p.isVisible("#trash"), "the trash stays open behind the question");
+    await p.click("#dialog-cancel");
+    assert.equal((await rows()).length, 1);
+    await p.click('.trash-item:has-text("旧的") button[data-act="purge"]');
+    await p.click("#dialog-ok");
+    await until(rows, [], "deleted for good");
+    assert.equal(await p.getAttribute("#trash-list", "data-empty"), "回收站是空的");
+    assert.ok(await p.isDisabled("#trash-empty"));
+    await p.keyboard.press("Escape");
+    await until(() => p.isHidden("#trash"), true, "Esc closes the trash");
+  });
+
+  ui("trash: a notebook comes back with its pages; from the settings the trash opens on top and Esc returns there; empty it all", { seed: seed({ "": { 首页: "hello" }, 旧的: { a: "1", b: "2" }, 工作: { 周报: "本周" } }) }, async (h) => {
+    const { p } = h;
+    await h.bookMenu("旧的");
+    await p.click('#ctx button[data-act="delete"]');
+    await p.click("#dialog-ok");
+    await until(async () => (await h.listBooks()).map((b) => b.name), ["默认", "工作"], "notebook deleted");
+    await h.openBooks();
+    await p.click("#books-trash");
+    await p.click('.trash-item:has-text("旧的") button[data-act="restore"]');
+    await until(h.bookName, "旧的", "the restored notebook opens");
+    assert.deepEqual(await h.tabs(), ["a", "b"]);
+    await p.keyboard.press("Escape");
+
+    await h.switchBook("工作");
+    await p.keyboard.press("Control+w");
+    await p.click("#dialog-ok");
+    await h.switchBook("");
+    await p.keyboard.press("Control+w");
+    await p.click("#dialog-ok");
+    await p.click("#btn-settings");
+    await settingsPage(p, "data");
+    await p.click("#set-trash");
+    await p.locator("#trash").waitFor();
+    assert.ok(await p.isVisible("#settings"), "settings stay open underneath");
+    await until(() => p.$$eval("#trash-list .trash-item", (els) => els.length), 2, "two pages");
+    // 从设置里恢复不换页面
+    await p.click('.trash-item:has-text("周报") button[data-act="restore"]');
+    await until(() => h.mockFile("工作", "周报"), "本周", "restored into 工作");
+    assert.equal(await h.bookName(), "默认");
+    await p.click("#trash-empty");
+    assert.match(await p.textContent("#dialog-msg"), /清空回收站,彻底删除这 1 项/);
+    await p.click("#dialog-ok");
+    await until(() => p.$$eval("#trash-list .trash-item", (els) => els.length), 0, "emptied");
+    await p.keyboard.press("Escape");
+    await until(() => p.isHidden("#trash"), true);
+    assert.ok(await p.isVisible("#settings"), "back in the settings");
+    assert.equal(await p.evaluate(() => document.activeElement.id), "set-trash");
+  });
+
+  ui("backup: files the daily backup could not read are listed in the settings and announced", { seed: seed({ "": { 首页: "hello" } }) }, async (h) => {
+    const { p } = h;
+    await p.evaluate(() => (window.__mockControl = { backupSkipped: ["工作/锁着.md", "照片/"] }));
+    await h.tab("首页").click();
+    await p.keyboard.type("x");
+    await p.evaluate(() => window.__minipad.flush());
+    await p.click("#btn-settings");
+    await settingsPage(p, "data");
+    await until(() => p.isVisible("#set-backup-skipped"), true, "the list shows up");
+    const text = await p.textContent("#set-backup-skipped");
+    assert.match(text, /今天的备份跳过了 2 个读不了的文件或文件夹/);
+    assert.match(text, /· 工作\/锁着\.md\n· 照片\//);
+    await p.uncheck("#set-backup");
+    assert.ok(await p.isHidden("#set-backup-skipped"), "not shown while backups are off");
+    await p.click("#set-cancel");
+    // 后端打完备份发来的提示
+    await p.evaluate(() => window.__mockEmit("backup-skipped", ["a.md"]));
+    assert.match(await h.toast(), /今天的备份跳过了 1 个读不了的文件或文件夹[\s\S]*· a\.md/);
+  });
+
+  ui("quick switch: Ctrl+P finds a page in any notebook by name, recent pages first; Enter opens it", { seed: seed({ "": { 首页: "hello", 购物清单: "x" }, 工作: { 周报: "本周", 会议记录: "y" }, 生活: { 周末计划: "z" } }) }, async (h) => {
+    const { p } = h;
+    await h.switchBook("工作");
+    await h.tab("会议记录").click();
+    await h.switchBook("");
+    await p.keyboard.press("Control+p");
+    await p.locator("#quick").waitFor();
+    assert.equal(await p.evaluate(() => document.activeElement.id), "quick-input");
+    const names = () => p.$$eval("#quick-results .result .snip", (els) => els.map((e) => e.textContent));
+    const first = await names();
+    assert.equal(first[0], "会议记录", "the most recently opened page first");
+    assert.ok(!first.includes("首页"), "not the page that is open now");
+    assert.equal(await p.textContent("#quick-results .result >> nth=0 >> .where"), "工作 · 最近打开");
+    await p.keyboard.type("周");
+    await until(names, ["周报", "周末计划"], "pages whose names start with it");
+    await p.keyboard.press("ArrowDown");
+    await p.keyboard.press("Enter");
+    await until(h.bookName, "生活", "jumps to the notebook");
+    assert.equal(await h.activeTab(), "周末计划");
+    assert.ok(await p.isHidden("#quick"));
+    assert.ok(await h.editorFocused());
+    // 笔记本名字也能用来找;字可以不挨着
+    await p.keyboard.press("Control+p");
+    await p.keyboard.type("工作 会记");
+    await until(names, ["会议记录"]);
+    await p.keyboard.press("Escape");
+    await until(() => p.isHidden("#quick"), true, "Esc closes it");
+    await p.keyboard.press("Control+p");
+    await p.keyboard.type("没有这页");
+    await until(() => p.getAttribute("#quick-results", "data-empty"), "没有找到");
+    assert.deepEqual(await names(), []);
+    // 再按一次快捷键也关掉
+    await p.keyboard.press("Control+p");
+    await until(() => p.isHidden("#quick"), true);
+  });
+
+  ui("quick switch: the shortcut can be changed or turned off, and it can look only in the current notebook", { seed: seed({ "": { 首页: "hello", 周记: "a" }, 工作: { 周报: "本周" } }) }, async (h) => {
+    const { p } = h;
+    await p.click("#btn-settings");
+    assert.equal(await p.inputValue("#set-quick-key"), "Ctrl+P");
+    await settingsPage(p, "general");
+    await p.click("#set-quick-key");
+    await p.keyboard.press("Control+Shift+KeyO");
+    assert.equal(await p.inputValue("#set-quick-key"), "Ctrl+Shift+O");
+    await p.selectOption("#set-quick-scope", "book");
+    await p.click("#set-save");
+    await until(() => p.isHidden("#settings"), true);
+    await p.keyboard.press("Control+p");
+    await sleep(150);
+    assert.ok(await p.isHidden("#quick"), "the old shortcut does nothing now");
+    await p.keyboard.press("Control+Shift+KeyO");
+    await p.locator("#quick").waitFor();
+    await p.keyboard.type("周");
+    await until(() => p.$$eval("#quick-results .result .snip", (els) => els.map((e) => e.textContent)), ["周记"], "only this notebook");
+    assert.equal(await p.locator("#quick-results .where").count(), 0, "no notebook names needed");
+    await p.keyboard.press("Escape");
+    // 清空就不用快捷键
+    await p.click("#btn-settings");
+    await settingsPage(p, "general");
+    await p.click("#set-quick-key");
+    await p.keyboard.press("Backspace");
+    assert.equal(await p.inputValue("#set-quick-key"), "");
+    await p.click("#set-save");
+    await until(() => p.evaluate(() => window.__minipad.state.settings.quick_switch_key), "");
+    await p.keyboard.press("Control+Shift+KeyO");
+    await sleep(150);
+    assert.ok(await p.isHidden("#quick"));
+  });
+
+  ui("pinned tabs: pinning moves a tab to the front with a pin, survives a reload, and Ctrl+W will not delete it", { seed: seed({ "": { 甲: "a", 乙: "b", 丙: "c" } }) }, async (h) => {
+    const { p } = h;
+    await h.tabMenu("丙");
+    await p.click('#ctx button[data-act="pin"]');
+    await until(h.tabs, ["丙", "甲", "乙"], "pinned tab goes first");
+    assert.ok(await h.tab("丙").evaluate((t) => t.classList.contains("pinned") && t.classList.contains("pin-end")));
+    assert.ok(await h.tab("丙").locator(".pin-mark").isVisible(), "a pin before the name");
+    await h.tabMenu("乙");
+    await p.click('#ctx button[data-act="pin"]');
+    await until(h.tabs, ["丙", "乙", "甲"], "the second pinned tab goes after the first");
+    await until(async () => (await h.stored())?.books[""].meta.pinned, ["丙", "乙"], "saved with the notebook");
+    // 不能被 Ctrl+W 删掉,右键菜单里的删除也是灰的
+    await h.tab("乙").click();
+    await p.keyboard.press("Control+w");
+    assert.match(await h.toast(), /「乙」是固定的标签,先右键取消固定才能删除/);
+    assert.ok(await p.isHidden("#dialog"));
+    await h.tabMenu("乙");
+    assert.equal(await p.textContent('#ctx button[data-act="pin"]'), "取消固定");
+    assert.ok(await p.isDisabled('#ctx button[data-act="delete"]'));
+    await p.keyboard.press("Escape");
+    // 普通的标签拖不到固定的前面(窗口放宽,标签栏不用滚动)
+    await p.setViewportSize({ width: 700, height: 540 });
+    await p.dragAndDrop("#tabs .tab:nth-child(3)", "#tabs .tab:nth-child(1)", { targetPosition: { x: 4, y: 10 } });
+    await until(h.tabs, ["丙", "乙", "甲"], "stays after the pinned ones");
+    await p.reload();
+    await until(h.tabs, ["丙", "乙", "甲"], "still pinned after a reload");
+    assert.equal(await p.locator("#tabs .tab.pinned").count(), 2);
+    // 取消固定:放到固定的后面
+    await h.tabMenu("丙");
+    await p.click('#ctx button[data-act="pin"]');
+    await until(h.tabs, ["乙", "丙", "甲"]);
+    await until(async () => (await h.stored())?.books[""].meta.pinned, ["乙"]);
+  });
+
+  ui("pinned tabs: the mark style is a setting", { seed: { ...seed({ "": { 甲: "a", 乙: "b" } }), settings: { ...SETTINGS, pin_style: "tint" } } }, async (h) => {
+    const { p } = h;
+    await h.tabMenu("乙");
+    await p.click('#ctx button[data-act="pin"]');
+    await h.tab("甲").click();
+    assert.equal(await p.evaluate(() => document.documentElement.dataset.pinStyle), "tint");
+    assert.ok(!(await h.tab("乙").locator(".pin-mark").isVisible()), "no pin with the tint style");
+    assert.notEqual(await h.tab("乙").evaluate((t) => getComputedStyle(t).backgroundColor), "rgba(0, 0, 0, 0)", "tinted");
+    await p.click("#btn-settings");
+    await settingsPage(p, "look");
+    assert.equal(await p.inputValue("#set-pin-style"), "tint");
+    await p.selectOption("#set-pin-style", "icon");
+    await p.click("#set-save");
+    await until(() => h.tab("乙").locator(".pin-mark").isVisible(), true, "pin shows after switching the style");
+  });
+
+  ui("edge button: one click keeps the window shown, another brings edge hiding back; it can be hidden in the settings", { seed: seed({ "": { 首页: "hello" } }) }, async (h) => {
+    const { p } = h;
+    const btn = p.locator("#btn-edge");
+    assert.ok(await btn.isVisible(), "shown by default");
+    assert.equal(await btn.getAttribute("aria-pressed"), "true");
+    assert.ok(await btn.evaluate((b) => b.classList.contains("on")));
+    await btn.click();
+    await until(() => p.evaluate(() => window.__minipad.state.settings.edge_hide), false, "edge hiding off");
+    assert.equal(await btn.getAttribute("aria-pressed"), "false");
+    assert.match(await btn.getAttribute("title"), /^一直显示/);
+    assert.match(await h.toast(), /一直显示/);
+    await p.click("#btn-settings");
+    await settingsPage(p, "window");
+    assert.ok(!(await p.isChecked("#set-edge")), "the setting follows the button");
+    await p.check("#set-edge");
+    await p.uncheck("#set-edge-button");
+    await p.click("#set-save");
+    await until(() => btn.isHidden(), true, "button hidden");
+    assert.equal(await p.evaluate(() => window.__minipad.state.settings.edge_hide), true);
   });
 });

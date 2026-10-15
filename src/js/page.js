@@ -8,9 +8,16 @@ export function rememberView() {
   if (current()) leaveEditor();
 }
 
+// 最近打开过的页面,最近的在前(快速切换用;只记这次运行里的)
+export const recent = [];
+
 export function showNote() {
   const n = current();
   if (!n) return;
+  const seen = recent.indexOf(n);
+  if (seen >= 0) recent.splice(seen, 1);
+  recent.unshift(n);
+  recent.length = Math.min(recent.length, 50);
   showInEditor(n);
   showReadError(n);
   focusEditorView();

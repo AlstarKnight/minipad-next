@@ -73,6 +73,10 @@ const DEFAULT_SETTINGS = {
   tab_drawer_pinned: false,
   tab_groups: false,
   tab_group_style: "line",
+  pin_style: "icon",
+  quick_switch_key: "Ctrl+P",
+  quick_switch_scope: "all",
+  edge_button: true,
   sel_bar: "always",
   sel_bar_items: ["block", "strong", "em", "strike", "code", "link", "sep3", "color", "bg"],
   sel_bar_pos: "above",
@@ -106,6 +110,7 @@ function load() {
   for (const b of Object.values(db.books)) fixBook(b);
   if (typeof db.book !== "string") db.book = "";
   if (!Array.isArray(db.backups)) db.backups = [];
+  if (!Array.isArray(db.trash)) db.trash = [];
   return db;
 }
 
@@ -161,6 +166,25 @@ export function mockApi() {
     db.backups = [...db.backups, today].sort().slice(-Math.max(1, db.settings.backup_keep));
   };
 
+  // 删掉的页面、笔记本放进回收站
+  const toTrash = (item) => {
+    db.trash.unshift({ id: `t${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`, deleted: Math.floor(Date.now() / 1000), ...item });
+  };
+  // 导入的暂存区:有页面的笔记本,页面名字去重;content 只在模拟里带着,导入时用
+  const stagedBooks = (m) =>
+    m.books
+      .filter((plan) => plan.pages.length)
+      .map((plan) => {
+        const taken = [];
+        return {
+          name: plan.name,
+          pages: plan.pages.map(([page, content]) => {
+            const name = firstFree(clean(page, "新页面"), (n) => taken.includes(n.toLowerCase()));
+            taken.push(name.toLowerCase());
+            return { name, chars: [...content].length, preview: content.split(/\s+/).filter(Boolean).join(" ").slice(0, 80), content };
+          }),
+        };
+      });
   // 笔记本文件夹不在了就重新建出来(和真的写文件一样)
   const bookOf = (name) => (has(db.books, name) ? fixBook(db.books[name]) : (db.books[name] = fixBook({})));
   const bookNames = () => Object.keys(db.books).filter((n) => n && !n.startsWith(".")).sort();
@@ -193,7 +217,7 @@ export function mockApi() {
         const g = meta.note_groups?.[n];
         const group = g && (meta.groups || []).some((x) => x.id === g) ? g : "";
         return { name: n, content: reason && !window.__mockControl?.keepUnreadableContent ? "" : files[n],
-          mode: meta.modes[n] || "edit", unreadable: !!reason, reason, group };
+          mode: meta.modes[n] || "edit", unreadable: !!reason, reason, group, pinned: (meta.pinned || []).includes(n) };
       }),
       active: order.includes(meta.active) ? meta.active : (order[0] ?? ""),
       groups: (meta.groups || []).filter((x) => order.some((n) => meta.note_groups?.[n] === x.id)),
@@ -261,7 +285,10 @@ export function mockApi() {
     },
     delete_note: ({ book, name }) => {
       backup();
-      if (has(db.books, book)) delete db.books[book].files[name];
+      if (!has(db.books, book) || !has(db.books[book].files, name)) return;
+      const content = db.books[book].files[name];
+      toTrash({ kind: "page", book, name, preview: content.split(/\s+/).filter(Boolean).join(" ").slice(0, 120), pages: 0, content });
+      delete db.books[book].files[name];
     },
     move_note: ({ book, name, target }) => {
       backup();
@@ -275,11 +302,12 @@ export function mockApi() {
       return n;
     },
     // 笔记本已经不在了就不写,免得把删掉的笔记本又建出来
-    // 带了 groups 才改分组(和 Rust 一样只记还有页面的分组)
-    save_meta: ({ book, order, active, modes, groups, note_groups }) => {
+    // 带了 groups 才改分组(和 Rust 一样只记还有页面的分组);带了 pinned 才改固定的页面
+    save_meta: ({ book, order, active, modes, groups, note_groups, pinned }) => {
       if (!has(db.books, book)) return;
       const old = db.books[book].meta || {};
       const meta = { ...old, order, active, modes, groups: old.groups || [], note_groups: old.note_groups || {} };
+      if (pinned) meta.pinned = pinned.filter((n, i, a) => order.includes(n) && a.indexOf(n) === i);
       if (groups) {
         const ng = Object.fromEntries(
           Object.entries(note_groups || {}).filter(([n, id]) => id && order.includes(n) && groups.some((g) => g.id === id)),
@@ -320,11 +348,39 @@ export function mockApi() {
       backup();
       if (!name) throw "「默认」笔记本不能删除";
       if (!has(db.books, name)) return;
+      toTrash({ kind: "book", book: "", name, preview: "", pages: Object.keys(db.books[name].files).length, data: db.books[name] });
       delete db.books[name];
       if (db.book === name) db.book = "";
     },
+    // 回收站:和后端一样,页面恢复到原来的笔记本(不在了就重新建),重名时加编号
+    trash_list: () => db.trash.map(({ content, data, ...item }) => item),
+    trash_restore: ({ id }) => {
+      const item = db.trash.find((t) => t.id === id);
+      if (!item) throw "回收站里已经没有这一项了";
+      db.trash = db.trash.filter((t) => t !== item);
+      backup();
+      if (item.kind === "book") {
+        const name = uniqBook(item.name);
+        db.books[name] = fixBook(item.data);
+        return { book: name, name: "" };
+      }
+      const b = bookOf(item.book);
+      const name = uniqPage(b, item.name);
+      b.files[name] = item.content;
+      return { book: item.book, name };
+    },
+    trash_purge: ({ id }) => {
+      if (!db.trash.some((t) => t.id === id)) throw "回收站里已经没有这一项了";
+      db.trash = db.trash.filter((t) => t.id !== id);
+    },
+    trash_empty: () => {
+      const n = db.trash.length;
+      db.trash = [];
+      return n;
+    },
     set_current_book: ({ book }) => void (db.book = book),
-    backup_info: () => ({ dir: "(浏览器预览)", latest: db.backups.at(-1) ?? null, count: db.backups.length }),
+    // 测试用 __mockControl.backupSkipped 模拟最近一份备份跳过的文件
+    backup_info: () => ({ dir: "(浏览器预览)", latest: db.backups.at(-1) ?? null, count: db.backups.length, skipped: window.__mockControl?.backupSkipped ?? [] }),
     open_backup_dir: () => toast("(预览)会在资源管理器里打开备份文件夹"),
     save_settings: ({ settings, migrateNotes }) => {
       if (migrateNotes && window.__mockControl?.migrationError) throw new Error(window.__mockControl.migrationError);
@@ -363,6 +419,9 @@ export function mockApi() {
         tab_overflow: pickOne(settings.tab_overflow, ["scroll", "wrap", "drawer"]),
         tab_drawer_side: pickOne(settings.tab_drawer_side, ["left", "right"]),
         tab_group_style: pickOne(settings.tab_group_style, ["line", "tint"]),
+        pin_style: pickOne(settings.pin_style, ["icon", "tint", "none"]),
+        quick_switch_scope: pickOne(settings.quick_switch_scope, ["all", "book"]),
+        quick_switch_key: [...String(settings.quick_switch_key ?? "").trim()].slice(0, 40).join(""),
         sel_bar: pickOne(settings.sel_bar, ["always", "nobar", "off"]),
         sel_bar_pos: pickOne(settings.sel_bar_pos, ["above", "below"]),
         sel_bar_items: Array.isArray(settings.sel_bar_items)
@@ -398,26 +457,35 @@ export function mockApi() {
       }
       return { folder: m.path, warnings: [], ...m.preview };
     },
-    minipad2_import: ({ path, options }) => {
+    // 暂存区:m.books 里有页面的笔记本,页面重名时加编号(和后端一样)
+    minipad2_stage: ({ path, options }) => {
+      const m = window.__mockControl?.minipad2;
+      if (!m || normPath(path) !== normPath(m.path)) throw `「${path}」里没有找到 minipad2 的数据`;
+      m.stagedOptions = options;
+      return { books: stagedBooks(m), skipped: m.skipped ?? 0, warnings: m.importWarnings ?? [] };
+    },
+    minipad2_import: ({ path, options, leave }) => {
       const m = window.__mockControl?.minipad2;
       if (!m || normPath(path) !== normPath(m.path)) throw `「${path}」里没有找到 minipad2 的数据`;
       m.options = options;
+      m.leave = leave;
       backup();
       const books = [];
       let pages = 0;
-      for (const plan of m.books) {
-        if (!plan.pages.length) continue;
+      stagedBooks(m).forEach((plan, i) => {
+        if (leave?.books?.includes(i)) return;
+        const picked = plan.pages.filter((_, j) => !leave?.pages?.some(([bi, pj]) => bi === i && pj === j));
+        if (!picked.length) return;
         const name = uniqBook(plan.name);
         const b = (db.books[name] = fixBook({}));
-        for (const [page, content] of plan.pages) {
-          const n = uniqPage(b, page);
-          b.files[n] = content;
-          b.meta.order.push(n);
+        for (const p of picked) {
+          b.files[p.name] = p.content;
+          b.meta.order.push(p.name);
           pages++;
         }
         b.meta.active = b.meta.order[0];
         books.push(name);
-      }
+      });
       return { books, pages, skipped: m.skipped ?? 0, warnings: m.importWarnings ?? [] };
     },
     hide_window: () => toast("(预览)窗口会隐藏到托盘,按 Ctrl+M 再呼出"),

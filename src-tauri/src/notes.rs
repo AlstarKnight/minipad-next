@@ -19,6 +19,8 @@ static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 pub const NOTE_EXT: &str = "md";
 pub const TRASH_DIR: &str = ".trash";
 const META_FILE: &str = ".minipad.json";
+/// 从 minipad2 导入时先写进笔记文件夹里以它开头的临时文件夹,写完再改名成笔记本
+pub const IMPORT_STAGE_PREFIX: &str = ".import-";
 /// 「默认」笔记本显示的名字,其他笔记本不能叫这个
 pub const DEFAULT_BOOK_LABEL: &str = "默认";
 
@@ -44,6 +46,9 @@ pub struct Meta {
     /// 笔记本图标颜色，可单独自定义。
     #[serde(skip_serializing_if = "String::is_empty")]
     pub icon_color: String,
+    /// 固定在标签栏最前面的页面
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub pinned: Vec<String>,
 }
 
 /// 一个标签分组。颜色是 "#rrggbb",名字可以空着(只显示颜色)
@@ -72,6 +77,8 @@ pub struct Note {
     pub reason: Option<String>,
     /// 所在分组的 id,不在分组里是空的
     pub group: String,
+    /// 固定在标签栏最前面
+    pub pinned: bool,
 }
 
 /// 一个笔记本和它的全部页面(按保存过的顺序)
@@ -136,6 +143,18 @@ pub fn cleanup_stale_temps(root: &Path) {
     let Some(cutoff) = SystemTime::now().checked_sub(Duration::from_secs(3600)) else {
         return;
     };
+    // 导入到一半(程序被关掉)留下的临时笔记本
+    if let Ok(entries) = fs::read_dir(root) {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            let old = entry
+                .metadata()
+                .is_ok_and(|m| m.is_dir() && m.modified().is_ok_and(|t| t < cutoff));
+            if name.starts_with(IMPORT_STAGE_PREFIX) && old {
+                let _ = fs::remove_dir_all(entry.path());
+            }
+        }
+    }
     let mut dirs = vec![root.to_path_buf()];
     if let Ok(books) = list_books(root) {
         dirs.extend(books.into_iter().map(|b| root.join(b)));
@@ -559,6 +578,7 @@ where
                 content,
                 unreadable,
                 reason,
+                pinned: meta.pinned.contains(&name),
                 group: meta
                     .note_groups
                     .get(&name)
@@ -615,6 +635,7 @@ pub fn save_book_meta(
     active: String,
     modes: HashMap<String, String>,
     groups: Option<Groups>,
+    pinned: Option<Vec<String>>,
 ) -> Result<(), String> {
     let dir = book_dir(root, book)?;
     if !dir.is_dir() {
@@ -624,6 +645,11 @@ pub fn save_book_meta(
     meta.order = order;
     meta.active = active;
     meta.modes = modes;
+    if let Some(mut pinned) = pinned {
+        let mut seen = std::collections::HashSet::new();
+        pinned.retain(|n| meta.order.contains(n) && seen.insert(n.clone()));
+        meta.pinned = pinned;
+    }
     if let Some(g) = groups {
         // 只记还有页面的分组,页面也只记在分组里的
         let note_groups: HashMap<String, String> = g
@@ -834,6 +860,220 @@ pub fn move_to_trash(root: &Path, book: &str, name: &str) -> Result<(), String> 
         &format!(".{NOTE_EXT}"),
     );
     fs::rename(&src, dst).map_err(|e| e.to_string())
+}
+
+// ---------- 回收站 ----------
+// 删掉的页面在 .trash/<笔记本>/<名字>.<秒数>.md(「默认」的直接在 .trash 里),
+// 删掉的笔记本是 .trash/<名字>.<秒数> 文件夹;同一秒删了同名的,后面还会多个 " (2)"
+
+/// 回收站里的一项:删掉的页面或笔记本
+#[derive(Serialize, Clone, Debug, PartialEq)]
+pub struct TrashItem {
+    /// 在 .trash 里的位置(用 / 分隔),恢复、彻底删除时用它找
+    pub id: String,
+    /// page 页面 / book 笔记本
+    pub kind: String,
+    /// 页面原来所在的笔记本(「默认」是空字符串);删掉的笔记本是空的
+    pub book: String,
+    /// 原来的名字
+    pub name: String,
+    /// 删除的时间(Unix 秒)
+    pub deleted: u64,
+    /// 页面开头的一段文字
+    pub preview: String,
+    /// 删掉的笔记本里有几页
+    pub pages: usize,
+}
+
+/// 从 "名字.1700000000" 或 "名字.1700000000 (2)" 里取出原来的名字和删除时间
+fn split_stamp(stem: &str) -> Option<(&str, u64)> {
+    let stem = match stem.rsplit_once(" (") {
+        Some((head, tail))
+            if tail.ends_with(')')
+                && tail.len() > 1
+                && tail[..tail.len() - 1].bytes().all(|b| b.is_ascii_digit()) =>
+        {
+            head
+        }
+        _ => stem,
+    };
+    let (name, secs) = stem.rsplit_once('.')?;
+    if name.is_empty()
+        || !(9..=12).contains(&secs.len())
+        || !secs.bytes().all(|b| b.is_ascii_digit())
+    {
+        return None;
+    }
+    Some((name, secs.parse().ok()?))
+}
+
+/// 文件的修改时间(Unix 秒),认不出删除时间时用它
+fn modified_secs(path: &Path) -> u64 {
+    fs::metadata(path)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map_or(0, |d| d.as_secs())
+}
+
+/// 页面开头的一段文字(只读前 4KB,空白合成一个空格)
+fn page_preview(path: &Path) -> String {
+    use std::io::Read;
+    let mut buf = Vec::new();
+    if let Ok(f) = fs::File::open(path) {
+        let _ = f.take(4096).read_to_end(&mut buf);
+    }
+    let text = decode_text(&buf);
+    let words: Vec<&str> = text.split_whitespace().collect();
+    words.join(" ").chars().take(120).collect()
+}
+
+fn trash_page(path: &Path, id: String, book: &str) -> TrashItem {
+    let stem = path
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let (name, deleted) = match split_stamp(&stem) {
+        Some((n, s)) => (n.to_string(), s),
+        None => (stem.clone(), modified_secs(path)),
+    };
+    TrashItem {
+        id,
+        kind: "page".into(),
+        book: book.to_string(),
+        name,
+        deleted,
+        preview: page_preview(path),
+        pages: 0,
+    }
+}
+
+/// 回收站里的全部东西,最近删的在前
+pub fn list_trash(root: &Path) -> Result<Vec<TrashItem>, String> {
+    let trash = root.join(TRASH_DIR);
+    let entries = match fs::read_dir(&trash) {
+        Ok(e) => e,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(format!("读不了回收站:{e}")),
+    };
+    let mut items = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let file = entry.file_name().to_string_lossy().to_string();
+        if is_note_file(&path) {
+            items.push(trash_page(&path, file, ""));
+        } else if !path.is_dir() {
+            continue;
+        } else if let Some((name, deleted)) = split_stamp(&file) {
+            items.push(TrashItem {
+                id: file.clone(),
+                kind: "book".into(),
+                book: String::new(),
+                name: name.to_string(),
+                deleted,
+                preview: String::new(),
+                pages: list_names(&path).map_or(0, |n| n.len()),
+            });
+        } else if let Ok(pages) = fs::read_dir(&path) {
+            // 其他笔记本删掉的页面
+            for p in pages.flatten() {
+                let pp = p.path();
+                if is_note_file(&pp) {
+                    let id = format!("{file}/{}", p.file_name().to_string_lossy());
+                    items.push(trash_page(&pp, id, &file));
+                }
+            }
+        }
+    }
+    items.sort_by(|a, b| b.deleted.cmp(&a.deleted).then_with(|| a.name.cmp(&b.name)));
+    Ok(items)
+}
+
+/// 回收站里 `id` 对应的文件或文件夹,和它在 .trash 里的位置(一层或两层)
+fn trash_path(root: &Path, id: &str) -> Result<(PathBuf, Vec<String>), String> {
+    let parts: Vec<String> = id.split('/').map(String::from).collect();
+    if parts.is_empty() || parts.len() > 2 || parts.iter().any(|p| check_name(p).is_err()) {
+        return Err(format!("回收站里没有「{id}」"));
+    }
+    let path = parts
+        .iter()
+        .fold(root.join(TRASH_DIR), |acc, p| acc.join(p));
+    if fs::symlink_metadata(&path).is_err() {
+        return Err("回收站里已经没有这一项了".into());
+    }
+    Ok((path, parts))
+}
+
+/// 恢复回收站里的一项:页面回到原来的笔记本(笔记本不在了就重新建),笔记本回到笔记文件夹;
+/// 重名时加编号。返回恢复后的 (笔记本, 页面名),恢复的是笔记本时页面名是空的
+pub fn restore_trash(root: &Path, id: &str) -> Result<(String, String), String> {
+    let (path, parts) = trash_path(root, id)?;
+    if parts.len() == 1 && path.is_dir() {
+        let Some((name, _)) = split_stamp(&parts[0]) else {
+            return Err(format!("回收站里没有「{id}」"));
+        };
+        let name = unique_book_name(root, name, None);
+        fs::rename(&path, book_dir(root, &name)?).map_err(|e| format!("恢复失败:{e}"))?;
+        return Ok((name, String::new()));
+    }
+    if !is_note_file(&path) {
+        return Err(format!("回收站里没有「{id}」"));
+    }
+    let book = if parts.len() == 2 {
+        parts[0].clone()
+    } else {
+        String::new()
+    };
+    let file = parts.last().unwrap();
+    let stem = file.strip_suffix(&format!(".{NOTE_EXT}")).unwrap_or(file);
+    let orig = split_stamp(stem).map_or(stem, |(n, _)| n);
+    let dir = book_dir(root, &book)?;
+    fs::create_dir_all(&dir).map_err(|e| format!("恢复失败:{e}"))?;
+    let name = unique_name(&dir, orig, None)?;
+    fs::rename(&path, note_path(&dir, &name)).map_err(|e| format!("恢复失败:{e}"))?;
+    remove_if_empty(&path);
+    Ok((book, name))
+}
+
+/// 彻底删除回收站里的一项
+pub fn purge_trash(root: &Path, id: &str) -> Result<(), String> {
+    let (path, _) = trash_path(root, id)?;
+    let done = if path.is_dir() {
+        fs::remove_dir_all(&path)
+    } else {
+        fs::remove_file(&path)
+    };
+    done.map_err(|e| format!("删除失败:{e}"))?;
+    remove_if_empty(&path);
+    Ok(())
+}
+
+/// 清空回收站,返回删掉了几项;删不掉的留着,报第一个错
+pub fn empty_trash(root: &Path) -> Result<usize, String> {
+    let items = list_trash(root)?;
+    let mut first_err = None;
+    let mut done = 0;
+    for item in &items {
+        match purge_trash(root, &item.id) {
+            Ok(()) => done += 1,
+            Err(e) => {
+                first_err.get_or_insert(e);
+            }
+        }
+    }
+    match first_err {
+        Some(e) => Err(format!("有 {} 项没删掉:{e}", items.len() - done)),
+        None => Ok(done),
+    }
+}
+
+/// 其他笔记本的页面都恢复或删掉以后,.trash 下那个空文件夹也去掉
+fn remove_if_empty(item: &Path) {
+    if let Some(parent) = item.parent() {
+        if parent.file_name().is_some_and(|n| n != TRASH_DIR) {
+            let _ = fs::remove_dir(parent);
+        }
+    }
 }
 
 /// 把 `old` 搬到 `new`(新位置已经有东西时不动)。能直接改名就改名,不行就复制一份,旧的留着当备份。
@@ -1301,6 +1541,96 @@ mod tests {
     }
 
     #[test]
+    fn trash_items_can_be_listed_restored_and_purged() {
+        let root = temp_dir("trash-ui");
+        assert!(list_trash(&root).unwrap().is_empty());
+        fs::write(note_path(&root, "笔记"), "第一行\n\n  第二行").unwrap();
+        create_book(&root, "工作").unwrap();
+        fs::write(note_path(&root.join("工作"), "周报"), "本周").unwrap();
+        create_book(&root, "旧的").unwrap();
+        fs::write(note_path(&root.join("旧的"), "a"), "").unwrap();
+        fs::write(note_path(&root.join("旧的"), "b"), "").unwrap();
+        move_to_trash(&root, "", "笔记").unwrap();
+        move_to_trash(&root, "工作", "周报").unwrap();
+        delete_book(&root, "旧的").unwrap();
+        // 手动放进来的、认不出时间的页面也列出来
+        fs::write(root.join(TRASH_DIR).join("手放的.md"), "x").unwrap();
+        fs::write(root.join(TRASH_DIR).join("不是页面.txt"), "x").unwrap();
+
+        let items = list_trash(&root).unwrap();
+        let find = |name: &str| items.iter().find(|i| i.name == name).unwrap().clone();
+        assert_eq!(items.len(), 4);
+        let page = find("笔记");
+        assert_eq!((page.kind.as_str(), page.book.as_str()), ("page", ""));
+        assert_eq!(page.preview, "第一行 第二行");
+        assert!(page.deleted > 1_600_000_000);
+        let weekly = find("周报");
+        assert_eq!(weekly.book, "工作");
+        assert!(weekly.id.starts_with("工作/周报."));
+        let book = find("旧的");
+        assert_eq!((book.kind.as_str(), book.pages), ("book", 2));
+        assert_eq!(find("手放的").kind, "page");
+
+        // 恢复页面:同名的页面已经有了就加编号
+        fs::write(note_path(&root, "笔记"), "新的").unwrap();
+        assert_eq!(
+            restore_trash(&root, &page.id).unwrap(),
+            ("".to_string(), "笔记 (2)".to_string())
+        );
+        assert_eq!(read_note(&root, "笔记 (2)").unwrap(), "第一行\n\n  第二行");
+        // 原来的笔记本不在了就重新建;.trash 里空了的文件夹去掉
+        fs::remove_dir_all(root.join("工作")).unwrap();
+        assert_eq!(
+            restore_trash(&root, &weekly.id).unwrap(),
+            ("工作".to_string(), "周报".to_string())
+        );
+        assert_eq!(read_note(&root.join("工作"), "周报").unwrap(), "本周");
+        assert!(!root.join(TRASH_DIR).join("工作").exists());
+        // 恢复笔记本
+        assert_eq!(
+            restore_trash(&root, &book.id).unwrap(),
+            ("旧的".to_string(), String::new())
+        );
+        assert_eq!(list_names(&root.join("旧的")).unwrap(), vec!["a", "b"]);
+        // 已经不在的、跑到外面去的都不行
+        assert!(restore_trash(&root, &page.id).is_err());
+        assert!(purge_trash(&root, "../笔记.md").is_err());
+        assert!(purge_trash(&root, "a/b/c.md").is_err());
+        assert!(purge_trash(&root, "").is_err());
+
+        // 彻底删除、清空
+        purge_trash(&root, &find("手放的").id).unwrap();
+        delete_book(&root, "旧的").unwrap();
+        move_to_trash(&root, "工作", "周报").unwrap();
+        assert_eq!(list_trash(&root).unwrap().len(), 2);
+        assert_eq!(empty_trash(&root).unwrap(), 2);
+        assert!(list_trash(&root).unwrap().is_empty());
+        // 不是回收站里的东西不会被清掉
+        assert!(root.join(TRASH_DIR).join("不是页面.txt").exists());
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn deletion_stamps_are_split_off_trash_names() {
+        assert_eq!(
+            split_stamp("周报.1700000000"),
+            Some(("周报", 1_700_000_000))
+        );
+        assert_eq!(
+            split_stamp("周报.1700000000 (2)"),
+            Some(("周报", 1_700_000_000))
+        );
+        assert_eq!(
+            split_stamp("v1.2.1700000000"),
+            Some(("v1.2", 1_700_000_000))
+        );
+        assert_eq!(split_stamp("周报"), None);
+        assert_eq!(split_stamp("v1.2"), None);
+        assert_eq!(split_stamp(".1700000000"), None);
+        assert_eq!(split_stamp("a.+70000000"), None);
+    }
+
+    #[test]
     fn migrate_moves_only_when_target_is_free() {
         let root = temp_dir("migrate");
         let old = root.join("old").join("notes");
@@ -1390,6 +1720,61 @@ mod tests {
     }
 
     #[test]
+    fn pinned_pages_are_saved_with_the_book() {
+        let root = temp_dir("pinned");
+        for n in ["a", "b", "c"] {
+            fs::write(note_path(&root, n), n).unwrap();
+        }
+        let order = vec!["b".to_string(), "a".to_string(), "c".to_string()];
+        let pinned = vec!["b".into(), "没有这页".into(), "b".into(), "a".into()];
+        save_book_meta(
+            &root,
+            "",
+            order.clone(),
+            "a".into(),
+            HashMap::new(),
+            None,
+            Some(pinned),
+        )
+        .unwrap();
+        assert_eq!(read_meta(&root).pinned, ["b", "a"]);
+        let book = load_book(&root, "").unwrap();
+        let flags: Vec<(&str, bool)> = book
+            .notes
+            .iter()
+            .map(|n| (n.name.as_str(), n.pinned))
+            .collect();
+        assert_eq!(flags, [("b", true), ("a", true), ("c", false)]);
+        // 没带 pinned 时不改
+        save_book_meta(
+            &root,
+            "",
+            order.clone(),
+            "a".into(),
+            HashMap::new(),
+            None,
+            None,
+        )
+        .unwrap();
+        assert_eq!(read_meta(&root).pinned, ["b", "a"]);
+        save_book_meta(
+            &root,
+            "",
+            order,
+            "a".into(),
+            HashMap::new(),
+            None,
+            Some(vec![]),
+        )
+        .unwrap();
+        assert!(read_meta(&root).pinned.is_empty());
+        assert!(!fs::read_to_string(root.join(META_FILE))
+            .unwrap()
+            .contains("pinned"));
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
     fn tab_groups_are_saved_with_the_book_and_empty_groups_dropped() {
         let root = temp_dir("groups");
         for n in ["a", "b", "c"] {
@@ -1416,6 +1801,7 @@ mod tests {
                     ("c".to_string(), "nope".to_string()),
                 ]),
             }),
+            None,
         )
         .unwrap();
         let meta = read_meta(&root);
@@ -1442,6 +1828,7 @@ mod tests {
             vec!["c".into(), "a".into(), "b".into()],
             "c".into(),
             HashMap::new(),
+            None,
             None,
         )
         .unwrap();
@@ -1471,6 +1858,7 @@ mod tests {
             vec!["周报".into()],
             "周报".into(),
             HashMap::new(),
+            None,
             None,
         )
         .unwrap();
@@ -1564,9 +1952,16 @@ mod tests {
         create_book(&root, "工作").unwrap();
         // 读不出来(这里 .minipad.json 是个文件夹):报错,什么都不写
         fs::create_dir(root.join("工作").join(META_FILE)).unwrap();
-        assert!(
-            save_book_meta(&root, "工作", vec![], String::new(), HashMap::new(), None).is_err()
-        );
+        assert!(save_book_meta(
+            &root,
+            "工作",
+            vec![],
+            String::new(),
+            HashMap::new(),
+            None,
+            None
+        )
+        .is_err());
         assert!(set_book_appearance(&root, "工作", "star", "").is_err());
         assert!(root.join("工作").join(META_FILE).is_dir());
         fs::create_dir(root.join(META_FILE)).unwrap();
@@ -1604,6 +1999,7 @@ mod tests {
             vec!["计划".into(), "周报".into()],
             "周报".into(),
             HashMap::from([("周报".to_string(), "view".to_string())]),
+            None,
             None,
         )
         .unwrap();
@@ -1645,11 +2041,37 @@ mod tests {
                 .set_times(fs::FileTimes::new().set_modified(past))
                 .unwrap();
         }
+        // 导入到一半留下的临时笔记本:旧的删掉,正在写的和别的点开头的文件夹不动
+        let stale = root.join(".import-1-0");
+        let busy = root.join(".import-1-1");
+        for dir in [&stale, &busy, &root.join(TRASH_DIR)] {
+            fs::create_dir_all(dir).unwrap();
+            fs::write(note_path(dir, "页"), "x").unwrap();
+        }
+        #[cfg(windows)]
+        let handle = {
+            use std::os::windows::fs::OpenOptionsExt;
+            // FILE_WRITE_ATTRIBUTES,FILE_FLAG_BACKUP_SEMANTICS(才能打开文件夹)
+            fs::OpenOptions::new()
+                .access_mode(0x100)
+                .custom_flags(0x0200_0000)
+                .open(&stale)
+                .unwrap()
+        };
+        #[cfg(not(windows))]
+        let handle = fs::File::open(&stale).unwrap();
+        handle
+            .set_times(fs::FileTimes::new().set_modified(past))
+            .unwrap();
+        drop(handle);
         cleanup_stale_temps(&root);
         assert!(!old.exists());
         assert!(!old_sub.exists());
         assert!(fresh.exists());
         assert!(normal.exists());
+        assert!(!stale.exists());
+        assert!(busy.exists());
+        assert!(root.join(TRASH_DIR).exists());
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -1819,6 +2241,7 @@ mod tests {
             "a".into(),
             HashMap::new(),
             None,
+            None,
         )
         .unwrap();
         save_book_meta(
@@ -1827,6 +2250,7 @@ mod tests {
             vec!["b".into()],
             "b".into(),
             HashMap::new(),
+            None,
             None,
         )
         .unwrap();
@@ -1841,7 +2265,16 @@ mod tests {
         let raw = fs::read_to_string(root.join("工作").join(META_FILE)).unwrap();
         assert!(!raw.contains("\"book\""));
         // 已经删掉的笔记本不会因为保存顺序又被建出来
-        save_book_meta(&root, "删掉了", vec![], String::new(), HashMap::new(), None).unwrap();
+        save_book_meta(
+            &root,
+            "删掉了",
+            vec![],
+            String::new(),
+            HashMap::new(),
+            None,
+            None,
+        )
+        .unwrap();
         assert!(!root.join("删掉了").exists());
         fs::remove_dir_all(&root).unwrap();
     }
