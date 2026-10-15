@@ -12,6 +12,7 @@ import {
   wrapInBulletListCommand,
   wrapInBlockquoteCommand,
   createCodeBlockCommand,
+  TextSelection,
 } from "../vendor/milkdown.js";
 
 // 点"链接"时问链接地址;由 main.js 设置(用程序自己的输入框)
@@ -33,6 +34,29 @@ export const headingLevel = (state) => {
   const p = state.selection.$from.parent;
   return p.type.name === "heading" ? p.attrs.level : 0;
 };
+
+// 将代码块的实际换行转换成段内软换行，避免往返保存时丢失空行。
+export function codeLines(schema, text) {
+  const parts = [];
+  text.replace(/\n+$/, "").split("\n").forEach((line, i) => {
+    if (i) parts.push(schema.nodes.hardbreak.create({ isInline: true }));
+    if (line) parts.push(schema.text(line));
+  });
+  return parts;
+}
+
+export function codeToText(state, dispatch) {
+  const { $from } = state.selection;
+  if (!$from.parent.type.spec.code) return false;
+  if (dispatch) {
+    const start = $from.before();
+    const paragraph = state.schema.nodes.paragraph.create(null, codeLines(state.schema, $from.parent.textContent));
+    const tr = state.tr.replaceWith(start, start + $from.parent.nodeSize, paragraph);
+    const at = start + 1 + Math.min($from.parentOffset, paragraph.content.size);
+    dispatch(tr.setSelection(TextSelection.create(tr.doc, at)).scrollIntoView());
+  }
+  return true;
+}
 
 export const BUTTONS = [
   { id: "strong", label: "<b>B</b>", title: "粗体 (Ctrl+B)", active: (s) => markActive(s, "strong"), run: (c) => c.call(toggleStrongCommand.key) },
@@ -73,5 +97,5 @@ export const BUTTONS = [
     title: "引用",
     run: (c) => c.call(wrapInBlockquoteCommand.key),
   },
-  { id: "codeblock", label: "{ }", title: "代码块", run: (c) => c.call(createCodeBlockCommand.key) },
+  { id: "codeblock", label: "{ }", title: "代码块", run: (c, v) => codeToText(v.state, v.dispatch) || c.call(createCodeBlockCommand.key) },
 ];
