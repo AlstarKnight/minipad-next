@@ -39,6 +39,7 @@ import { formatBar, selectionBar, setFormatBarItems, setSelectionBar } from "./f
 import { colorSpans, colorHandlers, textColor, textBg } from "./colors.js";
 import { findPlugin, reapplyFind } from "./find.js";
 import { outlinePlugin } from "./outline.js";
+import { codeToText } from "./toolbar.js";
 
 let editor = null;
 let view = null;
@@ -307,6 +308,19 @@ function clickLink(v, e) {
   return true;
 }
 
+// 回退 Markdown 代码围栏输入规则时，不保留触发规则的 Enter 换行。
+function undoCodeRule(state, dispatch) {
+  const undoable = state.plugins.find((p) => p.spec.isInputRules)?.getState(state);
+  if (!undoable || undoable.text !== "\n") return false;
+  if (dispatch) {
+    const tr = state.tr;
+    const steps = undoable.transform.steps;
+    for (let i = steps.length - 1; i >= 0; i--) tr.step(steps[i].invert(undoable.transform.docs[i]));
+    dispatch(tr);
+  }
+  return true;
+}
+
 // Ctrl+B:选中了文字就加粗;没选中时留给窗口(打开笔记本列表)
 let emptyBold = () => {};
 
@@ -332,6 +346,8 @@ const keys = $prose(
           else if (e.key === "Enter" && !e.shiftKey && !mod && !e.altKey) run = (state, dispatch) =>
             exitCodeBlock(state, dispatch, true) || enterInTask(state, dispatch);
           else if (e.key === "ArrowDown" && !e.shiftKey && !mod && !e.altKey) run = downOutOfBlock;
+          else if (mod && e.altKey && !e.shiftKey && e.key === "0") run = codeToText;
+          else if (e.key === "Backspace" && !mod && !e.altKey && !e.shiftKey) run = undoCodeRule;
           else if (mod && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "b" && v.state.selection.empty) {
             e.preventDefault();
             emptyBold();
@@ -479,10 +495,11 @@ export function showInEditor(n) {
     st = freshState(n.content);
     n.stateMd = n.content;
   } else if (n.stateMd !== n.content || n.emailLinkVersion !== emailLinkVersion) {
+    const changed = n.stateMd !== n.content;
     const tr = replaceTr(st, n.content);
-    if (tr) st = st.apply(tr.setMeta("addToHistory", false));
+    if (tr) st = st.apply(changed ? tr : tr.setMeta("addToHistory", false));
     n.stateMd = n.content;
-    if (n.emailLinkVersion === emailLinkVersion) scroll = 0;
+    if (changed) scroll = 0;
   }
   n.emailLinkVersion = emailLinkVersion;
   view.updateState(st);
