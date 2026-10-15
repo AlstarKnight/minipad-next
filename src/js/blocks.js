@@ -2,12 +2,13 @@
 // 直接操作 ProseMirror 节点；笔记仍用原有 Markdown 读写，不另存块结构。
 import { $prose, Plugin, TextSelection, closeHistory } from "../vendor/milkdown.js";
 import { openMenu } from "./ui.js";
+import { foldInfo, newFold, unfoldQuote, setFold } from "./foldblocks.js";
 
 const TYPES = [
   ["paragraph", "正文"], ["heading1", "标题 1"], ["heading2", "标题 2"],
   ["heading3", "标题 3"], ["heading4", "标题 4"], ["blockquote", "引用"],
   ["bullet_list", "无序列表"], ["ordered_list", "编号列表"],
-  ["code_block", "代码块"], ["hr", "分隔线"],
+  ["code_block", "代码块"], ["hr", "分隔线"], ["table", "表格"], ["fold", "折叠块"],
 ];
 
 function blockAt(doc, index) {
@@ -17,8 +18,32 @@ function blockAt(doc, index) {
 }
 
 function makeBlock(schema, kind, source = null) {
+  if (kind === "fold") return newFold(schema, source);
+  if (foldInfo(source)) {
+    if (kind === "blockquote") return unfoldQuote(schema, source);
+    const children = [...source.content].slice(1);
+    if (children.length !== 1) return null; // 多个子块不能压扁成一段文字
+    source = children[0];
+  }
+  if (source?.type.name === "table" && kind !== "table") return null;
+  if (source?.type.name === "blockquote") {
+    if (kind === "blockquote") return source;
+    if (source.childCount !== 1) return null;
+    source = source.firstChild;
+  }
+  if (kind === "table") {
+    if (source) return null; // 防止转换时丢失原文
+    const row = (type) => schema.nodes[type === "table_header" ? "table_header_row" : "table_row"].create(null,
+      [0, 1, 2].map(() => schema.nodes[type].create(null, schema.nodes.paragraph.create())));
+    return schema.nodes.table.create(null, [row("table_header"), row("table_cell"), row("table_cell")]);
+  }
+  if (source?.type.name === "bullet_list" || source?.type.name === "ordered_list") {
+    if (kind === "bullet_list" || kind === "ordered_list") return schema.nodes[kind].create(null, source.content);
+    if (source.childCount !== 1 || source.firstChild.childCount !== 1) return null;
+    source = source.firstChild.firstChild;
+  }
+  if (kind === "blockquote" && source) return schema.nodes.blockquote.create(null, [source]);
   const text = source ? source.textBetween(0, source.content.size, "\n") : "";
-  // 段落与标题互转时保留加粗、链接等行内格式。
   const content = source && ["paragraph", "heading"].includes(source.type.name)
     ? source.content : text ? [schema.text(text)] : null;
   const paragraph = () => schema.nodes.paragraph.create(null, content);
@@ -227,12 +252,14 @@ class BlockHandles {
     if (!node || !this.view.editable) return;
     const types = (action) => openMenu(TYPES.map(([kind, name]) => ({
       id: "block-type-" + kind, label: name,
+      disabled: action === "convert" && !makeBlock(this.view.state.schema, kind, node),
       act: () => this.change(index, action, kind),
     })), x, y);
     openMenu([
       { id: "block-insert-before", label: "在上方插入块 ›", act: () => types("insert-before") },
       { id: "block-insert-after", label: "在下方插入块 ›", act: () => types("insert-after") },
-      { id: "block-convert", label: "转换块类型 ›", disabled: node.type.name === "table", act: () => types("convert") },
+      { id: "block-convert", label: "转换块类型 ›", act: () => types("convert") },
+      ...(foldInfo(node) ? [{ id: "block-fold-toggle", label: foldInfo(node).closed ? "展开折叠块" : "收起折叠块", act: () => setFold(this.view, blockAt(this.view.state.doc, index), { closed: !foldInfo(node).closed }) }] : []),
       { id: "block-up", label: "上移一块", disabled: index === 0, act: () => this.move(index, index - 1) },
       { id: "block-down", label: "下移一块", disabled: index === this.view.state.doc.childCount - 1, act: () => this.move(index, index + 2) },
       { id: "block-duplicate", label: "复制块", act: () => this.change(index, "duplicate") },

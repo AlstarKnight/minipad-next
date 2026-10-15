@@ -529,6 +529,16 @@ html[data-find-pos="bottom"] #status { order: 2; }
 #editor li > p { margin: 0.1em 0; }
 #editor a { color: var(--accent); cursor: text; }
 #editor blockquote { margin: 0.5em 0; padding: 0.1em 0.9em; color: var(--muted); border-left: 3px solid var(--bar-border); }
+/* 折叠块保存成带 [!fold] 标记的普通 Markdown 引用；折叠仅控制编辑界面的可见性。 */
+#editor blockquote.fold-block { background: var(--code-bg); border: 1px solid var(--code-border); border-radius: 7px; padding: 5px 10px; color: var(--text); }
+#editor blockquote.fold-block > p:first-of-type { display: none; }
+#editor blockquote.fold-block.fold-closed > :not(.fold-heading) { display: none; }
+.fold-heading { display: flex; align-items: center; gap: 6px; min-height: 30px; }
+.fold-heading button { color: var(--text); padding: 4px; border-radius: 4px; }
+.fold-heading button:hover { background: var(--accent-soft); }
+.fold-heading .fold-toggle { flex: none; width: 24px; font-size: 15px; }
+.fold-heading .fold-title { flex: 1; text-align: left; font-weight: 600; overflow-wrap: anywhere; }
+#editor blockquote.fold-block > :last-child:not(.fold-heading) { margin-bottom: 0.1em; }
 #editor hr { border: none; border-top: 1px solid var(--code-border); margin: 1em 0; }
 #editor hr.ProseMirror-selectednode { border-top-color: var(--accent); }
 #editor img { max-width: 100%; }

@@ -1333,6 +1333,66 @@ describe("block management", () => {
   });
 });
 
+// ---------- 第二阶段：折叠、嵌套与表格 ----------
+
+describe("advanced blocks", () => {
+  ui("folded Markdown persists its title, children and collapsed state", {
+    seed: seed({ "": { 页: "> [!fold]- 课件总结\n>\n> 第一段\n>\n> - 清单\n>\n> 第二段" } }),
+  }, async (h) => {
+    const { p } = h;
+    const fold = p.locator("#editor .fold-block").first();
+    await fold.waitFor();
+    assert.equal(await fold.locator(".fold-title").textContent(), "课件总结");
+    assert.equal(await fold.locator(".fold-toggle").getAttribute("aria-expanded"), "false");
+    assert.ok(await fold.locator("ul").isHidden(), "collapsed children are hidden");
+    await fold.locator(".fold-toggle").click();
+    assert.ok(await fold.locator("ul").isVisible(), "expanding reveals nested Markdown blocks");
+    await until(async () => (await h.editor()).includes("[!fold]+ 课件总结"), true,
+      "expanded state is stored as Markdown");
+    await p.reload();
+    const restored = p.locator("#editor .fold-block").first();
+    assert.equal(await restored.locator(".fold-toggle").getAttribute("aria-expanded"), "true");
+    assert.ok(await restored.locator("ul").isVisible());
+    await restored.locator(".fold-title").click();
+    await p.locator("#dialog-input").fill("新标题");
+    await p.locator("#dialog-ok").click();
+    await until(async () => (await h.editor()).includes("[!fold]+ 新标题"), true, "title persists");
+  });
+
+  ui("turning a multi-block quote into a fold preserves all child blocks", {
+    seed: seed({ "": { 页: "> 段落甲\n>\n> - 列表甲\n>\n> 段落乙" } }),
+  }, async (h) => {
+    const { p } = h;
+    await p.locator("#editor blockquote").first().click({ button: "right" });
+    await p.click('#ctx button[data-act="block-convert"]');
+    await p.click('#ctx button[data-act="block-type-fold"]');
+    assert.equal(await p.locator("#editor .fold-block > ul li").textContent(), "列表甲");
+    assert.equal(await p.locator("#editor .fold-block > p").count(), 3);
+    assert.ok((await h.editor()).includes("[!fold]+ 折叠块"), "converted block has a Markdown marker");
+    await p.locator("#editor .fold-block .fold-title").click();
+    await p.click("#dialog-cancel");
+    await p.locator("#editor .fold-block").click({ button: "right" });
+    await p.click('#ctx button[data-act="block-convert"]');
+    assert.ok(await p.locator('#ctx button[data-act="block-type-paragraph"]').isDisabled(),
+      "multi-child fold cannot be destructively flattened");
+    await p.click('#ctx button[data-act="block-type-blockquote"]');
+    assert.equal(await p.locator("#editor blockquote > ul li").textContent(), "列表甲");
+    assert.ok(!(await h.editor()).includes("[!fold]"), "convert to quote removes marker");
+  });
+
+  ui("block menu inserts an editable table without changing nearby code", {
+    seed: seed({ "": { 页: "~~~js\nconsole.log(1)\n~~~" } }),
+  }, async (h) => {
+    const { p } = h;
+    await p.locator("#editor .codeblock code").click({ button: "right" });
+    await p.click('#ctx button[data-act="block-insert-after"]');
+    await p.click('#ctx button[data-act="block-type-table"]');
+    assert.equal(await p.locator("#editor table tr").count(), 3);
+    assert.equal(await p.locator("#editor table tr").first().locator("th").count(), 3);
+    assert.equal(await p.locator("#editor .codeblock code").textContent(), "console.log(1)");
+  });
+});
+
 // ---------- 代码块 ----------
 const CODE_PAGE = {
   "": {

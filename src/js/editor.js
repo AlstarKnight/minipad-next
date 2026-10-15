@@ -33,6 +33,7 @@ import {
 import { $ } from "./dom.js";
 import { codeBlockWithTitle, codeBlockView, codeHighlight } from "./codeblock.js";
 import { blockManager } from "./blocks.js";
+import { foldBlocks } from "./foldblocks.js";
 import { formatBar, selectionBar, setFormatBarItems, setSelectionBar } from "./formatbar.js";
 import { colorSpans, colorHandlers, textColor, textBg } from "./colors.js";
 import { findPlugin, reapplyFind } from "./find.js";
@@ -347,7 +348,7 @@ export async function createEditor(opts) {
     .use(history)
     .use(clipboard)
     .use([colorSpans, textColor, textBg].flat())
-    .use([lineBreak, codeBlockWithTitle, codeBlockView, codeHighlight, readOnly, changes, placeholder, afterRule, findPlugin, outlinePlugin, selectionBar, formatBar, blockManager])
+    .use([lineBreak, codeBlockWithTitle, codeBlockView, codeHighlight, readOnly, changes, placeholder, afterRule, findPlugin, outlinePlugin, selectionBar, formatBar, foldBlocks, blockManager])
     .create();
   editor.action((c) => {
     ctx = c;
