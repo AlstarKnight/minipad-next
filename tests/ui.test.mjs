@@ -2022,14 +2022,15 @@ describe("fourth review and copy text", () => {
     const { p } = h;
     await p.locator("#editor .codeblock.copyline code").click();
     await p.click('#format-bar [data-cmd="copytext"]');
-    assert.equal(await p.locator("#editor .ProseMirror > p br").count(), 3,
-      "the final two line breaks are retained along with the internal one");
+    const textBefore = await p.locator("#editor .ProseMirror > p").textContent();
+    assert.ok(textBefore.endsWith("\n\n"), "both trailing newlines survive conversion");
     const before = await h.editor();
+    assert.ok(before.includes("&#xA;"), "trailing newlines get durable Markdown encoding: " + before);
     await until(() => h.mockFile("", "页"), before, "all line breaks are saved");
     await p.reload();
-    assert.equal(await p.locator("#editor .ProseMirror > p br").count(), 3,
-      "reopening does not discard trailing line breaks; saved Markdown: " + JSON.stringify(before) +
-      "; reopened Markdown: " + JSON.stringify(await h.editor()));
+    assert.equal(await p.locator("#editor .ProseMirror > p").textContent(), textBefore,
+      "reopening must preserve the exact newline-bearing text");
+    assert.equal(await h.editor(), before, "the Markdown remains stable after reopening");
   });
 
   ui("block menu preserves soft breaks when converting plain paragraph to code", {
