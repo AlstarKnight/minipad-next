@@ -2022,19 +2022,16 @@ describe("fourth review and copy text", () => {
     const { p } = h;
     await p.locator("#editor .codeblock.copyline code").click();
     await p.click('#format-bar [data-cmd="copytext"]');
-    const textBefore = await p.locator("#editor .ProseMirror > p").textContent();
-    const details = await p.evaluate(() => ({
-      node: window.__minipad.editor().view.state.doc.firstChild.toJSON(),
-      html: document.querySelector("#editor .ProseMirror > p")?.outerHTML,
-    }));
-    assert.ok(textBefore.endsWith("\n\n"), "both trailing newlines survive conversion: " +
-      JSON.stringify({ textBefore, markdown: await h.editor(), details }));
+    const paragraphText = () => p.evaluate(() => {
+      const node = window.__minipad.editor().view.state.doc.firstChild;
+      return node.textBetween(0, node.content.size, "\n", "\n");
+    });
+    await until(paragraphText, "第一行\n第二行\n\n", "both trailing newlines survive conversion");
     const before = await h.editor();
     assert.ok(before.includes("&#xA;"), "trailing newlines get durable Markdown encoding: " + before);
     await until(() => h.mockFile("", "页"), before, "all line breaks are saved");
     await p.reload();
-    assert.equal(await p.locator("#editor .ProseMirror > p").textContent(), textBefore,
-      "reopening must preserve the exact newline-bearing text");
+    await until(paragraphText, "第一行\n第二行\n\n", "reopening must preserve all line breaks");
     assert.equal(await h.editor(), before, "the Markdown remains stable after reopening");
   });
 
