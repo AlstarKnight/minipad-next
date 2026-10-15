@@ -4965,6 +4965,8 @@ describe("0.3.2: tab groups", () => {
 
   ui("groups: dragging a tab next to a grouped tab joins the group; 移出分组 and 取消分组 take tabs out", { seed: books({ tab_groups: true }, { groups: [{ id: "g1", name: "组", color: "#4c8bf5", collapsed: false }], note_groups: { b: "g1", c: "g1" } }) }, async (h) => {
     const { p } = h;
+    // 窗口放宽,标签栏不用滚动(在滚动的标签栏上 Playwright 会拖错标签)
+    await p.setViewportSize({ width: 700, height: 540 });
     assert.deepEqual(await strip(p), ["a", "[组]", "b", "c", "d", "e"]);
     await p.dragAndDrop("#tabs .tab:nth-child(6)", "#tabs .tab:nth-child(3)", { targetPosition: { x: 30, y: 10 } });
     assert.deepEqual(await strip(p), ["a", "[组]", "b", "e", "c", "d"], "e joined the group");
