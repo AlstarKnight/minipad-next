@@ -1261,6 +1261,77 @@ describe("editor", () => {
   });
 });
 
+// ---------- 顶层块管理 ----------
+
+describe("block management", () => {
+  ui("right-click inserts a paragraph below a trailing code block and converts it to a heading", {
+    seed: seed({ "": { 页: "~~~js\nconsole.log(1)\n~~~" } }),
+  }, async (h) => {
+    const { p } = h;
+    await p.locator("#editor .codeblock code").click({ button: "right" });
+    assert.ok(await p.locator('#ctx button[data-act="block-insert-after"]').isVisible());
+    await p.click('#ctx button[data-act="block-insert-after"]');
+    await p.click('#ctx button[data-act="block-type-paragraph"]');
+    await p.keyboard.type("下一段");
+    assert.equal(await p.locator("#editor .ProseMirror > p").last().textContent(), "下一段");
+    assert.equal(await p.locator("#editor .codeblock code").textContent(), "console.log(1)");
+    await p.locator("#editor .ProseMirror > p").last().click({ button: "right" });
+    await p.click('#ctx button[data-act="block-convert"]');
+    await p.click('#ctx button[data-act="block-type-heading2"]');
+    assert.equal(await p.locator("#editor .ProseMirror > h2").textContent(), "下一段");
+    assert.match(await h.editor(), /## 下一段$/, "converted heading is stored in Markdown");
+    await until(async () => (await h.mockFile("", "页")).includes("## 下一段"), true,
+      "converted heading is saved");
+  });
+
+  ui("drag, duplicate, delete and undo manage whole Markdown blocks", {
+    seed: seed({ "": { 页: "甲\n\n乙\n\n丙" } }),
+  }, async (h) => {
+    const { p } = h;
+    const blocks = p.locator("#editor .ProseMirror > p");
+    await blocks.first().hover();
+    assert.ok(await p.locator(".block-handle").isVisible(), "hover shows a grab handle");
+    await p.locator(".block-handle").dragTo(blocks.last(), {
+      targetPosition: { x: 18, y: 22 },
+    });
+    await until(h.editor, "乙\n\n丙\n\n甲", "drag moves a paragraph below the last block");
+
+    await blocks.last().click({ button: "right" });
+    await p.click('#ctx button[data-act="block-duplicate"]');
+    await until(h.editor, "乙\n\n丙\n\n甲\n\n甲", "duplicate copies the complete block");
+
+    await blocks.last().click({ button: "right" });
+    await p.click('#ctx button[data-act="block-delete"]');
+    await until(h.editor, "乙\n\n丙\n\n甲", "delete removes just the target block");
+    await p.keyboard.press("Control+z");
+    await until(h.editor, "乙\n\n丙\n\n甲\n\n甲", "Ctrl+Z restores deleted block");
+  });
+
+  ui("blocks can convert among text, quote, list and code without losing their text", {
+    seed: seed({ "": { 页: "保留这段文字" } }),
+  }, async (h) => {
+    const { p } = h;
+    const convert = async (kind) => {
+      await p.locator("#editor .ProseMirror > :first-child").click({ button: "right" });
+      await p.click('#ctx button[data-act="block-convert"]');
+      await p.click('#ctx button[data-act="block-type-' + kind + '"]');
+    };
+    await convert("blockquote");
+    assert.equal(await p.locator("#editor blockquote").textContent(), "保留这段文字");
+    await convert("bullet_list");
+    assert.equal(await p.locator("#editor ul > li").textContent(), "保留这段文字");
+    await convert("code_block");
+    assert.equal(await p.locator("#editor .codeblock code").textContent(), "保留这段文字");
+
+    await p.locator("#editor .codeblock code").click({ button: "right" });
+    await p.click('#ctx button[data-act="block-insert-before"]');
+    await p.click('#ctx button[data-act="block-type-paragraph"]');
+    await p.keyboard.type("前面的正文");
+    assert.equal(await p.locator("#editor .ProseMirror > p").first().textContent(), "前面的正文");
+    assert.equal(await p.locator("#editor .codeblock code").textContent(), "保留这段文字");
+  });
+});
+
 // ---------- 代码块 ----------
 const CODE_PAGE = {
   "": {

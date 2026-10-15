@@ -32,6 +32,7 @@ import {
 } from "../vendor/milkdown.js";
 import { $ } from "./dom.js";
 import { codeBlockWithTitle, codeBlockView, codeHighlight } from "./codeblock.js";
+import { blockManager } from "./blocks.js";
 import { formatBar, selectionBar, setFormatBarItems, setSelectionBar } from "./formatbar.js";
 import { colorSpans, colorHandlers, textColor, textBg } from "./colors.js";
 import { findPlugin, reapplyFind } from "./find.js";
@@ -326,7 +327,7 @@ export async function createEditor(opts) {
     .use(history)
     .use(clipboard)
     .use([colorSpans, textColor, textBg].flat())
-    .use([lineBreak, codeBlockWithTitle, codeBlockView, codeHighlight, readOnly, changes, placeholder, afterRule, findPlugin, outlinePlugin, selectionBar, formatBar])
+    .use([lineBreak, codeBlockWithTitle, codeBlockView, codeHighlight, readOnly, changes, placeholder, afterRule, findPlugin, outlinePlugin, selectionBar, formatBar, blockManager])
     .create();
   editor.action((c) => {
     ctx = c;

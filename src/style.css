@@ -358,7 +358,7 @@ html[data-find-pos="bottom"] #status { order: 2; }
 #main[data-ol-side="right"] #outline { right: calc(var(--sbw, 0px) + 4px); }
 #main[data-ol-side="left"] #outline { left: 4px; }
 #main[data-outline="hover"][data-ol-side="right"] #editor .ProseMirror { padding-right: 30px; }
-#main[data-outline="hover"][data-ol-side="left"] #editor .ProseMirror { padding-left: 30px; }
+#main[data-outline="hover"][data-ol-side="left"] #editor .ProseMirror { padding-left: 44px; }
 .ol-strip {
   display: flex;
   flex-direction: column;
@@ -490,7 +490,7 @@ html[data-find-pos="bottom"] #status { order: 2; }
 #editor .milkdown { min-height: 100%; display: flex; flex-direction: column; }
 #editor .ProseMirror {
   flex: 1;
-  padding: 10px 14px 24px;
+  padding: 10px 14px 24px 38px;
   outline: none;
   color: var(--text);
   font-family: var(--sans);
@@ -499,6 +499,17 @@ html[data-find-pos="bottom"] #status { order: 2; }
   white-space: pre-wrap;
   caret-color: var(--text);
 }
+/* 拖动手柄始终位于正文左侧，不参与 Markdown 文档内容。 */
+.block-handle {
+  position: absolute; z-index: 6; display: flex; align-items: center; justify-content: center;
+  width: 24px; height: 25px; padding: 0; border-radius: 5px;
+  color: var(--muted); background: var(--panel); cursor: grab;
+  font-size: 20px; line-height: 1; user-select: none;
+}
+.block-handle:hover, .block-handle:focus { color: var(--accent); background: var(--accent-soft); }
+.block-handle:active { cursor: grabbing; }
+.block-drop-line { position: absolute; z-index: 5; height: 2px; border-radius: 2px; background: var(--accent); pointer-events: none; }
+.block-handle[hidden], .block-drop-line[hidden] { display: none; }
 #editor .ProseMirror ::selection { background: var(--selection); }
 #editor .ProseMirror > :first-child { margin-top: 0; }
 #editor .is-empty::before {
