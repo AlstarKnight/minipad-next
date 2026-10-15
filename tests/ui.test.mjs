@@ -2028,7 +2028,8 @@ describe("fourth review and copy text", () => {
     await until(() => h.mockFile("", "页"), before, "all line breaks are saved");
     await p.reload();
     assert.equal(await p.locator("#editor .ProseMirror > p br").count(), 3,
-      "reopening does not discard trailing line breaks");
+      "reopening does not discard trailing line breaks; saved Markdown: " + JSON.stringify(before) +
+      "; reopened Markdown: " + JSON.stringify(await h.editor()));
   });
 
   ui("block menu preserves soft breaks when converting plain paragraph to code", {
@@ -2094,7 +2095,7 @@ describe("fourth review and copy text", () => {
     const { p } = h;
     await p.locator("#editor blockquote p").click();
     await p.click('#format-bar [data-cmd="quote"]');
-    await until(h.editor, "[!fold]普通引用",
+    await until(() => p.locator("#editor .ProseMirror > p").textContent(), "[!fold]普通引用",
       "only valid folding markers suppress quote unwrapping");
     assert.equal(await p.locator("#editor blockquote").count(), 0);
   });
