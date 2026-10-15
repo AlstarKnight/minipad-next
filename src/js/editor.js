@@ -321,6 +321,18 @@ function undoCodeRule(state, dispatch) {
   return true;
 }
 
+// 页首空代码块可以退格回到正文，避免只能依赖格式栏解除。
+function removeEmptyFirstCode(state, dispatch) {
+  const { $from, empty } = state.selection;
+  if (!empty || $from.depth !== 1 || $from.before() !== 0 ||
+    !$from.parent.type.spec.code || $from.parent.content.size) return false;
+  if (dispatch) {
+    const tr = state.tr.replaceWith(0, $from.parent.nodeSize, state.schema.nodes.paragraph.create());
+    dispatch(tr.setSelection(TextSelection.create(tr.doc, 1)));
+  }
+  return true;
+}
+
 // Ctrl+B:选中了文字就加粗;没选中时留给窗口(打开笔记本列表)
 let emptyBold = () => {};
 
@@ -347,7 +359,8 @@ const keys = $prose(
             exitCodeBlock(state, dispatch, true) || enterInTask(state, dispatch);
           else if (e.key === "ArrowDown" && !e.shiftKey && !mod && !e.altKey) run = downOutOfBlock;
           else if (mod && e.altKey && !e.shiftKey && e.key === "0") run = codeToText;
-          else if (e.key === "Backspace" && !mod && !e.altKey && !e.shiftKey) run = undoCodeRule;
+          else if (e.key === "Backspace" && !mod && !e.altKey && !e.shiftKey) run = (state, dispatch) =>
+            undoCodeRule(state, dispatch) || removeEmptyFirstCode(state, dispatch);
           else if (mod && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "b" && v.state.selection.empty) {
             e.preventDefault();
             emptyBold();
