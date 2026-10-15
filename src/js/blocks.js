@@ -31,6 +31,9 @@ function blockAt(doc, index) {
 }
 
 function makeBlock(schema, kind, source = null) {
+  // 复制文本末尾空行无法在正文 Markdown 中稳定保存；块菜单也必须拒绝这种转换。
+  if (source?.type.name === "code_block" && source.attrs.language === "copy" &&
+    source.textContent.endsWith("\n") && kind !== "code_block") return null;
   // 块菜单与格式栏遵循相同的无损转换规则，保留段内换行与无语言代码块来源。
   if (kind === "copytext" && source &&
     (!["paragraph", "code_block"].includes(source.type.name) || !plainText(source) ||
@@ -71,7 +74,7 @@ function makeBlock(schema, kind, source = null) {
   const text = source ? source.textBetween(0, source.content.size, "\n", "\n") : "";
   const content = source && ["paragraph", "heading"].includes(source.type.name)
     ? source.content : source?.type.spec.code
-      ? codeLines(schema, text, source.attrs.language === "copy") : text ? [schema.text(text)] : null;
+      ? codeLines(schema, text) : text ? [schema.text(text)] : null;
   const paragraph = () => schema.nodes.paragraph.create(null, content);
   if (kind.startsWith("heading")) return schema.nodes.heading.create({ level: Number(kind.slice(-1)) }, content);
   if (kind === "paragraph") return paragraph();
