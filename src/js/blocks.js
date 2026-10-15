@@ -5,6 +5,7 @@ import { openMenu, toast } from "./ui.js";
 import { foldInfo, foldIsClosed, newFold, unfoldQuote, setFold } from "./foldblocks.js";
 import { blockLocation, moveNested, changeNested, listLevel } from "./nestedblocks.js";
 import { tableItems } from "./tableblocks.js";
+import { codeLines } from "./toolbar.js";
 
 
 let blockEnabled = true;
@@ -57,7 +58,7 @@ function makeBlock(schema, kind, source = null) {
   if (kind === "blockquote" && source) return schema.nodes.blockquote.create(null, [source]);
   const text = source ? source.textBetween(0, source.content.size, "\n") : "";
   const content = source && ["paragraph", "heading"].includes(source.type.name)
-    ? source.content : text ? [schema.text(text)] : null;
+    ? source.content : source?.type.spec.code ? codeLines(schema, text) : text ? [schema.text(text)] : null;
   const paragraph = () => schema.nodes.paragraph.create(null, content);
   if (kind.startsWith("heading")) return schema.nodes.heading.create({ level: Number(kind.slice(-1)) }, content);
   if (kind === "paragraph") return paragraph();
