@@ -41,10 +41,14 @@ export const headingLevel = (state) => {
 // 普通代码沿用原有去掉末尾空行的行为；复制文本保留原有换行。
 export function codeLines(schema, text, keepTrailing = false) {
   const parts = [];
-  (keepTrailing ? text : text.replace(/\n+$/, "")).split("\n").forEach((line, i) => {
+  const trailing = keepTrailing ? (/\n+$/.exec(text)?.[0] || "") : "";
+  const body = (keepTrailing ? text.slice(0, text.length - trailing.length) : text.replace(/\n+$/, ""));
+  body.split("\n").forEach((line, i) => {
     if (i) parts.push(schema.nodes.hardbreak.create({ isInline: true }));
     if (line) parts.push(schema.text(line));
   });
+  // Markdown 会裁掉正文末尾的硬换行；用文本换行编码为 &#xA;，才能往返保留。
+  if (trailing) parts.push(schema.text(trailing));
   return parts;
 }
 
