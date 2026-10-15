@@ -3616,7 +3616,9 @@ describe("email link recognition", () => {
     await p.keyboard.type("name@example.com");
     await p.keyboard.press("Space");
     assert.equal(await p.locator("#editor .ProseMirror a").count(), 0);
-    assert.ok((await h.editor()).includes("name@example.com"));
+    const markdown = await h.editor();
+    assert.ok(markdown.includes("name@example.com"), JSON.stringify({markdown,
+      text: await p.locator("#editor .ProseMirror").textContent()}));
     await until(async () => (await h.mockFile("", "页")).includes("name@example.com"), true);
     await p.reload();
     assert.equal(await p.locator("#editor .ProseMirror a").count(), 0,
