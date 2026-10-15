@@ -40,6 +40,7 @@ class BlockHandles {
     this.scroller = document.getElementById("editor");
     this.index = -1;
     this.dragging = -1;
+    this.pointerDown = false;
     this.dropIndex = -1;
     this.handle = document.createElement("button");
     this.handle.type = "button";
@@ -55,13 +56,16 @@ class BlockHandles {
     this.host.append(this.handle, this.marker);
 
     this.onMove = (e) => {
-      if (this.dragging !== -1) return;
+      if (this.dragging !== -1 || this.pointerDown) return;
       const index = this.indexOf(e.target);
       this.show(index);
     };
     this.onLeave = (e) => {
-      if (this.dragging === -1 && e.relatedTarget !== this.handle) this.show(-1);
+      if (this.dragging === -1 && !this.pointerDown && e.relatedTarget !== this.handle) this.show(-1);
     };
+    // 按住手柄到 dragstart 之间保留 DOM，否则浏览器会取消拖动。
+    this.onPress = (e) => { if (e.button === 0) this.pointerDown = true; };
+    this.onRelease = () => { this.pointerDown = false; };
     this.onContext = (e) => {
       if (e.shiftKey || e.target.closest?.("input, textarea")) return;
       const index = this.indexOf(e.target);
@@ -73,6 +77,7 @@ class BlockHandles {
     this.onScroll = () => this.position();
     this.onStart = (e) => {
       if (this.index < 0 || !this.view.editable) return;
+      this.pointerDown = false;
       this.dragging = this.index;
       e.dataTransfer.effectAllowed = "move";
       e.dataTransfer.setData("text/plain", "minipad-block");
@@ -107,6 +112,8 @@ class BlockHandles {
       const rect = this.handle.getBoundingClientRect();
       this.menu(this.index, rect.right, rect.bottom);
     });
+    this.handle.addEventListener("mousedown", this.onPress);
+    document.addEventListener("mouseup", this.onRelease);
     this.handle.addEventListener("dragstart", this.onStart);
     this.handle.addEventListener("dragend", this.onEnd);
     this.view.dom.addEventListener("mousemove", this.onMove);
@@ -240,6 +247,8 @@ class BlockHandles {
 
   destroy() {
     this.finishDrag();
+    this.handle.removeEventListener("mousedown", this.onPress);
+    document.removeEventListener("mouseup", this.onRelease);
     this.view.dom.removeEventListener("mousemove", this.onMove);
     this.view.dom.removeEventListener("mouseleave", this.onLeave);
     this.view.dom.removeEventListener("contextmenu", this.onContext);
