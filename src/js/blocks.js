@@ -21,7 +21,7 @@ const TYPES = [
   ["paragraph", "正文"], ["heading1", "标题 1"], ["heading2", "标题 2"],
   ["heading3", "标题 3"], ["heading4", "标题 4"], ["blockquote", "引用"],
   ["bullet_list", "无序列表"], ["ordered_list", "编号列表"],
-  ["code_block", "代码块"], ["hr", "分隔线"], ["table", "表格"], ["fold", "折叠块"],
+  ["code_block", "代码块"], ["copytext", "复制文本"], ["hr", "分隔线"], ["table", "表格"], ["fold", "折叠块"],
 ];
 
 function blockAt(doc, index) {
@@ -62,7 +62,7 @@ function makeBlock(schema, kind, source = null) {
   const paragraph = () => schema.nodes.paragraph.create(null, content);
   if (kind.startsWith("heading")) return schema.nodes.heading.create({ level: Number(kind.slice(-1)) }, content);
   if (kind === "paragraph") return paragraph();
-  if (kind === "code_block") return schema.nodes.code_block.create(null, text ? schema.text(text) : null);
+  if (kind === "code_block" || kind === "copytext") return schema.nodes.code_block.create(kind === "copytext" ? { language: "copy" } : null, text ? schema.text(text) : null);
   if (kind === "blockquote") return schema.nodes.blockquote.create(null, paragraph());
   if (kind === "bullet_list" || kind === "ordered_list") {
     return schema.nodes[kind].create(null, schema.nodes.list_item.create(null, paragraph()));
