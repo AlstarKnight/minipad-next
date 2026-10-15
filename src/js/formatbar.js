@@ -45,7 +45,9 @@ function toggleCopyText(c, view) {
   const { $from } = state.selection;
   if ($from.parent.type.spec.code) {
     if ($from.parent.attrs.language === "copy") return codeToText(state, view.dispatch);
-    view.dispatch(state.tr.setNodeMarkup($from.before(), null, { ...$from.parent.attrs, language: "copy", title: "" }));
+    // 复制文本仅支持单行，避免误把多行代码和标题转换成单行块。
+    if ($from.parent.textContent.includes("\n") || $from.parent.attrs.title) return false;
+    view.dispatch(state.tr.setNodeMarkup($from.before(), null, { ...$from.parent.attrs, language: "copy" }));
     return true;
   }
   if (!["paragraph", "heading"].includes($from.parent.type.name) || !state.selection.empty) return false;
