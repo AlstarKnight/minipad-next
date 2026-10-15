@@ -1323,10 +1323,14 @@ describe("block management", () => {
     assert.equal(await p.locator("#editor ul > li").textContent(), "保留这段文字");
     await convert("code_block");
     assert.equal(await p.locator("#editor .codeblock code").textContent(), "保留这段文字");
+    assert.equal(await p.locator("#editor .ProseMirror > .codeblock").count(), 1,
+      "converting a single-item list places the code block at the document root");
 
     await p.locator("#editor .codeblock code").click({ button: "right" });
     await p.click('#ctx button[data-act="block-insert-before"]');
     await p.click('#ctx button[data-act="block-type-paragraph"]');
+    assert.equal(await p.locator("#editor .ProseMirror > p").count(), 1,
+      "insert-before creates a top-level paragraph");
     await p.keyboard.type("前面的正文");
     assert.equal(await p.locator("#editor .ProseMirror > p").first().textContent(), "前面的正文");
     assert.equal(await p.locator("#editor .codeblock code").textContent(), "保留这段文字");

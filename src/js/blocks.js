@@ -24,7 +24,7 @@ function makeBlock(schema, kind, source = null) {
   if (kind === "fold") return newFold(schema, source);
   if (foldInfo(source)) {
     if (kind === "blockquote") return unfoldQuote(schema, source);
-    const children = [...source.content].slice(1);
+    const children = Array.from({ length: source.childCount }, (_, i) => source.child(i)).slice(1);
     if (children.length !== 1) return null; // 多个子块不能压扁成一段文字
     source = children[0];
   }
