@@ -336,7 +336,7 @@ function writeText(node, parent, state, info) {
   // 只在引用块内的标记段保留 [!fold] 原文，避免触碰代码块中的反斜杠。
   if (/^\[!fold\][+-](?: |$)/.test(v) && parent?.type === "paragraph" &&
       parent.children?.[0] === node && state.stack?.includes("blockquote")) {
-    return "[!fold]" + v[7] + state.safe(v.slice(8), { ...info, encode: [] });
+    return "[!fold]" + v[7] + (v.length > 8 ? " " + state.safe(v.slice(9), { ...info, encode: [] }) : "");
   }
   if (/^[ \t]+$/.test(v)) return /[\r\n]$/.test(info.before ?? "") ? (v[0] === "\t" ? "&#x9;" : "&#x20;") + v.slice(1) : v;
   const tail = /[ \t]+$/.exec(v);

@@ -155,6 +155,7 @@ function insertPending(view, value = "") {
 
 function protectedBoundary(view, event) {
   if (event.key !== "Backspace" && event.key !== "Delete") return false;
+  try { view.domObserver?.flush(); } catch (_) {}
   const { state } = view;
   const { $from, empty } = state.selection;
   if (!empty || !$from.parent.isTextblock) return false;
@@ -162,8 +163,9 @@ function protectedBoundary(view, event) {
   if (backward && $from.parentOffset !== 0) return false;
   if (!backward && $from.parentOffset !== $from.parent.content.size) return false;
   const blockDepth = $from.depth;
-  const cut = state.doc.resolve(backward ? $from.before(blockDepth) : $from.after(blockDepth));
-  const adjacent = backward ? cut.nodeBefore : cut.nodeAfter;
+  const container = $from.node(blockDepth - 1);
+  const index = $from.index(blockDepth - 1);
+  const adjacent = container.maybeChild(index + (backward ? -1 : 1));
   // 第一段可见内容之前是折叠标记，禁止 joinBackward 吞掉标记。
   const quote = $from.node(blockDepth - 1);
   if (backward && foldInfo(quote) && $from.index(blockDepth - 1) === 1) return true;
@@ -235,7 +237,7 @@ export const foldBlocks = $prose(() => new Plugin({
       for (const pos of data?.open ?? []) overrides.set(pos, false);
       for (const [pos, closed] of data?.toggles ?? []) overrides.set(pos, closed);
       return { overrides, deco: decorate(state.doc, overrides),
-        pending: data?.pending ?? (!tr.docChanged && !tr.selectionSet && prev.pending) };
+        pending: data?.pending ?? (prev.pending && !tr.docChanged) };
     },
   },
   appendTransaction(trs, _old, state) {
@@ -291,7 +293,19 @@ export const foldBlocks = $prose(() => new Plugin({
       view.focus();
     };
     scroller?.addEventListener("mousedown", below);
+    const resetPending = (event) => {
+      if (event.target === scroller || event.target === view.dom ||
+        view.dom.contains(event.target)) {
+        if (key.getState(view.state)?.pending) view.dispatch(view.state.tr.setMeta(key, { pending: false }));
+      }
+    };
+    view.dom.addEventListener("mousedown", resetPending, true);
     const guard = (e) => {
+      if (key.getState(view.state)?.pending &&
+        (e.key === "ArrowLeft" || e.key === "ArrowRight" || e.key === "ArrowUp" ||
+          e.key === "ArrowDown" || e.key === "Home" || e.key === "Escape")) {
+        view.dispatch(view.state.tr.setMeta(key, { pending: false }));
+      }
       if (e.isComposing || !view.editable || (e.key !== "Backspace" && e.key !== "Delete")) return;
       if (protectedBoundary(view, e)) { e.preventDefault(); e.stopImmediatePropagation(); }
     };
@@ -300,6 +314,7 @@ export const foldBlocks = $prose(() => new Plugin({
       update(next) { activeView = next; },
       destroy() {
         scroller?.removeEventListener("mousedown", below);
+        view.dom.removeEventListener("mousedown", resetPending, true);
         view.dom.removeEventListener("keydown", guard, true);
         if (activeView === view) activeView = null;
       },
