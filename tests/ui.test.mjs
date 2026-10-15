@@ -1631,7 +1631,7 @@ describe("fold boundary safety", () => {
 
 describe("nested fold cursor", () => {
   ui("Ctrl+End after a nested closed fold leaves file unchanged until typing", {
-    seed: seed({ "": { 页: "前文\n\n> 外层\n> > [!fold]- 内层\n> > 隐藏内容" } }),
+    seed: seed({ "": { 页: "前文\n\n> 外层\n>\n> > [!fold]- 内层\n> >\n> > 隐藏内容" } }),
   }, async (h) => {
     const { p } = h;
     const before = await h.mockFile("", "页");
@@ -1646,7 +1646,7 @@ describe("nested fold cursor", () => {
   });
 
   ui("fold serialization preserves nested marker and code backslash", {
-    seed: seed({ "": { 页: "> 外层\n> > [!fold]- 内层\n> > 内容\n\n~~~text\n> \\[!fold]+ 示例\n~~~" } }),
+    seed: seed({ "": { 页: "> 外层\n>\n> > [!fold]- 内层\n> >\n> > 内容\n\n~~~text\n> \\[!fold]+ 示例\n~~~" } }),
   }, async (h) => {
     const { p } = h;
     assert.ok(await p.locator("#editor .fold-toggle").count(),
