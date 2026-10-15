@@ -2,11 +2,12 @@
 // 一排常用的格式按钮(像语雀的工具栏),跟着光标显示当前的格式;顶栏的格式栏按钮可以把它收起来。
 // 右边的"自定义"可以选保留哪些按钮、拖动调整顺序,记在设置的 format_bar_hidden 和 format_bar_order 里
 import { $prose, Plugin, commandsCtx, undo, redo, liftListItem, TextSelection, wrapInOrderedListCommand, wrapInBulletListCommand, turnIntoTextCommand, wrapInHeadingCommand } from "../vendor/milkdown.js";
-import { BUTTONS, headingLevel, codeToText, plainLine } from "./toolbar.js";
+import { BUTTONS, headingLevel, codeToText, plainText, COPY_CODE_ORIGIN } from "./toolbar.js";
 import { openMenu, closeMenu, toast } from "./ui.js";
 import { setColor, colorAt } from "./colors.js";
 import { parseAccent } from "./accent.js";
 import { makeSharedColorTools } from "./sharedcolors.js";
+import { foldInfo } from "./foldblocks.js";
 
 const ICON = {
   undo: '<svg viewBox="0 0 16 16"><path d="M5.5 3.5 2.5 6.5l3 3"/><path d="M2.5 6.5h7a4 4 0 0 1 0 8H7"/></svg>',
@@ -19,6 +20,7 @@ const ICON = {
   more: '<svg viewBox="0 0 16 16"><path d="M2.5 4.5h6M11.5 4.5h2M2.5 11.5h2M7.5 11.5h6"/><circle cx="10" cy="4.5" r="1.5"/><circle cx="6" cy="11.5" r="1.5"/></svg>',
   color: '<svg viewBox="0 0 16 16" class="fb-color"><path d="M4.5 11 8 2.5 11.5 11M5.7 8h4.6"/><rect class="swatch" x="2.5" y="12.6" width="11" height="2.2" rx=".6"/></svg>',
   bg: '<svg viewBox="0 0 16 16" class="fb-color"><path d="m9.6 2.8 3.1 3.1-5 5H4.6V7.8z"/><path d="M8.2 4.2l3.1 3.1"/><rect class="swatch" x="2.5" y="12.6" width="11" height="2.2" rx=".6"/></svg>',
+  copytext: '<svg viewBox="0 0 16 16"><rect x="4.5" y="5" width="9" height="9" rx="1.6"/><path d="M10.5 3.3V3A1.5 1.5 0 0 0 9 1.5H3.2A1.7 1.7 0 0 0 1.5 3.2V9A1.5 1.5 0 0 0 3 10.5h.3"/></svg>',
 };
 
 const BLOCKS = [
@@ -40,29 +42,32 @@ function listAt(state) {
 }
 const inCode = (state) => !!state.selection.$from.parent.type.spec.code;
 
-function refuseCopyText() {
-  toast("复制文本只能放一行没有格式的文字");
+function refuseCopyText(message = "复制文本只能放没有格式的文字，且不能破坏原有块结构") {
+  toast(message);
   return false;
 }
 
 function toggleCopyText(c, view) {
   const { state } = view;
-  const { $from } = state.selection;
+  const { $from, $to } = state.selection;
+  if (!$from.sameParent($to)) return refuseCopyText("请在同一个段落中选择文字");
   if ($from.parent.type.spec.code) {
-    if ($from.parent.attrs.language === "copy") return codeToText(state, view.dispatch);
-    // 保留原有语言；无法在 copy 围栏里记住它时拒绝转换。
-    if (!plainLine($from.parent) || $from.parent.attrs.language) return refuseCopyText();
-    view.dispatch(state.tr.setNodeMarkup($from.before(), null, { ...$from.parent.attrs, language: "copy" }));
+    if ($from.parent.attrs.language === "copy") {
+      if ($from.parent.attrs.title !== COPY_CODE_ORIGIN) return codeToText(state, view.dispatch);
+      const tr = state.tr.setNodeMarkup($from.before(), null, { language: "", title: "" });
+      view.dispatch(tr.scrollIntoView());
+      return true;
+    }
+    if ($from.parent.attrs.language) return refuseCopyText("带语言的代码块不能转成复制文本");
+    if (!plainText($from.parent)) return refuseCopyText();
+    view.dispatch(state.tr.setNodeMarkup($from.before(), null, { ...$from.parent.attrs, language: "copy", title: COPY_CODE_ORIGIN }));
     return true;
   }
-  if (!$from.sameParent(state.selection.$to)) return false;
-  // 标题级别也属于格式，只有普通段落能无损转换。
   if ($from.parent.type.name !== "paragraph") return refuseCopyText();
   const holder = $from.node(-1), index = $from.index(-1);
-  // 防止 ProseMirror 自动把表格或列表第一段拆开、补空段落。
-  if (!plainLine($from.parent) || !holder.canReplaceWith(index, index + 1, state.schema.nodes.code_block)) return refuseCopyText();
-  const text = $from.parent.textContent;
-  const node = state.schema.nodes.code_block.create({ language: "copy" }, text ? state.schema.text(text) : null);
+  if (!plainText($from.parent) || !holder.canReplaceWith(index, index + 1, state.schema.nodes.code_block)) return refuseCopyText();
+  const text = $from.parent.textBetween(0, $from.parent.content.size, "\n", "\n");
+  const node = state.schema.nodes.code_block.create({ language: "copy" }, state.schema.text(text));
   const start = $from.before();
   const tr = state.tr.replaceWith(start, start + $from.parent.nodeSize, node);
   view.dispatch(tr.setSelection(TextSelection.create(tr.doc, start + 1 + Math.min($from.parentOffset, text.length))).scrollIntoView());
@@ -133,9 +138,9 @@ const ITEMS = [
   { id: "ol", label: ICON.ol, title: "编号列表", active: listActive("ordered_list"), run: toggleList("ordered_list", wrapInOrderedListCommand) },
   { ...byId.task, active: (s) => listAt(s)?.item?.attrs.checked != null },
   { sep: true, id: "sep4", title: "竖线分隔" },
-  { ...byId.quote, active: (s) => { const $f = s.selection.$from; for (let d = $f.depth; d > 0; d--) if ($f.node(d).type.name === "blockquote") return true; return false; } },
-  { id: "copytext", label: "⧉", title: "复制文本", active: (s) => inCode(s) && s.selection.$from.parent.attrs.language === "copy", run: toggleCopyText },
-  { ...byId.codeblock, active: inCode },
+  { ...byId.quote, active: (s) => { const $f = s.selection.$from; for (let d = $f.depth; d > 0; d--) if ($f.node(d).type.name === "blockquote" && !foldInfo($f.node(d))) return true; return false; } },
+  { id: "copytext", label: ICON.copytext, title: "复制文本", active: (s) => inCode(s) && s.selection.$from.parent.attrs.language === "copy", run: toggleCopyText },
+  { ...byId.codeblock, active: (s) => inCode(s) && s.selection.$from.parent.attrs.language !== "copy" },
   { id: "table", label: ICON.table, title: "表格", run: (c, v) => insertBlock(v, "table") },
   { id: "hr", label: ICON.hr, title: "分隔线", run: (c, v) => insertBlock(v, "hr") },
   { sep: true, id: "sep5", title: "竖线分隔" },
@@ -372,7 +377,7 @@ class Bar {
     for (const [btn, it] of this.buttons) {
       if (it.block) {
         const level = headingLevel(state);
-        btn.firstChild.textContent = code ? "代码" : BLOCKS.find((b) => b.level === level)?.label || `标题 ${level}`;
+        btn.firstChild.textContent = code ? (state.selection.$from.parent.attrs.language === "copy" ? "复制文本" : "代码") : BLOCKS.find((b) => b.level === level)?.label || `标题 ${level}`;
         continue;
       }
       if (it.palette) {
