@@ -1291,7 +1291,10 @@ describe("block management", () => {
     const blocks = p.locator("#editor .ProseMirror > p");
     await blocks.first().hover();
     assert.ok(await p.locator(".block-handle").isVisible(), "hover shows a grab handle");
-    await p.locator(".block-handle").dragTo(blocks.last());
+    const lastBox = await blocks.last().boundingBox();
+    await p.locator(".block-handle").dragTo(blocks.last(), {
+      targetPosition: { x: lastBox.width / 2, y: lastBox.height - 2 },
+    });
     await until(h.editor, "乙\n\n丙\n\n甲", "drag moves a paragraph below the last block");
 
     await blocks.last().click({ button: "right" });
