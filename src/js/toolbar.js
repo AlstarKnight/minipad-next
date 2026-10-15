@@ -45,6 +45,14 @@ export function codeLines(schema, text) {
   return parts;
 }
 
+// 复制文本只能容纳单行纯文字，不能丢弃链接、行内格式或标题。
+export function plainLine(node) {
+  if (!node?.isTextblock || node.attrs.title || node.textContent.includes("\n")) return false;
+  let plain = true;
+  node.forEach((child) => { if (!child.isText || child.marks.length) plain = false; });
+  return plain;
+}
+
 export function codeToText(state, dispatch) {
   const { $from } = state.selection;
   if (!$from.parent.type.spec.code) return false;
