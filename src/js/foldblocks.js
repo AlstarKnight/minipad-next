@@ -249,7 +249,10 @@ export const foldBlocks = $prose(() => new Plugin({
     const hidden = hiddenSelection(state);
     if (!hidden) return null;
     if (!activeView?.editable) return state.tr.setSelection(NodeSelection.create(state.doc, hidden.pos));
-    return selectionAfterFold(state, hidden.after, state.tr, null, !!activeView?.editable);
+    const tr = selectionAfterFold(state, hidden.after, state.tr, null, !!activeView?.editable);
+    // 同批用户删除不可被追加的临时占位段落覆盖保存标记。
+    if (trs.some((t) => t.docChanged && !t.getMeta("minipad-external"))) tr.setMeta("minipad-external", false);
+    return tr;
   },
   props: {
     decorations: (state) => key.getState(state)?.deco ?? null,
