@@ -202,7 +202,7 @@ class CodeBlockView {
     this.copy.classList.toggle("done", ok);
     setTimeout(() => {
       this.copy.innerHTML = ICON_COPY;
-      this.copy.title = "复制代码";
+      this.copy.title = this.node.attrs.language === "copy" ? "复制这行文字" : "复制代码";
       this.copy.classList.remove("done");
     }, 1400);
   }
