@@ -1594,6 +1594,112 @@ describe("block editor review regressions", () => {
   });
 });
 
+describe("fold boundary safety", () => {
+  ui("collapse followed by typing preserves the entire fold", {
+    seed: seed({ "": { 页: "前文\n\n> [!fold]+ 标题\n>\n> 内容\n\n后文" } }),
+  }, async (h) => {
+    const { p } = h;
+    await p.locator("#editor .fold-block > p").last().click();
+    await p.locator("#editor .fold-toggle").click();
+    await p.keyboard.type("Z");
+    assert.ok((await h.editor()).includes("> 内容"), "the fold contents must survive");
+    assert.ok((await h.editor()).includes("[!fold]- 标题"), "the fold marker must survive");
+    assert.ok((await h.editor()).includes("Z后文"), "typing goes into the following visible text");
+  });
+
+  ui("Backspace and Delete cannot corrupt fold boundaries", {
+    seed: seed({ "": { 页: "前文\n\n> [!fold]- 标题\n>\n> 隐藏内容\n\n后文" } }),
+  }, async (h) => {
+    const { p } = h;
+    const original = await h.editor();
+    await p.locator("#editor .ProseMirror > p").last().click();
+    await p.keyboard.press("Home");
+    await p.keyboard.press("Backspace");
+    assert.equal(await h.editor(), original, "Backspace leaves preceding fold intact");
+    await p.locator("#editor .ProseMirror > p").first().click();
+    await p.keyboard.press("End");
+    await p.keyboard.press("Delete");
+    assert.equal(await h.editor(), original, "Delete cannot pull the marker outside the fold");
+    await p.locator("#editor .fold-toggle").click();
+    await p.locator("#editor .fold-block > p").last().click();
+    await p.keyboard.press("Home");
+    const expanded = await h.editor();
+    await p.keyboard.press("Backspace");
+    assert.equal(await h.editor(), expanded, "first visible content cannot join hidden marker");
+  });
+});
+
+describe("nested fold cursor", () => {
+  ui("Ctrl+End after a nested closed fold leaves file unchanged until typing", {
+    seed: seed({ "": { 页: "前文\n\n> 外层\n> > [!fold]- 内层\n> > 隐藏内容" } }),
+  }, async (h) => {
+    const { p } = h;
+    const before = await h.mockFile("", "页");
+    await p.locator("#editor .ProseMirror > p").first().click();
+    await p.keyboard.press("Control+End");
+    await sleep(350);
+    assert.equal(await h.mockFile("", "页"), before, "cursor navigation should not save");
+    await p.keyboard.type("Z");
+    assert.equal(await p.locator("#editor .ProseMirror > p").last().textContent(), "Z");
+    assert.equal(await p.locator("#editor .ProseMirror > p").first().textContent(), "前文");
+    assert.ok((await h.editor()).includes("[!fold]- 内层"));
+  });
+
+  ui("fold serialization preserves nested marker and code backslash", {
+    seed: seed({ "": { 页: "> 外层\n> > [!fold]- 内层\n> > 内容\n\n~~~text\n> \\[!fold]+ 示例\n~~~" } }),
+  }, async (h) => {
+    const { p } = h;
+    await p.locator("#editor .fold-toggle").click();
+    const md = await h.editor();
+    assert.ok(md.includes("> > [!fold]+ 内层"), "nested marker is not escaped");
+    assert.ok(md.includes("> \\[!fold]+ 示例"), "code backslash remains intact");
+    await until(async () => (await h.mockFile("", "页")).includes("> > [!fold]+ 内层"), true);
+    await p.reload();
+    assert.equal(await p.locator("#editor .fold-toggle").getAttribute("aria-expanded"), "true");
+  });
+});
+
+describe("fold menus and tables", () => {
+  ui("find expansion, collapse and re-expansion work on the first click", {
+    seed: seed({ "": { 页: "前文\n\n> [!fold]- 标题\n>\n> 秘密内容\n\n后文" } }),
+  }, async (h) => {
+    const { p } = h;
+    const fold = p.locator("#editor .fold-block");
+    await p.locator("#editor .ProseMirror > p").first().click();
+    await p.keyboard.press("Control+f");
+    await p.fill("#find-input", "秘密");
+    await until(async () => fold.locator(".fold-toggle").getAttribute("aria-expanded"), "true");
+    await p.keyboard.press("Escape");
+    await fold.locator(".fold-toggle").click();
+    assert.equal(await fold.locator(".fold-toggle").getAttribute("aria-expanded"), "false");
+    await fold.locator(".fold-toggle").click();
+    assert.equal(await fold.locator(".fold-toggle").getAttribute("aria-expanded"), "true");
+    await p.click("#btn-settings");
+    await settingsPage(p, "edit");
+    await p.uncheck("#set-fold-save");
+    await p.click("#set-save");
+    await fold.locator(".fold-toggle").click();
+    await fold.locator(".fold-title").click();
+    await p.fill("#dialog-input", "新标题");
+    await p.click("#dialog-ok");
+    assert.ok((await h.editor()).includes("[!fold]+ 新标题"),
+      "renaming preserves the saved state instead of the temporary collapsed state");
+  });
+
+  ui("table handle uses hovered column under default system menu", {
+    seed: { ...seed({ "": { 页: "| A | B | C |\n| --- | --- | --- |\n| 1 | 2 | 3 |" } }),
+      settings: { ...SETTINGS, block_context_menu: "system" } },
+  }, async (h) => {
+    const { p } = h;
+    const table = p.locator("#editor table");
+    await table.locator("td").nth(1).hover();
+    await p.locator(".block-handle").click();
+    assert.ok(await p.locator('#ctx button[data-act="block-table-col-delete"]').isVisible());
+    await p.click('#ctx button[data-act="block-table-col-delete"]');
+    assert.deepEqual(await table.locator("th").allTextContents(), ["A", "C"]);
+  });
+});
+
 // ---------- 代码块 ----------
 const CODE_PAGE = {
   "": {
