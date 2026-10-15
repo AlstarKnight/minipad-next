@@ -1916,6 +1916,90 @@ describe("fourth review and copy text", () => {
     await p.click('#format-bar [data-cmd="copytext"]');
     await until(h.editor, "npm install", "copy block can be turned into text");
   });
+
+  ui("copy text refuses a table cell without splitting the table or saving", {
+    seed: seed({ "": { 页: "| A | B |\n| --- | --- |\n| 单元格 | 另一格 |\n| 下行 | 数据 |" } }),
+  }, async (h) => {
+    const { p } = h;
+    const before = await h.editor();
+    const file = await h.mockFile("", "页");
+    await p.locator("#editor table td").first().click();
+    await p.click('#format-bar [data-cmd="copytext"]');
+    assert.match(await h.toast(), /复制文本只能放一行没有格式的文字/);
+    assert.equal(await h.editor(), before, "table Markdown stays unchanged");
+    assert.equal(await p.locator("#editor table").count(), 1, "one intact table");
+    assert.equal(await p.locator("#editor table tr").count(), 3, "all rows remain");
+    await h.sync();
+    assert.equal(await h.mockFile("", "页"), file, "the file is unchanged");
+  });
+
+  ui("copy text refuses the first paragraph in a list and a task", {
+    seed: seed({ "": { 列表: "- 列表项", 任务: "- [ ] 任务项" } }),
+  }, async (h) => {
+    const { p } = h;
+    for (const [name, expected] of [["列表", "- 列表项"], ["任务", "- [ ] 任务项"]]) {
+      if (name === "任务") await h.tab(name).click();
+      await p.locator("#editor ul li p").first().click();
+      await p.click('#format-bar [data-cmd="copytext"]');
+      assert.match(await h.toast(), /复制文本只能放一行没有格式的文字/);
+      assert.equal(await h.editor(), expected, "list or task stays intact");
+      assert.equal(await p.locator("#editor ul li p").count(), 1, "no extra paragraph inserted");
+      await h.sync();
+      assert.equal(await h.mockFile("", name), expected, "no change to the file");
+    }
+  });
+
+  ui("copy text rejects a formatted paragraph in the bar and block menu", {
+    seed: seed({ "": { 页: '前文 **粗体** [链接](https://example.com) <span style="color: #df2a3f">红字</span> 尾' } }),
+  }, async (h) => {
+    const { p } = h;
+    const before = await h.editor();
+    const file = await h.mockFile("", "页");
+    const para = p.locator("#editor .ProseMirror > p");
+    await para.click();
+    await p.click('#format-bar [data-cmd="copytext"]');
+    assert.match(await h.toast(), /复制文本只能放一行没有格式的文字/);
+    assert.equal(await h.editor(), before, "marks and links are retained");
+    await para.click({ button: "right" });
+    await p.click('#ctx [data-act="block-convert"]');
+    assert.ok(await p.isDisabled('#ctx [data-act="block-type-copytext"]'), "block menu rejects the same source");
+    assert.equal(await h.editor(), before);
+    await h.sync();
+    assert.equal(await h.mockFile("", "页"), file);
+  });
+
+  ui("selected text can become a copy line from the floating toolbar", {
+    seed: { ...seed({ "": { 页: "选中的纯文字" } }), settings: { ...SETTINGS, sel_bar_items: ["copytext"] } },
+  }, async (h) => {
+    const { p } = h;
+    await p.locator("#editor .ProseMirror > p").click();
+    await p.keyboard.press("End");
+    await p.keyboard.press("Shift+ArrowLeft");
+    await p.keyboard.press("Shift+ArrowLeft");
+    await p.locator('#toolbar [data-cmd="copytext"]').click();
+    await until(() => p.locator("#editor .codeblock.copyline").count(), 1,
+      "floating toolbar converts the full paragraph");
+    assert.equal(await p.locator("#editor .codeblock code").textContent(), "选中的纯文字");
+    await until(async () => (await h.mockFile("", "页")).includes("copy"),
+      true, "the converted paragraph is saved");
+  });
+
+  ui("block menu refuses titled or multiline code and headings without data loss", {
+    seed: seed({ "": { 代码: "~~~python 标题\nprint(1)\nprint(2)\n~~~", 标题: "## 二级标题" } }),
+  }, async (h) => {
+    const { p } = h;
+    const before = await h.editor();
+    await p.locator("#editor .codeblock code").click({ button: "right" });
+    await p.click('#ctx [data-act="block-convert"]');
+    assert.ok(await p.isDisabled('#ctx [data-act="block-type-copytext"]'));
+    assert.equal(await h.editor(), before);
+    await h.tab("标题").click();
+    const heading = await h.editor();
+    await p.locator("#editor h2").click();
+    await p.click('#format-bar [data-cmd="copytext"]');
+    assert.match(await h.toast(), /复制文本只能放一行没有格式的文字/);
+    assert.equal(await h.editor(), heading, "heading level is preserved");
+  });
 });
 
 // ---------- 代码块 ----------
