@@ -16,6 +16,7 @@ import {
   TextSelection,
 } from "../vendor/milkdown.js";
 import { foldInfo } from "./foldblocks.js";
+import { toast } from "./ui.js";
 
 // 点"链接"时问链接地址;由 main.js 设置(用程序自己的输入框)
 let askLink = async () => null;
@@ -37,22 +38,13 @@ export const headingLevel = (state) => {
   return p.type.name === "heading" ? p.attrs.level : 0;
 };
 
-// 将代码块的实际换行转换成段内软换行，避免往返保存时丢失空行。
-// 普通代码沿用原有去掉末尾空行的行为；复制文本保留原有换行。
-export function codeLines(schema, text, keepTrailing = false) {
+// 将代码块的换行转成段内软换行；普通代码退出沿用原来的末尾空行处理。
+export function codeLines(schema, text) {
   const parts = [];
-  const trailing = keepTrailing ? (/\n+$/.exec(text)?.[0] || "") : "";
-  const body = (keepTrailing ? text.slice(0, text.length - trailing.length) : text.replace(/\n+$/, ""));
-  body.split("\n").forEach((line, i) => {
+  text.replace(/\n+$/, "").split("\n").forEach((line, i) => {
     if (i) parts.push(schema.nodes.hardbreak.create({ isInline: true }));
     if (line) parts.push(schema.text(line));
   });
-  // Markdown 会裁掉末尾硬换行；前面的换行用 hardbreak，最后一个用文本换行
-  // 编码为 &#xA;。避免连续文本换行在编辑 DOM 中被压缩。
-  if (trailing) {
-    for (let i = 1; i < trailing.length; i++) parts.push(schema.nodes.hardbreak.create({ isInline: true }));
-    parts.push(schema.text("\n"));
-  }
   return parts;
 }
 
@@ -70,10 +62,15 @@ export function plainText(node) {
 export function codeToText(state, dispatch) {
   const { $from } = state.selection;
   if (!$from.parent.type.spec.code) return false;
+  // 正文 Markdown 无法持久化尾部空行，拦截所有退出入口避免悄悄丢内容。
+  if ($from.parent.attrs.language === "copy" && $from.parent.textContent.endsWith("\n")) {
+    if (dispatch) toast("复制文本末尾有换行，请先删掉末尾空行再转成正文");
+    return true;
+  }
   if (dispatch) {
     const start = $from.before();
     const paragraph = state.schema.nodes.paragraph.create(null,
-      codeLines(state.schema, $from.parent.textContent, $from.parent.attrs.language === "copy"));
+      codeLines(state.schema, $from.parent.textContent));
     const tr = state.tr.replaceWith(start, start + $from.parent.nodeSize, paragraph);
     const at = start + 1 + Math.min($from.parentOffset, paragraph.content.size);
     dispatch(tr.setSelection(TextSelection.create(tr.doc, at)).scrollIntoView());
