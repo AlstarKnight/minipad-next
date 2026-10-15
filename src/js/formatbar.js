@@ -50,7 +50,8 @@ function refuseCopyText(message = "复制文本只能放没有格式的文字，
 function toggleCopyText(c, view) {
   const { state } = view;
   const { $from, $to } = state.selection;
-  if (!$from.sameParent($to)) return refuseCopyText("请在同一个段落中选择文字");
+  if (!$from.sameParent($to) || (!state.selection.empty && !$from.parent.isTextblock))
+    return refuseCopyText("请在同一个段落中选择文字");
   if ($from.parent.type.spec.code) {
     if ($from.parent.attrs.language === "copy") {
       if ($from.parent.attrs.title !== COPY_CODE_ORIGIN) return codeToText(state, view.dispatch);
