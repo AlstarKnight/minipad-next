@@ -285,6 +285,14 @@ const keys = $prose(
           if (e.isComposing || e.keyCode === 229) return false;
           if (e.key === "Tab" || e.key === "Enter" || e.key === "ArrowDown" || e.key.toLowerCase() === "b") readSelection(v);
           const mod = e.ctrlKey || e.metaKey;
+          // 编辑器里明确处理 Ctrl+End，避免换页后浏览器原生选区偶尔跳到段落开头。
+          if (mod && e.key === "End" && !e.shiftKey && !e.altKey) {
+            const { state } = v;
+            const end = state.doc.content.size;
+            v.dispatch(state.tr.setSelection(TextSelection.near(state.doc.resolve(end), -1)).scrollIntoView());
+            e.preventDefault();
+            return true;
+          }
           let run = null;
           if (e.key === "Tab" && !mod && !e.altKey) run = e.shiftKey ? untab : tab;
           else if (e.key === "Enter" && mod && !e.shiftKey && !e.altKey) run = (state, dispatch) =>
