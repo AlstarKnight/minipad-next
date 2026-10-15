@@ -1708,6 +1708,150 @@ describe("fold menus and tables", () => {
   });
 });
 
+describe("fold edge regressions", () => {
+  ui("undo inside a fold after collapsing never mismatches transactions", {
+    seed: seed({ "": { 页: "前文\n\n> [!fold]+ 标题\n>\n> 内容\n\n后文" } }),
+  }, async ({ p, editor }) => {
+    const content = p.locator("#editor .fold-block > p").last();
+    await content.click();
+    await p.keyboard.press("End");
+    await p.keyboard.type("X");
+    assert.ok((await editor()).includes("内容X"));
+    await p.locator(".fold-toggle").click();
+    await p.keyboard.press("Control+z");
+    assert.ok(!(await editor()).includes("内容X"), "the latest text edit is undone");
+    assert.ok((await editor()).includes("[!fold]- 标题"), "fold remains intact");
+  });
+
+  ui("external sync collapsing edited content does not discard the incoming version", {
+    seed: seed({ "": { 页: "前文\n\n> [!fold]+ 标题\n>\n> 内容\n\n后文" } }),
+  }, async (h) => {
+    const { p } = h;
+    await p.locator("#editor .fold-block > p").last().click();
+    await p.evaluate(() => { window.__mockFiles["页"] = "前文\n\n> [!fold]- 标题\n>\n> 内容改\n\n后文"; });
+    await h.sync();
+    await until(async () => (await h.editor()).includes("内容改"), true, "incoming edited content is displayed");
+    assert.ok((await h.editor()).includes("[!fold]- 标题"));
+    await p.keyboard.type("Z");
+    assert.ok((await h.editor()).includes("内容改"), "typing never discards the external edit");
+  });
+
+  ui("fold boundary protects list and quote starts from Backspace", {
+    seed: seed({ "": { 页: "前文\n\n> [!fold]- 标题\n>\n> 隐藏内容\n\n- 列表项\n\n> 普通引用" } }),
+  }, async (h) => {
+    const { p } = h;
+    const before = await h.editor();
+    await p.locator("#editor .ProseMirror > ul li p").first().click();
+    await p.keyboard.press("Home");
+    await p.keyboard.press("Backspace");
+    assert.equal(await h.editor(), before);
+    const quoteBefore = p.locator("#editor .ProseMirror > blockquote:not(.fold-block)");
+    await quoteBefore.locator("p").first().click();
+    await p.keyboard.press("Home");
+    await p.keyboard.press("Backspace");
+    assert.equal(await h.editor(), before);
+  });
+
+  ui("Delete between adjacent folds never merges marker paragraphs", {
+    seed: seed({ "": { 页: "> [!fold]+ 一\n>\n> 内容一\n\n> [!fold]- 二\n>\n> 内容二" } }),
+  }, async (h) => {
+    const { p } = h;
+    await p.locator("#editor .fold-block").first().locator("p").last().click();
+    await p.keyboard.press("End");
+    const before = await h.editor();
+    await p.keyboard.press("Delete");
+    assert.equal(await h.editor(), before);
+    assert.equal(await p.locator(".fold-block").count(), 2);
+  });
+
+  ui("fold without a title stays untitled and writes after the visible next paragraph", {
+    seed: seed({ "": { 页: "前文\n\n> [!fold]+\n>\n> 内容\n\n后文" } }),
+  }, async (h) => {
+    const { p } = h;
+    await p.locator("#editor .fold-block > p").last().click();
+    await p.locator(".fold-toggle").click();
+    await p.keyboard.type("Z");
+    assert.ok((await h.editor()).includes("[!fold]-\n"), "the original empty title is preserved");
+    assert.ok(!(await h.editor()).includes("[!fold]- 折叠块"), "no default title is inserted");
+    assert.ok((await h.editor()).includes("Z后文"), "typing continues at the following paragraph");
+  });
+
+  ui("Ctrl+End uses an actual position for paste and find after a closed final fold", {
+    seed: seed({ "": { 页: "前文\n\n> [!fold]- 标题\n>\n> 内容" } }),
+  }, async (h) => {
+    const { p } = h;
+    const before = await h.mockFile("", "页");
+    await p.locator("#editor .ProseMirror > p").first().click();
+    await p.keyboard.press("Control+End");
+    await sleep(400);
+    assert.equal(await h.mockFile("", "页"), before, "navigation does not persist an empty paragraph");
+    await p.keyboard.insertText("粘贴内容");
+    assert.ok((await h.editor()).endsWith("粘贴内容"));
+    assert.ok((await h.editor()).includes("[!fold]- 标题"));
+    await p.locator("#editor .ProseMirror > p").first().click();
+    await p.keyboard.press("Control+End");
+    await p.keyboard.press("Control+f");
+    await p.fill("#find-input", "前文");
+    await p.keyboard.press("Escape");
+    await p.keyboard.type("X");
+    assert.ok(!(await h.editor()).startsWith("X前文"), "find resets the navigation cursor");
+  });
+
+  ui("IME composition at the document end does not leave stray Latin letters", {
+    seed: seed({ "": { 页: "前文\n\n> [!fold]- 标题\n>\n> 内容" } }),
+  }, async (h) => {
+    const { p } = h;
+    await p.locator("#editor .ProseMirror > p").first().click();
+    await p.keyboard.press("Control+End");
+    const cdp = await p.context().newCDPSession(p);
+    try {
+      await cdp.send("Input.imeSetComposition", {
+        text: "zhong", selectionStart: 5, selectionEnd: 5,
+      });
+      await cdp.send("Input.insertText", { text: "中文" });
+    } finally { await cdp.detach(); }
+    const md = await h.editor();
+    assert.ok(md.endsWith("中文"), md);
+    assert.ok(!md.includes("z中文"), "IME initial composition letter must not leak");
+  });
+
+  ui("email auto-link setting also refreshes previously opened pages", {
+    seed: seed({ "": { 甲: "name@example.com", 乙: "other@example.com" } }),
+  }, async ({ p }) => {
+    assert.equal(await p.locator("#editor .ProseMirror a").count(), 0);
+    await p.locator("#tabs .tab").nth(1).click();
+    assert.equal(await p.locator("#editor .ProseMirror a").count(), 0);
+    await p.locator("#tabs .tab").first().click();
+    await p.click("#btn-settings");
+    await settingsPage(p, "edit");
+    await p.check("#set-email-links");
+    await p.click("#set-save");
+    await until(() => p.locator("#editor .ProseMirror a").count(), 1);
+    await p.locator("#tabs .tab").nth(1).click();
+    await until(() => p.locator("#editor .ProseMirror a").count(), 1,
+      "switching back uses the latest email parsing setting");
+  });
+
+  ui("read error alert shows all text in narrow windows and can be copied", {
+    seed: seed({ "": { "2026年10月 项目周报（草稿）": "内容" } }),
+  }, async (h) => {
+    const { p } = h;
+    await p.evaluate(() => { window.__mockControl = { unreadable: { "": {
+      "2026年10月 项目周报（草稿）": "读取失败：原文件有无法转换的内容，建议先备份再修复，请勿覆盖原文件。"
+    } }, keepUnreadableContent: true }; });
+    await h.sync();
+    await until(() => p.isVisible("#read-error"), true);
+    const sizes = await p.locator("#read-error").evaluate((el) => ({
+      scroll: el.scrollHeight, visible: el.clientHeight, userSelect: getComputedStyle(el).userSelect,
+      paddingTop: parseFloat(getComputedStyle(document.querySelector("#editor .ProseMirror")).paddingTop),
+      alertHeight: el.getBoundingClientRect().height,
+    }));
+    assert.ok(sizes.visible >= sizes.scroll - 1, JSON.stringify(sizes));
+    assert.equal(sizes.userSelect, "text");
+    assert.ok(sizes.paddingTop >= sizes.alertHeight, JSON.stringify(sizes));
+  });
+});
+
 // ---------- 代码块 ----------
 const CODE_PAGE = {
   "": {

@@ -52,6 +52,7 @@ const EXTERNAL = "minipad-external";
 
 // 邮箱默认按普通文字显示，保留手动指定的 mailto 链接与网址自动识别。
 let autoEmailLinks = false;
+let emailLinkVersion = 0;
 // GFM 会把裸邮箱解析成 mailto 链接。对照原始 Markdown 的源码区间，仅还原
 // 裸邮箱生成的链接，避免误伤 [标题](mailto:...) 或 <name@example.com>。
 const plainEmails = $remark("plainEmails", () => () => (tree, file) => {
@@ -477,12 +478,13 @@ export function showInEditor(n) {
   if (!st) {
     st = freshState(n.content);
     n.stateMd = n.content;
-  } else if (n.stateMd !== n.content) {
+  } else if (n.stateMd !== n.content || n.emailLinkVersion !== emailLinkVersion) {
     const tr = replaceTr(st, n.content);
-    if (tr) st = st.apply(tr);
+    if (tr) st = st.apply(tr.setMeta("addToHistory", false));
     n.stateMd = n.content;
-    scroll = 0;
+    if (n.emailLinkVersion === emailLinkVersion) scroll = 0;
   }
+  n.emailLinkVersion = emailLinkVersion;
   view.updateState(st);
   shown = n;
   view.setProps({ editable: () => !shown?.unreadable });
@@ -562,10 +564,14 @@ export function applyEditorSettings(s) {
   const wasEnabled = autoEmailLinks;
   autoEmailLinks = s.email_auto_link === true;
   // 切换选项时重新读取当前 Markdown，仅更新编辑器状态，不当作一次编辑保存。
-  if (view && shown && wasEnabled !== autoEmailLinks) {
-    syncContent(shown);
-    const tr = replaceTr(view.state, shown.content);
-    if (tr) view.dispatch(tr.setMeta("addToHistory", false));
+  if (wasEnabled !== autoEmailLinks) {
+    emailLinkVersion++;
+    if (view && shown) {
+      syncContent(shown);
+      const tr = replaceTr(view.state, shown.content);
+      if (tr) view.dispatch(tr.setMeta("addToHistory", false));
+      shown.emailLinkVersion = emailLinkVersion;
+    }
   }
   codeExitMode = ["blank2", "blank3", "ctrl"].includes(s.code_exit_mode) ? s.code_exit_mode : "blank3";
   setFoldPersistence(s.fold_save_state !== false);

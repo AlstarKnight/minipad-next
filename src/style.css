@@ -1350,8 +1350,8 @@ html[data-edge-style="hover"][data-edge-peek][data-edge="right"] #edge-expand { 
 #read-error { position: absolute; top: 0; left: 0; right: 0; z-index: 11;
   padding: 8px 14px; background: var(--bg); color: var(--text);
   border-bottom: 1px solid var(--bar-border); white-space: pre-wrap;
-  max-height: 54px; overflow: hidden; pointer-events: none; }
-html[data-unreadable] #editor .ProseMirror { padding-top: 64px; }
+  overflow-wrap: anywhere; user-select: text; }
+html[data-unreadable] #editor .ProseMirror { padding-top: var(--read-error-height, 64px); }
 #read-error[hidden] { display: none; }
 .tab.unreadable { opacity: .55; }
 .tab.unreadable::after { content: "⚠"; color: #ba772d; font-size: 12px; margin-left: 3px; }

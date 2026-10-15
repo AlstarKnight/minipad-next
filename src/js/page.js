@@ -42,4 +42,7 @@ function showReadError(n) {
   box.hidden = !n?.unreadable;
   box.textContent = n?.unreadable ? "这一页读取失败:" + (n.reason || "未知错误") : "";
   document.documentElement.toggleAttribute("data-unreadable", !!n?.unreadable);
+  // 告警可换行、选择复制；用实际高度挪开正文，避免长文件名截断提示。
+  $("#main").style.setProperty("--read-error-height",
+    n?.unreadable ? box.getBoundingClientRect().height + 12 + "px" : "0px");
 }
