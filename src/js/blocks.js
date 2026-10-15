@@ -17,7 +17,7 @@ function blockAt(doc, index) {
 }
 
 function makeBlock(schema, kind, source = null) {
-  const text = source?.textContent || "";
+  const text = source ? source.textBetween(0, source.content.size, "\n") : "";
   // 段落与标题互转时保留加粗、链接等行内格式。
   const content = source && ["paragraph", "heading"].includes(source.type.name)
     ? source.content : text ? [schema.text(text)] : null;
@@ -63,6 +63,7 @@ class BlockHandles {
       if (this.dragging === -1 && e.relatedTarget !== this.handle) this.show(-1);
     };
     this.onContext = (e) => {
+      if (e.shiftKey || e.target.closest?.("input, textarea")) return;
       const index = this.indexOf(e.target);
       if (index < 0 || !this.view.editable) return;
       e.preventDefault();
@@ -79,6 +80,7 @@ class BlockHandles {
     this.onOver = (e) => {
       if (this.dragging < 0) return;
       e.preventDefault();
+      e.stopImmediatePropagation();
       e.dataTransfer.dropEffect = "move";
       const index = this.indexOf(e.target);
       if (index < 0) {
@@ -93,6 +95,7 @@ class BlockHandles {
     this.onDrop = (e) => {
       if (this.dragging < 0) return;
       e.preventDefault();
+      e.stopImmediatePropagation();
       const from = this.dragging;
       const to = this.dropIndex;
       this.finishDrag();
@@ -109,8 +112,9 @@ class BlockHandles {
     this.view.dom.addEventListener("mousemove", this.onMove);
     this.view.dom.addEventListener("mouseleave", this.onLeave);
     this.view.dom.addEventListener("contextmenu", this.onContext);
-    this.view.dom.addEventListener("dragover", this.onOver);
-    this.view.dom.addEventListener("drop", this.onDrop);
+    // 捕获自有手柄的 drop，阻止 ProseMirror 将拖放携带的文本粘贴进文档。
+    this.view.dom.addEventListener("dragover", this.onOver, true);
+    this.view.dom.addEventListener("drop", this.onDrop, true);
     this.scroller.addEventListener("scroll", this.onScroll);
     this.handle.addEventListener("mouseleave", this.onLeave);
   }
@@ -210,6 +214,8 @@ class BlockHandles {
   }
 
   menu(index, x, y) {
+    x = Math.max(4, Math.min(x, window.innerWidth - 190));
+    y = Math.max(4, Math.min(y, window.innerHeight - 340));
     const node = this.view.state.doc.child(index);
     if (!node || !this.view.editable) return;
     const types = (action) => openMenu(TYPES.map(([kind, name]) => ({
@@ -237,8 +243,8 @@ class BlockHandles {
     this.view.dom.removeEventListener("mousemove", this.onMove);
     this.view.dom.removeEventListener("mouseleave", this.onLeave);
     this.view.dom.removeEventListener("contextmenu", this.onContext);
-    this.view.dom.removeEventListener("dragover", this.onOver);
-    this.view.dom.removeEventListener("drop", this.onDrop);
+    this.view.dom.removeEventListener("dragover", this.onOver, true);
+    this.view.dom.removeEventListener("drop", this.onDrop, true);
     this.scroller.removeEventListener("scroll", this.onScroll);
     this.handle.remove();
     this.marker.remove();
