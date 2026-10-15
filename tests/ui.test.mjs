@@ -2017,7 +2017,7 @@ describe("fourth review and copy text", () => {
   });
 
   ui("copy text with trailing blank lines refuses unsafe conversions and preserves saved data", {
-    seed: seed({ "": { 页: "```copy\n第一行\n第二行\n\n```" } }),
+    seed: seed({ "": { 页: "```copy\n第一行\n第二行\n\n\n```" } }),
   }, async (h) => {
     const { p } = h;
     const before = await h.editor();
