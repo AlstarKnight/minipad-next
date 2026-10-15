@@ -12,6 +12,7 @@ import {
   wrapInBulletListCommand,
   wrapInBlockquoteCommand,
   createCodeBlockCommand,
+  lift,
   TextSelection,
 } from "../vendor/milkdown.js";
 
@@ -45,11 +46,14 @@ export function codeLines(schema, text) {
   return parts;
 }
 
-// 复制文本只能容纳单行纯文字，不能丢弃链接、行内格式或标题。
-export function plainLine(node) {
-  if (!node?.isTextblock || node.attrs.title || node.textContent.includes("\n")) return false;
+// 多行纯文本也可复制；只容纳无标记文字和段内换行，拒绝链接、样式及标题元数据。
+export const COPY_CODE_ORIGIN = "minipad-original-code";
+export function plainText(node) {
+  if (!node?.isTextblock || node.attrs.title || !node.content.size) return false;
   let plain = true;
-  node.forEach((child) => { if (!child.isText || child.marks.length) plain = false; });
+  node.forEach((child) => {
+    if (!(child.isText && !child.marks.length) && child.type.name !== "hardbreak") plain = false;
+  });
   return plain;
 }
 
@@ -64,6 +68,18 @@ export function codeToText(state, dispatch) {
     dispatch(tr.setSelection(TextSelection.create(tr.doc, at)).scrollIntoView());
   }
   return true;
+}
+
+// 普通引用再点一次退出；折叠块标记引用不参与，也不重复套一层引用。
+function toggleQuote(state, dispatch) {
+  const { $from } = state.selection;
+  for (let d = $from.depth; d > 0; d--) {
+    const node = $from.node(d);
+    if (node.type.name !== "blockquote") continue;
+    if (node.firstChild?.textContent?.startsWith("[!fold]")) return true;
+    return lift(state, dispatch);
+  }
+  return false;
 }
 
 export const BUTTONS = [
@@ -103,7 +119,7 @@ export const BUTTONS = [
     id: "quote",
     label: '<svg viewBox="0 0 16 16"><path d="M3 4v8M6.5 5.5h7M6.5 8h7M6.5 10.5h5"/></svg>',
     title: "引用",
-    run: (c) => c.call(wrapInBlockquoteCommand.key),
+    run: (c, v) => toggleQuote(v.state, v.dispatch) || c.call(wrapInBlockquoteCommand.key),
   },
   { id: "codeblock", label: "{ }", title: "代码块", run: (c, v) => codeToText(v.state, v.dispatch) || c.call(createCodeBlockCommand.key) },
 ];
