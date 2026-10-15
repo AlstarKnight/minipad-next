@@ -5,7 +5,7 @@ import { openMenu, toast } from "./ui.js";
 import { foldInfo, foldIsClosed, newFold, unfoldQuote, setFold } from "./foldblocks.js";
 import { blockLocation, moveNested, changeNested, listLevel } from "./nestedblocks.js";
 import { tableItems } from "./tableblocks.js";
-import { codeLines } from "./toolbar.js";
+import { codeLines, plainLine } from "./toolbar.js";
 
 
 let blockEnabled = true;
@@ -31,6 +31,8 @@ function blockAt(doc, index) {
 }
 
 function makeBlock(schema, kind, source = null) {
+  // 块菜单与格式栏遵循相同的无损转换规则；引用、列表、标题和代码元数据不可被压平。
+  if (kind === "copytext" && source && (source.type.name !== "paragraph" || !plainLine(source))) return null;
   if (kind === "fold") return newFold(schema, source);
   if (foldInfo(source)) {
     if (kind === "blockquote") return unfoldQuote(schema, source);
