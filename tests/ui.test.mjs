@@ -1238,8 +1238,11 @@ describe("editor", () => {
     await p.keyboard.press("Control+b");
     await until(h.editor, "一段[文字](https://example.com)", "Ctrl+B with a selection toggles bold");
     assert.ok(await p.isHidden("#books"), "and does not open the notebook list");
-    await p.keyboard.press("End");
-    await until(h.selection, "", "nothing selected");
+    // 无界面的 Chromium 偶尔会吞掉紧跟在 Ctrl+B 后面的 End（选区还是链接文字），没取消选中就再按一次
+    await until(async () => {
+      await p.keyboard.press("End");
+      return h.selection();
+    }, "", "nothing selected");
     await p.keyboard.press("Control+b");
     await p.locator("#books").waitFor();
     await p.keyboard.press("Escape");
@@ -1962,13 +1965,18 @@ describe("fourth review and copy text", () => {
   });
 
   ui("empty paragraph cannot become a copy block and empty copy does not clear clipboard", {
-    seed: seed({ "": { 空白: "", 空复制: "```copy\n```" } }),
+    seed: seed({ "": { 空白: "", 空复制: "```copy\n```", 空代码: "```\n```" } }),
   }, async (h) => {
     const { p } = h;
     await p.click("#editor");
     await p.click('#format-bar [data-cmd="copytext"]');
     assert.equal(await p.locator("#editor .codeblock").count(), 0);
-    assert.match(await h.toast(), /复制文本只能放没有格式的文字/);
+    assert.match(await h.toast(), /空段落不能转成复制文本/);
+    await h.tab("空代码").click();
+    await p.locator("#editor .codeblock code").click();
+    await p.click('#format-bar [data-cmd="copytext"]');
+    assert.match(await h.toast(), /空代码块不能转成复制文本/);
+    assert.equal(await p.locator("#editor .codeblock.copyline").count(), 0);
     await h.tab("空复制").click();
     await p.evaluate(() => navigator.clipboard.writeText("保留剪贴板"));
     assert.ok(await p.locator("#editor .codeblock.copyline .copy").isDisabled());
@@ -2004,6 +2012,7 @@ describe("fourth review and copy text", () => {
     const before = await h.editor();
     await p.click('#format-bar [data-cmd="quote"]');
     assert.equal(await h.editor(), before, "clicking quote in a fold does not add nested quotes");
+    assert.match(await h.toast(), /折叠块里不能再加引用/);
   });
 
   ui("Backspace removes an empty first code block", {
@@ -2027,8 +2036,6 @@ describe("fourth review and copy text", () => {
     await p.click('#format-bar [data-cmd="copytext"]');
     assert.match(await h.toast(), /末尾有换行/);
     assert.equal(await h.editor(), before, "copy button refuses to discard trailing lines");
-    await p.click('#format-bar [data-cmd="codeblock"]');
-    assert.equal(await h.editor(), before, "code button does not bypass safety");
     await p.click('#format-bar [data-cmd="block"]');
     await p.click('#ctx [data-act="h0"]');
     assert.equal(await h.editor(), before, "body dropdown does not bypass safety");
@@ -2043,6 +2050,9 @@ describe("fourth review and copy text", () => {
     await p.reload();
     assert.equal(await p.locator("#editor .codeblock code").textContent(), originalText,
       "every trailing blank line survives reopening");
+    await p.locator("#editor .codeblock code").click();
+    await p.click('#format-bar [data-cmd="codeblock"]');
+    await until(h.editor, "```\n第一行\n第二行\n\n\n```", "the code button turns copy text into normal code with every line");
   });
 
   ui("block menu preserves soft breaks when converting plain paragraph to code", {
@@ -2210,6 +2220,79 @@ describe("fourth review and copy text", () => {
     await p.click('#format-bar [data-cmd="copytext"]');
     assert.match(await h.toast(), /复制文本只能放没有格式的文字/);
     assert.equal(await h.editor(), heading, "heading level is preserved");
+  });
+
+  ui("the quote button moves a whole list out of a quote instead of unwrapping one item", {
+    seed: seed({ "": { 页: "> - 列表项\n> - 第二项\n\n> 第一段\n>\n> 第二段" } }),
+  }, async (h) => {
+    const { p } = h;
+    await p.locator("#editor blockquote li p").first().click();
+    await p.click('#format-bar [data-cmd="quote"]');
+    await until(h.editor, "- 列表项\n- 第二项\n\n> 第一段\n>\n> 第二段", "the list leaves the quote with both items");
+    await p.locator("#editor blockquote p").first().click();
+    await p.click('#format-bar [data-cmd="quote"]');
+    await until(h.editor, "- 列表项\n- 第二项\n\n第一段\n\n> 第二段", "a paragraph still leaves a longer quote on its own");
+  });
+
+  ui("in a copy block the code button and the block menu make normal code", {
+    seed: seed({ "": { 按钮: "```copy\nnpm i\n```", 菜单: "```copy minipad-original-code\nnpm i\n```" } }),
+  }, async (h) => {
+    const { p } = h;
+    await p.locator("#editor .codeblock code").click();
+    await p.click('#format-bar [data-cmd="codeblock"]');
+    await until(h.editor, "```\nnpm i\n```", "the code button gives normal code");
+    assert.ok(await p.locator('#format-bar [data-cmd="codeblock"]').evaluate((el) => el.classList.contains("on")));
+    await h.tab("菜单").click();
+    await p.locator("#editor .codeblock code").click({ button: "right" });
+    await p.click('#ctx [data-act="block-convert"]');
+    await p.click('#ctx [data-act="block-type-code_block"]');
+    await until(h.editor, "```\nnpm i\n```", "the block menu gives normal code");
+    assert.equal(await p.locator("#editor .codeblock.copyline").count(), 0);
+  });
+
+  ui("block menu keeps the trailing lines of a copy block inside a quote or a fold", {
+    seed: seed({ "": { 引用: "> ```copy\n> npm i\n>\n> ```", 折叠: "> [!fold]+ 标题\n>\n> ```copy\n> npm i\n>\n> ```" } }),
+  }, async (h) => {
+    const { p } = h;
+    for (const name of ["引用", "折叠"]) {
+      if (name === "折叠") await h.tab(name).click();
+      const before = await h.editor();
+      await p.locator("#editor .ProseMirror > blockquote").click({ button: "right", position: { x: 4, y: 4 } });
+      await p.click('#ctx [data-act="block-convert"]');
+      assert.ok(await p.isDisabled('#ctx [data-act="block-type-paragraph"]'), `${name}: no plain text that drops the blank line`);
+      await p.keyboard.press("Escape");
+      assert.equal(await h.editor(), before);
+    }
+  });
+
+  ui("the third Enter at the end of a copy block leaves it like a code block", {
+    seed: seed({ "": { 页: "```copy\nnpm i\n```\n\n尾" } }),
+  }, async (h) => {
+    const { p } = h;
+    await p.locator("#editor .codeblock code").click();
+    await p.keyboard.press("End");
+    for (let i = 0; i < 3; i++) await p.keyboard.press("Enter");
+    await p.keyboard.type("x");
+    await until(h.editor, "```copy\nnpm i\n```\n\nx\n\n尾", "no blank lines are left in the copy block");
+  });
+
+  ui("a line break at the end of a paragraph is dropped when it becomes copy text", {
+    seed: seed({ "": { 页: "abc" } }),
+  }, async (h) => {
+    const { p } = h;
+    await p.locator("#editor .ProseMirror > p").click();
+    await p.keyboard.press("End");
+    await p.keyboard.press("Shift+Enter");
+    await p.click('#format-bar [data-cmd="copytext"]');
+    await until(h.editor, "```copy\nabc\n```", "the format bar drops the trailing break");
+    await p.click('#format-bar [data-cmd="copytext"]');
+    await until(h.editor, "abc", "and the copy text turns back into the paragraph");
+    await p.keyboard.press("End");
+    await p.keyboard.press("Shift+Enter");
+    await p.locator("#editor .ProseMirror > p").click({ button: "right" });
+    await p.click('#ctx [data-act="block-convert"]');
+    await p.click('#ctx [data-act="block-type-copytext"]');
+    await until(h.editor, "```copy\nabc\n```", "the block menu drops it too");
   });
 });
 

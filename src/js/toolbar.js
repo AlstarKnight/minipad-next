@@ -12,7 +12,6 @@ import {
   wrapInBulletListCommand,
   wrapInBlockquoteCommand,
   createCodeBlockCommand,
-  lift,
   TextSelection,
 } from "../vendor/milkdown.js";
 import { foldInfo } from "./foldblocks.js";
@@ -80,14 +79,29 @@ export function codeToText(state, dispatch) {
 
 // 普通引用再点一次退出；折叠块标记引用不参与，也不重复套一层引用。
 function toggleQuote(state, dispatch) {
-  const { $from } = state.selection;
-  for (let d = $from.depth; d > 0; d--) {
-    const node = $from.node(d);
-    if (node.type.name !== "blockquote") continue;
-    if (foldInfo(node)) return true;
-    return lift(state, dispatch);
+  const { $from, $to } = state.selection;
+  // 移出的是引用里含光标的整个子块（比如整张列表），不是最里层的列表项
+  const range = $from.blockRange($to, (node) => node.type.name === "blockquote");
+  if (!range) return false;
+  if (foldInfo(range.parent)) {
+    if (dispatch) toast("折叠块里不能再加引用");
+    return true;
   }
-  return false;
+  try {
+    const tr = state.tr.lift(range, range.depth - 1);
+    if (dispatch) dispatch(tr.scrollIntoView());
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// 复制文本块里代码块按钮不亮，点它变成普通代码块
+function copyToCode(state, dispatch) {
+  const { $from } = state.selection;
+  if (!$from.parent.type.spec.code || $from.parent.attrs.language !== "copy") return false;
+  if (dispatch) dispatch(state.tr.setNodeMarkup($from.before(), null, { ...$from.parent.attrs, language: "", title: "" }).scrollIntoView());
+  return true;
 }
 
 export const BUTTONS = [
@@ -129,5 +143,5 @@ export const BUTTONS = [
     title: "引用",
     run: (c, v) => toggleQuote(v.state, v.dispatch) || c.call(wrapInBlockquoteCommand.key),
   },
-  { id: "codeblock", label: "{ }", title: "代码块", run: (c, v) => codeToText(v.state, v.dispatch) || c.call(createCodeBlockCommand.key) },
+  { id: "codeblock", label: "{ }", title: "代码块", run: (c, v) => copyToCode(v.state, v.dispatch) || codeToText(v.state, v.dispatch) || c.call(createCodeBlockCommand.key) },
 ];

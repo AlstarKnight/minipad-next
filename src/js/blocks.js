@@ -31,9 +31,6 @@ function blockAt(doc, index) {
 }
 
 function makeBlock(schema, kind, source = null) {
-  // 复制文本末尾空行无法在正文 Markdown 中稳定保存；块菜单也必须拒绝这种转换。
-  if (source?.type.name === "code_block" && source.attrs.language === "copy" &&
-    source.textContent.endsWith("\n") && kind !== "code_block") return null;
   // 块菜单与格式栏遵循相同的无损转换规则，保留段内换行与无语言代码块来源。
   if (kind === "copytext" && source &&
     (!["paragraph", "code_block"].includes(source.type.name) || !plainText(source) ||
@@ -41,7 +38,9 @@ function makeBlock(schema, kind, source = null) {
   if (kind === "hr" && source && source.type.name !== "hr" &&
     (source.type.name !== "paragraph" || source.content.size)) return null;
   // 同类型转换不重建代码块，保留语言、标题和全部原文。
-  if (kind === "code_block" && source?.type.name === "code_block") return source;
+  // 复制文本块转代码块：去掉 copy 语言和来源标记，变成普通代码块
+  if (kind === "code_block" && source?.type.name === "code_block")
+    return source.attrs.language === "copy" ? source.type.create({ ...source.attrs, language: "", title: "" }, source.content) : source;
   if (kind === "fold") return newFold(schema, source);
   if (foldInfo(source)) {
     if (kind === "blockquote") return unfoldQuote(schema, source);
@@ -67,6 +66,10 @@ function makeBlock(schema, kind, source = null) {
     source = source.firstChild.firstChild;
   }
   if (kind === "blockquote" && source) return schema.nodes.blockquote.create(null, [source]);
+  // 复制文本末尾空行无法在正文 Markdown 中稳定保存；块菜单也必须拒绝这种转换。
+  // 放在拆开引用、折叠块之后，外层只包着一个复制文本块时也拦得住。
+  if (source?.type.name === "code_block" && source.attrs.language === "copy" &&
+    source.textContent.endsWith("\n") && kind !== "code_block") return null;
   // 代码块无法存储富文本标记。拒绝会丢链接、颜色、标题等格式的转换。
   if (kind === "code_block" && source &&
     (source.type.name !== "paragraph" ||
@@ -81,7 +84,9 @@ function makeBlock(schema, kind, source = null) {
   if (kind === "code_block" || kind === "copytext") {
     const sourceCode = source?.type.name === "code_block";
     const attrs = kind === "copytext" ? { language: "copy", title: sourceCode ? COPY_CODE_ORIGIN : "" } : null;
-    return schema.nodes.code_block.create(attrs, text ? schema.text(text) : null);
+    // 和格式栏一样：段落末尾的换行存不进 Markdown，转成复制文本时去掉
+    const body = kind === "copytext" && !sourceCode ? text.replace(/\n+$/, "") : text;
+    return schema.nodes.code_block.create(attrs, body ? schema.text(body) : null);
   }
   if (kind === "blockquote") return schema.nodes.blockquote.create(null, paragraph());
   if (kind === "bullet_list" || kind === "ordered_list") {

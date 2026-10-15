@@ -60,14 +60,17 @@ function toggleCopyText(c, view) {
       return true;
     }
     if ($from.parent.attrs.language) return refuseCopyText("带语言的代码块不能转成复制文本");
+    if (!$from.parent.content.size) return refuseCopyText("空代码块不能转成复制文本");
     if (!plainText($from.parent)) return refuseCopyText();
     view.dispatch(state.tr.setNodeMarkup($from.before(), null, { ...$from.parent.attrs, language: "copy", title: COPY_CODE_ORIGIN }));
     return true;
   }
   if ($from.parent.type.name !== "paragraph") return refuseCopyText();
+  // 段落末尾的换行存不进 Markdown，转换时去掉，免得复制文本之后转不回正文
+  const text = $from.parent.textBetween(0, $from.parent.content.size, "\n", "\n").replace(/\n+$/, "");
+  if (!text) return refuseCopyText("空段落不能转成复制文本");
   const holder = $from.node(-1), index = $from.index(-1);
   if (!plainText($from.parent) || !holder.canReplaceWith(index, index + 1, state.schema.nodes.code_block)) return refuseCopyText();
-  const text = $from.parent.textBetween(0, $from.parent.content.size, "\n", "\n");
   const node = state.schema.nodes.code_block.create({ language: "copy" }, state.schema.text(text));
   const start = $from.before();
   const tr = state.tr.replaceWith(start, start + $from.parent.nodeSize, node);
