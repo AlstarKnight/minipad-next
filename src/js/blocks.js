@@ -35,6 +35,10 @@ function makeBlock(schema, kind, source = null) {
   if (kind === "copytext" && source &&
     (!["paragraph", "code_block"].includes(source.type.name) || !plainText(source) ||
       (source.type.name === "code_block" && source.attrs.language))) return null;
+  if (kind === "hr" && source && source.type.name !== "hr" &&
+    (source.type.name !== "paragraph" || source.content.size)) return null;
+  // 同类型转换不重建代码块，保留语言、标题和全部原文。
+  if (kind === "code_block" && source?.type.name === "code_block") return source;
   if (kind === "fold") return newFold(schema, source);
   if (foldInfo(source)) {
     if (kind === "blockquote") return unfoldQuote(schema, source);
@@ -60,18 +64,21 @@ function makeBlock(schema, kind, source = null) {
     source = source.firstChild.firstChild;
   }
   if (kind === "blockquote" && source) return schema.nodes.blockquote.create(null, [source]);
-  const text = source ? source.textBetween(0, source.content.size, "\n") : "";
+  // 代码块无法存储富文本标记。拒绝会丢链接、颜色、标题等格式的转换。
+  if (kind === "code_block" && source &&
+    (source.type.name !== "paragraph" ||
+      (source.content.size && !plainText(source)))) return null;
+  const text = source ? source.textBetween(0, source.content.size, "\n", "\n") : "";
   const content = source && ["paragraph", "heading"].includes(source.type.name)
-    ? source.content : source?.type.spec.code ? codeLines(schema, text) : text ? [schema.text(text)] : null;
+    ? source.content : source?.type.spec.code
+      ? codeLines(schema, text, source.attrs.language === "copy") : text ? [schema.text(text)] : null;
   const paragraph = () => schema.nodes.paragraph.create(null, content);
   if (kind.startsWith("heading")) return schema.nodes.heading.create({ level: Number(kind.slice(-1)) }, content);
   if (kind === "paragraph") return paragraph();
   if (kind === "code_block" || kind === "copytext") {
     const sourceCode = source?.type.name === "code_block";
     const attrs = kind === "copytext" ? { language: "copy", title: sourceCode ? COPY_CODE_ORIGIN : "" } : null;
-    const content = kind === "copytext" && source?.type.name === "paragraph"
-      ? source.textBetween(0, source.content.size, "\n", "\n") : text;
-    return schema.nodes.code_block.create(attrs, content ? schema.text(content) : null);
+    return schema.nodes.code_block.create(attrs, text ? schema.text(text) : null);
   }
   if (kind === "blockquote") return schema.nodes.blockquote.create(null, paragraph());
   if (kind === "bullet_list" || kind === "ordered_list") {
