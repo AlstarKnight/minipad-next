@@ -213,6 +213,24 @@ function enterInTask(state, dispatch) {
   return splitListItem(item.type, { ...item.attrs, checked: false })(state, dispatch);
 }
 
+// 代码块最后一行留空后再按 Enter,从代码块退出到普通段落。
+// Ctrl+Enter 可以在代码块的任意位置直接退出,不影响其它地方的任务快捷键。
+function exitCodeBlock(state, dispatch, afterBlank = false) {
+  const { $from, empty } = state.selection;
+  if (!empty || !$from.parent.type.spec.code) return false;
+  if (afterBlank && ($from.parentOffset !== $from.parent.content.size || !$from.parent.textContent.endsWith("\n"))) return false;
+  if (dispatch) {
+    const tr = state.tr;
+    const end = $from.after();
+    // 退出时去掉为了离开代码块而输入的最后一个换行,避免代码末尾多出空行。
+    if (afterBlank) tr.delete($from.pos - 1, $from.pos);
+    const at = end - (afterBlank ? 1 : 0);
+    tr.insert(at, state.schema.nodes.paragraph.create());
+    dispatch(tr.setSelection(TextSelection.create(tr.doc, at + 1)).scrollIntoView());
+  }
+  return true;
+}
+
 // 在最后一个代码块(或表格)的最后一行按 ↓:后面补一个空段落,好接着往下写
 function downOutOfBlock(state, dispatch) {
   const { $from, empty } = state.selection;
@@ -268,9 +286,11 @@ const keys = $prose(
           const mod = e.ctrlKey || e.metaKey;
           let run = null;
           if (e.key === "Tab" && !mod && !e.altKey) run = e.shiftKey ? untab : tab;
-          else if (e.key === "Enter" && mod && !e.shiftKey && !e.altKey) run = toggleTask;
+          else if (e.key === "Enter" && mod && !e.shiftKey && !e.altKey) run = (state, dispatch) =>
+            exitCodeBlock(state, dispatch) || toggleTask(state, dispatch);
           else if (e.key === "Enter" && e.shiftKey && !mod && !e.altKey) run = softBreak;
-          else if (e.key === "Enter" && !e.shiftKey && !mod && !e.altKey) run = enterInTask;
+          else if (e.key === "Enter" && !e.shiftKey && !mod && !e.altKey) run = (state, dispatch) =>
+            exitCodeBlock(state, dispatch, true) || enterInTask(state, dispatch);
           else if (e.key === "ArrowDown" && !e.shiftKey && !mod && !e.altKey) run = downOutOfBlock;
           else if (mod && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "b" && v.state.selection.empty) {
             e.preventDefault();

@@ -1430,6 +1430,62 @@ describe("code blocks", () => {
     assert.equal(await h.editor(), "```js\nlet a = 1\n```");
   });
 
+  ui("Enter at a blank final code line opens a normal paragraph with heading formatting", {
+    seed: seed({ "": { 页: "```js\nconst a = 1\n```" } }),
+  }, async (h) => {
+    const { p } = h;
+    await p.click("#editor .codeblock code");
+    await p.keyboard.press("Control+End");
+    await p.keyboard.press("Enter");
+    await p.keyboard.type("const b = 2");
+    assert.equal(await h.editor(), "```js\nconst a = 1\nconst b = 2\n```",
+      "an ordinary Enter still adds a line inside the code");
+    await p.keyboard.press("Enter");
+    await p.keyboard.press("Enter");
+    await p.keyboard.type("正文");
+    assert.equal(await h.editor(), "```js\nconst a = 1\nconst b = 2\n```\n\n正文");
+    assert.equal(await p.locator("#editor .ProseMirror > p").count(), 1,
+      "the cursor exits the code block into a paragraph");
+    await p.click('#format-bar [data-cmd="block"]');
+    await p.click('#ctx button[data-act="h2"]');
+    assert.equal(await h.editor(), "```js\nconst a = 1\nconst b = 2\n```\n\n## 正文",
+      "the following paragraph can become a heading");
+    await until(() => h.mockFile("", "页"), "```js\nconst a = 1\nconst b = 2\n```\n\n## 正文",
+      "new heading is saved as Markdown");
+  });
+
+  ui("Ctrl+Enter exits a code block with following content; task shortcut still works", {
+    seed: seed({ "": { 页: "```python\nprint(1)\n```\n\n后段" } }),
+  }, async (h) => {
+    const { p } = h;
+    await p.click("#editor .codeblock code");
+    await p.keyboard.press("Control+Home");
+    await p.keyboard.press("Control+Enter");
+    await p.keyboard.type("新正文");
+    assert.equal(await h.editor(), "```python\nprint(1)\n```\n\n新正文\n\n后段",
+      "Ctrl+Enter adds a paragraph after the code block without changing its content");
+    await p.keyboard.press("Control+Enter");
+    assert.match(await h.editor(), /- \[ \] 新正文/, "Ctrl+Enter still creates a task outside code blocks");
+  });
+
+  ui("block menu and code keyboard exit work together", {
+    seed: seed({ "": { 页: "```js\nconst a = 1\n```" } }),
+  }, async (h) => {
+    const { p } = h;
+    await p.locator("#editor .codeblock code").click({ button: "right" });
+    await p.click('#ctx button[data-act="block-insert-after"]');
+    await p.click('#ctx button[data-act="block-type-paragraph"]');
+    await p.keyboard.type("菜单段落");
+    assert.equal(await h.editor(), "```js\nconst a = 1\n```\n\n菜单段落",
+      "the block menu adds a paragraph");
+
+    await p.locator("#editor .codeblock code").click();
+    await p.keyboard.press("Control+Enter");
+    await p.keyboard.type("快捷段落");
+    assert.equal(await h.editor(), "```js\nconst a = 1\n```\n\n快捷段落\n\n菜单段落",
+      "keyboard exit inserts another paragraph without replacing the menu-created one");
+  });
+
   ui("code line numbers can be turned off in the settings", { seed: seed(CODE_PAGE) }, async (h) => {
     const { p } = h;
     await p.locator("#editor .codeblock").first().waitFor();
