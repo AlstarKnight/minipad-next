@@ -1902,6 +1902,120 @@ describe("fourth review and copy text", () => {
     await until(async () => (await h.mockFile("", "页")).includes("后文"), false, "paragraph removal saved");
   });
 
+  ui("a multiline paragraph becomes one copy block and retains both lines after reload", {
+    seed: seed({ "": { 页: "第一行\n第二行" } }),
+  }, async (h) => {
+    const { p } = h;
+    await p.locator("#editor .ProseMirror > p").click();
+    await p.click('#format-bar [data-cmd="copytext"]');
+    const copy = p.locator("#editor .codeblock.copyline");
+    await until(() => copy.locator("code").textContent(), "第一行\n第二行", "both lines stay inside one block");
+    await copy.locator(".copy").click();
+    await until(() => p.evaluate(() => navigator.clipboard.readText()), "第一行\n第二行", "copies the complete multiline text");
+    await until(async () => (await h.mockFile("", "页")).includes("```copy\n第一行\n第二行\n```"), true, "saved as multiline copy");
+    await p.reload();
+    await p.locator("#editor .codeblock.copyline code").click();
+    await p.click('#format-bar [data-cmd="copytext"]');
+    assert.equal(await p.locator("#editor .ProseMirror > p").textContent(), "第一行第二行",
+      "restored paragraph retains both visual lines");
+    const value = await h.editor();
+    assert.ok(value.includes("第一行") && value.includes("第二行"), value);
+    assert.ok(!value.includes("第一行第二行"), "line separation survives round-trip");
+  });
+
+  ui("plain code can become multiline copy and revert to code after reopening", {
+    seed: seed({ "": { 页: "```\n第一行\n第二行\n```" } }),
+  }, async (h) => {
+    const { p } = h;
+    await p.locator("#editor .codeblock code").click();
+    await p.click('#format-bar [data-cmd="copytext"]');
+    await until(async () => (await h.editor()).startsWith("```copy minipad-original-code"), true,
+      "origin marker is saved");
+    await p.reload();
+    await p.locator("#editor .codeblock code").click();
+    await p.click('#format-bar [data-cmd="copytext"]');
+    await until(h.editor, "```\n第一行\n第二行\n```", "the original code block is restored");
+    assert.equal(await p.locator("#editor .codeblock:not(.copyline)").count(), 1);
+  });
+
+  ui("language-tagged code rejects copy with a specific message", {
+    seed: seed({ "": { 页: "```js\nconst a = 1\n```" } }),
+  }, async (h) => {
+    const { p } = h;
+    const before = await h.editor();
+    await p.locator("#editor .codeblock code").click();
+    await p.click('#format-bar [data-cmd="copytext"]');
+    assert.match(await h.toast(), /带语言的代码块不能转成复制文本/);
+    assert.equal(await h.editor(), before);
+  });
+
+  ui("selection across paragraphs is rejected with an explanation", {
+    seed: seed({ "": { 页: "第一段\n\n第二段" } }),
+  }, async (h) => {
+    const { p } = h;
+    const before = await h.editor();
+    await p.locator("#editor .ProseMirror > p").first().click();
+    await p.keyboard.press("Control+a");
+    await p.click('#format-bar [data-cmd="copytext"]');
+    assert.match(await h.toast(), /请在同一个段落中选择文字/);
+    assert.equal(await h.editor(), before);
+  });
+
+  ui("empty paragraph cannot become a copy block and empty copy does not clear clipboard", {
+    seed: seed({ "": { 空白: "", 空复制: "```copy\n```" } }),
+  }, async (h) => {
+    const { p } = h;
+    await p.click("#editor");
+    await p.click('#format-bar [data-cmd="copytext"]');
+    assert.equal(await p.locator("#editor .codeblock").count(), 0);
+    assert.match(await h.toast(), /复制文本只能放没有格式的文字/);
+    await h.tab("空复制").click();
+    await p.evaluate(() => navigator.clipboard.writeText("保留剪贴板"));
+    assert.ok(await p.locator("#editor .codeblock.copyline .copy").isDisabled());
+    assert.equal(await p.evaluate(() => navigator.clipboard.readText()), "保留剪贴板");
+  });
+
+  ui("copy blocks keep their own toolbar state and allow Enter to create new lines", {
+    seed: seed({ "": { 页: "```copy\n第一行\n```" } }),
+  }, async (h) => {
+    const { p } = h;
+    await p.locator("#editor .codeblock code").click();
+    assert.ok(await p.locator('#format-bar [data-cmd="copytext"]').evaluate((el) => el.classList.contains("on")));
+    assert.ok(!(await p.locator('#format-bar [data-cmd="codeblock"]').evaluate((el) => el.classList.contains("on"))));
+    assert.equal((await p.textContent('#format-bar [data-cmd="block"]')).trim(), "复制文本");
+    assert.equal(await p.locator('#format-bar [data-cmd="copytext"] svg').count(), 1);
+    await p.keyboard.press("End");
+    await p.keyboard.press("Enter");
+    await p.keyboard.type("第二行");
+    await until(async () => (await h.editor()).includes("第一行\n第二行"), true,
+      "Enter adds another line instead of exiting copy");
+  });
+
+  ui("quotation button unwraps normal quotes but does not nest inside folds", {
+    seed: seed({ "": { 引用: "> 普通引用", 折叠: "> [!fold]+ 标题\n>\n> 内容" } }),
+  }, async (h) => {
+    const { p } = h;
+    await p.locator("#editor blockquote p").click();
+    await p.click('#format-bar [data-cmd="quote"]');
+    await until(h.editor, "普通引用", "another quote click exits the quote");
+    await h.tab("折叠").click();
+    await p.locator("#editor .fold-block p").last().click();
+    assert.ok(!(await p.locator('#format-bar [data-cmd="quote"]').evaluate((el) => el.classList.contains("on"))));
+    const before = await h.editor();
+    await p.click('#format-bar [data-cmd="quote"]');
+    assert.equal(await h.editor(), before, "clicking quote in a fold does not add nested quotes");
+  });
+
+  ui("Backspace removes an empty first code block", {
+    seed: seed({ "": { 页: "```\n```" } }),
+  }, async (h) => {
+    const { p } = h;
+    await p.locator("#editor .codeblock code").click();
+    await p.keyboard.press("Backspace");
+    await until(() => p.locator("#editor .codeblock").count(), 0, "empty first code is removed");
+    assert.equal(await p.locator("#editor .ProseMirror > p").count(), 1);
+  });
+
   ui("copy text has a compact toolbar action, clipboard and Markdown persistence", {
     seed: seed({ "": { 页: "npm install" } }),
   }, async (h) => {
@@ -1925,7 +2039,7 @@ describe("fourth review and copy text", () => {
     const file = await h.mockFile("", "页");
     await p.locator("#editor table td").first().click();
     await p.click('#format-bar [data-cmd="copytext"]');
-    assert.match(await h.toast(), /复制文本只能放一行没有格式的文字/);
+    assert.match(await h.toast(), /复制文本只能放没有格式的文字/);
     assert.equal(await h.editor(), before, "table Markdown stays unchanged");
     assert.equal(await p.locator("#editor table").count(), 1, "one intact table");
     assert.equal(await p.locator("#editor table tr").count(), 3, "all rows remain");
@@ -1941,7 +2055,7 @@ describe("fourth review and copy text", () => {
       if (name === "任务") await h.tab(name).click();
       await p.locator("#editor ul li p").first().click();
       await p.click('#format-bar [data-cmd="copytext"]');
-      assert.match(await h.toast(), /复制文本只能放一行没有格式的文字/);
+      assert.match(await h.toast(), /复制文本只能放没有格式的文字/);
       assert.equal(await h.editor(), expected, "list or task stays intact");
       assert.equal(await p.locator("#editor ul li p").count(), 1, "no extra paragraph inserted");
       await h.sync();
@@ -1958,7 +2072,7 @@ describe("fourth review and copy text", () => {
     const para = p.locator("#editor .ProseMirror > p");
     await para.click();
     await p.click('#format-bar [data-cmd="copytext"]');
-    assert.match(await h.toast(), /复制文本只能放一行没有格式的文字/);
+    assert.match(await h.toast(), /复制文本只能放没有格式的文字/);
     assert.equal(await h.editor(), before, "marks and links are retained");
     await para.click({ button: "right" });
     await p.click('#ctx [data-act="block-convert"]');
@@ -1997,7 +2111,7 @@ describe("fourth review and copy text", () => {
     const heading = await h.editor();
     await p.locator("#editor h2").click();
     await p.click('#format-bar [data-cmd="copytext"]');
-    assert.match(await h.toast(), /复制文本只能放一行没有格式的文字/);
+    assert.match(await h.toast(), /复制文本只能放没有格式的文字/);
     assert.equal(await h.editor(), heading, "heading level is preserved");
   });
 });
