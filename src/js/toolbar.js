@@ -15,6 +15,7 @@ import {
   lift,
   TextSelection,
 } from "../vendor/milkdown.js";
+import { foldInfo } from "./foldblocks.js";
 
 // 点"链接"时问链接地址;由 main.js 设置(用程序自己的输入框)
 let askLink = async () => null;
@@ -37,9 +38,10 @@ export const headingLevel = (state) => {
 };
 
 // 将代码块的实际换行转换成段内软换行，避免往返保存时丢失空行。
-export function codeLines(schema, text) {
+// 普通代码沿用原有去掉末尾空行的行为；复制文本保留原有换行。
+export function codeLines(schema, text, keepTrailing = false) {
   const parts = [];
-  text.replace(/\n+$/, "").split("\n").forEach((line, i) => {
+  (keepTrailing ? text : text.replace(/\n+$/, "")).split("\n").forEach((line, i) => {
     if (i) parts.push(schema.nodes.hardbreak.create({ isInline: true }));
     if (line) parts.push(schema.text(line));
   });
@@ -62,7 +64,8 @@ export function codeToText(state, dispatch) {
   if (!$from.parent.type.spec.code) return false;
   if (dispatch) {
     const start = $from.before();
-    const paragraph = state.schema.nodes.paragraph.create(null, codeLines(state.schema, $from.parent.textContent));
+    const paragraph = state.schema.nodes.paragraph.create(null,
+      codeLines(state.schema, $from.parent.textContent, $from.parent.attrs.language === "copy"));
     const tr = state.tr.replaceWith(start, start + $from.parent.nodeSize, paragraph);
     const at = start + 1 + Math.min($from.parentOffset, paragraph.content.size);
     dispatch(tr.setSelection(TextSelection.create(tr.doc, at)).scrollIntoView());
@@ -76,7 +79,7 @@ function toggleQuote(state, dispatch) {
   for (let d = $from.depth; d > 0; d--) {
     const node = $from.node(d);
     if (node.type.name !== "blockquote") continue;
-    if (node.firstChild?.textContent?.startsWith("[!fold]")) return true;
+    if (foldInfo(node)) return true;
     return lift(state, dispatch);
   }
   return false;
