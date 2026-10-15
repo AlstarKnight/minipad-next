@@ -56,42 +56,80 @@ export function revealFolds(view, pos) {
   override(view, hidden);
 }
 
+// 折叠标记段永远隐藏；收起块内的所有文本块也不能承载浏览器光标。
+function invisible(state, pos) {
+  const $pos = state.doc.resolve(Math.min(pos, state.doc.content.size));
+  for (let depth = 1; depth <= $pos.depth; depth++) {
+    const node = $pos.node(depth);
+    if (node.type.name !== "blockquote" || !foldInfo(node)) continue;
+    if (isClosed(state, $pos.before(depth)) || (depth < $pos.depth &&
+      $pos.index(depth) === 0)) return true;
+  }
+  return false;
+}
+
+function visibleText(state, boundary, forward, excluded = null) {
+  let result = null;
+  state.doc.descendants((node, pos) => {
+    if (!node.isTextblock || invisible(state, pos + 1) ||
+      (excluded && pos >= excluded[0] && pos < excluded[1])) return true;
+    const start = pos + 1;
+    if (forward && start >= boundary && (result == null || start < result)) result = start;
+    if (!forward && pos + node.nodeSize <= boundary) result = pos + node.nodeSize - 1;
+    return true;
+  });
+  return result;
+}
+
+// 统一的可见光标出口：优先向后找文本块；文末无可见文本时仅记录“待输入”。
+// 此函数不会改变文档，因此 Ctrl+End/单击空白不会触发保存。
+export function selectionAfterFold(view, boundary, tr = view.state.tr, excluded = null) {
+  const state = view.state;
+  const next = visibleText(state, boundary, true, excluded);
+  if (next != null) return tr.setSelection(TextSelection.create(tr.doc, next)).scrollIntoView()
+    .setMeta(key, { ...tr.getMeta(key), pending: false });
+  const previous = visibleText(state, boundary, false, excluded);
+  if (previous != null) tr.setSelection(TextSelection.create(tr.doc, previous));
+  return tr.setMeta(key, { ...tr.getMeta(key), pending: true }).scrollIntoView();
+}
+
+export function safeDocumentEnd(view) {
+  const state = view.state;
+  const end = state.doc.content.size;
+  const selection = TextSelection.near(state.doc.resolve(end), -1);
+  return invisible(state, selection.from) ? selectionAfterFold(view, end)
+    : state.tr.setSelection(selection).setMeta(key, { pending: false }).scrollIntoView();
+}
+
+function selectionInside(state, pos, size) {
+  return state.selection.from > pos && state.selection.from < pos + size;
+}
+
 export function setFold(view, pos, options = {}) {
   const { state } = view;
   const node = state.doc.nodeAt(pos);
   const info = foldInfo(node);
   if (!info) return false;
   const closed = options.closed ?? isClosed(state, pos, info);
-  // 查找临时展开的折叠块再次收起时，文件里本来就是收起状态，无须改文档。
-  if (options.title == null && closed === info.closed) {
-    view.dispatch(state.tr.setMeta(key, { toggles: [[pos, closed]] }));
-    return true;
+  const changingVisibility = options.title == null;
+  const moved = changingVisibility && closed && selectionInside(state, pos, node.nodeSize);
+  let tr = state.tr;
+  // 改标题不能把查找临时展开的状态写进文件。
+  const writtenClosed = changingVisibility ? closed : info.closed;
+  if (!view.editable || (changingVisibility && (!persistFolds || closed === info.closed))) {
+    if (!changingVisibility && !view.editable) return false;
+  } else {
+    const title = (options.title ?? info.title).replace(/[\r\n]/g, " ").trim() || "折叠块";
+    tr = tr.insertText("[!fold]" + (writtenClosed ? "-" : "+") + " " + title,
+      pos + 2, pos + 2 + node.firstChild.content.size);
+    // 折叠状态单独写入 Markdown，但不污染正文的 Ctrl+Z 历史。
+    if (changingVisibility) tr.setMeta("addToHistory", false);
   }
-  if (!view.editable || (!persistFolds && options.title == null)) {
-    if (options.title != null) return false;
-    view.dispatch(state.tr.setMeta(key, { toggles: [[pos, closed]] }));
-    return true;
-  }
-  const title = (options.title ?? info.title).replace(/[\r\n]/g, " ").trim() || "折叠块";
-  const first = node.firstChild;
-  const from = pos + 2;
-  const tr = state.tr.insertText("[!fold]" + (closed ? "-" : "+") + " " + title,
-    from, from + first.content.size);
-  if (closed) tr.setSelection(NodeSelection.create(tr.doc, pos));
+  if (changingVisibility) tr.setMeta(key, { toggles: [[pos, closed]] });
+  if (moved) tr = selectionAfterFold(view, pos + tr.doc.nodeAt(pos).nodeSize, tr,
+    [pos, pos + node.nodeSize]);
   view.dispatch(tr);
   return true;
-}
-
-// 文档末尾的收起块之后必须有可编辑的光标位置。
-// Ctrl+End、点击末尾空白和其他选区操作共享同一套修正。
-export function selectionAfterFold(state, pos, tr = state.tr) {
-  const at = Math.max(0, Math.min(pos, tr.doc.content.size));
-  const $at = tr.doc.resolve(at);
-  if ($at.parent.type.name === "doc" && !$at.nodeAfter?.isTextblock) {
-    tr.insert(at, state.schema.nodes.paragraph.create());
-  }
-  const target = tr.doc.resolve(Math.min(at + 1, tr.doc.content.size));
-  return tr.setSelection(TextSelection.near(target, 1)).scrollIntoView();
 }
 
 function hiddenSelection(state) {
@@ -103,6 +141,34 @@ function hiddenSelection(state) {
     if (foldInfo(node) && isClosed(state, pos)) return { pos, after: pos + node.nodeSize };
   }
   return null;
+}
+
+function insertPending(view, value = "") {
+  const { state } = view;
+  const pos = state.doc.content.size;
+  const content = value ? state.schema.text(value) : null;
+  const tr = state.tr.insert(pos, state.schema.nodes.paragraph.create(null, content));
+  view.dispatch(tr.setSelection(TextSelection.create(tr.doc, pos + 1 + value.length))
+    .setMeta(key, { pending: false }).scrollIntoView());
+  return true;
+}
+
+function protectedBoundary(view, event) {
+  if (event.key !== "Backspace" && event.key !== "Delete") return false;
+  const { state } = view;
+  const { $from, empty } = state.selection;
+  if (!empty || !$from.parent.isTextblock) return false;
+  const backward = event.key === "Backspace";
+  if (backward && $from.parentOffset !== 0) return false;
+  if (!backward && $from.parentOffset !== $from.parent.content.size) return false;
+  const blockDepth = $from.depth;
+  const cut = state.doc.resolve(backward ? $from.before(blockDepth) : $from.after(blockDepth));
+  const adjacent = backward ? cut.nodeBefore : cut.nodeAfter;
+  // 第一段可见内容之前是折叠标记，禁止 joinBackward 吞掉标记。
+  const quote = $from.node(blockDepth - 1);
+  if (backward && foldInfo(quote) && $from.index(blockDepth - 1) === 1) return true;
+  // 禁止浏览器的原生删除/ProseMirror join 命令跨过折叠块边界。
+  return !!foldInfo(adjacent);
 }
 
 
@@ -157,10 +223,10 @@ function decorate(doc, overrides = new Map()) {
 export const foldBlocks = $prose(() => new Plugin({
   key,
   state: {
-    init: (_, state) => ({ overrides: new Map(), deco: decorate(state.doc) }),
+    init: (_, state) => ({ overrides: new Map(), deco: decorate(state.doc), pending: false }),
     apply(tr, prev, _old, state) {
       const data = tr.getMeta(key);
-      if (!tr.docChanged && !data) return prev;
+      if (!tr.docChanged && !data && !tr.selectionSet) return prev;
       const overrides = new Map();
       for (const [pos, closed] of prev.overrides) {
         const mapped = tr.docChanged ? tr.mapping.map(pos, 1) : pos;
@@ -168,19 +234,32 @@ export const foldBlocks = $prose(() => new Plugin({
       }
       for (const pos of data?.open ?? []) overrides.set(pos, false);
       for (const [pos, closed] of data?.toggles ?? []) overrides.set(pos, closed);
-      return { overrides, deco: decorate(state.doc, overrides) };
+      return { overrides, deco: decorate(state.doc, overrides),
+        pending: data?.pending ?? (!tr.docChanged && !tr.selectionSet && prev.pending) };
     },
   },
   appendTransaction(trs, _old, state) {
     if (!trs.some((tr) => tr.docChanged || tr.selectionSet)) return null;
-    if (state.selection instanceof NodeSelection) return null;
+    if (state.selection instanceof NodeSelection || key.getState(state)?.pending) return null;
     const hidden = hiddenSelection(state);
     if (!hidden) return null;
     if (!activeView?.editable) return state.tr.setSelection(NodeSelection.create(state.doc, hidden.pos));
-    return selectionAfterFold(state, hidden.after);
+    return selectionAfterFold(activeView, hidden.after);
   },
   props: {
     decorations: (state) => key.getState(state)?.deco ?? null,
+    handleTextInput(view, _from, _to, text) {
+      return key.getState(view.state)?.pending ? insertPending(view, text) : false;
+    },
+    handleKeyDown(view, event) {
+      const pending = key.getState(view.state)?.pending;
+      if (pending && !event.ctrlKey && !event.metaKey && !event.altKey) {
+        if (event.key === "Backspace" || event.key === "Delete") return true;
+        if (event.key === "Enter") return insertPending(view);
+        if (event.key.length === 1 && !event.isComposing) return insertPending(view, event.key);
+      }
+      return protectedBoundary(view, event);
+    },
     handleDOMEvents: {
       mousedown(view, event) {
         if (event.button !== 0 || !view.editable || event.target !== view.dom) return false;
@@ -189,7 +268,7 @@ export const foldBlocks = $prose(() => new Plugin({
         const bounds = view.dom.lastElementChild?.getBoundingClientRect();
         if (!bounds || event.clientY < bounds.bottom) return false;
         event.preventDefault();
-        const tr = selectionAfterFold(view.state, view.state.doc.content.size);
+        const tr = selectionAfterFold(view, view.state.doc.content.size);
         view.dispatch(tr);
         view.focus();
         return true;
@@ -208,14 +287,20 @@ export const foldBlocks = $prose(() => new Plugin({
       const bounds = view.dom.lastElementChild?.getBoundingClientRect();
       if (!bounds || event.clientY < bounds.bottom) return;
       event.preventDefault();
-      view.dispatch(selectionAfterFold(view.state, view.state.doc.content.size));
+      view.dispatch(selectionAfterFold(view, view.state.doc.content.size));
       view.focus();
     };
     scroller?.addEventListener("mousedown", below);
+    const guard = (e) => {
+      if (e.isComposing || !view.editable || (e.key !== "Backspace" && e.key !== "Delete")) return;
+      if (protectedBoundary(view, e)) { e.preventDefault(); e.stopImmediatePropagation(); }
+    };
+    view.dom.addEventListener("keydown", guard, true);
     return {
       update(next) { activeView = next; },
       destroy() {
         scroller?.removeEventListener("mousedown", below);
+        view.dom.removeEventListener("keydown", guard, true);
         if (activeView === view) activeView = null;
       },
     };

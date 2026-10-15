@@ -2,7 +2,7 @@
 // 直接操作 ProseMirror 节点；笔记仍用原有 Markdown 读写，不另存块结构。
 import { $prose, Plugin, TextSelection, closeHistory } from "../vendor/milkdown.js";
 import { openMenu, toast } from "./ui.js";
-import { foldInfo, newFold, unfoldQuote, setFold } from "./foldblocks.js";
+import { foldInfo, foldIsClosed, newFold, unfoldQuote, setFold } from "./foldblocks.js";
 import { blockLocation, moveNested, changeNested, listLevel } from "./nestedblocks.js";
 import { tableItems } from "./tableblocks.js";
 
@@ -80,6 +80,7 @@ class BlockHandles {
     this.pointerDown = false;
     this.dropIndex = -1;
     this.activeLoc = null;
+    this.cellLoc = null;
     this.draggingLoc = null;
     this.dropLoc = null;
     this.handle = document.createElement("button");
@@ -99,6 +100,9 @@ class BlockHandles {
       if (!blockEnabled || this.dragging !== -1 || this.pointerDown) return;
       const index = this.indexOf(e.target);
       const loc = blockLocation(this.view, e.target);
+      const cell = e.target.closest?.("td,th");
+      if (cell) this.cellLoc = this.cellPosition(cell);
+      else if (loc?.node.type.name !== "table") this.cellLoc = null;
       this.show(index, loc);
     };
     this.onLeave = (e) => {
@@ -116,8 +120,7 @@ class BlockHandles {
       e.preventDefault();
       this.show(index, loc);
       const cell = e.target.closest?.("td,th");
-      const row = cell ? Array.prototype.indexOf.call(cell.closest("table").querySelectorAll("tr"), cell.parentElement) : 0;
-      const col = cell ? Array.prototype.indexOf.call(cell.parentElement.children, cell) : 0;
+      const { row, col } = cell ? this.cellPosition(cell) : { row: null, col: null };
       if (loc.parent.type.name === "doc") this.menu(index, e.clientX, e.clientY, row, col);
       else this.menuNested(loc, e.clientX, e.clientY, row, col);
     };
@@ -170,8 +173,9 @@ class BlockHandles {
     this.handle.addEventListener("click", () => {
       if (!blockEnabled || !this.activeLoc) return;
       const rect = this.handle.getBoundingClientRect();
-      if (this.activeLoc.parent.type.name === "doc") this.menu(this.index, rect.right, rect.bottom);
-      else this.menuNested(this.activeLoc, rect.right, rect.bottom);
+      const cell = this.activeLoc.node.type.name === "table" ? this.cellLoc : null;
+      if (this.activeLoc.parent.type.name === "doc") this.menu(this.index, rect.right, rect.bottom, cell?.row, cell?.col);
+      else this.menuNested(this.activeLoc, rect.right, rect.bottom, cell?.row, cell?.col);
     });
     this.handle.addEventListener("contextmenu", (e) => {
       e.preventDefault();
@@ -189,6 +193,14 @@ class BlockHandles {
     this.view.dom.addEventListener("drop", this.onDrop, true);
     this.scroller.addEventListener("scroll", this.onScroll);
     this.handle.addEventListener("mouseleave", this.onLeave);
+  }
+
+  cellPosition(cell) {
+    const table = cell.closest("table");
+    return {
+      row: Array.prototype.indexOf.call(table.querySelectorAll("tr"), cell.closest("tr")),
+      col: Array.prototype.indexOf.call(cell.parentElement.children, cell),
+    };
   }
 
   indexOf(target) {
@@ -315,7 +327,7 @@ class BlockHandles {
       { id: "block-insert-before", label: "在上方插入块 ›", act: () => types("insert-before") },
       { id: "block-insert-after", label: "在下方插入块 ›", act: () => types("insert-after") },
       { id: "block-convert", label: "转换块类型 ›", act: () => types("convert") },
-      ...(foldInfo(node) ? [{ id: "block-fold-toggle", label: foldInfo(node).closed ? "展开折叠块" : "收起折叠块", act: () => setFold(this.view, blockAt(this.view.state.doc, index), { closed: !foldInfo(node).closed }) }] : []),
+      ...(foldInfo(node) ? [{ id: "block-fold-toggle", label: foldIsClosed(this.view, blockAt(this.view.state.doc, index)) ? "展开折叠块" : "收起折叠块", act: () => setFold(this.view, blockAt(this.view.state.doc, index), { closed: !foldIsClosed(this.view, blockAt(this.view.state.doc, index)) }) }] : []),
       { id: "block-up", label: "上移一块", disabled: index === 0, act: () => this.move(index, index - 1) },
       { id: "block-down", label: "下移一块", disabled: index === this.view.state.doc.childCount - 1, act: () => this.move(index, index + 2) },
       { id: "block-duplicate", label: "创建副本", act: () => this.change(index, "duplicate") },

@@ -33,7 +33,7 @@ import {
 import { $ } from "./dom.js";
 import { codeBlockWithTitle, codeBlockView, codeHighlight } from "./codeblock.js";
 import { blockManager, applyBlockSettings } from "./blocks.js";
-import { foldBlocks, foldInfo, foldIsClosed, selectionAfterFold, revealFolds, setFoldPersistence } from "./foldblocks.js";
+import { foldBlocks, revealFolds, safeDocumentEnd, setFoldPersistence } from "./foldblocks.js";
 import { formatBar, selectionBar, setFormatBarItems, setSelectionBar } from "./formatbar.js";
 import { colorSpans, colorHandlers, textColor, textBg } from "./colors.js";
 import { findPlugin, reapplyFind } from "./find.js";
@@ -51,7 +51,7 @@ const EXTERNAL = "minipad-external";
 
 const parse = (md) => ctx.get(parserCtx)(md);
 // 保留引用块的 [!fold] 识别标记，避免 remark-stringify 逃逸 '['。
-const serialize = (doc) => ctx.get(serializerCtx)(doc).replace(/^(\s*>\s*)\\\[(?=!fold\][+-])/gm, "$1[");
+const serialize = (doc) => ctx.get(serializerCtx)(doc);
 
 // ---------- 用户的修改 ----------
 // 每次文档变了,如果不是别处来的修改,就记下页面的 Markdown 已经过时(mdStale),通知保存。
@@ -292,14 +292,7 @@ const keys = $prose(
           const mod = e.ctrlKey || e.metaKey;
           // 编辑器里明确处理 Ctrl+End，避免换页后浏览器原生选区偶尔跳到段落开头。
           if (mod && e.key === "End" && !e.shiftKey && !e.altKey) {
-            const { state } = v;
-            const end = state.doc.content.size;
-            const last = state.doc.lastChild;
-            const start = end - last.nodeSize;
-            const tr = foldInfo(last) && foldIsClosed(v, start) && v.editable
-              ? selectionAfterFold(state, end)
-              : state.tr.setSelection(TextSelection.near(state.doc.resolve(end), -1)).scrollIntoView();
-            v.dispatch(tr);
+            v.dispatch(safeDocumentEnd(v));
             e.preventDefault();
             return true;
           }
@@ -338,8 +331,13 @@ function readSelection(v) {
 // 文字写进文件时怎么转义。Milkdown 自带的写法把「以空白结尾的文字」原样写出、不转义,
 // 行首只有空白的一段(比如几个空格后面紧跟带颜色的字)也原样写出,下次打开时就被吃掉了。
 // 这里:只有空白的一段在行首时把第一个写成字符引用;以空白结尾的,空白前面的部分照常转义
-function writeText(node, _, state, info) {
+function writeText(node, parent, state, info) {
   const v = node.value;
+  // 只在引用块内的标记段保留 [!fold] 原文，避免触碰代码块中的反斜杠。
+  if (/^\[!fold\][+-](?: |$)/.test(v) && parent?.type === "paragraph" &&
+      parent.children?.[0] === node && state.stack?.includes("blockquote")) {
+    return "[!fold]" + v[7] + state.safe(v.slice(8), { ...info, encode: [] });
+  }
   if (/^[ \t]+$/.test(v)) return /[\r\n]$/.test(info.before ?? "") ? (v[0] === "\t" ? "&#x9;" : "&#x20;") + v.slice(1) : v;
   const tail = /[ \t]+$/.exec(v);
   if (!tail) return state.safe(v, { ...info, encode: [] });
