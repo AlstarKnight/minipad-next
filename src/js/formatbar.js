@@ -2,8 +2,8 @@
 // 一排常用的格式按钮(像语雀的工具栏),跟着光标显示当前的格式;顶栏的格式栏按钮可以把它收起来。
 // 右边的"自定义"可以选保留哪些按钮、拖动调整顺序,记在设置的 format_bar_hidden 和 format_bar_order 里
 import { $prose, Plugin, commandsCtx, undo, redo, liftListItem, TextSelection, wrapInOrderedListCommand, wrapInBulletListCommand, turnIntoTextCommand, wrapInHeadingCommand } from "../vendor/milkdown.js";
-import { BUTTONS, headingLevel, codeToText } from "./toolbar.js";
-import { openMenu, closeMenu } from "./ui.js";
+import { BUTTONS, headingLevel, codeToText, plainLine } from "./toolbar.js";
+import { openMenu, closeMenu, toast } from "./ui.js";
 import { setColor, colorAt } from "./colors.js";
 import { parseAccent } from "./accent.js";
 import { makeSharedColorTools } from "./sharedcolors.js";
@@ -40,19 +40,28 @@ function listAt(state) {
 }
 const inCode = (state) => !!state.selection.$from.parent.type.spec.code;
 
+function refuseCopyText() {
+  toast("复制文本只能放一行没有格式的文字");
+  return false;
+}
+
 function toggleCopyText(c, view) {
   const { state } = view;
   const { $from } = state.selection;
   if ($from.parent.type.spec.code) {
     if ($from.parent.attrs.language === "copy") return codeToText(state, view.dispatch);
-    // 复制文本仅支持单行，避免误把多行代码和标题转换成单行块。
-    if ($from.parent.textContent.includes("\n") || $from.parent.attrs.title) return false;
+    // 保留原有语言；无法在 copy 围栏里记住它时拒绝转换。
+    if (!plainLine($from.parent) || $from.parent.attrs.language) return refuseCopyText();
     view.dispatch(state.tr.setNodeMarkup($from.before(), null, { ...$from.parent.attrs, language: "copy" }));
     return true;
   }
-  if (!["paragraph", "heading"].includes($from.parent.type.name) || !state.selection.empty) return false;
+  if (!$from.sameParent(state.selection.$to)) return false;
+  // 标题级别也属于格式，只有普通段落能无损转换。
+  if ($from.parent.type.name !== "paragraph") return refuseCopyText();
+  const holder = $from.node(-1), index = $from.index(-1);
+  // 防止 ProseMirror 自动把表格或列表第一段拆开、补空段落。
+  if (!plainLine($from.parent) || !holder.canReplaceWith(index, index + 1, state.schema.nodes.code_block)) return refuseCopyText();
   const text = $from.parent.textContent;
-  if (text.includes("\n")) return false;
   const node = state.schema.nodes.code_block.create({ language: "copy" }, text ? state.schema.text(text) : null);
   const start = $from.before();
   const tr = state.tr.replaceWith(start, start + $from.parent.nodeSize, node);
