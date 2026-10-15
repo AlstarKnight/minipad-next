@@ -17,6 +17,7 @@ import {
   history,
   clipboard,
   $prose,
+  $remark,
   Plugin,
   PluginKey,
   Decoration,
@@ -49,6 +50,32 @@ let onChange = () => {};
 // 别处来的修改(换页、文件在别处被改过):不算用户的修改,不触发保存
 const EXTERNAL = "minipad-external";
 
+// 邮箱默认按普通文字显示，保留手动指定的 mailto 链接与网址自动识别。
+let autoEmailLinks = false;
+// GFM 会把裸邮箱解析成 mailto 链接。对照原始 Markdown 的源码区间，仅还原
+// 裸邮箱生成的链接，避免误伤 [标题](mailto:...) 或 <name@example.com>。
+const plainEmails = $remark("plainEmails", () => () => (tree, file) => {
+  if (autoEmailLinks) return;
+  const markdown = String(file.value ?? "");
+  const walk = (parent) => {
+    if (!Array.isArray(parent.children)) return;
+    parent.children = parent.children.map((child) => {
+      const text = child.children?.length === 1 && child.children[0].type === "text"
+        ? child.children[0].value : null;
+      const start = child.position?.start?.offset;
+      const end = child.position?.end?.offset;
+      if (child.type === "link" && typeof text === "string" &&
+        child.url?.toLowerCase() === ("mailto:" + text).toLowerCase() &&
+        Number.isInteger(start) && Number.isInteger(end) &&
+        markdown.slice(start, end) === text) {
+        return { type: "text", value: text, position: child.position };
+      }
+      walk(child);
+      return child;
+    });
+  };
+  walk(tree);
+});
 const parse = (md) => ctx.get(parserCtx)(md);
 // 保留引用块的 [!fold] 识别标记，避免 remark-stringify 逃逸 '['。
 const serialize = (doc) => ctx.get(serializerCtx)(doc);
@@ -361,6 +388,7 @@ export async function createEditor(opts) {
     .use(keys)
     .use(commonmark)
     .use(gfm)
+    .use(plainEmails)
     .use(history)
     .use(clipboard)
     .use([colorSpans, textColor, textBg].flat())
@@ -524,6 +552,14 @@ export function insertText(text) {
 }
 
 export function applyEditorSettings(s) {
+  const wasEnabled = autoEmailLinks;
+  autoEmailLinks = s.email_auto_link === true;
+  // 切换选项时重新读取当前 Markdown，仅更新编辑器状态，不当作一次编辑保存。
+  if (view && shown && wasEnabled !== autoEmailLinks) {
+    syncContent(shown);
+    const tr = replaceTr(view.state, shown.content);
+    if (tr) view.dispatch(tr.setMeta("addToHistory", false));
+  }
   codeExitMode = ["blank2", "blank3", "ctrl"].includes(s.code_exit_mode) ? s.code_exit_mode : "blank3";
   setFoldPersistence(s.fold_save_state !== false);
   applyBlockSettings(s);

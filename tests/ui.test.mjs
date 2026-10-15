@@ -3590,6 +3590,60 @@ const MINIPAD2_ESCAPES = [
   ["www.a.com/b_c*d 和 www.。", "www.a.com/b_c*d 和 www.。"],
 ];
 
+describe("email link recognition", () => {
+  const MD = "写信给 name@example.com，访问 https://example.com\n\n[手动邮箱](mailto:contact@example.com)";
+
+  ui("bare email stays plain; URL and explicit mailto links remain clickable", {
+    seed: seed({ "": { 页: MD } }),
+  }, async (h) => {
+    const { p } = h;
+    const links = p.locator("#editor .ProseMirror a");
+    assert.equal(await links.count(), 2);
+    assert.deepEqual(await links.evaluateAll((els) => els.map((el) => el.getAttribute("href"))),
+      ["https://example.com", "mailto:contact@example.com"]);
+    assert.ok(await p.locator("#editor .ProseMirror > p").first().textContent().then((text) =>
+      text.includes("name@example.com")), "email remains visible as text");
+    assert.ok(!(await h.editor()).includes("<name@example.com>"), "bare email is not serialized as a link");
+    assert.equal(await h.mockFile("", "页"), MD, "opening the note does not rewrite it");
+  });
+
+  ui("typing and reopening an email keeps it as ordinary text", {
+    seed: seed({ "": { 页: "联系：" } }),
+  }, async (h) => {
+    const { p } = h;
+    await p.locator("#editor .ProseMirror > p").click();
+    await p.keyboard.press("Control+End");
+    await p.keyboard.type("name@example.com");
+    await p.keyboard.press("Space");
+    assert.equal(await p.locator("#editor .ProseMirror a").count(), 0);
+    assert.ok((await h.editor()).includes("name@example.com"));
+    await until(async () => (await h.mockFile("", "页")).includes("name@example.com"), true);
+    await p.reload();
+    assert.equal(await p.locator("#editor .ProseMirror a").count(), 0,
+      "a saved bare email stays plain after reloading");
+  });
+
+  ui("the email link setting toggles recognition without rewriting the note", {
+    seed: seed({ "": { 页: MD } }),
+  }, async (h) => {
+    const { p } = h;
+    const links = p.locator("#editor .ProseMirror a");
+    await p.click("#btn-settings");
+    await settingsPage(p, "edit");
+    assert.equal(await p.isChecked("#set-email-links"), false);
+    await p.check("#set-email-links");
+    await p.click("#set-save");
+    await until(async () => links.count(), 3, "turning on recognition updates current note");
+    assert.equal(await h.mockFile("", "页"), MD, "changing settings does not rewrite notes");
+    await p.click("#btn-settings");
+    await settingsPage(p, "edit");
+    await p.uncheck("#set-email-links");
+    await p.click("#set-save");
+    await until(async () => links.count(), 2, "turning it back off preserves explicit mailto links");
+    assert.equal(await h.mockFile("", "页"), MD);
+  });
+});
+
 describe("0.3.0: import from minipad2", () => {
   const MP2 = {
     pickFolder: "D:\\Tools\\minipad2",

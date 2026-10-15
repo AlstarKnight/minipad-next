@@ -94,6 +94,8 @@ pub struct Settings {
     date_format: String,
     /// 代码块显示行号
     code_line_numbers: bool,
+    /// 自动把裸邮箱识别为 mailto 链接；默认关闭，手动链接始终保留。
+    email_auto_link: bool,
     /// 块管理手柄与块操作菜单的开关。
     block_enabled: bool,
     /// system / block，选中文字仍使用系统右键菜单。
@@ -209,6 +211,7 @@ impl Default for Settings {
             line_numbers: false,
             date_format: DEFAULT_DATE_FORMAT.into(),
             code_line_numbers: true,
+            email_auto_link: false,
             block_enabled: true,
             block_context_menu: "system".into(),
             code_exit_mode: "blank3".into(),

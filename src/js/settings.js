@@ -164,6 +164,7 @@ export function openSettings() {
   $("#set-date-format").value = s.date_format;
   updateDatePreview();
   $("#set-code-lines").checked = s.code_line_numbers;
+  $("#set-email-links").checked = s.email_auto_link === true;
   $("#set-block-enabled").checked = s.block_enabled !== false;
   $("#set-block-context").value = s.block_context_menu === "block" ? "block" : "system";
   $("#set-code-exit").value = ["blank2", "blank3", "ctrl"].includes(s.code_exit_mode) ? s.code_exit_mode : "blank3";
@@ -510,6 +511,7 @@ async function submitSettings() {
     notes_dir: $("#set-dir").value.trim(),
     date_format: $("#set-date-format").value.trim(),
     code_line_numbers: $("#set-code-lines").checked,
+    email_auto_link: $("#set-email-links").checked,
     block_enabled: $("#set-block-enabled").checked,
     block_context_menu: $("#set-block-context").value,
     code_exit_mode: $("#set-code-exit").value,
