@@ -1314,13 +1314,18 @@ describe("block management", () => {
     const { p } = h;
     const convert = async (kind) => {
       await p.locator("#editor .ProseMirror > :first-child").click({ button: "right" });
+      // 右键会优先选中嵌套块；需要操作整个引用块时明确进入外层菜单。
+      const outer = p.locator('#ctx button[data-act="block-outer"]');
+      if (await outer.isVisible()) await outer.click();
       await p.click('#ctx button[data-act="block-convert"]');
       await p.click('#ctx button[data-act="block-type-' + kind + '"]');
     };
     await convert("blockquote");
     assert.equal(await p.locator("#editor blockquote").textContent(), "保留这段文字");
+    assert.equal(await p.locator("#editor .ProseMirror > blockquote").count(), 1);
     await convert("bullet_list");
     assert.equal(await p.locator("#editor ul > li").textContent(), "保留这段文字");
+    assert.equal(await p.locator("#editor .ProseMirror > ul").count(), 1);
     await convert("code_block");
     assert.equal(await p.locator("#editor .codeblock code").textContent(), "保留这段文字");
     assert.equal(await p.locator("#editor .ProseMirror > .codeblock").count(), 1,
