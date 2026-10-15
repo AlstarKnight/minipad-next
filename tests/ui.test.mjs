@@ -2016,6 +2016,89 @@ describe("fourth review and copy text", () => {
     assert.equal(await p.locator("#editor .ProseMirror > p").count(), 1);
   });
 
+  ui("copy text to paragraph keeps trailing blank lines, including after reopen", {
+    seed: seed({ "": { 页: "```copy\n第一行\n第二行\n\n```" } }),
+  }, async (h) => {
+    const { p } = h;
+    await p.locator("#editor .codeblock.copyline code").click();
+    await p.click('#format-bar [data-cmd="copytext"]');
+    assert.equal(await p.locator("#editor .ProseMirror > p br").count(), 3,
+      "the final two line breaks are retained along with the internal one");
+    const before = await h.editor();
+    await until(() => h.mockFile("", "页"), before, "all line breaks are saved");
+    await p.reload();
+    assert.equal(await p.locator("#editor .ProseMirror > p br").count(), 3,
+      "reopening does not discard trailing line breaks");
+  });
+
+  ui("block menu preserves soft breaks when converting plain paragraph to code", {
+    seed: seed({ "": { 页: "第一行\n第二行" } }),
+  }, async (h) => {
+    const { p } = h;
+    await p.locator("#editor .ProseMirror > p").click({ button: "right" });
+    await p.click('#ctx [data-act="block-convert"]');
+    assert.equal(await p.isDisabled('#ctx [data-act="block-type-code_block"]'), false);
+    await p.click('#ctx [data-act="block-type-code_block"]');
+    assert.equal(await p.locator("#editor .codeblock code").textContent(), "第一行\n第二行",
+      "Shift+Enter line break is kept inside the code block");
+    await until(h.editor, "```\n第一行\n第二行\n```");
+  });
+
+  ui("block menu rejects converting rich text or links into plain code", {
+    seed: seed({ "": { 页: "前文 **粗体** [链接](https://example.com) 尾" } }),
+  }, async (h) => {
+    const { p } = h;
+    const before = await h.editor();
+    await p.locator("#editor .ProseMirror > p").click({ button: "right" });
+    await p.click('#ctx [data-act="block-convert"]');
+    assert.ok(await p.isDisabled('#ctx [data-act="block-type-code_block"]'));
+    assert.equal(await h.editor(), before, "links and formatting stay intact");
+    await h.sync();
+    assert.equal(await h.mockFile("", "页"), before);
+  });
+
+  ui("block menu converting existing code to code keeps language and title", {
+    seed: seed({ "": { 页: "```python 打招呼\nprint(1)\n```" } }),
+  }, async (h) => {
+    const { p } = h;
+    const before = await h.editor();
+    await p.locator("#editor .codeblock code").click({ button: "right" });
+    await p.click('#ctx [data-act="block-convert"]');
+    await p.click('#ctx [data-act="block-type-code_block"]');
+    assert.equal(await h.editor(), before, "converting a code block to itself is lossless");
+    assert.equal(await p.locator("#editor .cb-lang").inputValue(), "python");
+    assert.equal(await p.locator("#editor .cb-title").inputValue(), "打招呼");
+    await h.sync();
+    assert.equal(await h.mockFile("", "页"), before);
+  });
+
+  ui("nonempty blocks cannot be converted to a horizontal rule but empty paragraphs can", {
+    seed: seed({ "": { 有内容: "重要原文", 空白: "" } }),
+  }, async (h) => {
+    const { p } = h;
+    await p.locator("#editor .ProseMirror > p").click({ button: "right" });
+    await p.click('#ctx [data-act="block-convert"]');
+    assert.ok(await p.isDisabled('#ctx [data-act="block-type-hr"]'));
+    assert.equal(await h.editor(), "重要原文");
+    await h.tab("空白").click();
+    await p.locator("#editor .ProseMirror > p").click({ button: "right" });
+    await p.click('#ctx [data-act="block-convert"]');
+    assert.equal(await p.isDisabled('#ctx [data-act="block-type-hr"]'), false);
+    await p.click('#ctx [data-act="block-type-hr"]');
+    assert.equal(await p.locator("#editor .ProseMirror > hr").count(), 1);
+  });
+
+  ui("a literal [!fold] prefix in an ordinary quote can still be unwrapped", {
+    seed: seed({ "": { 页: "> [!fold]普通引用" } }),
+  }, async (h) => {
+    const { p } = h;
+    await p.locator("#editor blockquote p").click();
+    await p.click('#format-bar [data-cmd="quote"]');
+    await until(h.editor, "[!fold]普通引用",
+      "only valid folding markers suppress quote unwrapping");
+    assert.equal(await p.locator("#editor blockquote").count(), 0);
+  });
+
   ui("copy text has a compact toolbar action, clipboard and Markdown persistence", {
     seed: seed({ "": { 页: "npm install" } }),
   }, async (h) => {
