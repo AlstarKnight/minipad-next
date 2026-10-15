@@ -2296,6 +2296,91 @@ describe("fourth review and copy text", () => {
   });
 });
 
+describe("block handle within reach", () => {
+  // 像手移鼠标一样一像素一像素地移过去，途中每一步都会触发 mousemove
+  const glide = async (p, from, to) => {
+    await p.mouse.move(from.x, from.y);
+    await p.mouse.move(to.x, to.y, { steps: Math.max(1, Math.round(Math.hypot(to.x - from.x, to.y - from.y))) });
+  };
+  const middle = (box) => ({ x: box.x + box.width / 2, y: box.y + box.height / 2 });
+
+  ui("the handle stays put while the mouse moves from the text over to it", {
+    seed: seed({ "": { 页: "第一段\n\n- 甲\n  - 乙一\n\n> 引用一\n>\n> 引用二\n\n尾段" } }),
+  }, async (h) => {
+    const { p } = h;
+    const handle = p.locator(".block-handle");
+    for (const [selector, after] of [
+      ["#editor .ProseMirror > p >> nth=0", "- 甲\n  - 乙一\n\n> 引用一\n>\n> 引用二\n\n尾段"],
+      ["#editor li li", "- 甲\n\n> 引用一\n>\n> 引用二\n\n尾段"],
+      ["#editor blockquote p >> nth=0", "- 甲\n\n> 引用二\n\n尾段"],
+    ]) {
+      const text = await p.locator(selector).boundingBox();
+      const start = { x: text.x + 30, y: text.y + 8 };
+      await p.mouse.move(start.x, start.y);
+      const at = await handle.boundingBox();
+      await glide(p, start, middle(at));
+      assert.ok(await handle.isVisible(), `${selector}: the handle is still there`);
+      assert.deepEqual(await handle.boundingBox(), at, `${selector}: and has not jumped to an outer block`);
+      await handle.click();
+      await p.click('#ctx button[data-act="block-delete"]');
+      await until(h.editor, after, `${selector}: its menu deletes just that block`);
+    }
+  });
+
+  ui("the handle follows the rows down the left margin, and a drop in a gap lands there", {
+    seed: seed({ "": { 页: "甲\n\n乙\n\n丙\n\n丁" } }),
+  }, async (h) => {
+    const { p } = h;
+    const handle = p.locator(".block-handle");
+    const blocks = p.locator("#editor .ProseMirror > p");
+    await blocks.first().hover();
+    const column = middle(await handle.boundingBox());
+    const third = await blocks.nth(2).boundingBox();
+    let gone = 0;
+    for (let y = column.y; y <= third.y + 8; y++) {
+      await p.mouse.move(column.x, y);
+      if (await handle.isHidden()) gone++;
+    }
+    assert.equal(gone, 0, "the handle never disappears between blocks");
+    assert.ok(Math.abs((await handle.boundingBox()).y - third.y) < 4, "it now sits beside the third block");
+    await handle.click();
+    await p.click('#ctx button[data-act="block-delete"]');
+    await until(h.editor, "甲\n\n乙\n\n丁", "its menu deletes the third block");
+
+    const editor = p.locator("#editor .ProseMirror");
+    const pm = await editor.boundingBox();
+    const [b1, b2] = [await blocks.nth(1).boundingBox(), await blocks.nth(2).boundingBox()];
+    await blocks.first().hover();
+    await handle.dragTo(editor, { targetPosition: { x: 100, y: (b1.y + b1.height + b2.y) / 2 - pm.y } });
+    await until(h.editor, "乙\n\n甲\n\n丁", "dropped in the gap between two blocks, not at the end");
+    await blocks.last().hover();
+    const top = await blocks.first().boundingBox();
+    await handle.dragTo(editor, { targetPosition: { x: 10, y: top.y + 3 - pm.y } });
+    await until(h.editor, "丁\n\n乙\n\n甲", "dropped in the left margin beside a block, not at the end");
+  });
+
+  for (const shown of [true, false]) {
+    const db = seed({ "": { 页: "# 标题\n\n第一段文字" } });
+    Object.assign(db.settings, { outline_enabled: shown, outline_side: "left" });
+    ui(`with the outline on the left (${shown ? "shown" : "off"}) the handle leaves the text start clickable`, {
+      seed: db,
+    }, async (h) => {
+      const { p } = h;
+      const para = p.locator("#editor .ProseMirror > p");
+      await para.hover();
+      const text = await para.boundingBox();
+      const at = await p.locator(".block-handle").boundingBox();
+      assert.ok(at.x + at.width <= text.x, "the handle ends before the text starts");
+      if (shown) {
+        const marks = await p.locator("#outline").boundingBox();
+        assert.ok(marks.x + marks.width <= at.x + 1, "and does not cover the outline marks");
+      }
+      assert.ok(await p.evaluate(([x, y]) => !!document.elementFromPoint(x, y)?.closest("#editor p"),
+        [text.x + 2, text.y + text.height / 2]), "the first letter can be clicked");
+    });
+  }
+});
+
 // ---------- 代码块 ----------
 const CODE_PAGE = {
   "": {
