@@ -40,6 +40,24 @@ function listAt(state) {
 }
 const inCode = (state) => !!state.selection.$from.parent.type.spec.code;
 
+function toggleCopyText(c, view) {
+  const { state } = view;
+  const { $from } = state.selection;
+  if ($from.parent.type.spec.code) {
+    if ($from.parent.attrs.language === "copy") return codeToText(state, view.dispatch);
+    view.dispatch(state.tr.setNodeMarkup($from.before(), null, { ...$from.parent.attrs, language: "copy", title: "" }));
+    return true;
+  }
+  if (!["paragraph", "heading"].includes($from.parent.type.name) || !state.selection.empty) return false;
+  const text = $from.parent.textContent;
+  if (text.includes("\n")) return false;
+  const node = state.schema.nodes.code_block.create({ language: "copy" }, text ? state.schema.text(text) : null);
+  const start = $from.before();
+  const tr = state.tr.replaceWith(start, start + $from.parent.nodeSize, node);
+  view.dispatch(tr.setSelection(TextSelection.create(tr.doc, start + 1 + Math.min($from.parentOffset, text.length))).scrollIntoView());
+  return true;
+}
+
 // 列表按钮:不在列表里就变成列表;已经是这种列表就取消;是另一种列表就换过来
 function toggleList(name, wrap) {
   return (c, view) => {
@@ -106,6 +124,7 @@ const ITEMS = [
   { sep: true, id: "sep4", title: "竖线分隔" },
   { ...byId.quote, active: (s) => { const $f = s.selection.$from; for (let d = $f.depth; d > 0; d--) if ($f.node(d).type.name === "blockquote") return true; return false; } },
   { ...byId.codeblock, active: inCode },
+  { id: "copytext", label: "⧉", title: "复制文本", active: (s) => inCode(s) && s.selection.$from.parent.attrs.language === "copy", run: toggleCopyText },
   { id: "table", label: ICON.table, title: "表格", run: (c, v) => insertBlock(v, "table") },
   { id: "hr", label: ICON.hr, title: "分隔线", run: (c, v) => insertBlock(v, "hr") },
   { sep: true, id: "sep5", title: "竖线分隔" },
