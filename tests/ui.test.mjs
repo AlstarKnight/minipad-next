@@ -1554,7 +1554,8 @@ describe("block editor review regressions", () => {
     await fold.locator(".fold-toggle").click();
     await until(async () => (await h.mockFile("", "页")).includes("> [!fold]+ 标题"), true,
       "serialized fold marker is unescaped");
-    assert.ok(!(await h.mockFile("", "页")).includes("\\[!fold]"));
+    assert.equal(await h.mockFile("", "页"), "前文\n\n> [!fold]+ 标题\n>\n> 秘密内容",
+      "the complete saved Markdown preserves the unescaped fold marker");
     await fold.locator(".fold-toggle").click();
     await p.locator("#editor .ProseMirror > p").first().click();
     await p.keyboard.press("Control+f");
