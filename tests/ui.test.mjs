@@ -1737,19 +1737,23 @@ describe("fold edge regressions", () => {
   });
 
   ui("fold boundary protects list and quote starts from Backspace", {
-    seed: seed({ "": { 页: "前文\n\n> [!fold]- 标题\n>\n> 隐藏内容\n\n- 列表项\n\n> 普通引用" } }),
+    seed: seed({ "": {
+      列表: "前文\n\n> [!fold]- 标题\n>\n> 隐藏内容\n\n- 列表项",
+      引用: "前文\n\n> [!fold]- 标题\n>\n> 隐藏内容\n\n> 普通引用",
+    } }),
   }, async (h) => {
     const { p } = h;
-    const before = await h.editor();
+    const listBefore = await h.editor();
     await p.locator("#editor .ProseMirror > ul li p").first().click();
     await p.keyboard.press("Home");
     await p.keyboard.press("Backspace");
-    assert.equal(await h.editor(), before);
-    const quoteBefore = p.locator("#editor .ProseMirror > blockquote:not(.fold-block)");
-    await quoteBefore.locator("p").first().click();
+    assert.equal(await h.editor(), listBefore, "the preceding closed fold remains intact");
+    await h.tab("引用").click();
+    const quoteBefore = await h.editor();
+    await p.locator("#editor .ProseMirror > blockquote:not(.fold-block) p").first().click();
     await p.keyboard.press("Home");
     await p.keyboard.press("Backspace");
-    assert.equal(await h.editor(), before);
+    assert.equal(await h.editor(), quoteBefore, "the closed fold is not merged into a quote");
   });
 
   ui("Delete between adjacent folds never merges marker paragraphs", {
