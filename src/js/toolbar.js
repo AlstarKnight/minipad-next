@@ -47,8 +47,12 @@ export function codeLines(schema, text, keepTrailing = false) {
     if (i) parts.push(schema.nodes.hardbreak.create({ isInline: true }));
     if (line) parts.push(schema.text(line));
   });
-  // Markdown 会裁掉正文末尾的硬换行；用文本换行编码为 &#xA;，才能往返保留。
-  if (trailing) parts.push(schema.text(trailing));
+  // Markdown 会裁掉末尾硬换行；前面的换行用 hardbreak，最后一个用文本换行
+  // 编码为 &#xA;。避免连续文本换行在编辑 DOM 中被压缩。
+  if (trailing) {
+    for (let i = 1; i < trailing.length; i++) parts.push(schema.nodes.hardbreak.create({ isInline: true }));
+    parts.push(schema.text("\n"));
+  }
   return parts;
 }
 
