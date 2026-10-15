@@ -202,7 +202,8 @@ class BlockHandles {
     const host = this.host.getBoundingClientRect();
     if (rect.bottom <= host.top || rect.top >= host.bottom) { this.handle.hidden = true; return; }
     this.handle.style.top = Math.max(0, rect.top - host.top + 2) + "px";
-    this.handle.style.left = Math.max(2, rect.left - host.left - 27) + "px";
+    // 列表项的勾选框位于左侧约 20px；拖动柄再向左挪，避免挡住任务方框。
+    this.handle.style.left = Math.max(2, rect.left - host.left - (this.activeLoc.node.type.name === "list_item" ? 54 : 27)) + "px";
     this.handle.hidden = false;
   }
 
@@ -314,14 +315,26 @@ class BlockHandles {
     if (!node || !this.view.editable) return;
     const listItem = node.type.name === "list_item";
     const siblings = loc.parent;
-    const convert = (action) => openMenu((listItem ? [["list_item", "列表项"]] : TYPES).map(([kind, name]) => ({
-      id: "block-type-" + kind, label: name,
-      disabled: action === "convert" && (listItem || !makeBlock(this.view.state.schema, kind, node)),
-      act: () => {
-        if (!changeNested(this.view, loc, action, kind, makeBlock)) toast("此位置不能执行该块操作");
-        this.show(-1);
-      },
-    })), x, y);
+    // 只有一个列表项时，转换的是整个列表；不能丢掉这项的正文。
+    const singleItemList = listItem && siblings.childCount === 1;
+    const convert = (action) => {
+      const wholeList = singleItemList && action === "convert";
+      const source = wholeList ? parentLoc?.node : node;
+      const choices = listItem && !wholeList ? [["list_item", "列表项"]] : TYPES;
+      openMenu(choices.map(([kind, name]) => ({
+        id: "block-type-" + kind, label: name,
+        disabled: action === "convert" && (!source || !makeBlock(this.view.state.schema, kind, source)),
+        act: () => {
+          const done = wholeList
+            ? parentLoc.parent.type.name === "doc"
+              ? (this.change(parentLoc.index, "convert", kind), true)
+              : changeNested(this.view, parentLoc, "convert", kind, makeBlock)
+            : changeNested(this.view, loc, action, kind, makeBlock);
+          if (!done) toast("此位置不能执行该块操作");
+          this.show(-1);
+        },
+      })), x, y);
+    };
     const siblingLoc = (index) => {
       if (index < 0 || index >= siblings.childCount) return null;
       let pos = loc.pos;
@@ -338,6 +351,16 @@ class BlockHandles {
         index: $at.index(), el: this.view.nodeDOM(pos) };
     })();
     const prev = siblingLoc(loc.index - 1);
+    const $loc = state.doc.resolve(loc.pos);
+    let outerQuote = null;
+    for (let depth = $loc.depth; depth > 0; depth--) {
+      if ($loc.node(depth).type.name !== "blockquote") continue;
+      const pos = $loc.before(depth);
+      const $outer = state.doc.resolve(pos);
+      outerQuote = { pos, node: state.doc.nodeAt(pos), parent: $outer.parent,
+        parentPos: $outer.depth ? $outer.before() : null, index: $outer.index(), el: this.view.nodeDOM(pos) };
+      break;
+    }
     const lift = () => {
       const okay = listItem ? listLevel(this.view, loc, true)
         : parentLoc && moveNested(this.view, loc, parentLoc, true);
@@ -351,7 +374,11 @@ class BlockHandles {
     openMenu([
       { id: "block-insert-before", label: "在上方插入块 ›", act: () => convert("insert-before") },
       { id: "block-insert-after", label: "在下方插入块 ›", act: () => convert("insert-after") },
-      { id: "block-convert", label: "转换块类型 ›", disabled: listItem, act: () => convert("convert") },
+      { id: "block-convert", label: "转换块类型 ›", disabled: listItem && !singleItemList, act: () => convert("convert") },
+      ...(outerQuote ? [{ id: "block-outer", label: "管理外层引用／折叠块 ›", act: () => {
+        if (outerQuote.parent.type.name === "doc") this.menu(outerQuote.index, x, y);
+        else this.menuNested(outerQuote, x, y);
+      } }] : []),
       { id: "block-up", label: "在当前层级上移", disabled: loc.index === 0, act: () => {
         if (!moveNested(this.view, loc, siblingLoc(loc.index - 1), false)) toast("不能上移此块");
       } },

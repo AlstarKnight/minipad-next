@@ -1363,7 +1363,8 @@ describe("advanced blocks", () => {
     seed: seed({ "": { 页: "> 段落甲\n>\n> - 列表甲\n>\n> 段落乙" } }),
   }, async (h) => {
     const { p } = h;
-    await p.locator("#editor blockquote").first().click({ button: "right" });
+    await p.locator("#editor blockquote li").first().click({ button: "right" });
+    await p.click('#ctx button[data-act="block-outer"]');
     await p.click('#ctx button[data-act="block-convert"]');
     await p.click('#ctx button[data-act="block-type-fold"]');
     assert.equal(await p.locator("#editor .fold-block > ul li").textContent(), "列表甲");
@@ -1371,7 +1372,7 @@ describe("advanced blocks", () => {
     assert.ok((await h.editor()).includes("[!fold]+ 折叠块"), "converted block has a Markdown marker");
     await p.locator("#editor .fold-block .fold-title").click();
     await p.click("#dialog-cancel");
-    await p.locator("#editor .fold-block").click({ button: "right" });
+    await p.locator("#editor .fold-heading").click({ button: "right" });
     await p.click('#ctx button[data-act="block-convert"]');
     assert.ok(await p.locator('#ctx button[data-act="block-type-paragraph"]').isDisabled(),
       "multi-child fold cannot be destructively flattened");
