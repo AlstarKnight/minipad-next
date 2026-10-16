@@ -18,7 +18,7 @@ import { applyTabBarSettings } from "./tabbar.js";
 import { ALL_ITEMS, DEFAULT_SEL_ITEMS, itemChecklist, orderedItems } from "./formatbar.js";
 import { renderTabs } from "./tabs.js";
 import { comboOf } from "./quickswitch.js";
-import { makeSharedColorTools, refreshSharedColors, quickLimit } from "./sharedcolors.js";
+import { makeSharedColorTools, refreshSharedColors, quickLimit, askResetColors } from "./sharedcolors.js";
 
 const REPO_URL = "https://github.com/AlstarKnight/minipad-next";
 
@@ -687,6 +687,7 @@ export function bindSettings() {
   for (const id of ["#set-tab-overflow", "#set-tab-fade", "#set-tab-list", "#set-drawer-side", "#set-drawer-width", "#set-tab-groups"]) $(id).addEventListener("input", updateTabOptions);
   $("#set-sel-bar").addEventListener("input", updateSelOptions);
   $("#set-sel-reset").addEventListener("click", () => showSelItems(DEFAULT_SEL_ITEMS));
+  $("#set-colors-reset").addEventListener("click", () => void askResetColors().catch((e) => toast(String(e))));
   $("#set-import").addEventListener("click", openImport);
   for (const id of ["#set-ball", "#set-ball-size", "#set-ball-opacity"]) $(id).addEventListener("input", updateBall);
   for (const r of document.querySelectorAll('input[name="set-ball-icon"]')) r.addEventListener("change", updateBall);

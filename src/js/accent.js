@@ -23,6 +23,22 @@ export const GRADIENTS = [
   { name: "粉红", stops: ["#f857a6", "#ff5858"] },
   { name: "橙黄", stops: ["#ff8a4c", "#f7c34b"] },
   { name: "彩虹", stops: ["#ff5f6d", "#ffa94d", "#f5d142", "#51cf66", "#4dabf7", "#9775fa"] },
+  // 0.3.11 新增
+  { name: "深海", stops: ["#1e3c72", "#2a5298"] },
+  { name: "海洋", stops: ["#2193b0", "#6dd5ed"] },
+  { name: "冰川", stops: ["#74ebd5", "#9face6"] },
+  { name: "天青", stops: ["#a1c4fd", "#c2e9fb"] },
+  { name: "蓝莓", stops: ["#4776e6", "#8e54e9"] },
+  { name: "葡萄", stops: ["#7f00ff", "#e100ff"] },
+  { name: "暮光", stops: ["#5f2c82", "#49a09d"] },
+  { name: "樱花", stops: ["#fbc2eb", "#a6c1ee"] },
+  { name: "梦境", stops: ["#4facfe", "#a18cd1", "#fbc2eb"] },
+  { name: "薄荷", stops: ["#43e97b", "#38f9d7"] },
+  { name: "森林", stops: ["#134e5e", "#71b280"] },
+  { name: "日落", stops: ["#ff7e5f", "#feb47b"] },
+  { name: "火焰", stops: ["#f12711", "#f5af19"] },
+  { name: "蜜桃", stops: ["#ffecd2", "#fcb69f"] },
+  { name: "银灰", stops: ["#bdc3c7", "#2c3e50"] },
 ];
 
 export const ACCENTS = [

@@ -82,8 +82,12 @@ pub struct Settings {
     color_presets: Option<Vec<String>>,
     /// 0.3.5 可编辑的全局颜色库，None 表示沿用内置和旧预设；Some([]) 表示用户已全部删除。
     color_library: Option<Vec<String>>,
-    /// 快捷色的个数：拖进快捷区加一个、拖出减一个；1..=128，旧设置默认 5。
+    /// 0.3.10 及以前的快捷色个数（颜色库的前几个）；只在还没有 quick_colors 时使用。
     quick_color_count: u32,
+    /// 0.3.11 起单独保存的快捷色（颜色库里的颜色，按显示顺序）；None 表示沿用 quick_color_count。
+    quick_colors: Option<Vec<String>>,
+    /// 颜色库已经补过的内置颜色版本，新版本加的预设只补一次。
+    color_library_rev: u32,
     /// 快捷色上限，0 表示不限；在设置里改，拖动不会改它。
     quick_color_limit: u32,
     /// 活跃标签的高亮:line 顶部线条、fill 整个标签、border 整圈边框
@@ -213,6 +217,8 @@ impl Default for Settings {
             color_presets: None,
             color_library: None,
             quick_color_count: 5,
+            quick_colors: None,
+            color_library_rev: 0,
             quick_color_limit: 0,
             tab_style: "line".into(),
             font_size: 14,
@@ -694,7 +700,10 @@ fn tidy_settings(s: &mut Settings) {
             .take(20)
             .collect(),
     );
-    if let Some(colors) = &mut s.color_library {
+    for colors in [&mut s.color_library, &mut s.quick_colors]
+        .into_iter()
+        .flatten()
+    {
         let mut seen = std::collections::HashSet::new();
         *colors = colors
             .iter()
@@ -2332,6 +2341,21 @@ mod tests {
         tidy_settings(&mut s);
         assert_eq!(s.quick_color_count, 128);
         assert_eq!(s.quick_color_limit, 128);
+        assert_eq!(
+            s.quick_colors, None,
+            "old settings keep using the first quick_color_count colors"
+        );
+        s.quick_colors = Some(vec![
+            "#ABCDEF".into(),
+            "bad".into(),
+            "#abcdef".into(),
+            "#123456".into(),
+        ]);
+        tidy_settings(&mut s);
+        assert_eq!(
+            s.quick_colors,
+            Some(vec!["#abcdef".to_string(), "#123456".to_string()])
+        );
         assert_eq!(s.date_format, DEFAULT_DATE_FORMAT);
 
         // 字号和前端一样限制在 10..=28;按钮列表最多留 64 项

@@ -47,6 +47,8 @@ const DEFAULT_SETTINGS = {
   color_presets: null,
   color_library: null,
   quick_color_count: 5,
+  quick_colors: null,
+  color_library_rev: 0,
   quick_color_limit: 0,
   backup_enabled: true,
   backup_keep: 14,
@@ -407,6 +409,10 @@ export function mockApi() {
           ? [...new Set(settings.color_library.map((v) => tidyAccent(v)).filter(Boolean))].slice(0, 128)
           : null,
         quick_color_count: Math.min(128, Math.max(1, Math.round(Number(settings.quick_color_count) || 5))),
+        quick_colors: Array.isArray(settings.quick_colors)
+          ? [...new Set(settings.quick_colors.map((v) => tidyAccent(v)).filter(Boolean))].slice(0, 128)
+          : null,
+        color_library_rev: Math.max(0, Math.round(Number(settings.color_library_rev) || 0)),
         quick_color_limit: Math.min(128, Math.max(0, Math.round(Number(settings.quick_color_limit) || 0))),
         edge_line_length_unit: settings.edge_line_length_unit === "px" ? "px" : "percent",
         edge_line_length: Math.min(100, Math.max(10, Number(settings.edge_line_length) || 100)),

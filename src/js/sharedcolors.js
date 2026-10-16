@@ -12,15 +12,28 @@ export const quickLimit = (value) => {
   return n >= 1 ? Math.min(128, n) : 0;
 };
 
-// 精选的默认库：15 个纯色、9 个不重复的渐变。
+// 精选的默认库：15 个纯色、24 个不重复的渐变。
+const ADDED_GRADIENTS = GRADIENTS.slice(12).map((g) => gradientOf(g.stops));
 export const DEFAULT_COLORS = [
   "#d9822b", "#3b82f6", "#16a34a", "#8b5cf6", "#e5484d",
   "#ec4899", "#8a8f98", "#df2a3f", "#117cee", "#1f9c58",
   "#c99a06", "#fbe9a6", "#d3e6fd", "#d2f1d9", "#e6dbf8",
   ...[0, 1, 2, 3, 5, 7, 9, 10, 11].map((i) => gradientOf(GRADIENTS[i].stops)),
+  ...ADDED_GRADIENTS,
 ];
+// 内置颜色的版本：1 = 0.3.11 加的渐变。旧颜色库只补一次，之后删掉的不会再回来。
+const COLOR_REV = 1;
 export const sharedColorPresets = () => state.settings?.color_library ??
   [...new Set([...DEFAULT_COLORS, ...(state.settings?.color_presets ?? state.settings?.book_color_presets ?? [])])];
+// 快捷色单独保存（quick_colors），不占颜色库里的位置：移出快捷栏就回到原来的地方。
+// 旧设置没有 quick_colors 时沿用颜色库的前 quick_color_count 个。limit 为 0 表示不限。
+export const quickColors = (limit = quickLimit(state.settings?.quick_color_limit)) => {
+  const library = sharedColorPresets();
+  const saved = state.settings?.quick_colors;
+  const list = Array.isArray(saved) ? saved.filter((color) => library.includes(color))
+    : library.slice(0, Math.max(1, Math.round(Number(state.settings?.quick_color_count) || QUICK)));
+  return limit ? list.slice(0, limit) : list;
+};
 
 const live = new Set();
 export function refreshSharedColors() {
@@ -30,25 +43,43 @@ export function refreshSharedColors() {
   }
 }
 let presetQueue = Promise.resolve();
-function updateLibrary(change, extra) {
+// change(颜色库, 快捷色) 返回 { library?, quick? }，null 表示不用保存。
+// limit 是这次操作时看到的快捷色上限（设置页里可能是还没保存的预览值）。
+function updateLibrary(change, limit = 0) {
   // 每次从最新已保存的颜色库计算，快速连续操作不会丢失修改。
   const task = presetQueue.then(async () => {
-    const next = change(sharedColorPresets());
+    const next = change(sharedColorPresets(), quickColors(limit));
     if (next === null) return;
+    const library = next.library ?? sharedColorPresets();
+    const quick = [...new Set(next.quick ?? quickColors(0))].filter((color) => library.includes(color));
     const { saveSettings } = await import("./settings.js");
-    await saveSettings({ ...state.settings, color_library: next, ...extra });
+    await saveSettings({ ...state.settings, color_library: library, quick_colors: quick, color_library_rev: COLOR_REV });
     refreshSharedColors();
   });
   presetQueue = task.catch(() => {});
   return task;
 }
+// 把 color 挪到 target 原来的位置：往后挪落在它后面，往前挪落在它前面。
+const moved = (list, color, target) => {
+  const next = list.filter((entry) => entry !== color);
+  const at = next.indexOf(target);
+  next.splice(at < 0 ? next.length : at + (list.indexOf(color) < list.indexOf(target) ? 1 : 0), 0, color);
+  return next;
+};
+// 把 color 放到 target 前面；target 为空时放到最后。
+const before = (list, color, target) => {
+  const next = list.filter((entry) => entry !== color);
+  const at = target ? next.indexOf(target) : -1;
+  next.splice(at < 0 ? next.length : at, 0, color);
+  return next;
+};
 export function changeSharedPreset(value, remove = false) {
   const normalized = tidyAccent(value);
   if (!normalized) return Promise.reject(new Error("颜色格式无效"));
   return updateLibrary((old) => {
     if (!remove && old.includes(normalized)) return null;
     if (!remove && old.length >= 128) throw new Error("颜色库最多保存 128 个颜色");
-    return remove ? old.filter((c) => c !== normalized) : [...old, normalized];
+    return { library: remove ? old.filter((c) => c !== normalized) : [...old, normalized] };
   });
 }
 export function replaceSharedPreset(oldValue, newValue) {
@@ -59,24 +90,37 @@ export function replaceSharedPreset(oldValue, newValue) {
     if (index < 0) throw new Error("待编辑的颜色已被删除");
     const next = old.filter((color) => color !== oldValue && color !== normalized);
     next.splice(Math.min(index, next.length), 0, normalized);
-    return next;
+    // 快捷栏里的也换成新颜色，位置不变
+    const quick = quickColors(0).map((color) => color === oldValue ? normalized : color);
+    return { library: next, quick };
   });
 }
-export const resetSharedPresets = () => updateLibrary(() => [...DEFAULT_COLORS]);
-// quickCount 给出时同时保存新的快捷色数量（颜色不用挪位也要保存）。
-export const moveSharedPreset = (color, target, quickCount) => updateLibrary((colors) => {
-  const from = colors.indexOf(color);
-  if (from < 0 || target < 0 || target >= colors.length || (from === target && !quickCount)) return null;
-  const next = [...colors];
-  next.splice(target, 0, ...next.splice(from, 1));
-  return next;
-}, quickCount && { quick_color_count: quickCount });
+export const resetSharedPresets = () =>
+  updateLibrary(() => ({ library: [...DEFAULT_COLORS], quick: DEFAULT_COLORS.slice(0, QUICK) }));
+// 颜色库里的按钮和设置→外观里的按钮共用；返回是否真的恢复了。
+export const askResetColors = () =>
+  ask("确定恢复默认颜色库？自己添加或编辑的颜色会从颜色库中移除，快捷色也恢复默认；已经使用的颜色不会改变。", "恢复默认", true, true)
+    .then((confirmed) => confirmed && resetSharedPresets().then(() => { toast("已恢复默认颜色库"); return true; }));
 export const restoreSharedPreset = (color, index) => updateLibrary((colors) => {
   if (colors.includes(color)) return null;
   const next = [...colors];
   next.splice(Math.min(Math.max(index, 0), colors.length), 0, color);
-  return next;
+  return { library: next };
 });
+export const restoreQuickColor = (color, index) => updateLibrary((colors) => {
+  const quick = quickColors(0);
+  if (!colors.includes(color) || quick.includes(color)) return null;
+  quick.splice(Math.min(Math.max(index, 0), quick.length), 0, color);
+  return { quick };
+});
+// 启动时给旧颜色库补上新版本的内置渐变（只补一次）。
+export async function upgradeColorLibrary() {
+  const s = state.settings;
+  if (!s || !Array.isArray(s.color_library) || (Number(s.color_library_rev) || 0) >= COLOR_REV) return;
+  await updateLibrary((library) => ({
+    library: [...library, ...ADDED_GRADIENTS.filter((color) => !library.includes(color))].slice(0, 128),
+  }));
+}
 const make = (tag, cls = "", label = "") => {
   const node = document.createElement(tag);
   node.className = cls;
@@ -112,6 +156,9 @@ export function makeSharedColorTools({ getValue, onApply, defaultColor = "#d9822
   edit.setAttribute("aria-expanded", "false");
   const save = make("button", "small", "保存当前颜色");
   save.type = "button";
+  const reset = make("button", "small uc-reset", "恢复默认颜色库");
+  reset.type = "button";
+  reset.title = "恢复内置颜色和快捷色，已应用的颜色不受影响";
   if (compact) {
     edit.textContent = "自定义…";
     edit.title = "自定义颜色 / 渐变节点";
@@ -119,11 +166,13 @@ export function makeSharedColorTools({ getValue, onApply, defaultColor = "#d9822
     save.textContent = "保存";
     save.title = "保存当前颜色";
     save.setAttribute("aria-label", "保存当前颜色");
+    reset.textContent = "恢复默认";
+    reset.setAttribute("aria-label", "恢复默认颜色库");
   }
   const undo = make("button", "small uc-undo", "撤销删除");
   undo.type = "button";
   undo.hidden = true;
-  actions.append(edit, save, undo);
+  actions.append(edit, save, undo, reset);
   let lastDeleted = null;
   let editingPreset = null;
   const editor = make("div", "uc-editor");
@@ -150,14 +199,11 @@ export function makeSharedColorTools({ getValue, onApply, defaultColor = "#d9822
   preview.setAttribute("aria-label", "颜色预览");
   const stopList = make("div", "uc-stops");
   const footer = make("div", "uc-actions");
-  const reset = make("button", "small uc-reset", "恢复默认颜色");
-  reset.type = "button";
-  reset.title = "恢复内置颜色，已应用的颜色不受影响";
   const add = make("button", "small", "+ 添加节点");
   add.type = "button";
   const apply = make("button", "small primary", "应用颜色");
   apply.type = "button";
-  footer.append(add, apply, reset);
+  footer.append(add, apply);
   editor.append(controls, preview, stopList, footer);
   root.append(heading, buttons, actions, editor);
   let refreshPresets = () => {};
@@ -260,55 +306,51 @@ export function makeSharedColorTools({ getValue, onApply, defaultColor = "#d9822
     buttons.replaceChildren();
     const presets = sharedColorPresets();
     const expanded = buttons.classList.contains("expanded");
-    // 快捷区取保存顺序的前 quick 个；其余颜色按类型分区，不重复渲染。
-    // 个数随拖动增减，不超过设置里的上限（设置页打开时按正在填的上限预览）。
-    const limit = quickLimit(getQuickLimit?.() ?? state.settings?.quick_color_limit) || Infinity;
-    const quick = Math.max(1, Math.min(limit, Math.round(Number(state.settings?.quick_color_count) || QUICK)));
-    buttons.style.setProperty("--uc-toggle-column",
-      String(presets.length ? Math.min(quick, presets.length, 5) + 1 : 6));
-    buttons.style.setProperty("--uc-quick-rows", String(Math.max(1, Math.ceil(Math.min(quick, presets.length) / 6))));
-    const remainder = presets.slice(quick);
+    // 快捷色单独保存，在颜色库里的位置不变；分区里不重复显示快捷色。
+    // 个数随拖进、移出增减，不超过设置里的上限（设置页打开时按正在填的上限预览）。
+    const limit = quickLimit(getQuickLimit?.() ?? state.settings?.quick_color_limit);
+    const quickList = quickColors(limit);
+    buttons.style.setProperty("--uc-toggle-column", String(quickList.length ? Math.min(quickList.length, 5) + 1 : 6));
+    buttons.style.setProperty("--uc-quick-rows", String(Math.max(1, Math.ceil(quickList.length / 6))));
+    const remainder = presets.filter((color) => !quickList.includes(color));
     const sections = expanded ? [
-      { kind: "quick", title: "快捷（收起时显示）", colors: presets.slice(0, quick) },
+      { kind: "quick", title: "快捷（收起时显示）", colors: quickList },
       { kind: "solid", title: "纯色", colors: remainder.filter((color) => kindOf(color) === "solid") },
       { kind: "gradient", title: "渐变色", colors: remainder.filter((color) => kindOf(color) === "gradient") },
-    ] : [{ kind: "quick", colors: presets.slice(0, quick) }];
+    ] : [{ kind: "quick", colors: quickList }];
     let draggingColor = null;
-    const sectionOf = (colors, value) => {
-      const index = colors.indexOf(value);
-      if (index < 0) return null;
-      return index < quick ? "quick" : kindOf(value);
+    const sectionOf = (value) => {
+      const quick = quickColors(limit);
+      if (quick.includes(value)) return "quick";
+      return sharedColorPresets().includes(value) ? kindOf(value) : null;
     };
     const canDrop = (value, targetSection, targetColor = null) => {
-      const colors = sharedColorPresets();
-      const source = sectionOf(colors, value);
-      if (!source || value === targetColor) return false;
-      if (targetSection === "quick") return true;
-      // 分类间的拖放无意义；快捷色只允许退出到自身的颜色类型。
-      return kindOf(value) === targetSection &&
-        (source !== "quick" || colors.length > quick || Math.min(quick, colors.length) > 1);
+      if (!sectionOf(value) || value === targetColor) return false;
+      // 分类间的拖放无意义；快捷色只能退回到自己的颜色类型。
+      return targetSection === "quick" || kindOf(value) === targetSection;
     };
     const dropAt = (value, targetSection, targetColor = null) => {
       if (!canDrop(value, targetSection, targetColor)) return;
-      const colors = sharedColorPresets();
-      const first = colors.findIndex((color, i) =>
-        i >= quick && kindOf(color) === targetSection);
-      const from = colors.indexOf(value);
-      // 拖进快捷区多一个、拖出少一个，其余颜色不动；到上限或只剩 1 个时才由相邻颜色替换。
-      const count = from >= quick && targetSection === "quick" ? Math.min(limit, quick + 1) :
-        from < quick && targetSection !== "quick" ? Math.max(1, Math.min(quick, colors.length) - 1) : quick;
-      // 从快捷区往后拖时，splice 先移走来源，目标索引会左移一格。
-      const next = targetColor ? colors.indexOf(targetColor) :
-        targetSection === "quick" ? Math.min(count - 1, colors.length - 1) :
-        first < 0 ? count : from < first ? Math.max(count, first - 1) : first;
-      void moveSharedPreset(value, next, count !== quick ? count : undefined)
-        .catch((err) => toast(String(err)));
+      void updateLibrary((library, quick) => {
+        if (targetSection === "quick") {
+          // 拖进快捷区多一个；到上限时挤掉最后一个（不是刚拖进来的这个），它回到原来的位置。
+          const next = quick.includes(value) ? moved(quick, value, targetColor) : before(quick, value, targetColor);
+          while (limit && next.length > limit) next.splice(next.at(-1) === value ? -2 : -1, 1);
+          return { quick: next };
+        }
+        const rest = quick.filter((color) => color !== value);
+        // 拖到分类标题：快捷色回到原来的位置；分类里的颜色排到这一类最前面。
+        const first = library.find((color) => color !== value && !rest.includes(color) && kindOf(color) === targetSection);
+        const next = targetColor ? moved(library, value, targetColor) :
+          quick.includes(value) || !first ? library : before(library, value, first);
+        return { library: next, quick: rest };
+      }, limit).catch((err) => toast(String(err)));
     };
     if (!presets.length) buttons.append(make("span", "muted", "还没有保存的颜色"));
+    else if (!quickList.length && !expanded) buttons.append(make("span", "muted", "点 ＋ 把颜色拖进快捷栏"));
     for (const section of sections) {
       if (expanded && (section.kind === "quick" || section.colors.length ||
-        ((presets.length > quick || Math.min(quick, presets.length) > 1) &&
-          presets.slice(0, quick).some((color) => kindOf(color) === section.kind)))) {
+        quickList.some((color) => kindOf(color) === section.kind))) {
         const label = make("div", "uc-kind-title" + (section.kind === "quick" ? " first" : ""),
           section.title);
         label.dataset.section = section.kind;
@@ -357,11 +399,12 @@ export function makeSharedColorTools({ getValue, onApply, defaultColor = "#d9822
         swatch.addEventListener("keydown", (e) => {
           if (!e.shiftKey || (e.key !== "ArrowLeft" && e.key !== "ArrowRight")) return;
           e.preventDefault();
-          const colors = sharedColorPresets();
-          const group = colors.filter((entry) => sectionOf(colors, entry) === section.kind);
-          const next = group[group.indexOf(color) + (e.key === "ArrowLeft" ? -1 : 1)];
+          const group = sharedColorPresets().filter((entry) => sectionOf(entry) === section.kind);
+          const ordered = section.kind === "quick" ? quickColors(limit) : group;
+          const next = ordered[ordered.indexOf(color) + (e.key === "ArrowLeft" ? -1 : 1)];
           if (!next) return;
-          void moveSharedPreset(color, colors.indexOf(next))
+          void updateLibrary((library, quick) => section.kind === "quick"
+            ? { quick: moved(quick, color, next) } : { library: moved(library, color, next) }, limit)
             .then(() => [...buttons.querySelectorAll(".uc-swatch")].find((x) => x.dataset.color === color)?.focus())
             .catch((err) => toast(String(err)));
         });
@@ -401,12 +444,22 @@ export function makeSharedColorTools({ getValue, onApply, defaultColor = "#d9822
         const remove = make("button", "uc-delete", "×");
         remove.type = "button"; remove.title = "删除颜色预设";
         remove.setAttribute("aria-label", "删除保存的颜色 " + color);
+        // 快捷栏里的 × 只是移出快捷栏，颜色回到原来的位置；分类里的 × 才从颜色库删除。
+        const fromQuick = section.kind === "quick";
+        if (fromQuick) {
+          remove.title = "移出快捷栏（回到原来的位置）";
+          remove.setAttribute("aria-label", "移出快捷栏 " + color);
+        }
         remove.addEventListener("click", () => {
-          const index = sharedColorPresets().indexOf(color);
-          void changeSharedPreset(color, true).then(() => {
-            lastDeleted = { color, index };
+          const index = (fromQuick ? quickColors(0) : sharedColorPresets()).indexOf(color);
+          const operation = fromQuick
+            ? updateLibrary((library, quick) => ({ quick: quick.filter((entry) => entry !== color) }), limit)
+            : changeSharedPreset(color, true);
+          void operation.then(() => {
+            lastDeleted = { color, index, quick: fromQuick };
+            undo.textContent = fromQuick ? "撤销移出" : "撤销删除";
             undo.hidden = false;
-            toast("已删除颜色，可点击“撤销删除”");
+            toast(fromQuick ? "已移出快捷栏，可点击“撤销移出”" : "已删除颜色，可点击“撤销删除”");
           }).catch((err) => toast(String(err)));
         });
         wrap.append(swatch, remove);
@@ -421,11 +474,11 @@ export function makeSharedColorTools({ getValue, onApply, defaultColor = "#d9822
   };
   undo.addEventListener("click", () => {
     if (!lastDeleted) return;
-    const { color, index } = lastDeleted;
-    void restoreSharedPreset(color, index).then(() => {
+    const { color, index, quick } = lastDeleted;
+    void (quick ? restoreQuickColor(color, index) : restoreSharedPreset(color, index)).then(() => {
       lastDeleted = null;
       undo.hidden = true;
-      toast("已撤销删除");
+      toast(quick ? "已撤销移出" : "已撤销删除");
     }).catch((err) => toast(String(err)));
   });
   edit.addEventListener("click", () => {
@@ -456,12 +509,9 @@ export function makeSharedColorTools({ getValue, onApply, defaultColor = "#d9822
       editor.hidden = true; editingPreset = null; edit.setAttribute("aria-expanded", "false");
     }).catch((e) => toast(String(e)));
   });
-  reset.addEventListener("click", () =>
-    void ask("确定恢复默认颜色库？自己添加或编辑的预设将从颜色库中移除，已经使用的颜色不会改变。", "恢复默认", true, true)
-      .then((confirmed) => confirmed && resetSharedPresets().then(() => {
-        editor.hidden = true; editingPreset = null; edit.setAttribute("aria-expanded", "false");
-        toast("已恢复默认颜色库");
-      })).catch((e) => toast(String(e))));
+  reset.addEventListener("click", () => void askResetColors().then((done) => {
+    if (done) { editor.hidden = true; editingPreset = null; edit.setAttribute("aria-expanded", "false"); }
+  }).catch((e) => toast(String(e))));
   const tool = { root, refreshPresets, sync: () => { if (!editor.hidden && !editingPreset) startEditing(); refreshPresets(); } };
   for (const stale of live) if (!stale.root.isConnected) live.delete(stale);
   live.add(tool);

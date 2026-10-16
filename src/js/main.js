@@ -17,6 +17,7 @@ import { bindTrash, closeTrash } from "./trash.js";
 import { bindQuick } from "./quickswitch.js";
 import { openSettings, saveSettings, applyEdgeAppearance, bindSettings, skippedText } from "./settings.js";
 import { bindOutline } from "./outline.js";
+import { upgradeColorLibrary } from "./sharedcolors.js";
 import { createEditor, editorDebug, insertText, toggleTask } from "./editor.js";
 import { setLinkPrompt, setTaskCommand } from "./toolbar.js";
 import { formatDate } from "./datetime.js";
@@ -28,6 +29,7 @@ async function init() {
   await createEditor({ onChange: markDirty, openLink, emptyBold: () => toggleBooks() });
   bindUi();
   await reload();
+  void upgradeColorLibrary().catch(() => {});
   api.listen("flush", () => { void flushAll().catch(() => {}); });
   api.listen("before-quit", (e) => { void handleQuit(e.payload); });
   api.listen("shown", () => {
