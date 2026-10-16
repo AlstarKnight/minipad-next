@@ -88,8 +88,22 @@ pub struct Settings {
     quick_colors: Option<Vec<String>>,
     /// 颜色库已经补过的内置颜色版本，新版本加的预设只补一次。
     color_library_rev: u32,
-    /// 快捷色上限，0 表示不限；在设置里改，拖动不会改它。
+    /// 纯色快捷色上限，0 表示不限；在设置里改，拖动不会改它。
     quick_color_limit: u32,
+    /// 渐变快捷色上限，0 表示不限。
+    quick_gradient_limit: u32,
+    /// 0.3.11 材质色库（金属、珠光等，也是渐变写法，所以和 color_library 分开存）；None 表示用内置的。
+    material_library: Option<Vec<String>>,
+    /// 材质快捷色上限，0 表示不限。
+    quick_material_limit: u32,
+    /// 颜色弹窗里纯色和渐变怎么摆:tabs 顶部切换,rows 两行同时显示
+    color_layout: String,
+    /// 打开颜色库时显示哪一类:remember 每个入口上次的、solid、gradient、follow 跟随当前颜色
+    color_open_tab: String,
+    /// 渐变色块形状:square 方块、bar 长条、round 圆形
+    gradient_shape: String,
+    /// 鼠标停在渐变色块上时显示它的名字
+    gradient_names: bool,
     /// 活跃标签的高亮:line 顶部线条、fill 整个标签、border 整圈边框
     tab_style: String,
     font_size: u32,
@@ -220,6 +234,13 @@ impl Default for Settings {
             quick_colors: None,
             color_library_rev: 0,
             quick_color_limit: 0,
+            quick_gradient_limit: 0,
+            material_library: None,
+            quick_material_limit: 0,
+            color_layout: "tabs".into(),
+            color_open_tab: "remember".into(),
+            gradient_shape: "square".into(),
+            gradient_names: true,
             tab_style: "line".into(),
             font_size: 14,
             notes_dir: String::new(),
@@ -688,6 +709,8 @@ fn tidy_settings(s: &mut Settings) {
     s.backup_keep = s.backup_keep.clamp(1, 365);
     s.quick_color_count = s.quick_color_count.clamp(1, 128);
     s.quick_color_limit = s.quick_color_limit.min(128);
+    s.quick_gradient_limit = s.quick_gradient_limit.min(128);
+    s.quick_material_limit = s.quick_material_limit.min(128);
     s.font_size = s.font_size.clamp(10, 28);
     tidy_color(&mut s.accent);
     let mut seen_colors = std::collections::HashSet::new();
@@ -704,19 +727,48 @@ fn tidy_settings(s: &mut Settings) {
         .into_iter()
         .flatten()
     {
+        // 纯色和渐变各自最多 128 个
         let mut seen = std::collections::HashSet::new();
+        let (mut solid, mut gradient) = (0, 0);
         *colors = colors
+            .iter()
+            .filter_map(|v| notes::normalized_book_color(v))
+            .filter(|v| seen.insert(v.clone()))
+            .filter(|v| {
+                let count = if v.starts_with("linear-gradient(") {
+                    &mut gradient
+                } else {
+                    &mut solid
+                };
+                *count += 1;
+                *count <= 128
+            })
+            .collect();
+    }
+    // 材质色库最多 128 个；同一个颜色不同时出现在渐变库和材质库里
+    if let Some(materials) = &mut s.material_library {
+        let mut seen = std::collections::HashSet::new();
+        *materials = materials
             .iter()
             .filter_map(|v| notes::normalized_book_color(v))
             .filter(|v| seen.insert(v.clone()))
             .take(128)
             .collect();
+        if let Some(colors) = &mut s.color_library {
+            colors.retain(|c| !materials.contains(c));
+        }
     }
     tidy_color(&mut s.edge_color);
     tidy_color(&mut s.ball_color);
     tidy_color(&mut s.find_color);
     tidy_color(&mut s.outline_color);
     pick_one(&mut s.ctrl_f, &["page", "all"]);
+    pick_one(&mut s.color_layout, &["tabs", "rows"]);
+    pick_one(
+        &mut s.color_open_tab,
+        &["remember", "solid", "gradient", "material", "follow"],
+    );
+    pick_one(&mut s.gradient_shape, &["square", "bar", "round"]);
     pick_one(&mut s.find_bar_pos, &["top", "bottom"]);
     pick_one(&mut s.block_context_menu, &["system", "block"]);
     pick_one(&mut s.code_exit_mode, &["blank3", "blank2", "ctrl"]);
@@ -2356,6 +2408,31 @@ mod tests {
             s.quick_colors,
             Some(vec!["#abcdef".to_string(), "#123456".to_string()])
         );
+        // 纯色和渐变各自最多 128 个
+        let gradients = (0..130).map(|i| format!("linear-gradient(135deg, #{i:06x}, #ffffff)"));
+        let solids = (0..130).map(|i| format!("#{i:06x}"));
+        s.color_library = Some(gradients.chain(solids).collect());
+        s.color_layout = "grid".into();
+        tidy_settings(&mut s);
+        let library = s.color_library.as_ref().unwrap();
+        assert_eq!(library.len(), 256);
+        assert_eq!(library.iter().filter(|c| c.starts_with('#')).count(), 128);
+        assert_eq!(
+            s.color_layout, "tabs",
+            "unknown layouts fall back to the top switch"
+        );
+        let gold = "linear-gradient(135deg, #a8741a 0%, #f6dc8a 30%, #9a6b16 100%)".to_string();
+        s.color_library = Some(vec!["#111111".into(), gold.clone()]);
+        s.material_library = Some(vec![gold.clone(), gold.clone(), "nope".into()]);
+        s.color_open_tab = "material".into();
+        tidy_settings(&mut s);
+        assert_eq!(s.material_library, Some(vec![gold]));
+        assert_eq!(
+            s.color_library,
+            Some(vec!["#111111".to_string()]),
+            "a material is not also a gradient"
+        );
+        assert_eq!(s.color_open_tab, "material");
         assert_eq!(s.date_format, DEFAULT_DATE_FORMAT);
 
         // 字号和前端一样限制在 10..=28;按钮列表最多留 64 项

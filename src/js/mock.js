@@ -50,6 +50,13 @@ const DEFAULT_SETTINGS = {
   quick_colors: null,
   color_library_rev: 0,
   quick_color_limit: 0,
+  quick_gradient_limit: 0,
+  quick_material_limit: 0,
+  material_library: null,
+  color_layout: "tabs",
+  color_open_tab: "remember",
+  gradient_shape: "square",
+  gradient_names: true,
   backup_enabled: true,
   backup_keep: 14,
   backup_dir: "",
@@ -138,6 +145,12 @@ const normPath = (p) => p.toLowerCase().replace(/\//g, "\\").replace(/\\+$/, "")
 
 // 只能是几个选项之一的设置:不认识的值换成第一个(和后端的 pick_one 一样)
 const pickOne = (value, options) => (options.includes(value) ? value : options[0]);
+// 和 lib.rs 一样：整理、去重，纯色和渐变各自最多 128 个
+const perKind = (list) => {
+  const count = { solid: 0, gradient: 0 };
+  return [...new Set(list.map((v) => tidyAccent(v)).filter(Boolean))]
+    .filter((v) => ++count[v.startsWith("linear-gradient(") ? "gradient" : "solid"] <= 128);
+};
 
 // 冲突副本的名字,比如「周报 (冲突 2026-10-12 18.30)」;和后端的 notes::conflict_name 一样
 function conflictName(name) {
@@ -405,15 +418,19 @@ export function mockApi() {
             .map((v) => tidyAccent(v))
             .filter(Boolean)
         )].slice(0, 20),
-        color_library: Array.isArray(settings.color_library)
-          ? [...new Set(settings.color_library.map((v) => tidyAccent(v)).filter(Boolean))].slice(0, 128)
-          : null,
+        color_library: Array.isArray(settings.color_library) ? perKind(settings.color_library) : null,
         quick_color_count: Math.min(128, Math.max(1, Math.round(Number(settings.quick_color_count) || 5))),
-        quick_colors: Array.isArray(settings.quick_colors)
-          ? [...new Set(settings.quick_colors.map((v) => tidyAccent(v)).filter(Boolean))].slice(0, 128)
-          : null,
+        quick_colors: Array.isArray(settings.quick_colors) ? perKind(settings.quick_colors) : null,
         color_library_rev: Math.max(0, Math.round(Number(settings.color_library_rev) || 0)),
         quick_color_limit: Math.min(128, Math.max(0, Math.round(Number(settings.quick_color_limit) || 0))),
+        quick_gradient_limit: Math.min(128, Math.max(0, Math.round(Number(settings.quick_gradient_limit) || 0))),
+        quick_material_limit: Math.min(128, Math.max(0, Math.round(Number(settings.quick_material_limit) || 0))),
+        material_library: Array.isArray(settings.material_library)
+          ? [...new Set(settings.material_library.map((v) => tidyAccent(v)).filter(Boolean))].slice(0, 128) : null,
+        color_layout: pickOne(settings.color_layout, ["tabs", "rows"]),
+        color_open_tab: pickOne(settings.color_open_tab, ["remember", "solid", "gradient", "material", "follow"]),
+        gradient_shape: pickOne(settings.gradient_shape, ["square", "bar", "round"]),
+        gradient_names: settings.gradient_names !== false,
         edge_line_length_unit: settings.edge_line_length_unit === "px" ? "px" : "percent",
         edge_line_length: Math.min(100, Math.max(10, Number(settings.edge_line_length) || 100)),
         edge_line_length_px: Math.min(600, Math.max(24, Number(settings.edge_line_length_px) || 120)),

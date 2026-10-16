@@ -149,6 +149,12 @@ export function openSettings() {
   $("#set-autostart").checked = s.autostart;
   $("#set-theme").value = s.theme;
   $("#set-quick-limit").value = s.quick_color_limit || "";
+  $("#set-quick-gradient-limit").value = s.quick_gradient_limit || "";
+  $("#set-quick-material-limit").value = s.quick_material_limit || "";
+  $("#set-color-layout").value = s.color_layout === "rows" ? "rows" : "tabs";
+  $("#set-color-open").value = ["solid", "gradient", "material", "follow"].includes(s.color_open_tab) ? s.color_open_tab : "remember";
+  $("#set-gradient-shape").value = ["bar", "round"].includes(s.gradient_shape) ? s.gradient_shape : "square";
+  $("#set-gradient-names").checked = s.gradient_names !== false;
   accentColor.show(s.accent || "");
   $("#set-ball").checked = !!s.ball_enabled;
   $("#set-ball-size").value = s.ball_size || 48;
@@ -219,6 +225,7 @@ export function openSettings() {
   backupInfo = null;
   updateBackup();
   $("#settings").hidden = false;
+  for (const picker of [accentColor, edgeColor, findColor, outlineColor, ballColor]) picker.reopen();
   showSettingsPage(page, { focus: true });
   api
     .invoke("backup_info")
@@ -230,6 +237,16 @@ export function openSettings() {
     .catch(() => {});
 }
 
+// 设置页打开时，颜色库按正在填的选项预览（还没保存）
+const colorPreview = () => $("#settings").hidden ? null : {
+  quick_color_limit: $("#set-quick-limit").value,
+  quick_gradient_limit: $("#set-quick-gradient-limit").value,
+  quick_material_limit: $("#set-quick-material-limit").value,
+  color_layout: $("#set-color-layout").value,
+  color_open_tab: $("#set-color-open").value,
+  gradient_shape: $("#set-gradient-shape").value,
+  gradient_names: $("#set-gradient-names").checked,
+};
 // ---- 颜色选择:预设色块 + 共用的单一多节点自定义编辑器 ----
 // 强调色和贴边标识的颜色共用。空字符串是第一个色块(默认橙色 / 跟随强调色)
 function colorPicker(prefix, box, options, firstSwatch, onChange) {
@@ -238,9 +255,10 @@ function colorPicker(prefix, box, options, firstSwatch, onChange) {
   picker.install = () => {
     if (sharedTool) return;
     sharedTool = makeSharedColorTools({
+      id: "settings-" + prefix,
       getValue: () => picker.value || state.settings?.accent || "#d9822b",
       onApply: (value) => picker.show(value),
-      getQuickLimit: () => $("#settings").hidden ? null : $("#set-quick-limit").value,
+      getPreview: colorPreview,
       compact: true,
     });
     $(box).after(sharedTool.root);
@@ -264,6 +282,7 @@ function colorPicker(prefix, box, options, firstSwatch, onChange) {
     onChange?.();
     sharedTool?.sync();
   };
+  picker.reopen = () => sharedTool?.reopen();
   return picker;
 }
 const accentColor = colorPicker("accent", "#set-accent", ACCENTS, "#d9822b", () => {
@@ -493,7 +512,7 @@ export function saveSettings(next, { migrateNotes = false } = {}) {
     }
     state.settings = await api.invoke("save_settings", { settings: merged, migrateNotes: dirChanged && migrateNotes });
     applySettings();
-    if ("quick_color_limit" in changed) refreshSharedColors();
+    if (["quick_color_limit", "quick_gradient_limit", "quick_material_limit", "color_layout", "gradient_shape", "gradient_names"].some((key) => key in changed)) refreshSharedColors();
     if (dirChanged) await reload();
     return state.settings;
   };
@@ -530,6 +549,12 @@ async function submitSettings() {
     theme: $("#set-theme").value,
     accent: accentColor.value,
     quick_color_limit: quickLimit($("#set-quick-limit").value),
+    quick_gradient_limit: quickLimit($("#set-quick-gradient-limit").value),
+    quick_material_limit: quickLimit($("#set-quick-material-limit").value),
+    color_layout: $("#set-color-layout").value,
+    color_open_tab: $("#set-color-open").value,
+    gradient_shape: $("#set-gradient-shape").value,
+    gradient_names: $("#set-gradient-names").checked,
     tab_style: $("#set-tab-style").value,
     font_size: Math.min(28, Math.max(10, Number($("#set-font").value) || 14)),
     notes_dir: $("#set-dir").value.trim(),
@@ -641,7 +666,9 @@ export function bindSettings() {
   });
   $("#set-save").addEventListener("click", submitSettings);
   $("#set-block-enabled").addEventListener("change", () => { $("#set-block-context").disabled = !$("#set-block-enabled").checked; });
-  $("#set-quick-limit").addEventListener("input", refreshSharedColors);
+  for (const id of ["#set-quick-limit", "#set-quick-gradient-limit", "#set-quick-material-limit", "#set-color-layout", "#set-gradient-shape", "#set-gradient-names"]) {
+    $(id).addEventListener("input", refreshSharedColors);
+  }
   // 分类:点一下换过去;焦点在分类上时,上下(分类在上面时左右)方向键换到相邻的一类,Home / End 换到第一类和最后一类
   const nav = $("#set-nav");
   nav.addEventListener("click", (e) => {
@@ -687,7 +714,9 @@ export function bindSettings() {
   for (const id of ["#set-tab-overflow", "#set-tab-fade", "#set-tab-list", "#set-drawer-side", "#set-drawer-width", "#set-tab-groups"]) $(id).addEventListener("input", updateTabOptions);
   $("#set-sel-bar").addEventListener("input", updateSelOptions);
   $("#set-sel-reset").addEventListener("click", () => showSelItems(DEFAULT_SEL_ITEMS));
-  $("#set-colors-reset").addEventListener("click", () => void askResetColors().catch((e) => toast(String(e))));
+  for (const [id, kinds] of [["#set-colors-reset", undefined], ["#set-colors-reset-solid", ["solid"]], ["#set-colors-reset-gradient", ["gradient"]], ["#set-colors-reset-material", ["material"]]]) {
+    $(id).addEventListener("click", () => void askResetColors(kinds).catch((e) => toast(String(e))));
+  }
   $("#set-import").addEventListener("click", openImport);
   for (const id of ["#set-ball", "#set-ball-size", "#set-ball-opacity"]) $(id).addEventListener("input", updateBall);
   for (const r of document.querySelectorAll('input[name="set-ball-icon"]')) r.addEventListener("change", updateBall);

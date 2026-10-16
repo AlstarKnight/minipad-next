@@ -170,11 +170,6 @@
               <div id="set-accent" class="accent-swatches"></div>
             </div>
             <label class="row">
-              <span>快捷色上限（所有颜色库通用）</span>
-              <input id="set-quick-limit" type="number" min="1" max="128" step="1" placeholder="不限" />
-            </label>
-            <div class="row"><button id="set-colors-reset" type="button" class="link">恢复默认颜色库</button></div>
-            <label class="row">
               <span>字号</span>
               <input id="set-font" type="number" min="10" max="28" />
             </label>
@@ -185,6 +180,54 @@
                 <option value="top">放在上面</option>
               </select>
             </label>
+            <h3>颜色库</h3>
+            <label class="row">
+              <span>纯色、渐变、材质怎么摆</span>
+              <select id="set-color-layout">
+                <option value="tabs">顶部切换「纯色 | 渐变 | 材质」</option>
+                <option value="rows">三行同时显示</option>
+              </select>
+            </label>
+            <label class="row">
+              <span>打开颜色库时显示</span>
+              <select id="set-color-open">
+                <option value="remember">每个入口上次看的</option>
+                <option value="solid">总是纯色</option>
+                <option value="gradient">总是渐变</option>
+                <option value="material">总是材质</option>
+                <option value="follow">跟随当前颜色的类型</option>
+              </select>
+            </label>
+            <label class="row">
+              <span>纯色快捷色上限（所有颜色库通用）</span>
+              <input id="set-quick-limit" type="number" min="1" max="128" step="1" placeholder="不限" />
+            </label>
+            <label class="row">
+              <span>渐变快捷色上限（所有颜色库通用）</span>
+              <input id="set-quick-gradient-limit" type="number" min="1" max="128" step="1" placeholder="不限" />
+            </label>
+            <label class="row">
+              <span>材质快捷色上限（所有颜色库通用）</span>
+              <input id="set-quick-material-limit" type="number" min="1" max="128" step="1" placeholder="不限" />
+            </label>
+            <label class="row">
+              <span>渐变和材质色块的形状</span>
+              <select id="set-gradient-shape">
+                <option value="square">方块（和纯色一样）</option>
+                <option value="bar">长条</option>
+                <option value="round">圆形</option>
+              </select>
+            </label>
+            <label class="row check"><input id="set-gradient-names" type="checkbox" /> <span>鼠标停在渐变和材质色块上时显示名字（如“蓝紫”“金色”）</span></label>
+            <div class="row">
+              <span>恢复默认颜色库</span>
+              <span class="inline-buttons">
+                <button id="set-colors-reset-solid" type="button" class="small">纯色</button>
+                <button id="set-colors-reset-gradient" type="button" class="small">渐变</button>
+                <button id="set-colors-reset-material" type="button" class="small">材质</button>
+                <button id="set-colors-reset" type="button" class="small">全部</button>
+              </span>
+            </div>
             <h3>标签栏</h3>
             <label class="row">
               <span>活跃标签的高亮</span>

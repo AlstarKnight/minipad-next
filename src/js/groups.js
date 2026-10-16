@@ -224,6 +224,7 @@ export function closeGroupEditor() {
 function paintColors() {
   const g = editing;
   const shared = makeSharedColorTools({
+    id: "group",
     getValue: () => editing?.color || "#d9822b",
     onApply: (value) => setColor(value),
   });
