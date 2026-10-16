@@ -533,17 +533,15 @@ npx tauri build --target x86_64-pc-windows-gnu
 
 ## 四、自动构建和发布
 
-`.github/workflows/build.yml` 会在每次推送和每个 Pull Request 时:
+`.github/workflows/build.yml` 会在推送到 main、推送 `v` 开头的标签和每个 Pull Request 时并行运行三组任务,也支持手动触发:
 
 - 在 Linux 机器上检查 Rust 代码格式,核对各处的版本号和 CHANGELOG,并跑界面测试;
-- 在 Windows 机器上:
-  1. 用 clippy 检查代码(有警告就算失败),跑单元测试;
-  2. 构建安装包和免安装版;
-  3. 真正启动程序做冒烟测试:窗口能不能出来、前端能不能读写笔记、全局热键、贴边隐藏、从 0.1.x 升级时的数据搬迁、空笔记本自动补一页、每日备份、重复启动只保留一个;
-  4. 把两个 exe 上传成这次运行的构建结果;
-- 上面都通过以后,合并到 main 时新版本自动发布 Release(见下)。
+- 在 Windows 机器上用 clippy 检查代码(有警告就算失败),跑单元测试;
+- 在另一台 Windows 机器上构建安装包和免安装版,真正启动程序做冒烟测试:窗口能不能出来、前端能不能读写笔记、全局热键、贴边隐藏、从 0.1.x 升级时的数据搬迁、空笔记本自动补一页、每日备份、重复启动只保留一个;最后把两个 exe 上传成这次运行的构建结果。
 
-要发布新版本:把 `package.json`、`package-lock.json`、`src-tauri/Cargo.toml`、`src-tauri/Cargo.lock` 里的版本号改好(`src-tauri/tauri.conf.json` 直接用 `package.json` 里的版本号,不用改;这几处对不上时构建会失败),在 `CHANGELOG.md` 加上 `## 版本号` 这一节,然后合并到 main。合并后格式检查、界面测试和 Windows 构建都通过了,如果这个版本还没有发布,会自动建标签 `v版本号`、发布 Release,并附上安装版和免安装版,Release 的说明就是 CHANGELOG 里这个版本的那一节。已经发布过的版本不会重复发布;上次发布到一半失败了(比如上传安装包出错),重新运行这次构建就会补上。
+Rust 检查和打包各自缓存依赖,失败时也保留已编译的依赖,方便修复后重跑。界面测试只下载所需的 Chromium 无头版本。PR 和正式发布使用相同的编译参数,PR 也会生成可下载的测试安装包。三组任务全部通过后才进入发布检查;PR 只检查安装包和发布说明,不会发布 Release。
+
+要发布新版本:把 `package.json`、`package-lock.json`、`src-tauri/Cargo.toml`、`src-tauri/Cargo.lock` 里的版本号改好(`src-tauri/tauri.conf.json` 直接用 `package.json` 里的版本号,不用改;这几处对不上时构建会失败),在 `CHANGELOG.md` 加上 `## 版本号` 这一节,然后合并到 main。三组 CI 任务全部通过后,如果这个版本还没有发布,会自动建标签 `v版本号`、发布 Release,并附上安装版和免安装版,Release 的说明就是 CHANGELOG 里这个版本的那一节。已经发布过的版本不会重复发布;上次发布到一半失败了(比如上传安装包出错),重新运行这次构建就会补上。
 
 `CHANGELOG.md` 里没有这个版本的那一节时,构建会失败,提醒你补上。想手动发布也可以:推送一个 `v` 开头的标签,或者在 GitHub 的 Releases 页面点“Draft a new release”新建标签再发布,构建通过后同样会附上安装包。
 
