@@ -1,7 +1,7 @@
 // ---------- 读取笔记,和磁盘同步(别处改过的文件) ----------
-import { api } from "./api.js";
+import { api, isMiniWindow } from "./api.js";
 import { tabsEl } from "./dom.js";
-import { state, book, current, makeNote, noteFromDisk, bookFromDisk, sortBooks } from "./state.js";
+import { state, book, current, makeNote, noteFromDisk, bookFromDisk, sortBooks, inMini } from "./state.js";
 import { toast } from "./ui.js";
 import { scheduleMeta, scheduleBooks, scheduleSave } from "./save.js";
 import { showNote, refreshCurrent } from "./page.js";
@@ -73,16 +73,27 @@ export async function syncFromDisk(force = false) {
   syncing = true;
   const g = gen;
   try {
-    const disk = await api.invoke("read_notes");
+    let disk = await api.invoke("read_notes");
     // 读的时候页面或笔记本有变动,这次的结果就不用了
     const fresh = () => !busy && gen === g && !tabsEl.querySelector("input");
     if (!fresh()) return;
+    if (isMiniWindow) disk = onlyThisPage(disk);
+    if (!disk) return;
     await applyDisk(disk, fresh);
   } catch (e) {
     console.error(e);
   } finally {
     syncing = false;
   }
+}
+
+// 小窗只看自己这一页;这一页在磁盘上找不到(别处改名或删了)时什么也不做,不建新页面
+function onlyThisPage(disk) {
+  const b = book();
+  const n = current();
+  const d = disk.find((x) => x.name === b?.name);
+  const dn = d?.notes.find((x) => x.name === n?.name);
+  return dn ? [{ ...d, notes: [dn] }] : null;
 }
 
 // 有没有还没保存(或者保存失败)的修改
@@ -217,7 +228,9 @@ function mergeBook(b, d) {
   const known = new Set(kept.map((n) => n.name));
   for (const dn of d.notes) {
     if (known.has(dn.name)) continue;
-    kept.push(noteFromDisk(dn));
+    const added = noteFromDisk(dn);
+    added.mini = inMini(b.name, dn.name);
+    kept.push(added);
     tabs = true;
   }
   // 别处新建的分组(这里已有的分组以这里的为准)

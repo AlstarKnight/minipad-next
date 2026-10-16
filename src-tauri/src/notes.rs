@@ -267,6 +267,10 @@ pub fn page_path(root: &Path, book: &str, name: &str) -> Result<PathBuf, String>
     Ok(note_path(&book_dir(root, book)?, name))
 }
 
+fn has_notes(dir: &Path) -> bool {
+    fs::read_dir(dir).is_ok_and(|rd| rd.flatten().any(|e| is_note_file(&e.path())))
+}
+
 fn is_note_file(path: &Path) -> bool {
     path.is_file()
         && path
@@ -293,12 +297,14 @@ pub fn list_names(dir: &Path) -> Result<Vec<String>, String> {
     Ok(names)
 }
 
-/// 笔记文件夹下的笔记本(子文件夹,点开头的除外),按名字排序
+/// 笔记文件夹下的笔记本(子文件夹,点开头的除外),按名字排序。
+/// 「默认」笔记本放图片的 assets 文件夹不算(以前就叫 assets、里面有页面的笔记本照样显示)
 pub fn list_books(root: &Path) -> Result<Vec<String>, String> {
     let mut books: Vec<String> = fs::read_dir(root)
         .map_err(|e| e.to_string())?
         .flatten()
         .filter(|e| e.path().is_dir())
+        .filter(|e| e.file_name() != crate::images::DIR || has_notes(&e.path()))
         .map(|e| e.file_name().to_string_lossy().to_string())
         .filter(|n| !n.starts_with('.'))
         .collect();
@@ -374,7 +380,10 @@ pub fn unique_book_name(root: &Path, base: &str, except: Option<&str>) -> String
         .unwrap_or_default();
     first_free(clean_name(base, "新笔记本"), |n| {
         let n = n.to_lowercase();
-        n == DEFAULT_BOOK_LABEL || (Some(&n) != except.as_ref() && existing.contains(&n))
+        // assets 是「默认」笔记本放图片的文件夹,不能用作笔记本的名字
+        n == DEFAULT_BOOK_LABEL
+            || n == crate::images::DIR
+            || (Some(&n) != except.as_ref() && existing.contains(&n))
     })
 }
 
@@ -2017,6 +2026,19 @@ mod tests {
         assert_eq!(books[1].notes[0].mode, "edit");
         assert!(books[2].notes.is_empty());
         assert_eq!(books[2].active, "");
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn the_default_books_image_folder_is_not_a_notebook_and_its_name_is_reserved() {
+        let root = temp_dir("assets-folder");
+        fs::create_dir_all(root.join("assets")).unwrap();
+        fs::write(root.join("assets").join("img-1.png"), "png").unwrap();
+        assert!(list_books(&root).unwrap().is_empty());
+        assert_eq!(unique_book_name(&root, "Assets", None), "Assets (2)");
+        // 以前建的、里面有页面的 assets 笔记本还在
+        fs::write(note_path(&root.join("assets"), "旧页面"), "").unwrap();
+        assert_eq!(list_books(&root).unwrap(), vec!["assets"]);
         fs::remove_dir_all(&root).unwrap();
     }
 

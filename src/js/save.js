@@ -1,7 +1,7 @@
 // ---------- 保存 ----------
 // 笔记与元信息各只有一个写入循环。新修改在当前写入完成后再写，
 // 所有主动等待保存的操作都要等队列真正清空，失败则拒绝继续。
-import { api } from "./api.js";
+import { api, isMiniWindow } from "./api.js";
 import { $ } from "./dom.js";
 import { state, book, current } from "./state.js";
 import { updateCount } from "./page.js";
@@ -25,7 +25,7 @@ const backgroundNotes = () => { if (!holds) void flushAll().catch(() => {}); };
 const backgroundMeta = () => { void saveMeta().catch(() => {}); };
 
 export function markDirty(n = current()) {
-  if (!n || n.unreadable) return;
+  if (!n || n.unreadable || n.mini) return;
   n.dirty = true;
   setSaveStatus("dirty");
   updateCount();
@@ -80,7 +80,8 @@ async function writeDirtyNotes() {
   dirtySince = 0;
   while (true) {
     const dirty = [];
-    for (const b of state.books) for (const n of b.notes) if (n.dirty && !n.unreadable) dirty.push([b, n]);
+    // 在小窗里编辑的页面由小窗保存,主窗口不写
+    for (const b of state.books) for (const n of b.notes) if (n.dirty && !n.unreadable && !n.mini) dirty.push([b, n]);
     if (!dirty.length) {
       const blocked = state.books.some((b) => b.notes.some((n) => n.unreadable && n.dirty));
       setSaveStatus(blocked ? "err" : "saved", blocked ? "存在无法读取的未保存页面" : "");
@@ -88,7 +89,7 @@ async function writeDirtyNotes() {
     }
     let firstError = null;
     for (const [b, n] of dirty) {
-      if (!n.dirty || n.unreadable || !state.books.includes(b) || !b.notes.includes(n)) continue;
+      if (!n.dirty || n.unreadable || n.mini || !state.books.includes(b) || !b.notes.includes(n)) continue;
       // 写入中的新编辑会重新标脏；其他页面不因本页失败而停止保存。
       n.dirty = false;
       syncContent(n);
@@ -117,19 +118,23 @@ async function writeDirtyNotes() {
   }
 }
 
+// 小窗里只有一页,不能写笔记本的元信息(页面顺序、当前页面……),那是主窗口的事
 export function scheduleMeta(b = book()) {
+  if (isMiniWindow) return;
   if (b) metaDirty.add(b);
   clearTimeout(metaTimer);
   metaTimer = setTimeout(backgroundMeta, 300);
 }
 
 export function scheduleBooks() {
+  if (isMiniWindow) return;
   bookDirty = true;
   clearTimeout(metaTimer);
   metaTimer = setTimeout(backgroundMeta, 300);
 }
 
 export function saveMeta() {
+  if (isMiniWindow) return Promise.resolve();
   clearTimeout(metaTimer);
   if (!metaFlush) {
     metaFlush = writeDirtyMeta().finally(() => { metaFlush = null; });

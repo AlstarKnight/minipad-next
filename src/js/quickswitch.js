@@ -1,11 +1,13 @@
 // ---------- 快速切换页面(默认 Ctrl+P,设置里可以换或者关掉) ----------
-// 打几个字找页面名字(也能带上笔记本的名字,空格隔开),上下键选,回车打开;
+// 打几个字找页面名字(也能带上笔记本的名字,空格隔开),上下键选,回车打开(Shift+回车放进小窗);
 // 什么都没打时列出最近打开过的页面。设置里可以只找当前笔记本
 import { $ } from "./dom.js";
 import { state, book, current, bookLabel } from "./state.js";
 import { closeOverlays, focusEditor } from "./ui.js";
 import { recent } from "./page.js";
 import { goTo } from "./tabs.js";
+import { openInMini } from "./mini.js";
+import { isMiniWindow } from "./api.js";
 
 // [{ b, n }]
 let results = [];
@@ -131,10 +133,11 @@ function move(d) {
   items[sel].scrollIntoView({ block: "nearest" });
 }
 
-function pick(i) {
+function pick(i, mini = false) {
   const r = results[i];
   if (!r) return;
   $("#quick").hidden = true;
+  if (mini) return void openInMini(r.b, r.n);
   goTo(r.b, r.n);
   focusEditor();
 }
@@ -149,14 +152,15 @@ export function bindQuick() {
     if (e.isComposing || e.keyCode === 229) return;
     if (e.key === "ArrowDown") (e.preventDefault(), move(1));
     else if (e.key === "ArrowUp") (e.preventDefault(), move(-1));
-    else if (e.key === "Enter") (e.preventDefault(), pick(sel));
+    // Shift+Enter:放进小窗打开
+    else if (e.key === "Enter") (e.preventDefault(), pick(sel, e.shiftKey));
   });
   // 快捷键在编辑器之前处理,设置里选了和编辑器一样的键(比如 Ctrl+B)也是打开快速切换
   document.addEventListener(
     "keydown",
     (e) => {
       const key = state.settings?.quick_switch_key;
-      if (!key || e.isComposing || e.keyCode === 229 || e.target.closest?.("#set-quick-key, #set-hotkey")) return;
+      if (!key || isMiniWindow || e.isComposing || e.keyCode === 229 || e.target.closest?.("#set-quick-key, #set-hotkey")) return;
       if (comboOf(e)?.toLowerCase() !== key.toLowerCase()) return;
       e.preventDefault();
       e.stopPropagation();

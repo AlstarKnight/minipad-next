@@ -89,6 +89,16 @@ const DEFAULT_SETTINGS = {
   sel_bar: "always",
   sel_bar_items: ["block", "strong", "em", "strike", "code", "link", "sep3", "color", "bg"],
   sel_bar_pos: "above",
+  image_paste: true,
+  image_size: "full",
+  mini_enabled: true,
+  mini_on_top: true,
+  mini_hotkey: "follow",
+  mini_opacity: 100,
+  mini_restore: true,
+  mini_max: 0,
+  mini_tab_button: true,
+  mini_windows: [],
 };
 
 const has = (obj, key) => Object.prototype.hasOwnProperty.call(obj, key);
@@ -242,6 +252,9 @@ export function mockApi() {
   };
   const readBooks = () => ["", ...bookNames()].filter((name) => !window.__mockControl?.unreadableBook?.includes(name)).map(readBook);
 
+  // 开着的小窗 [{ book, name }]
+  let minis = [];
+  const emitMinis = () => window.__mockEmit?.("mini-changed", minis.map((m) => ({ ...m })));
   const cmds = {
     load_state: () => {
       // 第一次用(既没有页面也没有笔记本)时放一页说明
@@ -314,6 +327,11 @@ export function mockApi() {
       const n = uniqPage(dst, name);
       dst.files[n] = src.files[name];
       delete src.files[name];
+      // 页面用到的图片也复制过去(和后端一样,原来的留着)
+      for (const [, rel] of String(dst.files[n]).matchAll(/\]\(<?(assets\/[^)\s>]+)/g)) {
+        const from = db.images?.[book + "\n" + rel];
+        if (from && !db.images[target + "\n" + rel]) db.images[target + "\n" + rel] = from;
+      }
       return n;
     },
     // 笔记本已经不在了就不写,免得把删掉的笔记本又建出来
@@ -452,6 +470,11 @@ export function mockApi() {
           : DEFAULT_SETTINGS.sel_bar_items,
         tab_rows: Math.min(8, Math.max(2, Math.round(Number(settings.tab_rows)) || 4)),
         tab_drawer_width: Math.min(360, Math.max(140, Math.round(Number(settings.tab_drawer_width)) || 200)),
+        mini_hotkey: pickOne(settings.mini_hotkey, ["follow", "independent"]),
+        image_size: pickOne(settings.image_size, ["full", "medium", "small"]),
+        mini_opacity: Math.min(100, Math.max(40, Math.round(Number(settings.mini_opacity)) || 100)),
+        mini_max: Math.min(20, Math.max(0, Math.round(Number(settings.mini_max)) || 0)),
+        mini_windows: db.settings.mini_windows || [],
       };
       const notes = normPath(s.notes_dir);
       const dest = normPath(s.backup_dir);
@@ -529,16 +552,76 @@ export function mockApi() {
     quit_cancel: () => {},
     show_window: () => {},
     quit_app: () => {},
+    // 小窗:预览里不真的开窗口,只记下来并像后端一样发 mini-changed;
+    // 小窗那边用 index.html?mini=1&book=&page= 打开(mini_self 从网址里读)
+    mini_open: ({ book, name, x, y }) => {
+      const s = db.settings;
+      if (!s.mini_enabled) throw "小窗已经关掉了,可以在 设置 → 窗口 里打开";
+      if (s.mini_max && minis.length >= s.mini_max) throw `最多同时开 ${s.mini_max} 个小窗,先关掉一个吧(设置 → 窗口 可以改)`;
+      if (!has(db.books, book) || !has(db.books[book].files, name)) throw `找不到页面「${name}」`;
+      if (window.__mockControl) (window.__mockControl.miniOpened ||= []).push({ book, name, x, y });
+      if (!minis.some((m) => m.book === book && m.name === name)) minis.push({ book, name });
+      emitMinis();
+    },
+    mini_self: () => {
+      const q = new URLSearchParams(location.search);
+      if (!q.has("mini")) return null;
+      const s = db.settings;
+      return { book: q.get("book") || "", name: q.get("page") || "", top: s.mini_on_top, opacity: s.mini_opacity };
+    },
+    mini_list: () => minis.map((m) => ({ ...m })),
+    mini_focus: ({ book, name }) => {
+      if (window.__mockControl) (window.__mockControl.miniFocused ||= []).push(name);
+      return minis.some((m) => m.book === book && m.name === name);
+    },
+    mini_recall: ({ book, name }) => {
+      if (window.__mockControl) (window.__mockControl.miniRecalled ||= []).push(name);
+      return minis.some((m) => m.book === book && m.name === name);
+    },
+    mini_close: ({ back }) => {
+      if (window.__mockControl) (window.__mockControl.miniClosed ||= []).push(back);
+    },
+    mini_set: ({ top, opacity }) => {
+      if (window.__mockControl) (window.__mockControl.miniSet ||= []).push({ top, opacity });
+    },
+    mini_restore: () => {},
+    // 图片:存成 data: 网址放在 db.images 里,显示时用 __mockImage 取回
+    save_image: (bytes, { headers } = {}) => {
+      const { book, ext } = JSON.parse(decodeURIComponent(headers?.["x-image"] || ""));
+      if (!db.settings.image_paste) throw "粘贴图片已经关掉了,可以在 设置 → 编辑 里打开";
+      if (!has(db.books, book)) throw "找不到这个笔记本";
+      const type = { jpg: "jpeg" }[ext] || ext;
+      let bin = "";
+      for (const b of bytes) bin += String.fromCharCode(b);
+      db.images ||= {};
+      let n = 1;
+      const stamp = window.__mockControl?.imageStamp || "20261016-101500";
+      let path = `assets/img-${stamp}.${ext}`;
+      while (db.images[book + "\n" + path]) path = `assets/img-${stamp}-${++n}.${ext}`;
+      db.images[book + "\n" + path] = `data:image/${type};base64,${btoa(bin)}`;
+      return path;
+    },
+    mini_flush_all: () => window.__mockControl?.miniFlushErrors ?? [],
+    mini_flushed: ({ error }) => {
+      if (window.__mockControl) (window.__mockControl.miniFlushed ||= []).push(error);
+    },
   };
 
   // 方便在浏览器控制台(和界面测试)里模拟"文件在别处被改了":直接改这两个对象,不要整个换掉
   window.__mockBooks = db.books;
+  window.__mockImage = (book, path) => db.images?.[book + "\n" + path.replace(/^\.\//, "")] || "";
   window.__mockFiles = db.books[""].files;
   // 模拟后端发来的事件(比如贴边隐藏):window.__mockEmit("edge-hidden", "top")
   const listeners = {};
   window.__mockEmit = (ev, payload) => (listeners[ev] || []).forEach((cb) => cb({ event: ev, payload }));
+  // 测试里模拟小窗关掉:window.__mockMiniClosed("", "页面", true) 和后端一样先发 mini-changed 再发 mini-returned
+  window.__mockMiniClosed = (book, name, back = false) => {
+    minis = minis.filter((m) => !(m.book === book && m.name === name));
+    emitMinis();
+    window.__mockEmit("mini-returned", { book, name, back });
+  };
   return {
-    invoke: async (cmd, args = {}) => {
+    invoke: async (cmd, args = {}, options = {}) => {
       // 测试专用：在页面控制台可模拟慢磁盘与写入失败。
       const test = window.__mockControl;
       if (Array.isArray(test?.calls)) test.calls.push(cmd);
@@ -546,7 +629,7 @@ export function mockApi() {
       if (test?.fail?.[cmd]) throw new Error(test.fail[cmd]);
       if (cmd === "save_note" && test?.failNote?.[args.name]) throw new Error(test.failNote[args.name]);
       try {
-        return cmds[cmd](args);
+        return cmds[cmd](args, options);
       } finally {
         persist();
       }

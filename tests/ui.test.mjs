@@ -218,7 +218,8 @@ function helpers(p) {
 // 最后检查没有页面报错、console.error 和浏览器自带的对话框(confirm/prompt/alert)
 function ui(name, ...args) {
   const fn = args.pop();
-  const { seed: db } = args[0] ?? {};
+  // url:打开别的网址(比如小窗 index.html?mini=1&book=&page=页)
+  const { seed: db, url = "/index.html" } = args[0] ?? {};
   test(name, { timeout: 60_000 }, async (t) => {
     const ctx = await browser.newContext({
       viewport: { width: 440, height: 540 },
@@ -238,7 +239,7 @@ function ui(name, ...args) {
       });
       const h = helpers(page);
       h.dialogs = dialogs;
-      await page.goto(`${base}/index.html`);
+      await page.goto(base + url);
       // 标签收进侧拉列表时看不见,只等它们画出来
       await page.waitForSelector("#tabs .tab", { state: "attached" });
       await fn(h);
@@ -728,6 +729,7 @@ describe("notebooks", () => {
           ["rename", "重命名"],
           ["pin", "固定标签"],
           ["move", "移到笔记本…"],
+          ["mini-open", "在小窗中打开"],
           ["delete", "删除页面"],
         ],
         "tab menu items",
@@ -3373,9 +3375,12 @@ describe("v0.3.5 editable color library", () => {
     await expandLibrary(p, "#ge-colors .shared-colors");
     const palette = p.locator("#ge-colors .shared-colors");
     await palette.locator(":scope > .uc-actions button").first().click();
+    // 弹窗变高后由 ResizeObserver 在下一帧挪回屏幕里,机器忙时会晚一点
     for (const id of ["#ge-collapse", "#ge-ungroup"]) {
-      const rect = await p.locator(id).boundingBox();
-      assert.ok(rect && rect.y >= 0 && rect.y + rect.height <= 540, id + " remains visible");
+      await until(async () => {
+        const rect = await p.locator(id).boundingBox();
+        return !!rect && rect.y >= 0 && rect.y + rect.height <= 540;
+      }, true, id + " remains visible");
     }
     const presets = await palette.locator(".uc-presets").evaluate((el) =>
       [el.clientHeight, el.scrollHeight]);
@@ -4968,13 +4973,13 @@ describe("0.3.2: tab groups", () => {
   ui("groups: off by default, so the tab menu has no group items", { seed: books() }, async (h) => {
     const { p } = h;
     await p.click("#tabs .tab:nth-child(2)", { button: "right" });
-    assert.deepEqual(await menu(p), ["重命名", "固定标签", "移到笔记本…", "删除页面"]);
+    assert.deepEqual(await menu(p), ["重命名", "固定标签", "移到笔记本…", "在小窗中打开", "删除页面"]);
   });
 
   ui("groups: a tab goes into a new group, which gets a name and colour, folds, and is saved with the notebook", { seed: books({ tab_groups: true }) }, async (h) => {
     const { p } = h;
     await p.click("#tabs .tab:nth-child(2)", { button: "right" });
-    assert.deepEqual(await menu(p), ["重命名", "固定标签", "移到笔记本…", "添加到新分组", "删除页面"]);
+    assert.deepEqual(await menu(p), ["重命名", "固定标签", "移到笔记本…", "添加到新分组", "在小窗中打开", "删除页面"]);
     await p.click('#ctx button[data-act="group-new"]');
     assert.ok(await p.isVisible("#group-edit"), "the group settings open");
     assert.equal(await p.evaluate(() => document.activeElement.id), "ge-name");
@@ -5047,7 +5052,7 @@ describe("0.3.2: tab groups", () => {
     await p.click("#set-save");
     await until(() => strip(p), ["a", "b", "c", "d", "e"], "no groups shown");
     await p.click("#tabs .tab:nth-child(2)", { button: "right" });
-    assert.deepEqual(await menu(p), ["重命名", "固定标签", "移到笔记本…", "删除页面"]);
+    assert.deepEqual(await menu(p), ["重命名", "固定标签", "移到笔记本…", "在小窗中打开", "删除页面"]);
     await p.keyboard.press("Escape");
     await p.waitForTimeout(500);
     assert.equal((await stored(h)).groups.length, 1, "the group is still saved");
@@ -5876,5 +5881,271 @@ describe("0.3.12: dragging colors in the format bar popup", () => {
       await p.keyboard.press("Escape");
     }
     assert.deepEqual((await h.stored()).settings.quick_colors, ["#111111", "#222222", "#333333"]);
+  });
+});
+
+// ---------- 0.4.0 ----------
+const PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
+// 在编辑区里粘贴 / 拖进来一张图片文件
+function sendImage(p, kind, name = "image.png") {
+  return p.evaluate(([png, kind, name]) => {
+    const dt = new DataTransfer();
+    dt.items.add(new File([Uint8Array.from(atob(png), (c) => c.charCodeAt(0))], name, { type: "image/png" }));
+    const target = document.querySelector("#editor .ProseMirror");
+    if (kind === "paste") {
+      target.dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
+    } else {
+      const r = target.querySelector("p").getBoundingClientRect();
+      target.dispatchEvent(new DragEvent("drop", { dataTransfer: dt, clientX: r.right - 1, clientY: r.top + 4, bubbles: true, cancelable: true }));
+    }
+  }, [PNG, kind, name]);
+}
+const control = (p, value = {}) => p.evaluate((v) => (window.__mockControl = { calls: [], ...v }), value);
+const mockCtl = (p, key) => p.evaluate((k) => window.__mockControl?.[k] ?? null, key);
+const miniUrl = (book, page) => `/index.html?mini=1&book=${encodeURIComponent(book)}&page=${encodeURIComponent(page)}`;
+
+describe("0.4.0: small windows", () => {
+  ui("right-click a tab to open it in a small window; the main tab fades and returns", { seed: seed({ "": { 甲: "一", 乙: "二", 丙: "三" } }) }, async (h) => {
+    const { p } = h;
+    await control(p);
+    await h.tabMenu("甲");
+    await p.click('#ctx [data-act="mini-open"]');
+    await until(() => mockCtl(p, "miniOpened"), [{ book: "", name: "甲", x: null, y: null }], "the page is opened in a small window");
+    await until(() => p.locator("#tabs .tab.in-mini").count(), 1, "the tab is marked");
+    assert.equal(await p.locator("#tabs .tab.in-mini .mini-badge").textContent(), "小窗");
+    await until(h.activeTab, "乙", "the main window moves to the next page");
+    assert.equal(await h.editor(), "二");
+    // 点变淡的标签:把小窗叫到前面,主窗口不换页
+    await h.tab("甲小窗").click();
+    await until(() => mockCtl(p, "miniFocused"), ["甲"]);
+    assert.equal(await h.activeTab(), "乙");
+    await h.tabMenu("甲小窗");
+    assert.deepEqual(await p.$$eval("#ctx button", (bs) => bs.filter((b) => b.disabled).map((b) => b.dataset.act)), ["rename", "move", "delete"],
+      "rename, move and delete wait until the page is back");
+    await p.click('#ctx [data-act="mini-back"]');
+    assert.deepEqual(await mockCtl(p, "miniRecalled"), ["甲"]);
+    // 小窗里改过内容,然后放回主窗口
+    await p.evaluate(() => (window.__mockBooks[""].files["甲"] = "小窗里改过"));
+    await p.evaluate(() => window.__mockMiniClosed("", "甲", true));
+    await until(h.activeTab, "甲", "放回 activates the page");
+    await until(h.editor, "小窗里改过", "the main window shows what the small window saved");
+    assert.equal(await p.locator("#tabs .tab.in-mini").count(), 0);
+    await p.click("#editor .ProseMirror");
+    await p.keyboard.press("Control+End");
+    await p.keyboard.type("!");
+    await until(() => h.mockFile("", "甲"), "小窗里改过!", "editing works again without a conflict copy");
+    assert.deepEqual(await h.tabs(), ["甲", "乙", "丙"]);
+  });
+
+  ui("a page in a small window is read only in the main window and never saved there", { seed: seed({ "": { 唯一: "原文" } }) }, async (h) => {
+    const { p } = h;
+    await p.evaluate(() => window.__mockEmit("mini-changed", [{ book: "", name: "唯一" }]));
+    await p.locator("#read-error.in-mini").waitFor();
+    assert.match(await p.textContent("#read-error"), /正在小窗里编辑/);
+    assert.equal(await p.evaluate(() => document.querySelector("#editor .ProseMirror").contentEditable), "false");
+    await control(p);
+    await p.click("#read-error");
+    assert.deepEqual(await mockCtl(p, "miniFocused"), ["唯一"], "the banner brings the small window forward");
+    await p.keyboard.press("Control+w");
+    await until(h.toast, "「唯一」正在小窗里编辑,先把它放回主窗口再删除");
+    await p.evaluate(() => window.__minipad.flush());
+    assert.equal(await h.mockFile("", "唯一"), "原文");
+    assert.ok(!(await mockCtl(p, "calls")).includes("save_note"));
+  });
+
+  ui("the ↗ on a hovered tab, dragging a tab out and Shift+Enter in quick switch all open a small window", { seed: seed({ "": { 甲: "一", 乙: "二", 丙: "三" } }) }, async (h) => {
+    const { p } = h;
+    await control(p);
+    assert.equal(await h.tab("乙").locator(".tab-mini").isVisible(), false, "hidden until hovered");
+    const before = await h.tab("乙").evaluate((t) => t.getBoundingClientRect().width);
+    await h.tab("乙").hover();
+    await h.tab("乙").locator(".tab-mini").waitFor();
+    const [nameRight, buttonLeft] = await h.tab("乙").evaluate((t) =>
+      [t.querySelector("span").getBoundingClientRect().right, t.querySelector(".tab-mini").getBoundingClientRect().left]);
+    assert.ok(buttonLeft >= nameRight, "the ↗ sits beside the name, never over it");
+    assert.equal(await h.tab("乙").evaluate((t) => t.getBoundingClientRect().width), before, "the tab keeps its width, so nothing shifts");
+    await h.tab("乙").locator(".tab-mini").click();
+    await until(() => mockCtl(p, "miniOpened").then((o) => o?.map((m) => m.name)), ["乙"]);
+    assert.equal(await h.activeTab(), "甲", "clicking ↗ does not switch pages");
+    // 拖到窗口外面松手
+    await h.tab("丙").evaluate((t) => {
+      t.dispatchEvent(new DragEvent("dragstart", { bubbles: true, dataTransfer: new DataTransfer() }));
+      const dt = new DataTransfer();
+      dt.dropEffect = "none";
+      t.dispatchEvent(new DragEvent("dragend", { bubbles: true, dataTransfer: dt, screenX: window.screenX + window.outerWidth + 80, screenY: window.screenY + 50 }));
+    });
+    await until(() => mockCtl(p, "miniOpened").then((o) => o?.map((m) => m.name)), ["乙", "丙"]);
+    const dropped = (await mockCtl(p, "miniOpened"))[1];
+    assert.ok(dropped.x > 440 && dropped.y > 0, "the small window opens where the tab was released");
+    await p.keyboard.press("Control+p");
+    await p.keyboard.type("甲");
+    await p.keyboard.press("Shift+Enter");
+    await until(() => mockCtl(p, "miniOpened").then((o) => o?.map((m) => m.name)), ["乙", "丙", "甲"]);
+  });
+
+  ui("settings turn small windows off, hide the ↗ and keep the other options", { seed: seed({ "": { 甲: "一", 乙: "二" } }) }, async (h) => {
+    const { p } = h;
+    await p.click("#btn-settings");
+    await settingsPage(p, "window");
+    assert.equal(await p.isChecked("#set-mini"), true);
+    assert.equal(await p.isChecked("#set-mini-top"), true);
+    assert.equal(await p.inputValue("#set-mini-hotkey"), "follow");
+    assert.equal(await p.inputValue("#set-mini-max"), "");
+    await p.selectOption("#set-mini-hotkey", "independent");
+    await p.fill("#set-mini-max", "3");
+    await p.locator("#set-mini-opacity").fill("70");
+    await p.uncheck("#set-mini-tab-button");
+    await p.uncheck("#set-mini-restore");
+    await p.uncheck("#set-mini");
+    assert.equal(await p.isDisabled("#set-mini-max"), true, "the other options grey out");
+    await p.click("#set-save");
+    const s = (await h.stored()).settings;
+    assert.deepEqual([s.mini_enabled, s.mini_hotkey, s.mini_max, s.mini_opacity, s.mini_tab_button, s.mini_restore],
+      [false, "independent", 3, 70, false, false]);
+    assert.equal(await p.locator("#tabs .tab-mini").count(), 0);
+    await h.tabMenu("乙");
+    assert.equal(await p.locator('#ctx [data-act="mini-open"]').count(), 0);
+    await p.keyboard.press("Escape");
+    await control(p);
+    await p.keyboard.press("Control+p");
+    await p.keyboard.type("乙");
+    await p.keyboard.press("Shift+Enter");
+    await until(h.toast, "小窗已经关掉了,可以在 设置 → 窗口 里打开");
+    assert.equal(await mockCtl(p, "miniOpened"), null);
+  });
+
+  ui("quitting waits for small windows to save and says when one could not", { seed: seed({ "": { 页: "一" } }) }, async (h) => {
+    const { p } = h;
+    await control(p, { miniFlushErrors: ["小窗「页」:磁盘满了"] });
+    await p.evaluate(() => window.__mockEmit("before-quit", 21));
+    await p.locator("#dialog").waitFor();
+    assert.match(await p.textContent("#dialog-msg"), /小窗里的页面没保存成功.*磁盘满了/);
+    await p.click("#dialog-cancel");
+    assert.ok((await mockCtl(p, "calls")).includes("mini_flush_all"));
+    assert.ok(!(await mockCtl(p, "calls")).includes("quit_app"));
+    await control(p);
+    await p.evaluate(() => window.__mockEmit("before-quit", 22));
+    await until(async () => (await mockCtl(p, "calls")).includes("quit_app"), true, "quits once every small window saved");
+  });
+
+  ui("changing the notes folder waits until small windows are closed", { seed: seed({ "": { 甲: "一", 乙: "二" } }) }, async (h) => {
+    const { p } = h;
+    await p.evaluate(() => window.__mockEmit("mini-changed", [{ book: "", name: "甲" }]));
+    await p.click("#btn-settings");
+    await settingsPage(p, "data");
+    await p.fill("#set-dir", "D:\\新笔记");
+    await p.click("#set-save");
+    await until(() => p.textContent("#set-error"), "还有页面在小窗里编辑,先把小窗都关掉再换笔记文件夹");
+    assert.equal((await h.stored()).settings.notes_dir, "");
+  });
+
+  ui("the small window shows one page with its full title and the small-window buttons", {
+    seed: seed({ "": { 甲: "一", "一个很长很长很长很长很长很长很长很长很长很长很长的页面名字": "长页面的内容" } }),
+    url: miniUrl("", "一个很长很长很长很长很长很长很长很长很长很长很长的页面名字"),
+  }, async (h) => {
+    const { p } = h;
+    await until(h.editor, "长页面的内容");
+    assert.equal(await p.evaluate(() => document.documentElement.hasAttribute("data-mini")), true);
+    const title = p.locator("#mini-title");
+    assert.equal(await title.textContent(), "一个很长很长很长很长很长很长很长很长很长很长很长的页面名字");
+    const [sw, cw, sh, ch] = await title.evaluate((t) => [t.scrollWidth, t.clientWidth, t.scrollHeight, t.clientHeight]);
+    assert.ok(sw <= cw && sh <= ch, "the title wraps instead of being cut");
+    for (const sel of ["#tabs", "#btn-book", "#btn-new", "#btn-settings", "#btn-search", "#btn-hide"]) {
+      assert.equal(await p.isVisible(sel), false, `${sel} is hidden in a small window`);
+    }
+    for (const sel of ["#btn-mini-top", "#btn-mini-opacity", "#btn-mini-back", "#btn-mini-close", "#btn-format", "#format-bar"]) {
+      assert.equal(await p.isVisible(sel), true, `${sel} is shown`);
+    }
+    // 只有这一页:Ctrl+T、Ctrl+W、Ctrl+Tab 都不做什么,Esc 不隐藏
+    await control(p);
+    await p.click("#editor .ProseMirror");
+    for (const key of ["Control+t", "Control+w", "Control+Tab", "Escape"]) await p.keyboard.press(key);
+    await p.keyboard.press("Control+End");
+    await p.keyboard.type("!");
+    await until(() => h.mockFile("", "一个很长很长很长很长很长很长很长很长很长很长很长的页面名字"), "长页面的内容!", "typing is saved");
+    await p.evaluate(() => window.__minipad.flush());
+    const calls = await mockCtl(p, "calls");
+    for (const cmd of ["save_meta", "set_current_book", "create_note", "delete_note", "hide_window"]) {
+      assert.ok(!calls.includes(cmd), `a small window never calls ${cmd}`);
+    }
+    assert.deepEqual((await h.mock())[""].meta.order, ["甲", "一个很长很长很长很长很长很长很长很长很长很长很长的页面名字"], "the notebook's order is untouched");
+  });
+
+  ui("small window buttons: on top, opacity, put back and close, and saving before quitting", {
+    seed: seed({ "": { 甲: "一", 乙: "二" } }),
+    url: miniUrl("", "乙"),
+  }, async (h) => {
+    const { p } = h;
+    await until(h.editor, "二");
+    await control(p);
+    assert.equal(await p.getAttribute("#btn-mini-top", "aria-pressed"), "true", "on top by default");
+    await p.click("#btn-mini-top");
+    assert.equal(await p.getAttribute("#btn-mini-top", "aria-pressed"), "false");
+    await p.click("#btn-mini-opacity");
+    await p.locator("#mini-opacity").fill("60");
+    await until(() => p.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--mini-opacity").trim()), "0.6");
+    assert.deepEqual(await mockCtl(p, "miniSet"), [{ top: false, opacity: null }, { top: null, opacity: 60 }]);
+    assert.equal(await p.textContent("#mini-opacity-val"), "60%");
+    // 退出程序前存好
+    await p.click("#editor .ProseMirror");
+    await p.keyboard.press("Control+End");
+    await p.keyboard.type("!");
+    await p.evaluate(() => window.__mockEmit("mini-flush"));
+    await until(() => mockCtl(p, "miniFlushed"), [null]);
+    assert.equal(await h.mockFile("", "乙"), "二!");
+    // 设置在主窗口里改了:小窗跟着换
+    await p.evaluate(() => window.__mockEmit("settings-changed", { ...window.__minipad.state.settings, font_size: 20 }));
+    await until(() => p.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--font-size").trim()), "20px");
+    await p.click("#btn-mini-back");
+    await until(() => mockCtl(p, "miniClosed"), [true], "放回主窗口");
+    await p.click("#btn-mini-close");
+    await until(() => mockCtl(p, "miniClosed"), [true, false], "关闭");
+    await p.evaluate(() => window.__mockEmit("mini-close-request"));
+    await until(() => mockCtl(p, "miniClosed"), [true, false, false], "Alt+F4 also saves first");
+  });
+});
+
+describe("0.4.0: images", () => {
+  ui("a pasted screenshot is saved in assets and shown; the page keeps a relative link", { seed: seed({ "": { 页: "文字" } }) }, async (h) => {
+    const { p } = h;
+    await p.click("#editor .ProseMirror");
+    await p.keyboard.press("Control+End");
+    await sendImage(p, "paste");
+    await until(() => h.mockFile("", "页"), "文字![](assets/img-20261016-101500.png)", "the page links the saved image");
+    const img = p.locator("#editor .ProseMirror img:not(.ProseMirror-separator)");
+    assert.match(await img.getAttribute("src"), /^data:image\/png;base64,/, "the image is shown");
+    await until(() => img.evaluate((i) => i.naturalWidth), 1);
+    await sendImage(p, "drop", "图表.png");
+    await until(() => h.mockFile("", "页").then((t) => t.match(/!\[[^\]]*\]\([^)]+\)/g)?.sort()),
+      ["![](assets/img-20261016-101500.png)", "![图表](assets/img-20261016-101500-2.png)"], "a dropped file gets its own name");
+  });
+
+  ui("images can be turned off and resized in settings, and move with their page", {
+    seed: seed({ "": { 页: "文字" }, 别处: { 旧: "x" } }),
+  }, async (h) => {
+    const { p } = h;
+    await p.click("#editor .ProseMirror");
+    await sendImage(p, "paste");
+    await until(() => h.mockFile("", "页").then((t) => t.includes("assets/img-")), true);
+    await p.click("#btn-settings");
+    await settingsPage(p, "edit");
+    assert.equal(await p.isChecked("#set-image-paste"), true);
+    await p.selectOption("#set-image-size", "small");
+    await p.uncheck("#set-image-paste");
+    await p.click("#set-save");
+    assert.equal(await p.evaluate(() => document.documentElement.dataset.imageSize), "small");
+    assert.ok((await p.locator("#editor .ProseMirror img:not(.ProseMirror-separator)").evaluate((i) => i.getBoundingClientRect().width)) <= 240);
+    const before = await h.mockFile("", "页");
+    await control(p);
+    await p.click("#editor .ProseMirror");
+    await sendImage(p, "paste");
+    await p.evaluate(() => window.__minipad.flush());
+    assert.ok(!(await mockCtl(p, "calls")).includes("save_image"), "turned off: nothing is saved");
+    assert.equal(await h.mockFile("", "页"), before);
+    await h.tabMenu("页");
+    await p.click('#ctx [data-act="move"]');
+    await h.item("别处").click();
+    await until(() => p.evaluate(() => window.__mockImage("别处", "assets/img-20261016-101500.png").slice(0, 11)), "data:image/",
+      "the image is copied to the other notebook");
   });
 });

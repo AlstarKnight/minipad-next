@@ -41,7 +41,7 @@ function paintCount() {
   clearTimeout(countTimer);
   countTimer = 0;
   const n = current();
-  $("#st-count").textContent = n && !n.unreadable ? `${visibleLength()} 字` : "";
+  $("#st-count").textContent = n && !n.unreadable && !n.mini ? `${visibleLength()} 字` : "";
 }
 
 // 只读横幅在窄窗口换行后高度可能继续变化。
@@ -51,12 +51,20 @@ const readErrorObserver = new ResizeObserver(() => {
 });
 readErrorObserver.observe($("#read-error"));
 
+// 主窗口里正在小窗里编辑的页面也用这个横幅(只读),点一下切到小窗
+$("#read-error").addEventListener("click", (e) => {
+  if (e.currentTarget.classList.contains("in-mini")) document.dispatchEvent(new CustomEvent("focus-mini"));
+});
+
 function showReadError(n) {
   const box = $("#read-error");
-  box.hidden = !n?.unreadable;
-  box.textContent = n?.unreadable ? "这一页读取失败:" + (n.reason || "未知错误") : "";
-  document.documentElement.toggleAttribute("data-unreadable", !!n?.unreadable);
+  const mini = !n?.unreadable && !!n?.mini;
+  const locked = !!n?.unreadable || mini;
+  box.hidden = !locked;
+  box.classList.toggle("in-mini", mini);
+  box.textContent = n?.unreadable ? "这一页读取失败:" + (n.reason || "未知错误") : mini ? "这一页正在小窗里编辑,点这里切到小窗" : "";
+  document.documentElement.toggleAttribute("data-unreadable", locked);
   // 告警可换行、选择复制；用实际高度挪开正文，避免长文件名截断提示。
   $("#main").style.setProperty("--read-error-height",
-    n?.unreadable ? box.getBoundingClientRect().height + 12 + "px" : "0px");
+    locked ? box.getBoundingClientRect().height + 12 + "px" : "0px");
 }

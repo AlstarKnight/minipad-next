@@ -9,6 +9,7 @@ import { rememberView, showNote } from "./page.js";
 import { renderTabs, ensurePage, removeNote } from "./tabs.js";
 import { BOOK_ICONS, bookIcon, iconColor } from "./bookicons.js";
 import { tidyAccent } from "./accent.js";
+import { refuseInMini } from "./mini.js";
 import { makeSharedColorTools } from "./sharedcolors.js";
 
 // 为了"移到笔记本…"打开列表时是要移动的页面,平时是 null
@@ -75,6 +76,7 @@ function renderList() {
 
 // 打开笔记本列表;传了页面就是"把这个页面移到…"
 export function openBooks(note = null) {
+  if (note && refuseInMini(note, "移动")) return;
   closeOverlays();
   moving = note;
   $("#books-title").textContent = note ? `把「${note.name}」移到…` : "笔记本";
@@ -160,7 +162,7 @@ export async function createBook() {
 }
 
 export async function renameBook(b) {
-  if (!b.name) return;
+  if (!b.name || refuseInMini(b, "给笔记本改名")) return;
   const name = await askText("笔记本的新名字:", b.name, "改名");
   if (name && name !== b.name) {
     try {
@@ -178,7 +180,7 @@ export async function renameBook(b) {
 }
 
 export async function deleteBook(b) {
-  if (!b.name) return;
+  if (!b.name || refuseInMini(b, "删除笔记本")) return;
   const count = b.notes.length;
   const msg =
     `删除笔记本「${b.name}」${count ? `和里面的 ${count} 个页面` : ""}?\n` +
@@ -211,7 +213,7 @@ export async function deleteBook(b) {
 // 把页面移到另一个笔记本,人还留在当前笔记本
 export async function moveNoteTo(n, target) {
   const src = state.books.find((b) => b.notes.includes(n));
-  if (!src || src === target || !state.books.includes(target)) return;
+  if (!src || src === target || !state.books.includes(target) || refuseInMini(n, "移动")) return;
   try {
     await mutate(() => holdSaves(async () => {
       await saveMeta();

@@ -1,5 +1,5 @@
 // Minipad Next 前端入口:启动、全局快捷键、按钮
-import { api, isMock } from "./api.js";
+import { api, isMock, isMiniWindow } from "./api.js";
 import { $ } from "./dom.js";
 import { state, book, current } from "./state.js";
 import { toast, dialogOpen, closeDialog, closeMenu, closeOverlays, focusEditor, ask, askText } from "./ui.js";
@@ -15,19 +15,22 @@ import { openFind, closeFind, findAgain, bindFind } from "./findbar.js";
 import { bindImport, closeImport } from "./importer.js";
 import { bindTrash, closeTrash } from "./trash.js";
 import { bindQuick } from "./quickswitch.js";
-import { openSettings, saveSettings, applyEdgeAppearance, bindSettings, skippedText } from "./settings.js";
+import { openSettings, saveSettings, applySettings, applyEdgeAppearance, bindSettings, skippedText } from "./settings.js";
 import { bindOutline } from "./outline.js";
 import { upgradeColorLibrary } from "./sharedcolors.js";
 import { createEditor, editorDebug, insertText, toggleTask } from "./editor.js";
 import { setLinkPrompt, setTaskCommand } from "./toolbar.js";
 import { formatDate } from "./datetime.js";
+import { initMini, bindMiniMain } from "./mini.js";
 
 // ---------- 启动 ----------
 async function init() {
   setLinkPrompt(() => askText("链接地址", "https://"));
   setTaskCommand(toggleTask);
-  await createEditor({ onChange: markDirty, openLink, emptyBold: () => toggleBooks() });
+  await createEditor({ onChange: markDirty, openLink, emptyBold: () => isMiniWindow || toggleBooks() });
   bindUi();
+  // 小窗:只放一页,别的(托盘退出、贴边隐藏、备份提示……)都归主窗口
+  if (isMiniWindow) return initMini();
   await reload();
   void upgradeColorLibrary().catch(() => {});
   api.listen("flush", () => { void flushAll().catch(() => {}); });
@@ -60,6 +63,12 @@ async function init() {
   api.listen("backup-error", (e) => toast("自动备份失败:" + e.payload, 5000));
   // 今天的备份里有读不了的文件(比如被别的程序独占打开)没装进去
   api.listen("backup-skipped", (e) => toast(skippedText(e.payload), 9000));
+  // 在小窗里改的设置(比如 Ctrl+加号 调字号)
+  api.listen("settings-changed", (e) => {
+    state.settings = e.payload;
+    applySettings();
+  });
+  bindMiniMain();
 }
 
 // 托盘退出确认后，给正常保存最多 10 秒。超时只弹确认，不直接退出。
@@ -77,6 +86,9 @@ async function handleQuit(id) {
       try {
         await flushAll();
         await saveMeta();
+        // 小窗里的页面:让每个小窗自己存好(后端最多等 8 秒)
+        const miniErrors = await api.invoke("mini_flush_all");
+        if (miniErrors?.length) return { ok: false, error: miniErrors.join("；"), mini: true };
         return { ok: true, error: "" };
       } catch (e) {
         return { ok: false, error: String(e) };
@@ -96,7 +108,9 @@ async function handleQuit(id) {
     const detail = result.error || "部分页面仍有未保存的修改";
     const message = pending
       ? `有 ${pending} 页没保存成功（${detail}），仍要退出吗？`
-      : `笔记元信息未保存成功（${detail}），仍要退出吗？`;
+      : result.mini
+        ? `小窗里的页面没保存成功（${detail}），仍要退出吗？`
+        : `笔记元信息未保存成功（${detail}），仍要退出吗？`;
     if (await ask(message, "仍要退出", true)) {
       await api.invoke("quit_app");
     } else {
@@ -262,11 +276,22 @@ function bindUi() {
       e.preventDefault();
       // 一次关一层:先关右键菜单,再关弹层,然后是查找栏,都没有才隐藏窗口
       if (!$("#ctx").hidden) closeMenu();
-      else if (!closeImport() && !closeTrash() && !closeOverlays() && !closeFind()) hideWindow();
+      else if (!closeImport() && !closeTrash() && !closeOverlays() && !closeFind() && !isMiniWindow) hideWindow();
       return;
     }
     // 编辑器自己处理过的快捷键(Ctrl+Z、Ctrl+B 加粗……)不再算窗口的
     if (!ctrl || e.defaultPrevented) return;
+    // 小窗里只有这一页:换页、新建、删除、笔记本列表、搜索全部页面都不用
+    if (isMiniWindow) {
+      if (k === "f" || k === "h") (e.preventDefault(), openFind({ replace: k === "h" }));
+      else if (k === "s") (e.preventDefault(), void flushAll().catch(() => {}));
+      else if (k === "=" || k === "+" || k === "-") {
+        e.preventDefault();
+        const fs = Math.min(28, Math.max(10, (state.settings.font_size || 14) + (k === "-" ? -1 : 1)));
+        saveSettings({ ...state.settings, font_size: fs }).catch(() => {});
+      } else if (["b", "t", "n", "w", "tab", "1", "2", "3", "4", "5", "6", "7", "8", "9"].includes(k)) e.preventDefault();
+      return;
+    }
     if (k === "b") (e.preventDefault(), toggleBooks());
     else if (k === "t" || k === "n") (e.preventDefault(), newNote());
     else if (k === "f") {
@@ -281,7 +306,13 @@ function bindUi() {
       e.preventDefault();
       const b = book();
       const len = b.notes.length;
-      switchTo((b.active + (e.shiftKey ? -1 : 1) + len) % len);
+      // 跳过在小窗里编辑的页面
+      let i = b.active;
+      for (let step = 0; step < len; step++) {
+        i = (i + (e.shiftKey ? -1 : 1) + len) % len;
+        if (!b.notes[i].mini) break;
+      }
+      switchTo(i);
     } else if (/^[1-9]$/.test(e.key)) {
       e.preventDefault();
       const i = Number(e.key) - 1;

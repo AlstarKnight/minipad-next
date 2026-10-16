@@ -1,6 +1,8 @@
 mod backup;
 mod ball;
 mod edge;
+mod images;
+mod mini;
 mod minipad2;
 mod notes;
 
@@ -206,6 +208,26 @@ pub struct Settings {
     sel_bar_items: Vec<String>,
     /// 悬浮工具栏放在选区的 above 上面 / below 下面(放不下时换到另一边)
     sel_bar_pos: String,
+    /// 0.4.0 小窗:允许把页面放进单独的小窗
+    mini_enabled: bool,
+    /// 新开的小窗默认置顶
+    mini_on_top: bool,
+    /// 按热键显示 / 隐藏主窗口时小窗:follow 一起显示和隐藏 / independent 不受影响
+    mini_hotkey: String,
+    /// 新开的小窗的不透明度(百分比,40–100);鼠标移上去时不透明
+    mini_opacity: u32,
+    /// 重启后恢复上次开着的小窗
+    mini_restore: bool,
+    /// 最多同时打开几个小窗,0 表示不限
+    mini_max: u32,
+    /// 鼠标移到标签上时显示「在小窗中打开」的 ↗ 按钮
+    mini_tab_button: bool,
+    /// 0.4.0 粘贴、拖进来的图片存进笔记本文件夹里的 assets
+    image_paste: bool,
+    /// 图片显示多大:full 最宽铺满 / medium 最宽一半多 / small 小图
+    image_size: String,
+    /// 每页小窗的位置、大小、置顶和不透明度(程序自己记,保存设置时沿用这里的)
+    mini_windows: Vec<mini::MiniWin>,
     window: Option<Geom>,
 }
 
@@ -297,6 +319,16 @@ impl Default for Settings {
             .map(String::from)
             .to_vec(),
             sel_bar_pos: "above".into(),
+            mini_enabled: true,
+            mini_on_top: true,
+            mini_hotkey: "follow".into(),
+            mini_opacity: 100,
+            mini_restore: true,
+            mini_max: 0,
+            mini_tab_button: true,
+            image_paste: true,
+            image_size: "full".into(),
+            mini_windows: Vec::new(),
             window: None,
         }
     }
@@ -362,6 +394,20 @@ struct AppState {
     backup_running: AtomicBool,
     /// 这次运行里最近一份备份跳过的文件(读不了的):(日期, 文件)
     backup_skipped: Mutex<(String, Vec<String>)>,
+    /// 开着的小窗
+    minis: Mutex<Vec<OpenMini>>,
+    mini_seq: AtomicU64,
+    /// 退出前等小窗把页面存好:还没回话的小窗,和它们报的错
+    mini_flush: Mutex<(std::collections::HashSet<String>, Vec<String>)>,
+    /// 上次退出时还开着的小窗,主窗口读完笔记后恢复
+    mini_restore: Mutex<Vec<(String, String)>>,
+}
+
+#[derive(Clone)]
+struct OpenMini {
+    label: String,
+    book: String,
+    name: String,
 }
 
 #[derive(Serialize)]
@@ -787,6 +833,11 @@ fn tidy_settings(s: &mut Settings) {
     s.quick_switch_key = s.quick_switch_key.trim().chars().take(40).collect();
     pick_one(&mut s.sel_bar, &["always", "nobar", "off"]);
     pick_one(&mut s.sel_bar_pos, &["above", "below"]);
+    pick_one(&mut s.mini_hotkey, &["follow", "independent"]);
+    pick_one(&mut s.image_size, &["full", "medium", "small"]);
+    s.mini_opacity = mini::clamp_opacity(s.mini_opacity);
+    s.mini_max = s.mini_max.min(20);
+    mini::tidy(&mut s.mini_windows);
     let mut seen = std::collections::HashSet::new();
     s.sel_bar_items
         .retain(|id| !id.is_empty() && id.len() <= 32 && seen.insert(id.clone()));
@@ -1020,7 +1071,91 @@ fn delete_note(app: AppHandle, book: String, name: String) -> Result<(), String>
 #[tauri::command]
 fn move_note(app: AppHandle, book: String, name: String, target: String) -> Result<String, String> {
     maybe_backup(&app);
-    notes::move_note(&current_notes_dir(&app), &book, &name, &target)
+    let root = current_notes_dir(&app);
+    let new = notes::move_note(&root, &book, &name, &target)?;
+    // 页面里的图片(assets/…)也复制到那个笔记本,不然移过去就看不到了
+    if book != target {
+        if let (Ok(from), Ok(to), Ok(page)) = (
+            notes::book_dir(&root, &book),
+            notes::book_dir(&root, &target),
+            notes::page_path(&root, &target, &new),
+        ) {
+            let content = fs::read_to_string(&page).unwrap_or_default();
+            for rel in images::copy_referenced(&from, &to, &content) {
+                eprintln!("移动页面时没能复制图片 {rel}");
+            }
+        }
+    }
+    Ok(new)
+}
+
+#[derive(Deserialize)]
+struct ImageMeta {
+    book: String,
+    ext: String,
+}
+
+/// 粘贴、拖进来的图片:存进这个笔记本的 assets 文件夹,返回页面里写的相对路径。
+/// 图片内容直接作为二进制传过来,笔记本名字和扩展名放在 x-image 头里(encodeURIComponent 过的 JSON)
+#[tauri::command]
+fn save_image(app: AppHandle, request: tauri::ipc::Request<'_>) -> Result<String, String> {
+    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
+        return Err("图片数据不对".into());
+    };
+    let meta = request
+        .headers()
+        .get("x-image")
+        .and_then(|v| v.to_str().ok())
+        .and_then(images::percent_decode)
+        .ok_or("缺少图片信息")?;
+    let meta: ImageMeta = serde_json::from_str(&meta).map_err(|e| e.to_string())?;
+    let s = app.state::<AppState>().settings.lock().unwrap().clone();
+    if !s.image_paste {
+        return Err("粘贴图片已经关掉了,可以在 设置 → 编辑 里打开".into());
+    }
+    let dir = notes::book_dir(&notes_dir(&app, &s), &meta.book)?;
+    if !dir.is_dir() {
+        return Err("找不到这个笔记本".into());
+    }
+    let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S").to_string();
+    images::save(&dir, bytes, &meta.ext, &stamp)
+}
+
+/// 编辑器里显示图片:http://note.localhost/img?book=…&path=assets/…(Windows 上的写法)
+fn note_image(app: &AppHandle, uri: &tauri::http::Uri) -> tauri::http::Response<Vec<u8>> {
+    let not_found = || {
+        tauri::http::Response::builder()
+            .status(404)
+            .body(Vec::new())
+            .unwrap()
+    };
+    let query = uri.query().unwrap_or_default();
+    let (Some(book), Some(rel)) = (
+        images::query_value(query, "book"),
+        images::query_value(query, "path"),
+    ) else {
+        return not_found();
+    };
+    let root = current_notes_dir(app);
+    let Some(path) = notes::book_dir(&root, &book)
+        .ok()
+        .and_then(|dir| images::resolve(&dir, &rel))
+    else {
+        return not_found();
+    };
+    let mime = path
+        .extension()
+        .and_then(|x| x.to_str())
+        .and_then(images::mime_for)
+        .unwrap_or("application/octet-stream");
+    match fs::read(&path) {
+        Ok(bytes) => tauri::http::Response::builder()
+            .header("Content-Type", mime)
+            .header("Cache-Control", "no-cache")
+            .body(bytes)
+            .unwrap_or_else(|_| not_found()),
+        Err(_) => not_found(),
+    }
 }
 
 /// 参数和前端发来的字段一一对应
@@ -1107,11 +1242,8 @@ fn trash_empty(app: AppHandle) -> Result<usize, String> {
 
 /// 从窗口内容区（Alt+左键）触发原生 Windows 拖动。
 #[tauri::command]
-fn start_window_drag(app: AppHandle) -> Result<(), String> {
-    main_window(&app)
-        .ok_or("找不到主窗口")?
-        .start_dragging()
-        .map_err(|e| e.to_string())
+fn start_window_drag(window: WebviewWindow) -> Result<(), String> {
+    window.start_dragging().map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -1258,6 +1390,7 @@ fn append_rollback_error(original: String, rollback: Vec<String>) -> String {
 #[tauri::command]
 fn save_settings(
     app: AppHandle,
+    window: WebviewWindow,
     settings: Settings,
     migrate_notes: Option<bool>,
 ) -> Result<Settings, String> {
@@ -1273,6 +1406,7 @@ fn save_settings(
     let mut new = settings;
     new.window = old.window.clone();
     new.ball_pos = old.ball_pos;
+    new.mini_windows = old.mini_windows.clone();
     tidy_settings(&mut new);
 
     let old_notes = notes_dir(&app, &old);
@@ -1327,6 +1461,9 @@ fn save_settings(
         let _ = win.set_always_on_top(new.always_on_top);
         let _ = win.set_skip_taskbar(!new.show_in_taskbar);
     }
+    for w in mini_windows(&app) {
+        let _ = w.set_skip_taskbar(!new.show_in_taskbar);
+    }
     // 关掉贴边隐藏或者换了样式(露出的宽度不同),先把窗口放出来
     if !new.edge_hide
         || new.edge_style != old.edge_style
@@ -1344,6 +1481,14 @@ fn save_settings(
     }
     *state.settings.lock().unwrap() = new.clone();
     persist_settings(&app);
+    // 别的窗口(主窗口和小窗)换上新设置
+    for label in
+        std::iter::once("main".to_string()).chain(open_minis(&app).into_iter().map(|m| m.label))
+    {
+        if label != window.label() {
+            let _ = app.emit_to(label.as_str(), "settings-changed", &new);
+        }
+    }
     // 关掉悬浮图标时如果正缩着,就把窗口放出来;改了大小、图标、颜色就让悬浮图标重画
     if !new.ball_enabled && ball_visible(&app) {
         show_main(&app);
@@ -1371,7 +1516,11 @@ fn resume_hotkey(app: AppHandle) {
 
 /// 前端在用户打字时调用(有节流),用来判断贴边隐藏该不该缩回去
 #[tauri::command]
-fn note_activity(app: AppHandle) {
+fn note_activity(app: AppHandle, window: WebviewWindow) {
+    // 只管主窗口贴边时要不要缩回去,小窗里打字不算
+    if window.label() != "main" {
+        return;
+    }
     app.state::<AppState>().typing.store(true, Ordering::SeqCst);
 }
 
@@ -1496,6 +1645,351 @@ fn request_tray_quit(app: &AppHandle) {
 }
 
 // ---------- 窗口显示 / 隐藏 / 贴边 ----------
+
+// ---------- 小窗 ----------
+
+fn open_minis(app: &AppHandle) -> Vec<OpenMini> {
+    app.state::<AppState>().minis.lock().unwrap().clone()
+}
+
+fn mini_windows(app: &AppHandle) -> Vec<WebviewWindow> {
+    open_minis(app)
+        .iter()
+        .filter_map(|m| app.get_webview_window(&m.label))
+        .collect()
+}
+
+fn mini_by_label(app: &AppHandle, label: &str) -> Option<OpenMini> {
+    open_minis(app).into_iter().find(|m| m.label == label)
+}
+
+#[derive(Serialize, Clone)]
+struct MiniPage {
+    book: String,
+    name: String,
+}
+
+/// 告诉主窗口现在哪些页面在小窗里(这些标签变淡)
+fn emit_minis(app: &AppHandle) {
+    let _ = app.emit_to("main", "mini-changed", mini_pages(app));
+}
+
+fn mini_pages(app: &AppHandle) -> Vec<MiniPage> {
+    open_minis(app)
+        .into_iter()
+        .map(|m| MiniPage {
+            book: m.book,
+            name: m.name,
+        })
+        .collect()
+}
+
+/// 小窗记住的位置、大小、置顶和不透明度(没开过就用设置里的默认值)
+fn mini_entry(app: &AppHandle, book: &str, name: &str) -> mini::MiniWin {
+    let s = app.state::<AppState>().settings.lock().unwrap().clone();
+    let mut list = s.mini_windows.clone();
+    mini::find(&mut list, book, name)
+        .map(|m| m.clone())
+        .unwrap_or(mini::MiniWin {
+            book: book.into(),
+            name: name.into(),
+            top: s.mini_on_top,
+            opacity: s.mini_opacity,
+            ..Default::default()
+        })
+}
+
+fn update_entry(app: &AppHandle, book: &str, name: &str, change: impl FnOnce(&mut mini::MiniWin)) {
+    let mut entry = mini_entry(app, book, name);
+    change(&mut entry);
+    let st = app.state::<AppState>();
+    mini::remember(&mut st.settings.lock().unwrap().mini_windows, entry);
+}
+
+fn open_mini(
+    app: &AppHandle,
+    book: &str,
+    name: &str,
+    at: Option<(f64, f64)>,
+    focus: bool,
+) -> Result<(), String> {
+    if let Some(m) = open_minis(app)
+        .into_iter()
+        .find(|m| m.book == book && m.name == name)
+    {
+        if let Some(w) = app.get_webview_window(&m.label) {
+            let _ = w.show();
+            let _ = w.set_focus();
+        }
+        return Ok(());
+    }
+    let s = app.state::<AppState>().settings.lock().unwrap().clone();
+    if !s.mini_enabled {
+        return Err("小窗已经关掉了,可以在 设置 → 窗口 里打开".into());
+    }
+    let count = open_minis(app).len();
+    if s.mini_max > 0 && count >= s.mini_max as usize {
+        return Err(format!(
+            "最多同时开 {} 个小窗,先关掉一个吧(设置 → 窗口 可以改)",
+            s.mini_max
+        ));
+    }
+    if !notes::page_path(&notes_dir(app, &s), book, name)?.is_file() {
+        return Err(format!("找不到页面「{name}」"));
+    }
+    let st = app.state::<AppState>();
+    let label = format!("mini-{}", st.mini_seq.fetch_add(1, Ordering::SeqCst) + 1);
+    let entry = mini_entry(app, book, name);
+    let win = WebviewWindowBuilder::new(app, &label, WebviewUrl::App("index.html".into()))
+        .title(name)
+        .inner_size(340.0, 400.0)
+        .min_inner_size(220.0, 140.0)
+        .decorations(false)
+        .transparent(true)
+        .always_on_top(entry.top)
+        .skip_taskbar(!s.show_in_taskbar)
+        .disable_drag_drop_handler()
+        .focused(focus)
+        .visible(false)
+        .build()
+        .map_err(|e| e.to_string())?;
+    if entry.w > 0 {
+        apply_saved_geometry(
+            &win,
+            &Geom {
+                x: entry.x,
+                y: entry.y,
+                w: entry.w,
+                h: entry.h,
+            },
+        );
+    } else if let Some((x, y)) = at {
+        // 从主窗口拖出来的:小窗出现在松手的地方
+        let _ = win.set_position(tauri::LogicalPosition::new(x - 40.0, y - 14.0));
+    } else if let Some(r) = main_window(app).and_then(|m| window_rect(&m)) {
+        let step = 32 * (count as i32 + 1);
+        let _ = win.set_position(PhysicalPosition::new(r.x + step, r.y + step));
+    }
+    st.minis.lock().unwrap().push(OpenMini {
+        label,
+        book: book.into(),
+        name: name.into(),
+    });
+    update_entry(app, book, name, |m| m.open = true);
+    // 开机自启时主窗口藏在托盘里:恢复的小窗也先藏着,按热键时跟主窗口一起出来
+    let hidden_main = !main_window(app).is_some_and(|m| m.is_visible().unwrap_or(false));
+    if focus || s.mini_hotkey != "follow" || !hidden_main {
+        let _ = win.show();
+    }
+    if focus {
+        let _ = win.set_focus();
+    }
+    emit_minis(app);
+    persist_settings(app);
+    Ok(())
+}
+
+/// 把一页放进小窗(主窗口已经先把这页存好了);x、y 是拖出标签时松手的屏幕位置。
+/// 建窗口的命令要用 async,在 Windows 上同步命令里建窗口会卡死
+#[tauri::command]
+async fn mini_open(
+    app: AppHandle,
+    book: String,
+    name: String,
+    x: Option<f64>,
+    y: Option<f64>,
+) -> Result<(), String> {
+    open_mini(&app, &book, &name, x.zip(y), true)
+}
+
+#[derive(Serialize)]
+struct MiniSelf {
+    book: String,
+    name: String,
+    top: bool,
+    opacity: u32,
+}
+
+/// 小窗启动时问自己放的是哪一页
+#[tauri::command]
+fn mini_self(app: AppHandle, window: WebviewWindow) -> Option<MiniSelf> {
+    let m = mini_by_label(&app, window.label())?;
+    let e = mini_entry(&app, &m.book, &m.name);
+    Some(MiniSelf {
+        book: m.book,
+        name: m.name,
+        top: e.top,
+        opacity: e.opacity,
+    })
+}
+
+#[tauri::command]
+fn mini_list(app: AppHandle) -> Vec<MiniPage> {
+    mini_pages(&app)
+}
+
+/// 主窗口里点变淡的标签:把那个小窗叫到前面
+#[tauri::command]
+fn mini_focus(app: AppHandle, book: String, name: String) -> bool {
+    let Some(m) = open_minis(&app)
+        .into_iter()
+        .find(|m| m.book == book && m.name == name)
+    else {
+        return false;
+    };
+    let Some(w) = app.get_webview_window(&m.label) else {
+        return false;
+    };
+    let _ = w.show();
+    let _ = w.set_focus();
+    true
+}
+
+/// 主窗口里右键「放回主窗口」:让那个小窗存好页面后自己关掉
+#[tauri::command]
+fn mini_recall(app: AppHandle, book: String, name: String) -> bool {
+    let Some(m) = open_minis(&app)
+        .into_iter()
+        .find(|m| m.book == book && m.name == name)
+    else {
+        return false;
+    };
+    app.emit_to(m.label.as_str(), "mini-recall", ()).is_ok()
+}
+
+/// 小窗存好页面后关掉自己;back = 「放回主窗口」(主窗口出来并切到这页)
+#[tauri::command]
+async fn mini_close(app: AppHandle, window: WebviewWindow, back: bool) {
+    let Some(m) = mini_by_label(&app, window.label()) else {
+        let _ = window.destroy();
+        return;
+    };
+    update_entry(&app, &m.book, &m.name, |e| e.open = false);
+    forget_mini(&app, &m.label);
+    let _ = app.emit_to(
+        "main",
+        "mini-returned",
+        serde_json::json!({ "book": m.book, "name": m.name, "back": back }),
+    );
+    let _ = window.destroy();
+    if back {
+        show_main(&app);
+    }
+    persist_settings(&app);
+}
+
+fn forget_mini(app: &AppHandle, label: &str) {
+    let st = app.state::<AppState>();
+    let removed = {
+        let mut minis = st.minis.lock().unwrap();
+        let before = minis.len();
+        minis.retain(|m| m.label != label);
+        before != minis.len()
+    };
+    st.mini_flush.lock().unwrap().0.remove(label);
+    if removed {
+        emit_minis(app);
+    }
+}
+
+/// 小窗标题栏的置顶和不透明度
+#[tauri::command]
+fn mini_set(app: AppHandle, window: WebviewWindow, top: Option<bool>, opacity: Option<u32>) {
+    let Some(m) = mini_by_label(&app, window.label()) else {
+        return;
+    };
+    if let Some(top) = top {
+        let _ = window.set_always_on_top(top);
+    }
+    update_entry(&app, &m.book, &m.name, |e| {
+        if let Some(top) = top {
+            e.top = top;
+        }
+        if let Some(o) = opacity {
+            e.opacity = mini::clamp_opacity(o);
+        }
+    });
+}
+
+/// 主窗口读完笔记后调用:打开上次退出时还开着的小窗
+#[tauri::command]
+async fn mini_restore(app: AppHandle) {
+    let pending = std::mem::take(&mut *app.state::<AppState>().mini_restore.lock().unwrap());
+    for (book, name) in pending {
+        if let Err(e) = open_mini(&app, &book, &name, None, false) {
+            eprintln!("没能恢复小窗「{name}」:{e}");
+        }
+    }
+}
+
+/// 退出前让每个小窗把页面存好,最多等 8 秒;返回没存好的原因
+#[tauri::command]
+async fn mini_flush_all(app: AppHandle) -> Vec<String> {
+    let minis = open_minis(&app);
+    if minis.is_empty() {
+        return Vec::new();
+    }
+    {
+        let st = app.state::<AppState>();
+        let mut f = st.mini_flush.lock().unwrap();
+        f.0 = minis.iter().map(|m| m.label.clone()).collect();
+        f.1.clear();
+    }
+    for m in &minis {
+        let _ = app.emit_to(m.label.as_str(), "mini-flush", ());
+    }
+    let handle = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let st = handle.state::<AppState>();
+        for _ in 0..80 {
+            if st.mini_flush.lock().unwrap().0.is_empty() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        let mut f = st.mini_flush.lock().unwrap();
+        let mut errors = std::mem::take(&mut f.1);
+        for m in minis.iter().filter(|m| f.0.contains(&m.label)) {
+            errors.push(format!("小窗「{}」没有回应", m.name));
+        }
+        f.0.clear();
+        errors
+    })
+    .await
+    .unwrap_or_default()
+}
+
+#[tauri::command]
+fn mini_flushed(app: AppHandle, window: WebviewWindow, error: Option<String>) {
+    let name = mini_by_label(&app, window.label())
+        .map(|m| m.name)
+        .unwrap_or_default();
+    let st = app.state::<AppState>();
+    let mut f = st.mini_flush.lock().unwrap();
+    f.0.remove(window.label());
+    if let Some(e) = error {
+        f.1.push(format!("小窗「{name}」:{e}"));
+    }
+}
+
+/// 小窗挪动或改大小:记下来,下次打开同一页时还在这里
+fn remember_mini_geometry(app: &AppHandle, window: &tauri::Window) {
+    let Some(m) = mini_by_label(app, window.label()) else {
+        return;
+    };
+    let (Ok(p), Ok(s)) = (window.outer_position(), window.inner_size()) else {
+        return;
+    };
+    if window.is_minimized().unwrap_or(false) || s.width == 0 {
+        return;
+    }
+    update_entry(app, &m.book, &m.name, |e| {
+        e.x = p.x;
+        e.y = p.y;
+        e.w = s.width;
+        e.h = s.height;
+    });
+}
 
 // ---------- 悬浮图标 ----------
 
@@ -1702,9 +2196,21 @@ fn toggle_main(app: &AppHandle) {
         .unwrap()
         .hidden
         .is_some();
+    // 小窗默认跟着主窗口一起藏起来、一起出来(设置里可以改成各管各的)
+    let follow = app.state::<AppState>().settings.lock().unwrap().mini_hotkey == "follow";
     if visible && focused && !edge_hidden {
+        if follow {
+            for w in mini_windows(app) {
+                let _ = w.hide();
+            }
+        }
         hide_main(app);
     } else {
+        if follow {
+            for w in mini_windows(app) {
+                let _ = w.show();
+            }
+        }
         show_main(app);
     }
 }
@@ -1951,6 +2457,9 @@ pub fn run() {
                 .build(),
         )
         .manage(AppState::default())
+        .register_uri_scheme_protocol("note", |ctx, request| {
+            note_image(ctx.app_handle(), request.uri())
+        })
         .invoke_handler(tauri::generate_handler![
             load_state,
             read_notes,
@@ -1990,6 +2499,17 @@ pub fn run() {
             expand_from_ball,
             open_notes_dir,
             open_link,
+            save_image,
+            mini_open,
+            mini_self,
+            mini_list,
+            mini_focus,
+            mini_close,
+            mini_recall,
+            mini_set,
+            mini_restore,
+            mini_flush_all,
+            mini_flushed,
             quit_app,
             quit_ack,
             quit_cancel
@@ -2017,6 +2537,18 @@ pub fn run() {
                 *st.settings_read_error.lock().unwrap() = read_error;
                 *st.settings.lock().unwrap() = settings.clone();
                 *st.geom.lock().unwrap() = settings.window.clone();
+                // 上次退出时还开着的小窗:等主窗口读完笔记再打开
+                if settings.mini_enabled && settings.mini_restore {
+                    *st.mini_restore.lock().unwrap() = settings
+                        .mini_windows
+                        .iter()
+                        .filter(|m| m.open)
+                        .map(|m| (m.book.clone(), m.name.clone()))
+                        .collect();
+                }
+                for m in st.settings.lock().unwrap().mini_windows.iter_mut() {
+                    m.open = false;
+                }
                 // 损坏的原文件已经改名留底:马上写一份新的,免得没来得及保存就退出、下次启动又回到默认值
                 if (pinned || settings_notice.is_some()) && write_allowed {
                     let path = config_path(&handle);
@@ -2100,6 +2632,24 @@ pub fn run() {
                 }
                 return;
             }
+            if window.label().starts_with("mini-") {
+                match event {
+                    // Alt+F4 之类:让小窗先存好页面再自己关
+                    WindowEvent::CloseRequested { api, .. } => {
+                        api.prevent_close();
+                        let _ = app.emit_to(window.label(), "mini-close-request", ());
+                    }
+                    WindowEvent::Destroyed => forget_mini(app, window.label()),
+                    WindowEvent::Focused(true) => {
+                        let _ = app.emit_to(window.label(), "window-focus", ());
+                    }
+                    WindowEvent::Moved(_) | WindowEvent::Resized(_) => {
+                        remember_mini_geometry(app, window)
+                    }
+                    _ => {}
+                }
+                return;
+            }
             match event {
                 WindowEvent::CloseRequested { api, .. } => {
                     // 关闭按钮只是隐藏到托盘
@@ -2107,8 +2657,8 @@ pub fn run() {
                     hide_main(app);
                 }
                 WindowEvent::Focused(true) => {
-                    // 前端借这个机会检查笔记有没有在别处被改过
-                    let _ = app.emit("window-focus", ());
+                    // 前端借这个机会检查笔记有没有在别处被改过(小窗里改的也在这时读回来)
+                    let _ = app.emit_to("main", "window-focus", ());
                 }
                 WindowEvent::Focused(false) => {
                     st.typing.store(false, Ordering::SeqCst);
@@ -2361,6 +2911,31 @@ mod tests {
         assert_eq!(s.backup_keep, 30);
         let g = s.window.unwrap();
         assert_eq!((g.x, g.y, g.w, g.h), (10, 20, 500, 600));
+    }
+
+    #[test]
+    fn small_window_settings_default_on_and_stay_in_range() {
+        let s: Settings = serde_json::from_str(r#"{ "hotkey": "Ctrl+M" }"#).unwrap();
+        assert!(s.mini_enabled && s.mini_on_top && s.mini_restore && s.mini_tab_button);
+        assert_eq!(
+            (s.mini_hotkey.as_str(), s.mini_opacity, s.mini_max),
+            ("follow", 100, 0)
+        );
+        let mut s: Settings = serde_json::from_str(
+            r#"{ "mini_hotkey": "sometimes", "mini_opacity": 3, "mini_max": 500,
+                 "mini_windows": [{ "book": "", "name": "a", "opacity": 300, "open": true },
+                                  { "book": "", "name": "a", "opacity": 60 }] }"#,
+        )
+        .unwrap();
+        tidy_settings(&mut s);
+        assert_eq!(s.mini_hotkey, "follow");
+        assert_eq!((s.mini_opacity, s.mini_max), (mini::MIN_OPACITY, 20));
+        assert_eq!(
+            s.mini_windows.len(),
+            1,
+            "one remembered small window per page"
+        );
+        assert_eq!(s.mini_windows[0].opacity, 60);
     }
 
     #[test]

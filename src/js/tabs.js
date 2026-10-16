@@ -10,6 +10,7 @@ import { rememberView, showNote } from "./page.js";
 import { openBooks, renderBook } from "./notebooks.js";
 import { groupsOn, groupOf, tidyGroups, groupChip, groupMenuItems, joinNeighbour, revealNote, groupVars } from "./groups.js";
 import { refreshTabBar, afterSwitch, tabsVertical, revealActive } from "./tabbar.js";
+import { openInMini, focusMini, recallMini, refuseInMini, miniAllowed } from "./mini.js";
 
 // 正在拖动的标签对应的页面
 let dragged = null;
@@ -55,7 +56,7 @@ export function renderTabs() {
       tabsEl.appendChild(groupChip(b, g, b.notes.filter((x) => x.group === g.id).length));
     }
     const t = document.createElement("div");
-    t.className = "tab" + (i === b.active ? " active" : "") + (n.unreadable ? " unreadable" : "") + (n.pinned ? " pinned" : "");
+    t.className = "tab" + (i === b.active ? " active" : "") + (n.unreadable ? " unreadable" : "") + (n.pinned ? " pinned" : "") + (n.mini ? " in-mini" : "");
     if (n.pinned && !b.notes[i + 1]?.pinned) t.classList.add("pin-end");
     if (g) {
       t.classList.add("in-group");
@@ -77,6 +78,28 @@ export function renderTabs() {
     const s = document.createElement("span");
     s.textContent = n.name;
     t.appendChild(s);
+    // 在小窗里编辑的页面:标签变淡,后面标上「小窗」,点了切到那个小窗
+    if (n.mini) {
+      const badge = document.createElement("em");
+      badge.className = "mini-badge";
+      badge.textContent = "小窗";
+      t.appendChild(badge);
+      t.title += "(正在小窗里编辑,点一下切到小窗)";
+    } else if (miniAllowed() && state.settings?.mini_tab_button !== false && !n.unreadable) {
+      // 鼠标移上来时出现的 ↗:放进小窗(在名字右边的空白里,不挡名字)
+      const pop = document.createElement("button");
+      pop.className = "tab-mini";
+      pop.type = "button";
+      pop.title = "在小窗中打开";
+      pop.setAttribute("aria-label", `在小窗中打开「${n.name}」`);
+      pop.innerHTML = '<svg viewBox="0 0 16 16"><path d="M9 3h4v4M13 3 7.5 8.5M11.5 10v2.5a1 1 0 0 1-1 1h-7a1 1 0 0 1-1-1v-7a1 1 0 0 1 1-1H6"/></svg>';
+      pop.addEventListener("mousedown", (e) => (e.stopPropagation(), e.preventDefault()));
+      pop.addEventListener("click", (e) => {
+        e.stopPropagation();
+        openInMini(book(), n);
+      });
+      t.appendChild(pop);
+    }
     // 事件里用页面对象而不是位置,中途同步过也不会点错页面
     t.addEventListener("mousedown", (e) => {
       if (e.button === 0 && !t.querySelector("input")) switchTo(book().notes.indexOf(n));
@@ -90,13 +113,27 @@ export function renderTabs() {
     t.addEventListener("contextmenu", (e) => {
       e.preventDefault();
       const groupItems = n.pinned ? [] : groupMenuItems(n);
+      const b = book();
+      const miniItems = n.mini
+        ? [
+            { id: "mini-focus", label: "切到小窗", act: () => focusMini(b, n) },
+            { id: "mini-back", label: "放回主窗口", act: () => recallMini(b, n) },
+          ]
+        : [];
+      const openItem = !n.mini && miniAllowed() && !n.unreadable
+        ? [{ id: "mini-open", label: "在小窗中打开", act: () => openInMini(b, n) }]
+        : [];
+      // 在小窗里编辑时不能改名、移动、删除(先放回主窗口)
+      const away = n.mini ? "(先放回主窗口)" : "";
       openMenu(
         [
-          { id: "rename", label: "重命名", act: () => startRename(n) },
+          ...miniItems,
+          { id: "rename", label: "重命名" + away, act: () => startRename(n), disabled: n.mini },
           { id: "pin", label: n.pinned ? "取消固定" : "固定标签", act: () => togglePin(n) },
-          { id: "move", label: "移到笔记本…", act: () => openBooks(n) },
+          { id: "move", label: "移到笔记本…" + away, act: () => openBooks(n), disabled: n.mini },
           ...groupItems,
-          { id: "delete", label: n.pinned ? "删除页面(先取消固定)" : "删除页面", act: () => deleteNote(n), danger: true, disabled: n.pinned },
+          ...openItem,
+          { id: "delete", label: n.pinned ? "删除页面(先取消固定)" : "删除页面" + away, act: () => deleteNote(n), danger: true, disabled: n.pinned || n.mini },
         ],
         e.clientX,
         e.clientY
@@ -107,9 +144,21 @@ export function renderTabs() {
       e.dataTransfer.setData("text/x-tab", String(i));
       e.dataTransfer.effectAllowed = "move";
     });
-    t.addEventListener("dragend", () => (dragged = null));
+    // 把标签拖到窗口外面松手:这一页放进小窗,小窗出现在松手的地方
+    t.addEventListener("dragend", (e) => {
+      dragged = null;
+      if (e.dataTransfer.dropEffect !== "none" || n.mini || !miniAllowed()) return;
+      const outside =
+        e.screenX < window.screenX || e.screenX > window.screenX + window.outerWidth ||
+        e.screenY < window.screenY || e.screenY > window.screenY + window.outerHeight;
+      if (outside) openInMini(book(), n, { x: e.screenX, y: e.screenY });
+    });
     // 横着排时看鼠标在标签的左半还是右半,竖着排(侧拉的页面列表)时看上半还是下半
-    const after = (e) => (tabsVertical() ? e.offsetY > t.offsetHeight / 2 : e.offsetX > t.offsetWidth / 2);
+    // 按标签自己的位置算(鼠标在名字或 ↗ 上时 offsetX 是相对它们的)
+    const after = (e) => {
+      const r = t.getBoundingClientRect();
+      return tabsVertical() ? e.clientY > r.top + r.height / 2 : e.clientX > r.left + r.width / 2;
+    };
     t.addEventListener("dragover", (e) => {
       e.preventDefault();
       const a = after(e);
@@ -150,6 +199,7 @@ export function moveTab(from, to, target = null) {
 export function switchTo(i) {
   const b = book();
   if (i < 0 || i >= b.notes.length || i === b.active) return;
+  if (b.notes[i].mini) return focusMini(b, b.notes[i]);
   rememberView();
   b.active = i;
   revealNote(b, b.notes[i]);
@@ -162,6 +212,7 @@ export function switchTo(i) {
 // 打开某个笔记本里的某一页(快速切换、回收站恢复以后用)
 export function goTo(b, n) {
   if (!state.books.includes(b) || !b.notes.includes(n)) return;
+  if (n.mini) return focusMini(b, n);
   rememberView();
   if (b !== book()) {
     state.book = state.books.indexOf(b);
@@ -202,6 +253,7 @@ export async function newNote(group = null) {
 }
 
 export function startRename(n) {
+  if (refuseInMini(n, "改名")) return;
   const b = book();
   const t = tabAt(b.notes.indexOf(n));
   if (!t || t.querySelector("input")) return;
@@ -244,7 +296,7 @@ export function startRename(n) {
 
 export async function deleteNote(n) {
   const b = state.books.find((x) => x.notes.includes(n));
-  if (!b) return;
+  if (!b || refuseInMini(n, "删除")) return;
   // 固定的页面不会被 Ctrl+W 误删
   if (n.pinned) return toast(`「${n.name}」是固定的标签,先右键取消固定才能删除`, 4000);
   syncContent(n);
