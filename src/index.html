@@ -403,6 +403,19 @@
             <h3>编辑器</h3>
             <label class="row check"><input id="set-format-bar" type="checkbox" /> <span>标签下面显示格式栏(顶栏的格式栏按钮也能切换)</span></label>
             <label class="row check"><input id="set-code-lines" type="checkbox" /> <span>代码块显示行号</span></label>
+            <label class="row"><span>代码高亮配色</span><select id="set-code-theme">
+              <option value="one">默认(One)</option>
+              <option value="github">GitHub</option>
+              <option value="dracula">Dracula</option>
+              <option value="nord">Nord</option>
+              <option value="solarized">Solarized</option>
+              <option value="monokai">Monokai</option>
+              <option value="dreamy">梦幻</option>
+              <option value="starry">星空</option>
+              <option value="rainbow">彩虹</option>
+            </select></label>
+            <div id="code-theme-preview" class="row col code-theme-preview" aria-label="配色预览"></div>
+            <label class="row check"><input id="set-code-lang-menu" type="checkbox" /> <span>点代码块的语言时列出常用语言(也可以直接输入)</span></label>
             <label class="row check"><input id="set-email-links" type="checkbox" /> <span>自动将邮箱地址识别为链接（默认关闭；手动链接不受影响）</span></label>
             <label class="row"><span>代码块退出方式</span><select id="set-code-exit">
               <option value="blank3">第三次 Enter 退出（默认）</option>

@@ -6,9 +6,11 @@ import { toast, closeOverlays } from "./ui.js";
 import { flushAll, saveMeta } from "./save.js";
 import { reload } from "./sync.js";
 import { applyEditorSettings } from "./editor.js";
+import { CODE_THEMES, paintCodePreview as paintPreview } from "./codeblock.js";
 import { DEFAULT_DATE_FORMAT, formatDate } from "./datetime.js";
 // 活跃标签的高亮:顶部线条 / 整个标签 / 整圈边框(见 style.css)
 const TAB_STYLES = ["line", "fill", "border"];
+const paintCodePreview = () => paintPreview($("#code-theme-preview"), $("#set-code-theme").value);
 import { ACCENTS, applyAccent, parseAccent, tidyAccent, gradientOf } from "./accent.js";
 import { APP_ICON, paintBall } from "./ballicon.js";
 import { applyFindAppearance, findColors } from "./findbar.js";
@@ -188,6 +190,9 @@ export function openSettings() {
   $("#set-date-format").value = s.date_format;
   updateDatePreview();
   $("#set-code-lines").checked = s.code_line_numbers;
+  $("#set-code-theme").value = CODE_THEMES.includes(s.code_theme) ? s.code_theme : "one";
+  paintCodePreview();
+  $("#set-code-lang-menu").checked = s.code_lang_menu !== false;
   $("#set-email-links").checked = s.email_auto_link === true;
   $("#set-block-enabled").checked = s.block_enabled !== false;
   $("#set-block-context").value = s.block_context_menu === "block" ? "block" : "system";
@@ -586,6 +591,8 @@ async function submitSettings() {
     notes_dir: $("#set-dir").value.trim(),
     date_format: $("#set-date-format").value.trim(),
     code_line_numbers: $("#set-code-lines").checked,
+    code_theme: $("#set-code-theme").value,
+    code_lang_menu: $("#set-code-lang-menu").checked,
     email_auto_link: $("#set-email-links").checked,
     block_enabled: $("#set-block-enabled").checked,
     block_context_menu: $("#set-block-context").value,
@@ -726,6 +733,7 @@ export function bindSettings() {
     { passive: false },
   );
   $("#set-nav-pos").addEventListener("change", () => applyNavPos($("#set-nav-pos").value));
+  $("#set-code-theme").addEventListener("change", paintCodePreview);
   $("#set-edge").addEventListener("change", updateEdgeOptions);
   $("#set-edge-style").addEventListener("change", updateEdgeOptions);
   for (const id of ["#set-edge-line-width", "#set-edge-line-length", "#set-edge-glow"]) $(id).addEventListener("input", updateEdgeLinePreview);

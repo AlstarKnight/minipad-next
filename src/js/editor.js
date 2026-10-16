@@ -32,7 +32,7 @@ import {
   splitListItem,
 } from "../vendor/milkdown.js";
 import { $ } from "./dom.js";
-import { codeBlockWithTitle, codeBlockView, codeHighlight, setCodeFoldPersistence } from "./codeblock.js";
+import { codeBlockWithTitle, codeBlockView, codeHighlight, setCodeFoldPersistence, applyCodeTheme, setLangMenu } from "./codeblock.js";
 import { blockManager, applyBlockSettings } from "./blocks.js";
 import { foldBlocks, revealFolds, safeDocumentEnd, setFoldPersistence } from "./foldblocks.js";
 import { formatBar, selectionBar, setFormatBarItems, setSelectionBar } from "./formatbar.js";
@@ -609,6 +609,8 @@ export function applyEditorSettings(s) {
   codeExitMode = ["blank2", "blank3", "ctrl"].includes(s.code_exit_mode) ? s.code_exit_mode : "blank3";
   setFoldPersistence(s.fold_save_state !== false);
   setCodeFoldPersistence(s.fold_save_state !== false);
+  applyCodeTheme(s);
+  setLangMenu(s.code_lang_menu !== false);
   applyBlockSettings(s);
   applyImageSettings(s);
   $("#editor").classList.toggle("code-lines", s.code_line_numbers !== false);

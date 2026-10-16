@@ -4,7 +4,123 @@
 // 文件里还是普通的 Markdown:```js 牛奶测试,``` 后面第一个词是语言,其余的是标题。
 import { codeBlockSchema, $prose, Plugin, PluginKey, Decoration, DecorationSet, TextSelection } from "../vendor/milkdown.js";
 
+import { promptLanguage } from "./prompt-lang.js";
+
+hljs.registerLanguage("prompt", promptLanguage);
+
 const FOLDED = "[minipad-folded]";
+
+// ---- 代码高亮配色(颜色在 style.css 里,每套分浅色和深色) ----
+export const CODE_THEMES = ["one", "github", "dracula", "nord", "solarized", "monokai", "dreamy", "starry", "rainbow"];
+
+export function applyCodeTheme(s) {
+  document.documentElement.dataset.codeTheme = CODE_THEMES.includes(s.code_theme) ? s.code_theme : "one";
+}
+
+const PREVIEW = [
+  ["javascript", "// 统计字数\nfunction count(text, limit = 100) {\n  const words = text.split(\" \");\n  return words.length > limit;\n}"],
+  ["prompt", "# 角色\nSystem: 你是一位{{领域}}专家。\n<rules>\n- **必须**用中文回答\n- 不超过 {字数} 字\n</rules>"],
+];
+
+// ---- 点语言时的常用语言列表(列表里没有的也可以直接输入) ----
+const LANGS = [
+  ["prompt", "Prompt 提示词"], ["text", "纯文本"], ["bash", "Bash / Shell"], ["powershell", "PowerShell"],
+  ["dos", "CMD 批处理"], ["python", "Python"], ["javascript", "JavaScript"], ["typescript", "TypeScript"],
+  ["json", "JSON"], ["html", "HTML"], ["css", "CSS"], ["sql", "SQL"], ["markdown", "Markdown"],
+  ["yaml", "YAML"], ["toml", "TOML"], ["xml", "XML"], ["java", "Java"], ["c", "C"], ["cpp", "C++"],
+  ["csharp", "C#"], ["go", "Go"], ["rust", "Rust"], ["php", "PHP"], ["kotlin", "Kotlin"],
+  ["swift", "Swift"], ["lua", "Lua"], ["diff", "Diff"], ["ini", "INI"],
+];
+let langMenu = true;
+export function setLangMenu(enabled) {
+  langMenu = enabled;
+  if (!enabled) menu.close();
+}
+
+// 整个页面共用一个列表,跟着正在改的那个语言框
+const menu = {
+  el: null,
+  input: null,
+  items: [],
+  active: -1,
+  open(input, pick) {
+    if (!this.el) {
+      this.el = document.createElement("div");
+      this.el.className = "menu cb-lang-menu";
+      this.el.setAttribute("role", "listbox");
+      this.el.hidden = true;
+      // 点列表不让语言框失去焦点
+      this.el.addEventListener("mousedown", (e) => e.preventDefault());
+      document.body.append(this.el);
+    }
+    this.input = input;
+    this.pick = pick;
+    this.filter();
+  },
+  filter() {
+    const q = this.input.value.trim().toLowerCase();
+    const all = LANGS;
+    const hit = (s) => s.toLowerCase().includes(q);
+    const starts = (s) => s.toLowerCase().startsWith(q);
+    this.items = !q || LANGS.some(([v]) => v === q)
+      ? all
+      : [...all.filter(([v, l]) => starts(v) || starts(l)), ...all.filter(([v, l]) => !(starts(v) || starts(l)) && (hit(v) || hit(l)))];
+    // 打的已经是认识的语言(比如 py)时 Enter 就用打的;不认识时 Enter 用列表里第一个
+    this.active = this.items.findIndex(([v]) => v === q);
+    if (this.active < 0 && q && !hljs.getLanguage(q)) this.active = 0;
+    if (!this.items.length) return this.close();
+    this.el.replaceChildren(...this.items.map(([v, l], i) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.tabIndex = -1;
+      b.setAttribute("role", "option");
+      b.dataset.lang = v;
+      b.className = i === this.active ? "active" : "";
+      b.innerHTML = `<span></span><small></small>`;
+      b.firstChild.textContent = l;
+      b.lastChild.textContent = v;
+      b.addEventListener("click", () => this.pick(v));
+      return b;
+    }));
+    this.el.hidden = false;
+    this.place();
+    this.el.children[this.active]?.scrollIntoView({ block: "nearest" });
+  },
+  place() {
+    const r = this.input.getBoundingClientRect();
+    const h = this.el.offsetHeight;
+    const below = window.innerHeight - r.bottom - 6;
+    this.el.style.top = `${below >= h || below >= r.top ? r.bottom + 2 : Math.max(4, r.top - h - 2)}px`;
+    this.el.style.left = `${Math.max(4, Math.min(r.right - this.el.offsetWidth, window.innerWidth - this.el.offsetWidth - 4))}px`;
+  },
+  move(d) {
+    if (!this.items.length) return;
+    this.active = (this.active + d + this.items.length) % this.items.length;
+    [...this.el.children].forEach((b, i) => b.classList.toggle("active", i === this.active));
+    this.el.children[this.active].scrollIntoView({ block: "nearest" });
+  },
+  close() {
+    if (this.el) this.el.hidden = true;
+    this.input = null;
+  },
+  isOpenFor(input) {
+    return this.input === input && this.el && !this.el.hidden;
+  },
+};
+
+// 页面滚动时列表跟着语言框走
+document.addEventListener("scroll", () => menu.input && menu.place(), true);
+
+// 设置里的预览:选了哪套配色马上用哪套显示
+export function paintCodePreview(el, theme) {
+  el.dataset.codeTheme = theme;
+  if (el.childElementCount) return;
+  for (const [language, code] of PREVIEW) {
+    const pre = document.createElement("pre");
+    pre.innerHTML = hljs.highlight(code, { language }).value;
+    el.append(pre);
+  }
+}
 let persistFolds = true;
 export function setCodeFoldPersistence(enabled) { persistFolds = enabled; }
 
@@ -103,6 +219,7 @@ class CodeBlockView {
     this.count = document.createElement("span");
     this.count.className = "cb-count";
     this.lang = this.field("cb-lang", "语言", "language", "代码的语言,比如 js、python");
+    this.langList();
 
     this.copy = document.createElement("button");
     this.copy.className = "copy";
@@ -175,6 +292,35 @@ class CodeBlockView {
     input.addEventListener("blur", () => this.commit(attr, input));
     input.addEventListener("input", () => this.fit(input));
     return input;
+  }
+
+  // 语言框:获得焦点、打字时列出常用语言,↑↓ 选、Enter 或点一下用它
+  langList() {
+    const input = this.lang;
+    const pick = (v) => {
+      input.value = v;
+      this.fit(input);
+      menu.close();
+      this.commit("language", input);
+      this.focusCode();
+    };
+    const show = () => langMenu && this.view.editable && menu.open(input, pick);
+    input.addEventListener("focus", show);
+    input.addEventListener("input", () => (menu.isOpenFor(input) ? menu.filter() : show()));
+    input.addEventListener("blur", () => menu.isOpenFor(input) && menu.close());
+    // 先于 field() 里的 Enter / Esc 处理
+    input.addEventListener("keydown", (e) => {
+      if (e.isComposing || e.keyCode === 229 || !menu.isOpenFor(input)) return;
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        e.preventDefault();
+        menu.move(e.key === "ArrowDown" ? 1 : -1);
+      } else if (e.key === "Enter" && menu.active >= 0) {
+        input.value = menu.items[menu.active][0];
+        menu.close();
+      } else if (e.key === "Escape" || e.key === "Tab") {
+        menu.close();
+      }
+    }, true);
   }
 
   commit(attr, input) {
@@ -280,6 +426,7 @@ class CodeBlockView {
 
   destroy() {
     this.resize.disconnect();
+    if (menu.input === this.lang) menu.close();
   }
 }
 

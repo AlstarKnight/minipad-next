@@ -32,6 +32,7 @@
   --hl-title: #4078f2;
   --hl-type: #c18401;
   --hl-attr: #e45649;
+  --hl-var: #0184bc;
 }
 
 :root[data-theme="dark"] {
@@ -60,6 +61,7 @@
   --hl-title: #61afef;
   --hl-type: #e5c07b;
   --hl-attr: #e06c75;
+  --hl-var: #56b6c2;
 }
 
 * { box-sizing: border-box; }
@@ -710,6 +712,31 @@ html[data-find-pos="bottom"] #status { order: 2; }
 .hljs-title, .hljs-section, .hljs-function .hljs-title { color: var(--hl-title); }
 .hljs-type, .hljs-class .hljs-title, .hljs-variable.language_ { color: var(--hl-type); }
 .hljs-attr, .hljs-attribute, .hljs-name, .hljs-tag, .hljs-deletion, .hljs-property { color: var(--hl-attr); }
+.hljs-template-variable, .hljs-variable { color: var(--hl-var); }
+.hljs-strong { font-weight: 600; }
+.hljs-emphasis { font-style: italic; }
+.hljs-code { color: var(--hl-string); }
+
+/* ---------- 代码高亮配色(设置 → 编辑 → 代码高亮配色),每套分浅色和深色 ---------- */
+/* html 上的 data-code-theme 管编辑器;设置里的预览自己也带一个,选了马上能看到 */
+[data-code-theme="one"] { --hl-keyword: #a626a4; --hl-string: #50a14f; --hl-number: #986801; --hl-comment: #a0a1a7; --hl-title: #4078f2; --hl-type: #c18401; --hl-attr: #e45649; --hl-var: #0184bc; }
+[data-theme="dark"][data-code-theme="one"], [data-theme="dark"] [data-code-theme="one"] { --hl-keyword: #c678dd; --hl-string: #98c379; --hl-number: #d19a66; --hl-comment: #7f848e; --hl-title: #61afef; --hl-type: #e5c07b; --hl-attr: #e06c75; --hl-var: #56b6c2; }
+[data-code-theme="github"] { --hl-keyword: #cf222e; --hl-string: #0a3069; --hl-number: #0550ae; --hl-comment: #6e7781; --hl-title: #8250df; --hl-type: #953800; --hl-attr: #116329; --hl-var: #bc4c00; }
+[data-theme="dark"][data-code-theme="github"], [data-theme="dark"] [data-code-theme="github"] { --hl-keyword: #ff7b72; --hl-string: #a5d6ff; --hl-number: #79c0ff; --hl-comment: #8b949e; --hl-title: #d2a8ff; --hl-type: #ffa657; --hl-attr: #7ee787; --hl-var: #f0883e; }
+[data-code-theme="dracula"] { --hl-keyword: #a3144d; --hl-string: #846e15; --hl-number: #635d97; --hl-comment: #6c664b; --hl-title: #14710a; --hl-type: #036a96; --hl-attr: #a34d14; --hl-var: #cb3a2a; }
+[data-theme="dark"][data-code-theme="dracula"], [data-theme="dark"] [data-code-theme="dracula"] { --hl-keyword: #ff79c6; --hl-string: #f1fa8c; --hl-number: #bd93f9; --hl-comment: #6272a4; --hl-title: #50fa7b; --hl-type: #8be9fd; --hl-attr: #ffb86c; --hl-var: #ff5555; }
+[data-code-theme="nord"] { --hl-keyword: #5e81ac; --hl-string: #4f7a3a; --hl-number: #8c5f86; --hl-comment: #8a93a5; --hl-title: #2e7d8c; --hl-type: #3b7a78; --hl-attr: #b5562f; --hl-var: #a07a1c; }
+[data-theme="dark"][data-code-theme="nord"], [data-theme="dark"] [data-code-theme="nord"] { --hl-keyword: #81a1c1; --hl-string: #a3be8c; --hl-number: #b48ead; --hl-comment: #616e88; --hl-title: #88c0d0; --hl-type: #8fbcbb; --hl-attr: #d08770; --hl-var: #ebcb8b; }
+[data-code-theme="solarized"] { --hl-keyword: #859900; --hl-string: #2aa198; --hl-number: #d33682; --hl-comment: #93a1a1; --hl-title: #268bd2; --hl-type: #b58900; --hl-attr: #cb4b16; --hl-var: #6c71c4; }
+[data-theme="dark"][data-code-theme="solarized"], [data-theme="dark"] [data-code-theme="solarized"] { --hl-keyword: #859900; --hl-string: #2aa198; --hl-number: #d33682; --hl-comment: #657b83; --hl-title: #268bd2; --hl-type: #b58900; --hl-attr: #cb4b16; --hl-var: #6c71c4; }
+[data-code-theme="monokai"] { --hl-keyword: #d0175a; --hl-string: #998a00; --hl-number: #7a4fd6; --hl-comment: #8f8a74; --hl-title: #5f8c00; --hl-type: #0a8ca8; --hl-attr: #c76a00; --hl-var: #c2408a; }
+[data-theme="dark"][data-code-theme="monokai"], [data-theme="dark"] [data-code-theme="monokai"] { --hl-keyword: #f92672; --hl-string: #e6db74; --hl-number: #ae81ff; --hl-comment: #75715e; --hl-title: #a6e22e; --hl-type: #66d9ef; --hl-attr: #fd971f; --hl-var: #ff9ac1; }
+[data-code-theme="dreamy"] { --hl-keyword: #c45cc9; --hl-string: #4a9bd6; --hl-number: #e0779f; --hl-comment: #b3a6c4; --hl-title: #8a63d2; --hl-type: #4fa3a3; --hl-attr: #d0609a; --hl-var: #7d7ee8; }
+[data-theme="dark"][data-code-theme="dreamy"], [data-theme="dark"] [data-code-theme="dreamy"] { --hl-keyword: #f5a8f0; --hl-string: #9ed8ff; --hl-number: #ffb3cf; --hl-comment: #8b84a3; --hl-title: #c7a8ff; --hl-type: #9be3dc; --hl-attr: #ff9ac8; --hl-var: #b8b9ff; }
+[data-code-theme="starry"] { --hl-keyword: #5b3fc4; --hl-string: #1b7d9f; --hl-number: #b07d0a; --hl-comment: #8a8fac; --hl-title: #2d54d6; --hl-type: #8a4fcf; --hl-attr: #c2701a; --hl-var: #a8860c; }
+[data-theme="dark"][data-code-theme="starry"], [data-theme="dark"] [data-code-theme="starry"] { --hl-keyword: #a58bff; --hl-string: #7fd4ff; --hl-number: #ffd36b; --hl-comment: #6f78a3; --hl-title: #7aa2ff; --hl-type: #d6a6ff; --hl-attr: #ffb86b; --hl-var: #ffe08a; }
+[data-code-theme="rainbow"] { --hl-keyword: #e5484d; --hl-string: #2f9e44; --hl-number: #8e4ec6; --hl-comment: #9aa0a6; --hl-title: #3b6fe0; --hl-type: #c99400; --hl-attr: #f76b15; --hl-var: #0d9fbf; }
+[data-theme="dark"][data-code-theme="rainbow"], [data-theme="dark"] [data-code-theme="rainbow"] { --hl-keyword: #ff6b6b; --hl-string: #69db7c; --hl-number: #da77f2; --hl-comment: #868e96; --hl-title: #74c0fc; --hl-type: #ffd43b; --hl-attr: #ffa94d; --hl-var: #66d9e8; }
 
 /* ---------- 选中文字时的小工具栏 ---------- */
 #toolbar {
@@ -1748,3 +1775,23 @@ html[data-image-size="small"] #editor .ProseMirror img { max-width: min(100%, 24
 #editor .ProseMirror img.ProseMirror-selectednode { outline: 2px solid var(--accent); outline-offset: 1px; }
 /* 找不到的图片:一个带虚线框的小占位,鼠标移上去看是哪个文件 */
 #editor .ProseMirror img.broken { display: inline-block; min-width: 48px; min-height: 32px; border: 1px dashed var(--bar-border); }
+
+/* 设置里的代码高亮配色预览 */
+.code-theme-preview { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.code-theme-preview pre {
+  margin: 0;
+  padding: 8px 10px;
+  background: var(--code-bg);
+  border: 1px solid var(--code-border);
+  border-radius: 7px;
+  color: var(--code-text);
+  font: 12px/1.55 var(--mono);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* 代码块语言的常用语言列表 */
+.cb-lang-menu { max-height: 260px; overflow-y: auto; min-width: 180px; }
+.cb-lang-menu button { display: flex; align-items: baseline; gap: 12px; justify-content: space-between; }
+.cb-lang-menu button small { color: var(--muted); font: 11px var(--mono); }
+.cb-lang-menu button.active { background: var(--accent-soft); }

@@ -116,6 +116,10 @@ pub struct Settings {
     date_format: String,
     /// 代码块显示行号
     code_line_numbers: bool,
+    /// 代码高亮配色:one(默认)/ github / dracula / nord / solarized / monokai / dreamy 梦幻 / starry 星空 / rainbow 彩虹
+    code_theme: String,
+    /// 点代码块的语言时列出常用语言
+    code_lang_menu: bool,
     /// 自动把裸邮箱识别为 mailto 链接；默认关闭，手动链接始终保留。
     email_auto_link: bool,
     /// 块管理手柄与块操作菜单的开关。
@@ -269,6 +273,8 @@ impl Default for Settings {
             line_numbers: false,
             date_format: DEFAULT_DATE_FORMAT.into(),
             code_line_numbers: true,
+            code_theme: "one".into(),
+            code_lang_menu: true,
             email_auto_link: false,
             block_enabled: true,
             block_context_menu: "system".into(),
@@ -741,6 +747,19 @@ fn tidy_color(c: &mut String) {
 }
 
 /// 只能是几个选项之一的设置:不认识的值换成第一个(默认的那个)
+/// 代码高亮配色,第一个是默认(颜色在 style.css 里)
+const CODE_THEMES: &[&str] = &[
+    "one",
+    "github",
+    "dracula",
+    "nord",
+    "solarized",
+    "monokai",
+    "dreamy",
+    "starry",
+    "rainbow",
+];
+
 fn pick_one(value: &mut String, options: &[&str]) {
     if !options.contains(&value.as_str()) {
         *value = options[0].to_string();
@@ -818,6 +837,7 @@ fn tidy_settings(s: &mut Settings) {
     pick_one(&mut s.find_bar_pos, &["top", "bottom"]);
     pick_one(&mut s.block_context_menu, &["system", "block"]);
     pick_one(&mut s.code_exit_mode, &["blank3", "blank2", "ctrl"]);
+    pick_one(&mut s.code_theme, CODE_THEMES);
     pick_one(&mut s.conflict_mode, &["copy", "overwrite"]);
     pick_one(&mut s.settings_nav, &["left", "top"]);
     pick_one(&mut s.outline_mode, &["hover", "pinned"]);
@@ -3088,6 +3108,19 @@ mod tests {
             (s.ball_size, s.ball_icon.as_str(), s.ball_open.as_str()),
             (32, "custom", "dblclick")
         );
+    }
+
+    #[test]
+    fn tidy_settings_keeps_the_code_theme_known() {
+        let mut s = Settings::default();
+        assert_eq!(s.code_theme, "one");
+        assert!(s.code_lang_menu);
+        s.code_theme = "starry".into();
+        tidy_settings(&mut s);
+        assert_eq!(s.code_theme, "starry");
+        s.code_theme = "neon".into();
+        tidy_settings(&mut s);
+        assert_eq!(s.code_theme, "one");
     }
 
     #[test]

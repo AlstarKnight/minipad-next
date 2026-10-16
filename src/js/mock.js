@@ -33,6 +33,8 @@ const DEFAULT_SETTINGS = {
   line_numbers: false,
   date_format: DEFAULT_DATE_FORMAT,
   code_line_numbers: true,
+  code_theme: "one",
+  code_lang_menu: true,
   email_auto_link: false,
   block_enabled: true,
   block_context_menu: "system",
@@ -429,6 +431,7 @@ export function mockApi() {
         find_bar_pos: pickOne(settings.find_bar_pos, ["top", "bottom"]),
         block_context_menu: pickOne(settings.block_context_menu, ["system", "block"]),
         code_exit_mode: pickOne(settings.code_exit_mode, ["blank3", "blank2", "ctrl"]),
+        code_theme: pickOne(settings.code_theme, ["one", "github", "dracula", "nord", "solarized", "monokai", "dreamy", "starry", "rainbow"]),
         conflict_mode: pickOne(settings.conflict_mode, ["copy", "overwrite"]),
         settings_nav: pickOne(settings.settings_nav, ["left", "top"]),
         color_presets: [...new Set(

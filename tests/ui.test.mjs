@@ -6261,3 +6261,102 @@ describe("0.4.0: images", () => {
       "the image is copied to the other notebook");
   });
 });
+
+// ---------- 0.4.2:Prompt 上色、高亮配色、语言列表 ----------
+const PROMPT_PAGE = [
+  "```prompt 提示词",
+  "# 角色",
+  "System: 你是一位{{领域}}专家。",
+  "<rules>",
+  "- **必须**用中文回答",
+  "- 不超过 {字数} 字",
+  "</rules>",
+  "<!-- 备注 -->",
+  "```",
+].join("\n");
+
+describe("0.4.2: code highlighting", () => {
+  ui("prompt blocks color tags, variables, roles, headings and emphasis", {
+    seed: seed({ "": { 页: PROMPT_PAGE } }),
+  }, async (h) => {
+    const { p } = h;
+    const code = p.locator("#editor .codeblock code");
+    const spans = (cls) => code.locator(`.hljs-${cls}`).allTextContents();
+    await until(() => spans("section"), ["# 角色"], "headings");
+    assert.deepEqual(await spans("type"), ["System"], "roles");
+    assert.deepEqual(await spans("template-variable"), ["{{领域}}", "{字数}"], "variables");
+    assert.deepEqual(await spans("name"), ["rules", "rules"], "tag names");
+    assert.deepEqual(await spans("keyword"), ["必须"], "emphasis words");
+    assert.equal((await spans("comment")).join(""), "<!-- 备注 -->", "comments");
+    assert.equal(await h.editor(), PROMPT_PAGE, "coloring never changes the text");
+  });
+
+  ui("unlabelled code is never guessed as a prompt", {
+    seed: seed({ "": { 页: "```\nSystem: hi {{x}}\n```" } }),
+  }, async (h) => {
+    await h.p.locator("#editor .codeblock").waitFor();
+    assert.equal(await h.p.locator("#editor .codeblock .hljs-template-variable").count(), 0);
+  });
+
+  ui("the highlight theme comes from settings and the preview follows the dropdown", {
+    seed: seed({ "": { 页: "```js\nconst a = 1;\n```" } }),
+  }, async (h) => {
+    const { p } = h;
+    const keyword = () => p.locator("#editor .hljs-keyword").first().evaluate((el) => getComputedStyle(el).color);
+    await until(keyword, "rgb(166, 38, 164)", "the default theme");
+    await p.click("#btn-settings");
+    await settingsPage(p, "edit");
+    assert.equal(await p.locator("#set-code-theme").inputValue(), "one");
+    assert.equal(await p.locator("#code-theme-preview pre").count(), 2, "a code and a prompt sample");
+    await p.selectOption("#set-code-theme", "dracula");
+    const previewKeyword = () => p.locator("#code-theme-preview .hljs-keyword").first().evaluate((el) => getComputedStyle(el).color);
+    await until(previewKeyword, "rgb(163, 20, 77)", "the preview shows the chosen theme before saving");
+    assert.equal(await keyword(), "rgb(166, 38, 164)", "the page keeps its theme until saved");
+    if (process.env.SHOTS) {
+      await p.locator("#code-theme-preview").scrollIntoViewIfNeeded();
+      await p.screenshot({ path: `${process.env.SHOTS}/settings-theme.png` });
+    }
+    await p.click("#set-save");
+    await until(keyword, "rgb(163, 20, 77)", "saved theme applies to the page");
+    assert.equal((await h.stored()).settings.code_theme, "dracula");
+    await p.evaluate(() => { document.documentElement.dataset.theme = "dark"; });
+    await until(keyword, "rgb(255, 121, 198)", "each theme has a dark variant");
+    if (process.env.SHOTS) await p.screenshot({ path: `${process.env.SHOTS}/theme-dark.png` });
+  });
+
+  ui("the language box lists common languages and still accepts typing", {
+    seed: seed({ "": { 页: "```\nprint(1)\n```" } }),
+  }, async (h) => {
+    const { p } = h;
+    const lang = p.locator("#editor .cb-lang");
+    const menu = p.locator(".cb-lang-menu");
+    await lang.click();
+    await until(() => menu.isVisible(), true, "focusing the box opens the list");
+    assert.equal(await menu.locator("button").first().getAttribute("data-lang"), "prompt", "Prompt comes first");
+    if (process.env.SHOTS) await p.screenshot({ path: `${process.env.SHOTS}/lang-menu.png` });
+    await p.keyboard.type("pyt");
+    assert.deepEqual(await menu.locator("button").evaluateAll((bs) => bs.map((b) => b.dataset.lang)), ["python"],
+      "typing filters the list");
+    await p.keyboard.press("Enter");
+    await until(h.editor, "```python\nprint(1)\n```", "Enter picks the highlighted language");
+    assert.ok(await menu.isHidden());
+    await lang.click();
+    await menu.locator('button[data-lang="prompt"]').click();
+    await until(h.editor, "```prompt\nprint(1)\n```", "clicking picks a language");
+    await lang.click();
+    await p.keyboard.press("Control+a");
+    await p.keyboard.type("brainfuck");
+    assert.ok(await menu.isHidden(), "no match hides the list");
+    await p.keyboard.press("Enter");
+    await until(h.editor, "```brainfuck\nprint(1)\n```", "languages outside the list can still be typed");
+  });
+
+  ui("the language list can be turned off", {
+    seed: { ...seed({ "": { 页: "```\nx\n```" } }), settings: { ...SETTINGS, code_lang_menu: false } },
+  }, async (h) => {
+    const { p } = h;
+    await p.locator("#editor .cb-lang").click();
+    await sleep(150);
+    assert.equal(await p.locator(".cb-lang-menu:visible").count(), 0);
+  });
+});
