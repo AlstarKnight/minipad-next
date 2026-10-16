@@ -2809,6 +2809,7 @@ describe("format bar", () => {
     await p.click('.fb-pop .uc-swatch[data-color="#3b82f6"]');
     assert.equal(await h.editor(), '红<span style="color: #3b82f6">字</span>', "a new text color");
     await p.keyboard.press("Shift+Home");
+    await until(h.selection, "红字", "the expanded selection is ready before applying the background");
     await p.click(fb("bg"));
     await expandLibrary(p, ".fb-pop");
     await p.click('.fb-pop .uc-swatch[data-color="#fbe9a6"]');
