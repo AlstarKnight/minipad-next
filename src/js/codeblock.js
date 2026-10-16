@@ -4,6 +4,10 @@
 // 文件里还是普通的 Markdown:```js 牛奶测试,``` 后面第一个词是语言,其余的是标题。
 import { codeBlockSchema, $prose, Plugin, PluginKey, Decoration, DecorationSet, TextSelection } from "../vendor/milkdown.js";
 
+const FOLDED = "[minipad-folded]";
+let persistFolds = true;
+export function setCodeFoldPersistence(enabled) { persistFolds = enabled; }
+
 // 第一个词是认识的语言或者像个语言名(字母、数字和 # + . -)才算语言
 function looksLikeLanguage(word) {
   return !!word && (!!hljs.getLanguage(word) || /^[\w#+.-]+$/.test(word));
@@ -38,12 +42,18 @@ export const codeBlockWithTitle = codeBlockSchema.extendSchema((prev) => (ctx) =
   const base = prev(ctx);
   return {
     ...base,
-    attrs: { ...base.attrs, title: { default: "", validate: "string" } },
+    attrs: { ...base.attrs, title: { default: "", validate: "string" }, folded: { default: false, validate: "boolean" } },
     parseMarkdown: {
       match: base.parseMarkdown.match,
       runner: (state, node, type) => {
-        const { language, title } = splitInfo(node.lang, node.meta);
-        state.openNode(type, { language, title });
+        let { lang, meta } = node;
+        const folded = (!meta && lang === FOLDED) || /(?:^|\s)\[minipad-folded\]$/.test(meta || "");
+        if (folded) {
+          if (lang === FOLDED && !meta) lang = null;
+          else meta = meta.slice(0, -FOLDED.length).trimEnd();
+        }
+        const { language, title } = splitInfo(lang, meta);
+        state.openNode(type, { language, title, folded });
         if (node.value) state.addText(node.value);
         state.closeNode();
       },
@@ -51,7 +61,12 @@ export const codeBlockWithTitle = codeBlockSchema.extendSchema((prev) => (ctx) =
     toMarkdown: {
       match: base.toMarkdown.match,
       runner: (state, node) => {
-        state.addNode("code", undefined, node.content.firstChild?.text || "", joinInfo(node.attrs.language, node.attrs.title));
+        const info = joinInfo(node.attrs.language, node.attrs.title);
+        if (node.attrs.folded) {
+          if (info.lang) info.meta = [info.meta, FOLDED].filter(Boolean).join(" ");
+          else info.lang = FOLDED;
+        }
+        state.addNode("code", undefined, node.content.firstChild?.text || "", info);
       },
     },
   };
@@ -69,6 +84,7 @@ class CodeBlockView {
     this.node = node;
     this.view = view;
     this.getPos = getPos;
+    this.foldOverride = null;
 
     this.dom = document.createElement("div");
     this.dom.className = "codeblock";
@@ -190,6 +206,21 @@ class CodeBlockView {
   }
 
   setFolded(folded) {
+    const pos = this.getPos();
+    if (persistFolds && this.view.editable && pos != null) {
+      this.foldOverride = null;
+      if (folded !== this.node.attrs.folded) {
+        this.view.dispatch(this.view.state.tr.setNodeMarkup(pos, null, { ...this.node.attrs, folded })
+          .setMeta("addToHistory", false));
+      }
+    } else {
+      // 只读页面或关闭持久化时，只改变这次查看的状态。
+      this.foldOverride = folded;
+    }
+    this.paintFolded(folded);
+  }
+
+  paintFolded(folded) {
     this.dom.classList.toggle("folded", folded);
     this.toggle.setAttribute("aria-expanded", String(!folded));
     if (!folded) this.layoutLines();
@@ -222,12 +253,14 @@ class CodeBlockView {
     const lines = lineCount(this.node);
     this.count.textContent = `${lines} 行`;
     this.dom.style.setProperty("--digits", String(String(lines).length));
+    this.paintFolded(this.foldOverride ?? this.node.attrs.folded);
     // 内容放进页面以后再量行号的位置
     requestAnimationFrame(() => this.layoutLines());
   }
 
   update(node) {
     if (node.type !== this.node.type) return false;
+    if (node.attrs.folded !== this.node.attrs.folded) this.foldOverride = null;
     this.node = node;
     this.sync();
     return true;

@@ -3,7 +3,8 @@ import { api, isMiniWindow } from "./api.js";
 import { tabsEl } from "./dom.js";
 import { state, book, current, makeNote, noteFromDisk, bookFromDisk, sortBooks, inMini } from "./state.js";
 import { toast } from "./ui.js";
-import { scheduleMeta, scheduleBooks, scheduleSave } from "./save.js";
+import { scheduleMeta, scheduleBooks, scheduleSave, noteDiskRevision, noteSaveInFlight } from "./save.js";
+import { editorIsComposing } from "./editor.js";
 import { showNote, refreshCurrent } from "./page.js";
 import { renderTabs, ensurePage } from "./tabs.js";
 import { renderBook } from "./notebooks.js";
@@ -17,6 +18,14 @@ let syncing = false;
 let lastSync = 0;
 // 窗口还没显示时(开机自启时藏在托盘里)的启动提示,等窗口第一次得到焦点再弹,免得没人看见
 let pendingNotice = "";
+
+// 主窗口和小窗都持续检查前台文件；后台仍由 shown / window-focus 事件触发。
+export function startForegroundSync() {
+  const timer = setInterval(() => {
+    if (!document.hidden && document.hasFocus()) void syncFromDisk();
+  }, 1000);
+  window.addEventListener("pagehide", () => clearInterval(timer), { once: true });
+}
 
 export async function mutate(fn) {
   busy++;
@@ -66,16 +75,18 @@ export function showPendingNotice() {
 }
 
 export async function syncFromDisk(force = false) {
-  if (syncing || busy || !state.books.length || tabsEl.querySelector("input")) return;
+  if (syncing || busy || editorIsComposing() || noteSaveInFlight() || !state.books.length || tabsEl.querySelector("input")) return;
   const now = Date.now();
   if (!force && now - lastSync < 800) return;
   lastSync = now;
   syncing = true;
   const g = gen;
+  const revision = noteDiskRevision();
   try {
     let disk = await api.invoke("read_notes");
     // 读的时候页面或笔记本有变动,这次的结果就不用了
-    const fresh = () => !busy && gen === g && !tabsEl.querySelector("input");
+    const fresh = () => !busy && gen === g && !editorIsComposing() && !noteSaveInFlight() &&
+      noteDiskRevision() === revision && !tabsEl.querySelector("input");
     if (!fresh()) return;
     if (isMiniWindow) disk = onlyThisPage(disk);
     if (!disk) return;

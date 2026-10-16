@@ -4,7 +4,7 @@ import { $ } from "./dom.js";
 import { state, book, current } from "./state.js";
 import { toast, dialogOpen, closeDialog, closeMenu, closeOverlays, focusEditor, ask, askText } from "./ui.js";
 import { markDirty, flushAll, saveMeta, pendingNoteCount, resetActivity } from "./save.js";
-import { reload, syncFromDisk, addConflictCopy, showPendingNotice } from "./sync.js";
+import { reload, syncFromDisk, startForegroundSync, addConflictCopy, showPendingNotice } from "./sync.js";
 import { rememberView } from "./page.js";
 import { switchTo, newNote, deleteNote } from "./tabs.js";
 import { bindTabBar } from "./tabbar.js";
@@ -29,6 +29,7 @@ async function init() {
   setTaskCommand(toggleTask);
   await createEditor({ onChange: markDirty, openLink, emptyBold: () => isMiniWindow || toggleBooks() });
   bindUi();
+  startForegroundSync();
   // 小窗:只放一页,别的(托盘退出、贴边隐藏、备份提示……)都归主窗口
   if (isMiniWindow) return initMini();
   await reload();
