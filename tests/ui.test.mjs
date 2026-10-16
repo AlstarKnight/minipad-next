@@ -5816,3 +5816,34 @@ describe("0.3.11: quick colors keep their place in the library", () => {
     assert.equal(await p.locator("#set-accent + .shared-colors .uc-preset:visible").count(), 5);
   });
 });
+
+describe("0.3.12: dragging colors in the format bar popup", () => {
+  ui("text and background color popups let library colors be dragged into quick, and clicks still color the text", {
+    seed: { ...seed({ "": { 页: "文字" } }), settings: {
+      ...SETTINGS, color_library: ["#111111", "#222222", "#333333"], quick_colors: ["#111111"],
+    } },
+  }, async (h) => {
+    const { p } = h;
+    await p.click("#editor .ProseMirror");
+    await p.keyboard.press("Control+a");
+    for (const cmd of ["color", "bg"]) {
+      await p.click(`#format-bar [data-cmd="${cmd}"]`);
+      await p.locator(".fb-pop:not([hidden])").waitFor();
+      const root = ".fb-pop:not([hidden]) .shared-colors";
+      const pop = p.locator(root);
+      await expandLibrary(p, root);
+      await showKind(p, ".fb-pop:not([hidden])", "solid");
+      const color = cmd === "color" ? "#222222" : "#333333";
+      await pop.locator(`.uc-preset[data-color="${color}"]`).dragTo(pop.locator('.uc-kind-title[data-section="quick"]'));
+      await until(async () => (await h.stored()).settings.quick_colors.includes(color), true,
+        `a color dragged in the ${cmd} popup becomes a quick color`);
+      assert.equal(await p.locator(".fb-pop:not([hidden])").count(), 1, "the popup stays open while dragging");
+      await pop.locator('.uc-swatch[data-color="#111111"]').click();
+      await until(h.editor, cmd === "color" ? '<span style="color: #111111">文字</span>'
+        : '<span style="color: #111111"><span style="background-color: #111111">文字</span></span>',
+      "clicking a swatch in the expanded library still colors the selected text");
+      await p.keyboard.press("Escape");
+    }
+    assert.deepEqual((await h.stored()).settings.quick_colors, ["#111111", "#222222", "#333333"]);
+  });
+});

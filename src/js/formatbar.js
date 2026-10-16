@@ -248,8 +248,9 @@ class Bar {
     this.pop = document.createElement("div");
     this.pop.className = "menu fb-pop";
     this.pop.hidden = true;
-    // 输入框和自定义面板里可以拖动的行除外
-    this.pop.addEventListener("mousedown", (e) => !e.target.closest("input,select,.fb-check") && e.preventDefault());
+    // 输入框、自定义面板里可以拖动的行、展开后可以拖动的色块除外（拦掉按下就拖不起来）
+    this.pop.addEventListener("mousedown", (e) =>
+      !e.target.closest("input,select,.fb-check,.uc-presets.expanded .uc-preset") && e.preventDefault());
     this.onDown = (e) => !this.pop.hidden && !this.pop.contains(e.target) && e.target.closest?.("button") !== this.popFor && this.closePop();
     this.onKey = (e) => {
       if (e.key !== "Escape" || this.pop.hidden) return;
@@ -322,6 +323,8 @@ class Bar {
 
   paletteMenu(btn, { mark, none }) {
     const pick = (value) => {
+      // 展开后按下色块会让编辑器失去焦点（为了能拖动），选完颜色把焦点还给编辑器
+      if (!this.view.hasFocus()) this.view.focus();
       this.closePop();
       setColor(this.view, mark, value);
       if (value) btn.dataset.last = value;
