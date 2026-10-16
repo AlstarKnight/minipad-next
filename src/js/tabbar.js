@@ -215,6 +215,13 @@ function fillPagesMenu() {
     const s = document.createElement("span");
     s.textContent = n.name;
     it.appendChild(s);
+    if (n.pinned) {
+      const mark = document.createElement("i");
+      mark.className = "pin-mark";
+      mark.innerHTML = '<svg viewBox="0 0 16 16"><path d="M6 1.5h4M7 1.5v4L4.5 8.5h7L9 5.5v-4M8 8.5v6"/></svg>';
+      it.prepend(mark);
+      it.title = "已固定";
+    }
     it.addEventListener("click", () => {
       closePagesMenu();
       switchTo(book().notes.indexOf(n));

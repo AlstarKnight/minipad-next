@@ -25,6 +25,10 @@
     <button id="btn-search" class="icon" title="搜索全部页面 (Ctrl+F)">
       <svg viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14"/></svg>
     </button>
+    <!-- 贴边隐藏的开关(设置里可以不显示):亮着表示靠边时会自动隐藏 -->
+    <button id="btn-edge" class="icon" title="贴边隐藏" aria-pressed="true">
+      <svg viewBox="0 0 16 16"><path d="M13.5 2v12"/><rect x="2.5" y="4" width="7.5" height="8" rx="1.5"/><path d="M11 8h.01"/></svg>
+    </button>
     <button id="btn-pin" class="icon" title="窗口置顶">
       <svg viewBox="0 0 16 16"><path d="M6 1.5h4M7 1.5v4L4.5 8.5h7L9 5.5v-4M8 8.5v6"/></svg>
     </button>
@@ -107,6 +111,14 @@
     </div>
   </div>
 
+  <!-- 快速切换页面(见 js/quickswitch.js) -->
+  <div id="quick" class="overlay" hidden>
+    <div class="panel">
+      <input id="quick-input" type="text" placeholder="找页面……" autocomplete="off" spellcheck="false" aria-label="快速切换页面" />
+      <div id="quick-results" role="listbox"></div>
+    </div>
+  </div>
+
   <!-- 设置:左边(或上面)是分类,点了只显示那一类;保存和取消一直在最下面。分类和面板的切换见 js/settings.js -->
   <div id="settings" class="overlay" hidden>
     <div class="panel form settings-panel">
@@ -128,6 +140,19 @@
             <label class="row check"><input id="set-autostart" type="checkbox" /> <span>开机启动(启动后藏在托盘)</span></label>
             <label class="row check"><input id="set-taskbar" type="checkbox" /> <span>在任务栏显示</span></label>
             <label class="row check"><input id="set-top" type="checkbox" /> <span>窗口总在最前</span></label>
+            <h3>快速切换页面</h3>
+            <label class="row">
+              <span>快捷键</span>
+              <input id="set-quick-key" type="text" readonly placeholder="不用(点这里然后按下组合键)" />
+            </label>
+            <div class="row"><span class="muted grow">输入几个字找到页面直接打开。点上面的框再按组合键就换成它;按 Backspace 或 Delete 清空,就不用这个快捷键</span></div>
+            <label class="row">
+              <span>找哪些页面</span>
+              <select id="set-quick-scope">
+                <option value="all">全部笔记本</option>
+                <option value="book">只找当前笔记本</option>
+              </select>
+            </label>
           </section>
 
           <section id="set-page-look" class="set-page" role="tabpanel" data-page="look" hidden>
@@ -208,6 +233,16 @@
             <label class="row check tab-option" data-for="drawer"><input id="set-drawer-hover" type="checkbox" /> <span>鼠标移到窗口这一边的边缘也拉出来</span></label>
             <label class="row check tab-option" data-for="drawer"><input id="set-drawer-pinned" type="checkbox" /> <span>钉住,一直开在编辑区旁边(列表上的图钉也能切换)</span></label>
 
+            <label class="row">
+              <span>固定的标签</span>
+              <select id="set-pin-style">
+                <option value="icon">名字前面一个图钉</option>
+                <option value="tint">淡淡染上强调色</option>
+                <option value="none">不标出来(只是排在最前面)</option>
+              </select>
+            </label>
+            <div class="row"><span class="muted grow">右键标签选「固定标签」,它会排在最前面,不会被 Ctrl+W 误删</span></div>
+
             <h3>标签分组</h3>
             <label class="row check"><input id="set-tab-groups" type="checkbox" /> <span>标签分组(右键标签加进分组;点分组的名字折叠 / 展开,右键改名字和颜色)</span></label>
             <label class="row group-option">
@@ -222,6 +257,7 @@
           <section id="set-page-window" class="set-page" role="tabpanel" data-page="window" hidden>
             <h3>贴边隐藏</h3>
             <label class="row check"><input id="set-edge" type="checkbox" /> <span>靠屏幕边缘时自动隐藏</span></label>
+            <label class="row check"><input id="set-edge-button" type="checkbox" /> <span>顶栏右上角显示切换按钮:点一下一直显示,再点一下恢复贴边隐藏</span></label>
             <label class="row edge-option">
               <span>贴边后的样式</span>
               <select id="set-edge-style">
@@ -423,6 +459,12 @@
               <div class="inline"><input id="set-backup-dir" type="text" spellcheck="false" /><button id="set-pick-backup" class="small">选择…</button></div>
             </div>
             <div class="row"><span id="set-backup-info" class="muted"></span><button id="set-open-backup" class="link">打开备份文件夹</button></div>
+            <p id="set-backup-skipped" class="backup-skipped" hidden></p>
+            <h3>回收站</h3>
+            <div class="row">
+              <span class="muted grow">删掉的页面和笔记本先放进回收站(笔记文件夹里的 .trash),可以恢复,也可以彻底删除</span>
+              <button id="set-trash" class="small">打开回收站…</button>
+            </div>
             <h3>导入</h3>
             <div class="row">
               <span class="muted grow">把 minipad2 的笔记导入成新的笔记本,已有的笔记不会被改动</span>
@@ -473,12 +515,34 @@
           <label id="import-empty-row" class="row check"><input id="import-skip-empty" type="checkbox" /> <span id="import-empty-text"></span></label>
         </div>
       </div>
+      <!-- 暂存区:会建的笔记本和页面,勾掉不要的再导入 -->
+      <div id="import-stage" hidden>
+        <p id="import-stage-summary"></p>
+        <div id="import-stage-list"></div>
+      </div>
       <div id="import-result" hidden></div>
       <ul id="import-warnings" class="import-warnings" hidden></ul>
       <p id="import-error" class="error" hidden></p>
       <div class="actions">
+        <button id="import-back" hidden>上一步</button>
         <button id="import-cancel">取消</button>
-        <button id="import-ok" class="primary" disabled>导入</button>
+        <button id="import-ok" class="primary" disabled>预览</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 回收站(见 js/trash.js):从设置里打开时盖在设置上面,关掉以后回到设置 -->
+  <div id="trash" class="overlay" hidden>
+    <div class="panel form trash-panel">
+      <h2>回收站 <span id="trash-count" class="muted"></span></h2>
+      <p class="muted">删掉的页面和笔记本都在这里。恢复时回到原来的笔记本,重名时自动加编号;彻底删除以后只能从每日备份里找回。</p>
+      <input id="trash-filter" type="text" placeholder="按名字或内容筛选" spellcheck="false" autocomplete="off" aria-label="筛选回收站" />
+      <div id="trash-list" role="list"></div>
+      <p id="trash-error" class="error" hidden></p>
+      <div class="actions">
+        <button id="trash-empty" class="danger-text">清空回收站</button>
+        <span class="grow"></span>
+        <button id="trash-close" class="primary">关闭</button>
       </div>
     </div>
   </div>
@@ -502,6 +566,7 @@
     <hr />
     <button id="books-new">新建笔记本…</button>
     <button id="books-import">从 minipad2 导入…</button>
+    <button id="books-trash">回收站…</button>
     <button id="books-manage">管理笔记本…</button>
     <div id="books-hint" class="menu-hint">管理页面可修改笔记本图标和颜色</div>
   </div>

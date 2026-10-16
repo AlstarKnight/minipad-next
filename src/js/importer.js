@@ -1,5 +1,6 @@
 // ---------- 从 minipad2 导入 ----------
-// 选好 minipad2 的文件夹后先看看里面有什么(minipad2_preview),按选的选项导入成新的笔记本(minipad2_import)。
+// 选好 minipad2 的文件夹后先看看里面有什么(minipad2_preview),选好选项后先放进暂存区(minipad2_stage):
+// 列出会建的笔记本和页面,可以取消勾选不要的;确认以后才写进笔记文件夹(minipad2_import)。
 // 已有的笔记不会被改动;导入完换到第一个新笔记本。从设置里打开时盖在设置上面,关掉以后回到设置
 import { api } from "./api.js";
 import { $ } from "./dom.js";
@@ -17,6 +18,8 @@ let lastPath = "";
 let busy = false;
 // 导入完了,窗口里显示的是结果
 let done = false;
+// 暂存区:{ books: [{ name, pages: [{ name, chars, preview }] }], skipped, warnings },还在选选项时是 null
+let staged = null;
 // 换了文件夹时,之前还没回来的结果不要
 let looking = 0;
 
@@ -26,11 +29,14 @@ export function openImport() {
   closeBooks();
   found = null;
   done = false;
+  staged = null;
+  $("#import-stage").hidden = true;
+  $("#import-back").hidden = true;
   $("#import-setup").hidden = false;
   $("#import-found").hidden = true;
   $("#import-result").hidden = true;
   $("#import-cancel").hidden = false;
-  $("#import-ok").textContent = "导入";
+  $("#import-ok").textContent = "预览";
   showWarnings([]);
   showError("");
   updateButtons();
@@ -141,6 +147,14 @@ function updateButtons() {
     $("#import-recycle-text").textContent = `回收站里的 ${p.recycled} 页,放进「${options().base} 回收站」笔记本`;
   }
   const ok = $("#import-ok");
+  if (staged && !done) {
+    const n = pickedPages();
+    ok.disabled = busy || !n;
+    ok.textContent = busy ? "导入中…" : n ? `导入 ${n} 页` : "导入";
+    ok.title = n ? "" : "一页都没勾选";
+    $("#import-stage-summary").textContent = stageSummary();
+    return;
+  }
   ok.disabled = busy || (!done && !anything());
   ok.title = !done && p && !anything() ? "按现在的选项没有可以导入的页面" : "";
 }
@@ -148,12 +162,133 @@ function updateButtons() {
 function setBusy(on) {
   busy = on;
   for (const el of $("#import").querySelectorAll("input, select, button")) el.disabled = on;
-  $("#import-ok").textContent = on ? "导入中…" : done ? "完成" : "导入";
+  $("#import-ok").textContent = on ? (staged ? "导入中…" : "整理中…") : done ? "完成" : staged ? "导入" : "预览";
   if (!on) updateButtons();
 }
 
-async function runImport() {
+// ---- 暂存区:按选项整理好的笔记本和页面,勾掉不要的再导入 ----
+async function runStage() {
   if (!found || busy) return;
+  setBusy(true);
+  showError("");
+  try {
+    staged = await api.invoke("minipad2_stage", { path: found.path, options: options() });
+    showStage();
+  } catch (e) {
+    staged = null;
+    showError(String(e));
+  } finally {
+    setBusy(false);
+  }
+}
+
+const pageBoxes = () => [...$("#import-stage-list").querySelectorAll("input.st-page")];
+const pickedPages = () => pageBoxes().filter((c) => c.checked).length;
+
+function stageSummary() {
+  const boxes = pageBoxes();
+  const books = new Set(boxes.filter((c) => c.checked).map((c) => c.dataset.book)).size;
+  const all = boxes.length;
+  const n = pickedPages();
+  const skipped = staged.skipped ? `,跳过 ${staged.skipped} 个空白页面` : "";
+  return `暂存区:会新建 ${books} 个笔记本、${n} 页(共 ${all} 页${skipped})。还没有写进笔记文件夹,勾掉不要的再导入;笔记本和已有的重名时会自动加编号。`;
+}
+
+function showStage() {
+  $("#import-setup").hidden = true;
+  const list = $("#import-stage-list");
+  list.replaceChildren(
+    ...staged.books.map((b, i) => {
+      const box = document.createElement("details");
+      box.className = "st-book";
+      box.open = staged.books.length <= 3;
+      const head = document.createElement("summary");
+      const all = document.createElement("input");
+      all.type = "checkbox";
+      all.className = "st-book-check";
+      all.checked = true;
+      all.setAttribute("aria-label", `导入笔记本「${b.name}」`);
+      all.addEventListener("click", (e) => e.stopPropagation());
+      all.addEventListener("change", () => {
+        for (const c of box.querySelectorAll("input.st-page")) c.checked = all.checked;
+        all.indeterminate = false;
+        updateButtons();
+      });
+      const name = document.createElement("span");
+      name.className = "st-name";
+      name.textContent = b.name;
+      const count = document.createElement("span");
+      count.className = "muted";
+      count.textContent = `${b.pages.length} 页`;
+      head.append(all, name, count);
+      const pages = document.createElement("div");
+      pages.className = "st-pages";
+      b.pages.forEach((pg, j) => {
+        const row = document.createElement("label");
+        row.className = "st-page-row";
+        const c = document.createElement("input");
+        c.type = "checkbox";
+        c.className = "st-page";
+        c.checked = true;
+        c.dataset.book = String(i);
+        c.dataset.page = String(j);
+        c.addEventListener("change", () => {
+          const boxes = [...pages.querySelectorAll("input.st-page")];
+          const on = boxes.filter((x) => x.checked).length;
+          all.checked = on > 0;
+          all.indeterminate = on > 0 && on < boxes.length;
+          updateButtons();
+        });
+        const text = document.createElement("span");
+        const n = document.createElement("span");
+        n.className = "st-name";
+        n.textContent = pg.name;
+        const meta = document.createElement("span");
+        meta.className = "muted st-preview";
+        meta.textContent = `${pg.chars} 字${pg.preview ? " · " + pg.preview : ""}`;
+        text.append(n, meta);
+        row.append(c, text);
+        pages.appendChild(row);
+      });
+      box.append(head, pages);
+      return box;
+    }),
+  );
+  $("#import-stage").hidden = false;
+  $("#import-back").hidden = false;
+  showWarnings(staged.warnings);
+  updateButtons();
+  $("#import-ok").focus();
+}
+
+// 回到选项
+function backToSetup() {
+  if (busy) return;
+  staged = null;
+  $("#import-stage").hidden = true;
+  $("#import-back").hidden = true;
+  $("#import-setup").hidden = false;
+  $("#import-ok").textContent = "预览";
+  showWarnings(found?.preview?.warnings || []);
+  showError("");
+  updateButtons();
+}
+
+// 没勾上的笔记本和页面
+function leave() {
+  const books = [];
+  const pages = [];
+  staged.books.forEach((b, i) => {
+    const boxes = pageBoxes().filter((c) => c.dataset.book === String(i));
+    if (!boxes.some((c) => c.checked)) books.push(i);
+    else for (const c of boxes) if (!c.checked) pages.push([i, Number(c.dataset.page)]);
+  });
+  return { books, pages };
+}
+
+async function runImport() {
+  if (!found || !staged || busy) return;
+  const skip = leave();
   setBusy(true);
   showError("");
   try {
@@ -161,11 +296,16 @@ async function runImport() {
     await flushAll();
     await saveMeta();
     // 导入时不和磁盘同步,免得读到导入了一半的笔记本、把页面顺序打乱
-    const r = await mutate(() => api.invoke("minipad2_import", { path: found.path, options: options() }));
+    const r = await mutate(async () => {
+      try {
+        return await api.invoke("minipad2_import", { path: found.path, options: options(), leave: skip });
+      } finally {
+        // 中途出错时已经导入的笔记本也要显示出来
+        await applyDisk(await api.invoke("read_notes"));
+      }
+    });
     done = true;
     showResult(r);
-    const disk = await api.invoke("read_notes");
-    await mutate(() => applyDisk(disk));
     const first = state.books.find((b) => b.name === r.books[0]);
     if (first) await switchBook(first);
   } catch (e) {
@@ -178,6 +318,8 @@ async function runImport() {
 
 function showResult(r) {
   $("#import-setup").hidden = true;
+  $("#import-stage").hidden = true;
+  $("#import-back").hidden = true;
   const box = $("#import-result");
   const line = (text) => {
     const p = document.createElement("p");
@@ -231,5 +373,6 @@ export function bindImport() {
   $("#import-base").addEventListener("input", updateButtons);
   for (const name of CHECKS) $(`#import-${name}`).addEventListener("change", updateButtons);
   $("#import-cancel").addEventListener("click", closeImport);
-  $("#import-ok").addEventListener("click", () => (done ? closeImport() : runImport()));
+  $("#import-back").addEventListener("click", backToSetup);
+  $("#import-ok").addEventListener("click", () => (done ? closeImport() : staged ? runImport() : runStage()));
 }

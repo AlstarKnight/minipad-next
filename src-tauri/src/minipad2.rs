@@ -17,7 +17,9 @@ use crate::notes;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 /// 根页面的 id;分组、回收站、快速链接这些都挂在它下面
 const ROOT_ID: i64 = -1;
@@ -1080,32 +1082,167 @@ fn unique_in(taken: &mut HashSet<String>, base: &str) -> String {
     name
 }
 
-/// 导入到笔记文件夹 `root`:每个笔记本都是新建的,重名的自动改名
-pub fn import(path: &Path, root: &Path, opts: &Options) -> Result<Imported, String> {
+/// 暂存区里的一个笔记本:还没写进笔记文件夹,名字是打算用的(真写进去时和已有的重名会加编号)
+#[derive(Serialize, Debug)]
+pub struct StagedBook {
+    pub name: String,
+    pub pages: Vec<StagedPage>,
+}
+
+#[derive(Serialize, Debug)]
+pub struct StagedPage {
+    pub name: String,
+    /// 有多少个字
+    pub chars: usize,
+    /// 开头的一段文字
+    pub preview: String,
+}
+
+/// 暂存区:按现在的选项会建哪些笔记本、每个里面有哪些页面。确认以后才写进笔记文件夹
+#[derive(Serialize, Debug)]
+pub struct Staged {
+    pub books: Vec<StagedBook>,
+    pub skipped: usize,
+    pub warnings: Vec<String>,
+}
+
+/// 暂存区里没勾上的:第几个笔记本,第几个笔记本的第几页(都从 0 数)
+#[derive(Deserialize, Default, Debug)]
+#[serde(default)]
+pub struct Leave {
+    pub books: Vec<usize>,
+    pub pages: Vec<(usize, usize)>,
+}
+
+/// 有页面的笔记本和其中每页最后的名字、内容
+fn named_books(plan: &Planner) -> Vec<(String, Vec<(String, String)>)> {
+    plan.books
+        .iter()
+        .filter(|b| !b.pages.is_empty())
+        .map(|b| {
+            let mut taken = HashSet::new();
+            let pages = b
+                .pages
+                .iter()
+                .map(|(name, md)| (unique_in(&mut taken, name), md.clone()))
+                .collect();
+            (b.name.clone(), pages)
+        })
+        .collect()
+}
+
+/// 先放进暂存区看看:按选项整理好,但什么都不写
+pub fn stage(path: &Path, opts: &Options) -> Result<Staged, String> {
+    let src = load(path)?;
+    let plan = plan(&src, opts);
+    let books = named_books(&plan)
+        .into_iter()
+        .map(|(name, pages)| StagedBook {
+            name,
+            pages: pages
+                .into_iter()
+                .map(|(name, md)| StagedPage {
+                    chars: md.chars().count(),
+                    preview: md
+                        .split_whitespace()
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                        .chars()
+                        .take(80)
+                        .collect(),
+                    name,
+                })
+                .collect(),
+        })
+        .collect();
+    let mut warnings = src.warnings.clone();
+    warnings.extend(plan.warnings);
+    Ok(Staged {
+        books,
+        skipped: plan.skipped,
+        warnings,
+    })
+}
+
+static STAGE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+/// 写一个新笔记本:先在笔记文件夹里的 .import-* 临时文件夹里写好全部页面和页面顺序,
+/// 再改名成正式的笔记本,写到一半出错不会留下半个笔记本(同步也看不到点开头的文件夹)
+fn write_book(root: &Path, base: &str, pages: &[&(String, String)]) -> Result<String, String> {
+    let seq = STAGE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let stage = root.join(format!(
+        "{}{}-{seq}",
+        notes::IMPORT_STAGE_PREFIX,
+        std::process::id()
+    ));
+    let result = (|| {
+        fs::create_dir_all(root).map_err(|e| e.to_string())?;
+        fs::create_dir(&stage).map_err(|e| format!("新建临时文件夹失败:{e}"))?;
+        for (page, content) in pages {
+            let write = || -> std::io::Result<()> {
+                let mut file = fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(notes::note_path(&stage, page))?;
+                file.write_all(content.as_bytes())?;
+                file.sync_all()
+            };
+            write().map_err(|e| format!("写入「{base}」里的「{page}」失败:{e}"))?;
+        }
+        let meta = notes::Meta {
+            active: pages[0].0.clone(),
+            order: pages.iter().map(|(p, _)| p.clone()).collect(),
+            ..Default::default()
+        };
+        notes::write_meta(&stage, &meta)?;
+        let name = notes::unique_book_name(root, base, None);
+        fs::rename(&stage, notes::book_dir(root, &name)?)
+            .map_err(|e| format!("新建笔记本「{name}」失败:{e}"))?;
+        Ok(name)
+    })();
+    if result.is_err() {
+        let _ = fs::remove_dir_all(&stage);
+    }
+    result
+}
+
+/// 导入到笔记文件夹 `root`:每个笔记本都是新建的,重名的自动改名;`leave` 里的笔记本和页面不导入。
+/// 中途出错时已经写好的笔记本留着,出错的那个不留半个,错误里写明已经导入了哪些
+pub fn import(path: &Path, root: &Path, opts: &Options, leave: &Leave) -> Result<Imported, String> {
     let src = load(path)?;
     let plan = plan(&src, opts);
     let mut books = Vec::new();
     let mut pages = 0;
-    for book in plan.books.iter().filter(|b| !b.pages.is_empty()) {
-        let name = notes::unique_book_name(root, &book.name, None);
-        let dir = notes::book_dir(root, &name)?;
-        fs::create_dir_all(&dir).map_err(|e| format!("新建笔记本「{name}」失败:{e}"))?;
-        let mut taken = HashSet::new();
-        let mut order = Vec::new();
-        for (page, content) in &book.pages {
-            let file = unique_in(&mut taken, page);
-            notes::write_atomic(&notes::note_path(&dir, &file), content)
-                .map_err(|e| format!("写入「{name}」里的「{file}」失败:{e}"))?;
-            order.push(file);
-            pages += 1;
+    for (i, (book, list)) in named_books(&plan).iter().enumerate() {
+        if leave.books.contains(&i) {
+            continue;
         }
-        let meta = notes::Meta {
-            active: order[0].clone(),
-            order,
-            ..Default::default()
-        };
-        notes::write_meta(&dir, &meta)?;
-        books.push(name);
+        let picked: Vec<&(String, String)> = list
+            .iter()
+            .enumerate()
+            .filter(|(j, _)| !leave.pages.contains(&(i, *j)))
+            .map(|(_, p)| p)
+            .collect();
+        if picked.is_empty() {
+            continue;
+        }
+        match write_book(root, book, &picked) {
+            Ok(name) => {
+                books.push(name);
+                pages += picked.len();
+            }
+            Err(e) if books.is_empty() => return Err(e),
+            Err(e) => {
+                return Err(format!(
+                    "{e}\n已经导入的笔记本:{}",
+                    books
+                        .iter()
+                        .map(|b| format!("「{b}」"))
+                        .collect::<Vec<_>>()
+                        .join("、")
+                ))
+            }
+        }
     }
     let mut warnings = src.warnings.clone();
     warnings.extend(plan.warnings);
@@ -1508,7 +1645,7 @@ mod tests {
         let root = notes::temp_dir("mp2-root");
         fs::create_dir_all(root.join("工作")).unwrap();
         fs::write(root.join("工作").join("周报.md"), "原来的").unwrap();
-        let done = import(&prog, &root, &Options::default()).unwrap();
+        let done = import(&prog, &root, &Options::default(), &Leave::default()).unwrap();
         assert_eq!(done.books, ["minipad2", "工作 (2)", "工作 › 项目"]);
         assert_eq!((done.pages, done.skipped), (10, 1));
         // 已有的笔记本没动
@@ -1528,6 +1665,77 @@ mod tests {
             "本周<span style=\"color: #ff3232\">完成</span>了"
         );
         let _ = fs::remove_dir_all(&prog);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn staging_shows_the_plan_and_import_leaves_out_what_was_unticked() {
+        let prog = notes::temp_dir("mp2-stage");
+        sample(&prog, false);
+        let root = notes::temp_dir("mp2-stage-root");
+        let staged = stage(&prog, &Options::default()).unwrap();
+        // 暂存时什么都不写
+        assert_eq!(fs::read_dir(&root).unwrap().count(), 0);
+        let names: Vec<&str> = staged.books.iter().map(|b| b.name.as_str()).collect();
+        assert_eq!(names, ["minipad2", "工作", "工作 › 项目"]);
+        assert_eq!(staged.skipped, 1);
+        let first: Vec<&str> = staged.books[0]
+            .pages
+            .iter()
+            .map(|p| p.name.as_str())
+            .collect();
+        assert_eq!(
+            first,
+            ["便签", "外部", "便签 (2)", "快速链接", "文字模板", "孤儿"]
+        );
+        let weekly = staged.books[1]
+            .pages
+            .iter()
+            .find(|p| p.name == "周报")
+            .unwrap();
+        assert!(weekly.chars > 0 && weekly.preview.starts_with("本周"));
+
+        // 不要「工作 › 项目」,「minipad2」里不要第 2 页(外部)
+        let leave = Leave {
+            books: vec![2],
+            pages: vec![(0, 1)],
+        };
+        let done = import(&prog, &root, &Options::default(), &leave).unwrap();
+        assert_eq!(done.books, ["minipad2", "工作"]);
+        assert_eq!(done.pages, 5 + staged.books[1].pages.len());
+        let book = notes::load_book(&root, "minipad2").unwrap();
+        let names: Vec<&str> = book.notes.iter().map(|n| n.name.as_str()).collect();
+        assert_eq!(names, ["便签", "便签 (2)", "快速链接", "文字模板", "孤儿"]);
+        // 写完不留临时文件夹
+        let left: Vec<String> = fs::read_dir(&root)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .filter(|n| n.starts_with('.'))
+            .collect();
+        assert!(left.is_empty(), "{left:?}");
+        // 一个笔记本的页面全都没勾就不建这个笔记本
+        let leave = Leave {
+            books: vec![0, 2],
+            pages: (0..staged.books[1].pages.len()).map(|j| (1, j)).collect(),
+        };
+        let done = import(&prog, &root, &Options::default(), &leave).unwrap();
+        assert!(done.books.is_empty());
+        assert_eq!(done.pages, 0);
+        let _ = fs::remove_dir_all(&prog);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_failed_notebook_is_not_left_half_written() {
+        let root = notes::temp_dir("mp2-fail");
+        let page = ("页".to_string(), "内容".to_string());
+        // 同名的两页:第二页 create_new 失败
+        let err = write_book(&root, "坏的", &[&page, &page]).unwrap_err();
+        assert!(err.contains("写入「坏的」里的「页」失败"), "{err}");
+        assert_eq!(fs::read_dir(&root).unwrap().count(), 0);
+        assert_eq!(write_book(&root, "好的", &[&page]).unwrap(), "好的");
+        assert_eq!(notes::read_note(&root.join("好的"), "页").unwrap(), "内容");
         let _ = fs::remove_dir_all(&root);
     }
 

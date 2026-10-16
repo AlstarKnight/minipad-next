@@ -182,7 +182,7 @@ export async function deleteBook(b) {
   const count = b.notes.length;
   const msg =
     `删除笔记本「${b.name}」${count ? `和里面的 ${count} 个页面` : ""}?\n` +
-    "文件夹会移到笔记文件夹的 .trash 里,需要时可以找回。";
+    "笔记本会移到回收站,需要时可以恢复(笔记本列表 → 回收站)。";
   if (await ask(msg, "删除", true)) {
     try {
       await mutate(() => holdSaves(async () => {

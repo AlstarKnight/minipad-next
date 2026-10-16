@@ -17,6 +17,7 @@ import { applyOutlineSettings, outlineVars } from "./outline.js";
 import { applyTabBarSettings } from "./tabbar.js";
 import { ALL_ITEMS, DEFAULT_SEL_ITEMS, itemChecklist, orderedItems } from "./formatbar.js";
 import { renderTabs } from "./tabs.js";
+import { comboOf } from "./quickswitch.js";
 import { makeSharedColorTools, refreshSharedColors, quickLimit } from "./sharedcolors.js";
 
 const REPO_URL = "https://github.com/AlstarKnight/minipad-next";
@@ -28,6 +29,11 @@ export function applySettings() {
   document.documentElement.dataset.theme = theme;
   document.documentElement.style.setProperty("--font-size", (s.font_size || 14) + "px");
   $("#btn-pin").classList.toggle("on", s.always_on_top);
+  $("#btn-edge").hidden = s.edge_button === false;
+  $("#btn-edge").classList.toggle("on", !!s.edge_hide);
+  $("#btn-edge").setAttribute("aria-pressed", String(!!s.edge_hide));
+  $("#btn-edge").title = s.edge_hide ? "贴边隐藏:开(点一下改成一直显示)" : "一直显示(点一下恢复贴边隐藏)";
+  document.documentElement.dataset.pinStyle = ["icon", "tint", "none"].includes(s.pin_style) ? s.pin_style : "icon";
   $("#btn-pin").title = s.always_on_top ? "取消置顶" : "窗口置顶";
   $("#btn-theme").title = theme === "dark" ? "切换到浅色" : "切换到深色";
   applyAccent(s.accent);
@@ -128,6 +134,10 @@ export function openSettings() {
   $("#set-hotkey").value = s.hotkey;
   $("#set-top").checked = s.always_on_top;
   $("#set-edge").checked = s.edge_hide;
+  $("#set-edge-button").checked = s.edge_button !== false;
+  $("#set-quick-key").value = s.quick_switch_key || "";
+  $("#set-quick-scope").value = s.quick_switch_scope === "book" ? "book" : "all";
+  $("#set-pin-style").value = ["icon", "tint", "none"].includes(s.pin_style) ? s.pin_style : "icon";
   $("#set-edge-style").value = EDGE_STYLES.includes(s.edge_style) ? s.edge_style : "arrow";
   $("#set-edge-line-width").value = edgeWidth(s);
   edgeLengthValues = { percent: edgeLength(s), px: edgeLengthPx(s) };
@@ -453,6 +463,16 @@ function updateBackup() {
   else if (info?.latest) text = `最近一次:${info.latest},共 ${info.count} 份`;
   else if (info) text = "还没有备份,今天第一次保存时会自动备份";
   $("#set-backup-info").textContent = text;
+  const skipped = on && info?.skipped?.length ? info.skipped : [];
+  $("#set-backup-skipped").textContent = skipped.length ? skippedText(skipped) : "";
+  $("#set-backup-skipped").hidden = !skipped.length;
+}
+
+// 备份时跳过的文件:说明 + 每行一个(太多时只列前 20 个)
+export function skippedText(files) {
+  const list = files.slice(0, 20).map((f) => "· " + f);
+  if (files.length > 20) list.push(`还有 ${files.length - 20} 个`);
+  return `今天的备份跳过了 ${files.length} 个读不了的文件或文件夹(可能被别的程序占用),其余的都备份好了:\n${list.join("\n")}`;
 }
 
 // UI 操作可能在上一笔设置仍在保存时继续发生。按触发时的状态计算差异，
@@ -488,6 +508,10 @@ async function submitSettings() {
     hotkey: $("#set-hotkey").value || state.settings.hotkey,
     always_on_top: $("#set-top").checked,
     edge_hide: $("#set-edge").checked,
+    edge_button: $("#set-edge-button").checked,
+    quick_switch_key: $("#set-quick-key").value,
+    quick_switch_scope: $("#set-quick-scope").value,
+    pin_style: $("#set-pin-style").value,
     edge_style: $("#set-edge-style").value,
     edge_line_width: Number($("#set-edge-line-width").value) || 2,
     edge_line_length: edgeLengthValues.percent,
@@ -570,22 +594,6 @@ async function pickFolder(input, title) {
   }
 }
 
-function hotkeyFromEvent(e) {
-  const mods = [];
-  if (e.ctrlKey) mods.push("Ctrl");
-  if (e.altKey) mods.push("Alt");
-  if (e.shiftKey) mods.push("Shift");
-  if (e.metaKey) mods.push("Super");
-  const c = e.code;
-  if (/^(Control|Alt|Shift|Meta|OS)/.test(c)) return null;
-  let key;
-  if (/^Key[A-Z]$/.test(c)) key = c.slice(3);
-  else if (/^Digit\d$/.test(c)) key = c.slice(5);
-  else key = c;
-  if (!mods.length && !/^F\d{1,2}$/.test(key)) return null;
-  return [...mods, key].join("+");
-}
-
 function updateMigration() {
   const currentDir = state.settings?.notes_dir || "";
   const changing = $("#set-dir").value.trim() !== currentDir;
@@ -609,8 +617,27 @@ export function bindSettings() {
     e.preventDefault();
     e.stopPropagation();
     if (e.key === "Escape") return hk.blur();
-    const combo = hotkeyFromEvent(e);
+    const combo = comboOf(e);
     if (combo) hk.value = combo;
+  });
+  // 快速切换页面的快捷键(窗口里的):按组合键换成它,Backspace / Delete 清空就不用
+  const qk = $("#set-quick-key");
+  qk.addEventListener("focus", () => {
+    qk.classList.add("recording");
+    api.invoke("pause_hotkey").catch(() => {});
+  });
+  qk.addEventListener("blur", () => {
+    qk.classList.remove("recording");
+    api.invoke("resume_hotkey").catch(() => {});
+  });
+  qk.addEventListener("keydown", (e) => {
+    if (e.key === "Tab") return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.key === "Escape") return qk.blur();
+    if (!e.ctrlKey && !e.altKey && !e.metaKey && (e.key === "Backspace" || e.key === "Delete")) return void (qk.value = "");
+    const combo = comboOf(e);
+    if (combo) qk.value = combo;
   });
   $("#set-save").addEventListener("click", submitSettings);
   $("#set-block-enabled").addEventListener("change", () => { $("#set-block-context").disabled = !$("#set-block-enabled").checked; });

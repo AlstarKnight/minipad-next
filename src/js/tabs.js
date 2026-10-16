@@ -3,11 +3,11 @@ import { api } from "./api.js";
 import { tabsEl } from "./dom.js";
 import { state, book, current, makeNote } from "./state.js";
 import { toast, ask, openMenu, focusEditor } from "./ui.js";
-import { flushAll, holdSaves, scheduleMeta } from "./save.js";
+import { flushAll, holdSaves, scheduleMeta, scheduleBooks } from "./save.js";
 import { syncContent } from "./editor.js";
 import { mutate } from "./sync.js";
 import { rememberView, showNote } from "./page.js";
-import { openBooks } from "./notebooks.js";
+import { openBooks, renderBook } from "./notebooks.js";
 import { groupsOn, groupOf, tidyGroups, groupChip, groupMenuItems, joinNeighbour, revealNote, groupVars } from "./groups.js";
 import { refreshTabBar, afterSwitch, tabsVertical, revealActive } from "./tabbar.js";
 
@@ -19,19 +19,44 @@ export function tabAt(i) {
   return tabsEl.querySelector(`.tab[data-index="${i}"]`);
 }
 
+// 固定的页面排在最前面(按固定的先后),不在分组里;当前页面跟着对象走
+export function tidyPinned(b) {
+  const active = b.notes[b.active];
+  for (const n of b.notes) if (n.pinned) n.group = "";
+  const sorted = [...b.notes.filter((n) => n.pinned), ...b.notes.filter((n) => !n.pinned)];
+  if (sorted.every((n, i) => n === b.notes[i])) return;
+  b.notes.splice(0, b.notes.length, ...sorted);
+  b.active = Math.max(0, sorted.indexOf(active));
+}
+
+// 固定 / 取消固定:固定的放到固定区的最后,取消的放到固定区后面第一个
+export function togglePin(n) {
+  const b = book();
+  if (!b.notes.includes(n)) return;
+  const active = current();
+  b.notes.splice(b.notes.indexOf(n), 1);
+  n.pinned = !n.pinned;
+  b.notes.splice(b.notes.filter((x) => x.pinned).length, 0, n);
+  b.active = Math.max(0, b.notes.indexOf(active));
+  renderTabs();
+  scheduleMeta(b);
+}
+
 export function renderTabs() {
   const b = book();
   tabsEl.innerHTML = "";
   if (!b) return refreshTabBar();
   const grouped = groupsOn();
   if (grouped) tidyGroups(b);
+  tidyPinned(b);
   b.notes.forEach((n, i) => {
     const g = grouped ? groupOf(b, n) : null;
     if (g && groupOf(b, b.notes[i - 1]) !== g) {
       tabsEl.appendChild(groupChip(b, g, b.notes.filter((x) => x.group === g.id).length));
     }
     const t = document.createElement("div");
-    t.className = "tab" + (i === b.active ? " active" : "") + (n.unreadable ? " unreadable" : "");
+    t.className = "tab" + (i === b.active ? " active" : "") + (n.unreadable ? " unreadable" : "") + (n.pinned ? " pinned" : "");
+    if (n.pinned && !b.notes[i + 1]?.pinned) t.classList.add("pin-end");
     if (g) {
       t.classList.add("in-group");
       groupVars(t, g.color);
@@ -42,6 +67,13 @@ export function renderTabs() {
     t.draggable = true;
     t.dataset.index = i;
     t.title = n.unreadable ? `${n.name}:读取失败:${n.reason || "未知错误"}` : n.name;
+    if (n.pinned) {
+      const mark = document.createElement("i");
+      mark.className = "pin-mark";
+      mark.innerHTML = '<svg viewBox="0 0 16 16"><path d="M6 1.5h4M7 1.5v4L4.5 8.5h7L9 5.5v-4M8 8.5v6"/></svg>';
+      t.appendChild(mark);
+      t.title += "(已固定)";
+    }
     const s = document.createElement("span");
     s.textContent = n.name;
     t.appendChild(s);
@@ -57,13 +89,14 @@ export function renderTabs() {
     t.addEventListener("dblclick", () => startRename(n));
     t.addEventListener("contextmenu", (e) => {
       e.preventDefault();
-      const groupItems = groupMenuItems(n);
+      const groupItems = n.pinned ? [] : groupMenuItems(n);
       openMenu(
         [
           { id: "rename", label: "重命名", act: () => startRename(n) },
+          { id: "pin", label: n.pinned ? "取消固定" : "固定标签", act: () => togglePin(n) },
           { id: "move", label: "移到笔记本…", act: () => openBooks(n) },
           ...groupItems,
-          { id: "delete", label: "删除页面", act: () => deleteNote(n), danger: true },
+          { id: "delete", label: n.pinned ? "删除页面(先取消固定)" : "删除页面", act: () => deleteNote(n), danger: true, disabled: n.pinned },
         ],
         e.clientX,
         e.clientY
@@ -108,7 +141,7 @@ export function moveTab(from, to, target = null) {
   const activeNote = current();
   b.notes.splice(from, 1);
   b.notes.splice(from < to ? to - 1 : to, 0, n);
-  if (target) joinNeighbour(b, n, target);
+  if (target && !n.pinned) joinNeighbour(b, n, target);
   b.active = b.notes.indexOf(activeNote);
   renderTabs();
   scheduleMeta(b);
@@ -120,6 +153,23 @@ export function switchTo(i) {
   rememberView();
   b.active = i;
   revealNote(b, b.notes[i]);
+  renderTabs();
+  showNote();
+  scheduleMeta(b);
+  afterSwitch();
+}
+
+// 打开某个笔记本里的某一页(快速切换、回收站恢复以后用)
+export function goTo(b, n) {
+  if (!state.books.includes(b) || !b.notes.includes(n)) return;
+  rememberView();
+  if (b !== book()) {
+    state.book = state.books.indexOf(b);
+    renderBook();
+    scheduleBooks();
+  }
+  b.active = b.notes.indexOf(n);
+  revealNote(b, n);
   renderTabs();
   showNote();
   scheduleMeta(b);
@@ -195,9 +245,11 @@ export function startRename(n) {
 export async function deleteNote(n) {
   const b = state.books.find((x) => x.notes.includes(n));
   if (!b) return;
+  // 固定的页面不会被 Ctrl+W 误删
+  if (n.pinned) return toast(`「${n.name}」是固定的标签,先右键取消固定才能删除`, 4000);
   syncContent(n);
   const msg = n.content.trim()
-    ? `删除页面「${n.name}」?\n文件会移到笔记文件夹的 .trash 里,需要时可以找回。`
+    ? `删除页面「${n.name}」?\n页面会移到回收站,需要时可以恢复(笔记本列表 → 回收站)。`
     : `删除空白页面「${n.name}」?`;
   if (!(await ask(msg, "删除", true))) return;
   try {

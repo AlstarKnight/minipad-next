@@ -66,6 +66,8 @@ pub struct Settings {
     edge_line_length_px: u32,
     /// 细线微光效果（默认关闭）
     edge_line_glow: bool,
+    /// 顶栏显示「贴边隐藏 / 一直显示」的切换按钮
+    edge_button: bool,
     /// 贴边标识的颜色,写法同 accent;空着跟随强调色
     edge_color: String,
     show_in_taskbar: bool,
@@ -174,6 +176,12 @@ pub struct Settings {
     tab_groups: bool,
     /// 组里的标签怎么标出来:line 下面一条组的颜色 / tint 整个标签淡淡染上组的颜色
     tab_group_style: String,
+    /// 固定的标签怎么标出来:icon 名字前面一个图钉 / tint 淡淡染上强调色 / none 不标(都排在最前面)
+    pin_style: String,
+    /// 快速切换页面的快捷键(窗口里的,写法同 hotkey),空着就不用
+    quick_switch_key: String,
+    /// 快速切换找哪些页面:all 全部笔记本 / book 当前笔记本
+    quick_switch_scope: String,
     /// 选中文字时的悬浮工具栏:always 总是出现 / nobar 只在格式栏收起时 / off 不出现
     sel_bar: String,
     /// 悬浮工具栏上的按钮(按顺序,id 同格式栏)
@@ -195,6 +203,7 @@ impl Default for Settings {
             edge_line_length_unit: "percent".into(),
             edge_line_length_px: 120,
             edge_line_glow: false,
+            edge_button: true,
             edge_color: String::new(),
             show_in_taskbar: false,
             autostart: false,
@@ -251,6 +260,9 @@ impl Default for Settings {
             tab_drawer_pinned: false,
             tab_groups: false,
             tab_group_style: "line".into(),
+            pin_style: "icon".into(),
+            quick_switch_key: "Ctrl+P".into(),
+            quick_switch_scope: "all".into(),
             sel_bar: "always".into(),
             sel_bar_items: [
                 "block", "strong", "em", "strike", "code", "link", "sep3", "color", "bg",
@@ -321,6 +333,8 @@ struct AppState {
     backup_day: Mutex<String>,
     /// 后台正在打包备份
     backup_running: AtomicBool,
+    /// 这次运行里最近一份备份跳过的文件(读不了的):(日期, 文件)
+    backup_skipped: Mutex<(String, Vec<String>)>,
 }
 
 #[derive(Serialize)]
@@ -330,6 +344,8 @@ struct BackupInfo {
     /// 最近一份备份的日期
     latest: Option<String>,
     count: usize,
+    /// 最近一份备份跳过的读不了的文件(只记得这次运行里打的备份)
+    skipped: Vec<String>,
 }
 
 // ---------- 路径与设置 ----------
@@ -467,11 +483,20 @@ fn maybe_backup(app: &AppHandle) {
     std::thread::spawn(move || {
         let result = backup::run(&notes, &dest, &today, keep);
         let st = app.state::<AppState>();
-        *st.backup_day.lock().unwrap() = today;
+        *st.backup_day.lock().unwrap() = today.clone();
         st.backup_running.store(false, Ordering::SeqCst);
-        if let Err(e) = result {
-            eprintln!("{e}");
-            let _ = app.emit("backup-error", e);
+        match result {
+            Ok(Some(made)) => {
+                if !made.skipped.is_empty() {
+                    let _ = app.emit("backup-skipped", made.skipped.clone());
+                }
+                *st.backup_skipped.lock().unwrap() = (today, made.skipped);
+            }
+            Ok(None) => {}
+            Err(e) => {
+                eprintln!("{e}");
+                let _ = app.emit("backup-error", e);
+            }
         }
     });
 }
@@ -696,6 +721,9 @@ fn tidy_settings(s: &mut Settings) {
     pick_one(&mut s.tab_overflow, &["scroll", "wrap", "drawer"]);
     pick_one(&mut s.tab_drawer_side, &["left", "right"]);
     pick_one(&mut s.tab_group_style, &["line", "tint"]);
+    pick_one(&mut s.pin_style, &["icon", "tint", "none"]);
+    pick_one(&mut s.quick_switch_scope, &["all", "book"]);
+    s.quick_switch_key = s.quick_switch_key.trim().chars().take(40).collect();
     pick_one(&mut s.sel_bar, &["always", "nobar", "off"]);
     pick_one(&mut s.sel_bar_pos, &["above", "below"]);
     let mut seen = std::collections::HashSet::new();
@@ -934,7 +962,9 @@ fn move_note(app: AppHandle, book: String, name: String, target: String) -> Resu
     notes::move_note(&current_notes_dir(&app), &book, &name, &target)
 }
 
+/// 参数和前端发来的字段一一对应
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 fn save_meta(
     app: AppHandle,
     book: String,
@@ -943,6 +973,7 @@ fn save_meta(
     modes: HashMap<String, String>,
     groups: Option<Vec<notes::TabGroup>>,
     note_groups: Option<HashMap<String, String>>,
+    pinned: Option<Vec<String>>,
 ) -> Result<(), String> {
     let groups = groups.map(|groups| notes::Groups {
         groups,
@@ -957,6 +988,7 @@ fn save_meta(
         active,
         modes,
         groups,
+        pinned,
     )
 }
 
@@ -976,6 +1008,40 @@ fn rename_book(app: AppHandle, old: String, new: String) -> Result<String, Strin
 fn delete_book(app: AppHandle, name: String) -> Result<(), String> {
     maybe_backup(&app);
     notes::delete_book(&current_notes_dir(&app), &name)
+}
+
+/// 回收站里删掉的页面和笔记本,最近删的在前
+#[tauri::command]
+fn trash_list(app: AppHandle) -> Result<Vec<notes::TrashItem>, String> {
+    notes::list_trash(&current_notes_dir(&app))
+}
+
+#[derive(Serialize)]
+struct Restored {
+    book: String,
+    /// 恢复的是笔记本时是空的
+    name: String,
+}
+
+/// 恢复回收站里的一项,返回它现在的位置(重名时会加编号)
+#[tauri::command]
+fn trash_restore(app: AppHandle, id: String) -> Result<Restored, String> {
+    maybe_backup(&app);
+    let (book, name) = notes::restore_trash(&current_notes_dir(&app), &id)?;
+    Ok(Restored { book, name })
+}
+
+/// 彻底删除回收站里的一项(之前的每日备份里还有)
+#[tauri::command]
+fn trash_purge(app: AppHandle, id: String) -> Result<(), String> {
+    maybe_backup(&app);
+    notes::purge_trash(&current_notes_dir(&app), &id)
+}
+
+#[tauri::command]
+fn trash_empty(app: AppHandle) -> Result<usize, String> {
+    maybe_backup(&app);
+    notes::empty_trash(&current_notes_dir(&app))
 }
 
 /// 从窗口内容区（Alt+左键）触发原生 Windows 拖动。
@@ -1014,15 +1080,30 @@ async fn minipad2_preview(path: String) -> Result<minipad2::Preview, String> {
     minipad2::preview(Path::new(&path))
 }
 
-/// 从 minipad2 导入:每个分组建一个新笔记本,不动已有的笔记
+/// 按选的选项先放进暂存区:会建哪些笔记本、每个里面有哪些页面,什么都不写
+#[tauri::command]
+async fn minipad2_stage(
+    path: String,
+    options: minipad2::Options,
+) -> Result<minipad2::Staged, String> {
+    minipad2::stage(Path::new(&path), &options)
+}
+
+/// 从 minipad2 导入:每个分组建一个新笔记本,不动已有的笔记;`leave` 是暂存区里没勾上的
 #[tauri::command]
 async fn minipad2_import(
     app: AppHandle,
     path: String,
     options: minipad2::Options,
+    leave: Option<minipad2::Leave>,
 ) -> Result<minipad2::Imported, String> {
     maybe_backup(&app);
-    minipad2::import(Path::new(&path), &current_notes_dir(&app), &options)
+    minipad2::import(
+        Path::new(&path),
+        &current_notes_dir(&app),
+        &options,
+        &leave.unwrap_or_default(),
+    )
 }
 
 #[tauri::command]
@@ -1030,9 +1111,21 @@ fn backup_info(app: AppHandle) -> BackupInfo {
     let settings = app.state::<AppState>().settings.lock().unwrap().clone();
     let dir = backup_dir(&app, &settings);
     let all = backup::list(&dir);
+    let latest = all.last().map(|(day, _)| day.clone());
+    let (day, files) = app
+        .state::<AppState>()
+        .backup_skipped
+        .lock()
+        .unwrap()
+        .clone();
     BackupInfo {
         dir: dir.to_string_lossy().to_string(),
-        latest: all.last().map(|(day, _)| day.clone()),
+        skipped: if latest.as_ref() == Some(&day) {
+            files
+        } else {
+            Vec::new()
+        },
+        latest,
         count: all.len(),
     }
 }
@@ -1813,6 +1906,10 @@ pub fn run() {
             set_book_appearance,
             start_window_drag,
             set_current_book,
+            trash_list,
+            trash_restore,
+            trash_purge,
+            trash_empty,
             backup_info,
             open_backup_dir,
             save_settings,
@@ -1821,6 +1918,7 @@ pub fn run() {
             note_activity,
             pick_folder,
             minipad2_preview,
+            minipad2_stage,
             minipad2_import,
             hide_window,
             show_window,

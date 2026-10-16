@@ -208,6 +208,14 @@ svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width:
   outline: none;
 }
 
+/* 固定的标签:排在最前面,和后面的标签之间空开一点;样式在设置里选(图钉 / 淡淡的强调色 / 不标) */
+.tab.pin-end { margin-right: 8px; }
+.pin-mark { display: none; flex-shrink: 0; }
+.pin-mark svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linejoin: round; stroke-linecap: round; }
+html[data-pin-style="icon"] .tab.pinned .pin-mark { display: inline-flex; margin-right: 4px; color: var(--accent); }
+html[data-pin-style="tint"] .tab.pinned:not(.active) { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.menu .pm-item .pin-mark { display: inline-flex; margin-top: 3px; color: var(--accent); }
+
 .icon {
   display: grid;
   place-items: center;
@@ -756,7 +764,7 @@ html[data-find-pos="bottom"] #status { order: 2; }
   box-shadow: 0 8px 28px rgba(0, 0, 0, 0.18);
 }
 
-#search-input {
+#search-input, #quick-input {
   width: 100%;
   padding: 10px 12px;
   border: none;
@@ -766,7 +774,7 @@ html[data-find-pos="bottom"] #status { order: 2; }
   font: inherit;
   outline: none;
 }
-#search-results:empty::after {
+#search-results:empty::after, #quick-results:empty::after {
   content: attr(data-empty);
   display: block;
   padding: 10px 12px;
@@ -783,6 +791,7 @@ html[data-find-pos="bottom"] #status { order: 2; }
 .result:last-child { border-bottom: none; }
 .result.sel, .result:hover { background: var(--accent-soft); }
 .result .where { font-size: 11.5px; color: var(--muted); }
+#quick-results { max-height: 60vh; overflow-y: auto; }
 .result .snip { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* 页面标题整个显示,长了就换行 */
 .result .snip.title { white-space: normal; overflow-wrap: anywhere; }
@@ -808,7 +817,7 @@ html[data-find-pos="bottom"] #status { order: 2; }
 }
 .form input:focus, .form select:focus { border-color: var(--accent); }
 #set-hotkey { cursor: pointer; text-align: center; font-family: var(--mono); }
-#set-hotkey.recording { border-color: var(--accent); background: var(--accent-soft); }
+#set-hotkey.recording, #set-quick-key.recording { border-color: var(--accent); background: var(--accent-soft); }
 .form .link { color: var(--accent); padding: 0; font-size: 12.5px; }
 .form .error { color: var(--danger); font-size: 12.5px; margin: 8px 0 0; }
 .form .inline { display: flex; gap: 6px; }
@@ -1345,6 +1354,7 @@ html[data-edge-style="hover"][data-edge-peek][data-edge="right"] #edge-expand { 
 /* 设置里查找高亮颜色的预览:和编辑区一样的底色和字 */
 .find-preview { padding: 6px 10px; border: 1px solid var(--code-border); border-radius: 6px; background: var(--bg); color: var(--text); font-size: 13px; line-height: 1.8; }
 .form .row .grow { flex: 1; min-width: 0; font-size: 12px; }
+.backup-skipped { margin: 4px 0 8px; font-size: 12px; line-height: 1.6; color: #ba772d; white-space: pre-wrap; overflow-wrap: anywhere; }
 
 /* ---------- 从 minipad2 导入 ---------- */
 /* 盖在设置上面(从设置里打开时) */
@@ -1353,7 +1363,41 @@ html[data-edge-style="hover"][data-edge-peek][data-edge="right"] #edge-expand { 
 #import-summary { margin: 10px 0 4px; font-size: 13px; line-height: 1.6; }
 #import-result { font-size: 13px; line-height: 1.7; }
 #import-result p { margin: 4px 0; }
+#import-stage-summary { margin: 0 0 8px; font-size: 12.5px; line-height: 1.6; }
+#import-stage-list { max-height: 46vh; overflow-y: auto; border: 1px solid var(--code-border); border-radius: 6px; }
+.st-book { border-bottom: 1px solid var(--code-border); }
+.st-book:last-child { border-bottom: none; }
+.st-book > summary { display: flex; align-items: center; gap: 6px; padding: 6px 10px; cursor: pointer; font-size: 13px; }
+.st-book > summary:hover { background: var(--accent-soft); }
+.st-book > summary .muted { font-size: 11.5px; margin-left: auto; white-space: nowrap; }
+/* 笔记本和页面的名字整个显示,长了就换行 */
+.st-name { overflow-wrap: anywhere; }
+.st-pages { padding: 0 10px 6px 30px; }
+.st-page-row { display: flex; align-items: flex-start; gap: 6px; padding: 3px 0; font-size: 12.5px; cursor: pointer; }
+.st-page-row input { margin-top: 3px; }
+.st-page-row > span { display: flex; flex-direction: column; min-width: 0; }
+.st-preview { font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .import-warnings { margin: 8px 0 0; padding: 6px 10px 6px 26px; max-height: 120px; overflow-y: auto; border: 1px solid var(--code-border); border-radius: 6px; color: var(--muted); font-size: 12px; line-height: 1.6; }
+
+/* ---------- 回收站(见 js/trash.js) ---------- */
+/* 和导入一样盖在设置上面 */
+#trash { z-index: 12; }
+.trash-panel h2 .muted { font-size: 12px; font-weight: normal; }
+.trash-panel > p.muted { margin: 0 0 8px; font-size: 12px; line-height: 1.6; }
+#trash-list { margin-top: 8px; border: 1px solid var(--code-border); border-radius: 6px; max-height: 50vh; overflow-y: auto; }
+#trash-list:empty::after { content: attr(data-empty); display: block; padding: 10px 12px; color: var(--muted); font-size: 12.5px; }
+.trash-item { display: flex; align-items: flex-start; gap: 8px; padding: 7px 10px; border-bottom: 1px solid var(--code-border); }
+.trash-item:last-child { border-bottom: none; }
+.trash-item:hover { background: var(--accent-soft); }
+.ti-icon svg { width: 16px; height: 16px; margin-top: 2px; fill: none; stroke: var(--muted); stroke-width: 1.2; stroke-linejoin: round; }
+.ti-body { flex: 1; min-width: 0; }
+/* 名字整个显示,长了就换行 */
+.ti-name { font-size: 13px; overflow-wrap: anywhere; }
+.ti-meta { font-size: 11.5px; color: var(--muted); }
+.ti-preview { font-size: 12px; color: var(--muted); overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow-wrap: anywhere; }
+.ti-acts { display: flex; flex-direction: column; gap: 4px; }
+.form .danger-text, .actions > .danger-text { color: var(--danger); }
+.actions .grow { flex: 1; }
 
 /* 读取失败时显示告警横幅，保留只读内容与折叠箭头可见、可点。 */
 #read-error { position: absolute; top: 0; left: 0; right: 0; z-index: 11;

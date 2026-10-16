@@ -105,7 +105,7 @@ export function closeMenu() {
 
 // 关掉弹层,返回原来有没有开着的(Esc 先关弹层,没有弹层才隐藏窗口)
 export function closeOverlays(keepBooks = false) {
-  const overlays = ["#search", "#settings", "#import", ...(keepBooks ? [] : ["#book-manager"])];
+  const overlays = ["#search", "#quick", "#settings", "#import", "#trash", ...(keepBooks ? [] : ["#book-manager"])];
   let wasOpen = overlays.some((sel) => !$(sel).hidden) || (!keepBooks && !$("#books").hidden);
   if (closeGroupEditor()) wasOpen = true;
   if (closeTabPopups()) wasOpen = true;
