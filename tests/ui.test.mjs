@@ -2403,75 +2403,12 @@ describe("block handle within reach", () => {
 });
 
 // ---------- 代码块 ----------
-describe("foreground disk sync", () => {
-  for (const mini of [false, true]) {
-    ui(`external edits appear automatically in the foreground ${mini ? "mini" : "main"} window`, {
-      seed: seed({ "": { 页: "原内容" } }),
-      url: mini ? "/index.html?mini=1&book=&page=页" : "/index.html",
-    }, async (h) => {
-      const { p } = h;
-      await p.locator("#editor .ProseMirror").waitFor();
-      await p.evaluate(() => {
-        document.hasFocus = () => true;
-        window.__mockControl = { calls: [] };
-        window.__mockFiles.页 = "外部新内容";
-      });
-      await until(h.editor, "外部新内容", "external edit appears without a focus event or manual sync");
-      assert.ok(await p.evaluate(() => window.__mockControl.calls.includes("read_notes")));
-      assert.equal(await p.evaluate(() => window.__mockControl.calls.includes("save_note")), false,
-        "reading external content never writes it back");
-    });
-  }
-
-  ui("foreground polling pauses in the background and during IME composition", {
-    seed: seed({ "": { 页: "原内容" } }),
-  }, async (h) => {
-    const { p } = h;
-    await p.evaluate(() => {
-      document.hasFocus = () => false;
-      window.__mockControl = { calls: [] };
-      window.__mockFiles.页 = "外部新内容";
-    });
-    await sleep(1200);
-    assert.equal(await p.evaluate(() => window.__mockControl.calls.includes("read_notes")), false);
-    await p.locator("#editor .ProseMirror").dispatchEvent("compositionstart");
-    await p.evaluate(() => { document.hasFocus = () => true; });
-    await sleep(1200);
-    assert.equal(await h.editor(), "原内容", "composition is not replaced by incoming content");
-    assert.equal(await p.evaluate(() => window.__mockControl.calls.includes("read_notes")), false);
-    await p.locator("#editor .ProseMirror").dispatchEvent("compositionend");
-    await until(h.editor, "外部新内容", "polling resumes after composition ends");
-  });
-
-  ui("foreground sync preserves unsaved edits and the external conflict copy", {
-    seed: seed({ "": { 页: "原内容" } }),
-  }, async (h) => {
-    const { p } = h;
-    await p.evaluate(() => {
-      document.hasFocus = () => true;
-      window.__mockControl = { calls: [], fail: { save_note: "测试保存失败" } };
-    });
-    await p.click("#editor .ProseMirror");
-    await p.keyboard.press("Control+End");
-    await p.keyboard.type(" local");
-    await p.evaluate(() => { window.__mockFiles.页 = "外部版本"; });
-    await until(() => p.evaluate(() => window.__mockControl.calls.includes("read_notes")), true);
-    assert.equal(await h.editor(), "原内容 local", "unsaved local content is retained");
-    assert.equal(await h.mockFile("", "页"), "外部版本", "failed saves leave the external version intact");
-    await p.evaluate(async () => {
-      window.__mockControl.fail = {};
-      await window.__minipad.flush();
-    });
-    await until(() => p.evaluate(() => Object.values(window.__mockFiles).sort()),
-      ["原内容 local", "外部版本"].sort(), "both versions remain after saving");
-  });
-
+describe("disk sync and saving", () => {
   ui("a disk read started before a completed save cannot restore stale content", {
     seed: seed({ "": { 页: "原内容" } }),
   }, async (h) => {
     const { p } = h;
     await p.evaluate(async () => {
-      document.hasFocus = () => true;
       const { api } = await import("./js/api.js");
       const invoke = api.invoke;
       let delayed = false;
@@ -2484,6 +2421,8 @@ describe("foreground disk sync", () => {
         return result;
       };
     });
+    // 切回窗口时的那次读取还没回来
+    await p.evaluate(() => void window.__minipad.sync());
     await until(() => p.evaluate(() => typeof window.__releaseDiskRead), "function");
     await p.click("#editor .ProseMirror");
     await p.keyboard.press("Control+End");
@@ -2534,6 +2473,20 @@ describe("code blocks", () => {
     await p.reload();
     await blocks.first().waitFor();
     assert.equal(await blocks.locator("pre:visible").count(), 2, "expanded state survives restart too");
+  });
+
+  ui("a collapsed copy-text block turns into an expanded code block", {
+    seed: seed({ "": { 页: "```copy [minipad-folded]\n复制这段\n```" } }),
+  }, async (h) => {
+    const { p } = h;
+    const block = p.locator("#editor .codeblock");
+    assert.ok(await block.locator("pre").isHidden(), "starts collapsed");
+    await block.click({ button: "right" });
+    await p.click('#ctx button[data-act="block-convert"]');
+    await p.click('#ctx button[data-act="block-type-code_block"]');
+    await until(() => block.locator("pre").isVisible(), true, "the converted code block is expanded");
+    await p.evaluate(() => window.__minipad.flush());
+    assert.equal(await h.mockFile("", "页"), "```\n复制这段\n```");
   });
 
   for (const readOnly of [false, true]) {

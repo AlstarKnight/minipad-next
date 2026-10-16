@@ -19,14 +19,6 @@ let lastSync = 0;
 // 窗口还没显示时(开机自启时藏在托盘里)的启动提示,等窗口第一次得到焦点再弹,免得没人看见
 let pendingNotice = "";
 
-// 主窗口和小窗都持续检查前台文件；后台仍由 shown / window-focus 事件触发。
-export function startForegroundSync() {
-  const timer = setInterval(() => {
-    if (!document.hidden && document.hasFocus()) void syncFromDisk();
-  }, 1000);
-  window.addEventListener("pagehide", () => clearInterval(timer), { once: true });
-}
-
 export async function mutate(fn) {
   busy++;
   gen++;

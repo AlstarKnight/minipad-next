@@ -40,7 +40,7 @@ function makeBlock(schema, kind, source = null) {
   // 同类型转换不重建代码块，保留语言、标题和全部原文。
   // 复制文本块转代码块：去掉 copy 语言和来源标记，变成普通代码块
   if (kind === "code_block" && source?.type.name === "code_block")
-    return source.attrs.language === "copy" ? source.type.create({ ...source.attrs, language: "", title: "" }, source.content) : source;
+    return source.attrs.language === "copy" ? source.type.create({ ...source.attrs, language: "", title: "", folded: false }, source.content) : source;
   if (kind === "fold") return newFold(schema, source);
   if (foldInfo(source)) {
     if (kind === "blockquote") return unfoldQuote(schema, source);
