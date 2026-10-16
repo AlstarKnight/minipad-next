@@ -476,7 +476,9 @@ export function makeSharedColorTools({ id = "", getValue, onApply, defaultColor 
     let cells = 0;
     for (const color of first) { if (cells + span(color) > 5) break; cells += span(color); }
     buttons.style.setProperty("--uc-toggle-column", String(first.length ? cells + 1 : 6));
-    const quickCells = kinds.reduce((sum, kind) => sum + Math.max(1, quickOf[kind].reduce((n, c) => n + span(c), 0)), 0);
+    // 展开后每个快捷栏末尾多一个「＋」空位
+    const quickCells = kinds.reduce((sum, kind) =>
+      sum + Math.max(1, quickOf[kind].reduce((n, c) => n + span(c), 0) + (expanded ? 1 : 0)), 0);
     buttons.style.setProperty("--uc-quick-rows", String(Math.max(1, Math.ceil(quickCells / 6))));
     const sections = kinds.flatMap((kind) => {
       const quick = { role: "quick", kind, colors: quickOf[kind],
@@ -635,6 +637,26 @@ export function makeSharedColorTools({ id = "", getValue, onApply, defaultColor 
         });
         wrap.append(swatch, remove);
         buttons.append(wrap);
+      }
+      // 快捷栏末尾的「＋」空位：拖到这里加到最后，不用瞄准标题
+      if (expanded && section.role === "quick") {
+        const slot = make("div", "uc-drop-slot", "＋");
+        slot.dataset.kind = section.kind;
+        slot.title = "把" + KIND_NAME[section.kind] + "拖到这里，加到快捷栏最后";
+        slot.addEventListener("dragover", (e) => {
+          if (!canDrop(draggingColor, section)) return;
+          e.preventDefault();
+          e.dataTransfer.dropEffect = "move";
+          slot.classList.add("over");
+        });
+        slot.addEventListener("dragleave", () => slot.classList.remove("over"));
+        slot.addEventListener("drop", (e) => {
+          slot.classList.remove("over");
+          if (!canDrop(draggingColor, section)) return;
+          e.preventDefault();
+          dropAt(draggingColor, section);
+        });
+        buttons.append(slot);
       }
     });
     buttons.append(more);

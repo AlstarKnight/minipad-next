@@ -5816,3 +5816,65 @@ describe("0.3.11: quick colors keep their place in the library", () => {
     assert.equal(await p.locator("#set-accent + .shared-colors .uc-preset:visible").count(), 5);
   });
 });
+
+describe("0.3.12: dragging colors in the format bar popup", () => {
+  ui("each quick bar ends with a ＋ slot; a color dropped there goes last", {
+    seed: { ...seed({ "": { 页: "文字" } }), settings: {
+      ...SETTINGS, color_layout: "rows", color_library: ["#111111", "#222222", "#333333",
+        "linear-gradient(90deg, #aaaaaa, #bbbbbb)", "linear-gradient(45deg, #cccccc, #dddddd)"],
+      quick_colors: ["#111111", "#222222", "linear-gradient(90deg, #aaaaaa, #bbbbbb)"],
+    } },
+  }, async (h) => {
+    const { p } = h;
+    await p.click("#btn-settings");
+    await settingsPage(p, "look");
+    const root = "#set-accent + .shared-colors";
+    const lib = p.locator(root);
+    assert.equal(await lib.locator(".uc-drop-slot").count(), 0, "no slot while collapsed");
+    await expandLibrary(p, root);
+    assert.deepEqual(await lib.locator(".uc-drop-slot").evaluateAll((nodes) => nodes.map((n) => n.dataset.kind)),
+      ["solid", "gradient", "material"], "one slot at the end of each quick bar");
+    const slot = (kind) => lib.locator(`.uc-drop-slot[data-kind="${kind}"]`);
+    const gradient = "linear-gradient(45deg, #cccccc, #dddddd)";
+    await lib.locator(`.uc-preset[data-color="${gradient}"]`).dragTo(slot("solid"));
+    assert.deepEqual((await h.stored()).settings.quick_colors, ["#111111", "#222222", "linear-gradient(90deg, #aaaaaa, #bbbbbb)"],
+      "a gradient is not taken by the solid slot");
+    await lib.locator('.uc-preset[data-color="#333333"]').dragTo(slot("solid"));
+    await until(async () => (await h.stored()).settings.quick_colors,
+      ["#111111", "#222222", "#333333", "linear-gradient(90deg, #aaaaaa, #bbbbbb)"]);
+    await lib.locator('.uc-preset[data-color="#111111"]').dragTo(slot("solid"));
+    await until(async () => sectionColors(lib, "quick").then((c) => c.slice(0, 3)), ["#222222", "#333333", "#111111"],
+      "a quick color dropped on the slot moves to the end");
+    await lib.locator(`.uc-preset[data-color="${gradient}"]`).dragTo(slot("gradient"));
+    await until(async () => (await h.stored()).settings.quick_colors.at(-1), gradient);
+  });
+
+  ui("text and background color popups let library colors be dragged into quick, and clicks still color the text", {
+    seed: { ...seed({ "": { 页: "文字" } }), settings: {
+      ...SETTINGS, color_library: ["#111111", "#222222", "#333333"], quick_colors: ["#111111"],
+    } },
+  }, async (h) => {
+    const { p } = h;
+    await p.click("#editor .ProseMirror");
+    await p.keyboard.press("Control+a");
+    for (const cmd of ["color", "bg"]) {
+      await p.click(`#format-bar [data-cmd="${cmd}"]`);
+      await p.locator(".fb-pop:not([hidden])").waitFor();
+      const root = ".fb-pop:not([hidden]) .shared-colors";
+      const pop = p.locator(root);
+      await expandLibrary(p, root);
+      await showKind(p, ".fb-pop:not([hidden])", "solid");
+      const color = cmd === "color" ? "#222222" : "#333333";
+      await pop.locator(`.uc-preset[data-color="${color}"]`).dragTo(pop.locator('.uc-kind-title[data-section="quick"]'));
+      await until(async () => (await h.stored()).settings.quick_colors.includes(color), true,
+        `a color dragged in the ${cmd} popup becomes a quick color`);
+      assert.equal(await p.locator(".fb-pop:not([hidden])").count(), 1, "the popup stays open while dragging");
+      await pop.locator('.uc-swatch[data-color="#111111"]').click();
+      await until(h.editor, cmd === "color" ? '<span style="color: #111111">文字</span>'
+        : '<span style="color: #111111"><span style="background-color: #111111">文字</span></span>',
+      "clicking a swatch in the expanded library still colors the selected text");
+      await p.keyboard.press("Escape");
+    }
+    assert.deepEqual((await h.stored()).settings.quick_colors, ["#111111", "#222222", "#333333"]);
+  });
+});
