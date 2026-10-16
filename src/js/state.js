@@ -8,14 +8,21 @@ export const state = {
   notesDir: "",
   version: "",
   debug: false,
+  // 主窗口:正在小窗里编辑的页面 [{ book, name }](见 mini.js);小窗里是空的
+  minis: [],
 };
 
-// 页面:{ name, content, mode, dirty, scroll, disk, state, snap, group }
+export function inMini(bookName, name) {
+  return state.minis.some((m) => m.book === bookName && m.name === name);
+}
+
+// 页面:{ name, content, mode, dirty, scroll, disk, state, snap, group, mini }
 // disk 是最近一次从磁盘读到或写到磁盘的内容,用来判断文件有没有在别处被改过;
 // scroll 是阅读模式的滚动位置;state / snap 是编辑器的状态(光标、撤销记录)和滚动位置,第一次编辑时才有;
-// group 是所在标签分组的 id,不在分组里是空的;pinned 是固定在标签栏最前面
+// group 是所在标签分组的 id,不在分组里是空的;pinned 是固定在标签栏最前面;
+// mini 是这一页正在小窗里编辑(主窗口里只读,不保存)
 export function makeNote(name, content, mode = "edit", unreadable = false, reason = null, group = "") {
-  return { name, content, mode, unreadable, reason, dirty: false, scroll: 0, disk: content, state: null, snap: null, group, pinned: false };
+  return { name, content, mode, unreadable, reason, dirty: false, scroll: 0, disk: content, state: null, snap: null, group, pinned: false, mini: false };
 }
 
 // 笔记本:「默认」的 name 是空字符串,active 是当前页面在 notes 里的位置;
@@ -32,6 +39,7 @@ export function noteFromDisk(n) {
 }
 export function bookFromDisk(d) {
   const notes = d.notes.map(noteFromDisk);
+  for (const n of notes) n.mini = inMini(d.name, n.name);
   return makeBook(d.name, notes, Math.max(0, notes.findIndex((n) => n.name === d.active)), (d.groups || []).map((g) => ({ ...g })), d.icon || "", d.icon_color || "");
 }
 

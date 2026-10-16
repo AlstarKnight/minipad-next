@@ -1693,3 +1693,58 @@ html[data-unreadable] #format-bar, html[data-unreadable] #toolbar { pointer-even
 #toolbar .fb-block svg { width: 11px; height: 11px; stroke-width: 1.8; }
 #toolbar .fb-color .swatch { stroke: none; fill: var(--muted); }
 #toolbar button:disabled { opacity: 0.4; }
+
+/* ---------- 小窗(见 js/mini.js) ---------- */
+.mini-only { display: none !important; }
+html[data-mini] .mini-only { display: grid !important; }
+html[data-mini] #btn-mini-close:hover { background: #e5534b; color: #fff; }
+/* 小窗的顶栏:页面名字(放不下就换行,不截断)+ 置顶、透明度、放回、关闭 */
+html[data-mini] #bar { height: auto; align-items: center; padding: 3px 4px 3px 10px; gap: 2px; }
+html[data-mini] #bar > :not(.mini-only):not(#btn-format) { display: none !important; }
+html[data-mini] #mini-title {
+  display: block !important; flex: 1 1 auto; min-width: 0; padding: 4px 6px 4px 0;
+  font-size: 13px; font-weight: 600; line-height: 1.35;
+  white-space: normal; overflow-wrap: anywhere;
+  cursor: default;
+}
+html[data-mini] #bar .icon { flex: 0 0 auto; align-self: flex-start; margin-top: 1px; }
+/* 不透明度:整个小窗一起变淡,鼠标移上来时不透明(拖滑块时先不变,好看到效果) */
+html[data-mini] { background: transparent; }
+html[data-mini] body { opacity: var(--mini-opacity, 1); transition: opacity .15s; }
+html[data-mini]:not([data-mini-preview]) body:hover { opacity: 1; }
+.mini-pop {
+  position: fixed; top: 36px; right: 8px; z-index: 40;
+  display: flex; flex-direction: column; gap: 6px;
+  padding: 10px 12px; font-size: 12px;
+  background: var(--panel); color: var(--text);
+  border: 1px solid var(--bar-border); border-radius: 10px;
+}
+.mini-pop[hidden] { display: none; }
+.mini-pop label { display: flex; align-items: center; gap: 8px; }
+.mini-pop input[type="range"] { width: 120px; accent-color: var(--accent); }
+/* 主窗口里正在小窗里编辑的页面:标签变淡,后面标上「小窗」 */
+.tab.in-mini { opacity: .55; }
+.tab.in-mini .mini-badge {
+  margin-left: 5px; padding: 0 4px; font-style: normal; font-size: 11px; line-height: 15px;
+  border-radius: 4px; color: var(--accent); border: 1px solid currentColor;
+}
+/* 标签上的 ↗:鼠标移上来时才出现,放在名字右边的空白里(不挡名字,标签也不变宽,旁边的标签不会挪动) */
+.tab .tab-mini {
+  position: absolute; top: 2px; right: 0;
+  display: none; align-items: center; justify-content: center;
+  width: 12px; height: 12px; margin: 0; padding: 0;
+  border: none; border-radius: 3px; background: transparent; color: var(--muted);
+}
+.tab .tab-mini svg { width: 9px; height: 9px; stroke-width: 1.7; }
+.tab:hover .tab-mini { display: inline-flex; }
+.tab .tab-mini:hover { background: var(--accent-soft); color: var(--text); }
+.mini-option.off { opacity: .5; }
+#read-error.in-mini { cursor: pointer; }
+
+/* ---------- 图片(见 js/images.js) ---------- */
+#editor .ProseMirror img { max-width: 100%; height: auto; vertical-align: bottom; border-radius: 4px; }
+html[data-image-size="medium"] #editor .ProseMirror img { max-width: min(100%, 60%); }
+html[data-image-size="small"] #editor .ProseMirror img { max-width: min(100%, 240px); }
+#editor .ProseMirror img.ProseMirror-selectednode { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* 找不到的图片:一个带虚线框的小占位,鼠标移上去看是哪个文件 */
+#editor .ProseMirror img.broken { display: inline-block; min-width: 48px; min-height: 32px; border: 1px dashed var(--bar-border); }

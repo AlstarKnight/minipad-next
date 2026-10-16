@@ -8,6 +8,8 @@
 </head>
 <body>
   <header id="bar" data-tauri-drag-region>
+    <!-- 小窗(见 js/mini.js):顶栏只有页面名字和下面几个小窗按钮,名字太长就换行 -->
+    <span id="mini-title" class="mini-only" data-tauri-drag-region></span>
     <button id="btn-book" title="默认" aria-label="当前笔记本：默认，点击切换" aria-haspopup="true" aria-expanded="false"><span id="book-icon" aria-hidden="true"></span><span id="book-name" class="visually-hidden">默认</span></button>
     <!-- 标签收进侧拉列表时(设置里选):顶栏只显示当前页的名字,点了拉出页面列表 -->
     <button id="btn-pages" title="页面列表" aria-expanded="false" aria-controls="drawer" hidden>
@@ -45,7 +47,23 @@
     <button id="btn-hide" class="icon" title="隐藏 (Esc)">
       <svg viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8"/></svg>
     </button>
+    <button id="btn-mini-top" class="icon mini-only" title="置顶" aria-pressed="true">
+      <svg viewBox="0 0 16 16"><path d="M6 1.5h4M7 1.5v4L4.5 8.5h7L9 5.5v-4M8 8.5v6"/></svg>
+    </button>
+    <button id="btn-mini-opacity" class="icon mini-only" title="透明度" aria-haspopup="true" aria-controls="mini-opacity-pop">
+      <svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.5"/><path d="M8 2.5v11M8 5h3.8M8 8h5.5M8 11h3.8" opacity=".6"/></svg>
+    </button>
+    <button id="btn-mini-back" class="icon mini-only" title="放回主窗口">
+      <svg viewBox="0 0 16 16"><path d="M7 3H3.5a1 1 0 0 0-1 1v8.5a1 1 0 0 0 1 1H12a1 1 0 0 0 1-1V9"/><path d="M13.5 2.5 8 8M8 4.5V8h3.5"/></svg>
+    </button>
+    <button id="btn-mini-close" class="icon mini-only" title="关闭小窗">
+      <svg viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8"/></svg>
+    </button>
   </header>
+  <div id="mini-opacity-pop" class="mini-pop" role="dialog" aria-label="小窗透明度" hidden>
+    <label><span>不透明度</span><input id="mini-opacity" type="range" min="40" max="100" step="5" /><span id="mini-opacity-val" class="muted"></span></label>
+    <div class="muted">鼠标移到小窗上时不透明</div>
+  </div>
 
   <!-- 格式栏:按钮由 js/formatbar.js 放进来 -->
   <nav id="format-bar" aria-label="格式"></nav>
@@ -114,7 +132,7 @@
   <!-- 快速切换页面(见 js/quickswitch.js) -->
   <div id="quick" class="overlay" hidden>
     <div class="panel">
-      <input id="quick-input" type="text" placeholder="找页面……" autocomplete="off" spellcheck="false" aria-label="快速切换页面" />
+      <input id="quick-input" type="text" placeholder="找页面……(Shift+回车在小窗中打开)" autocomplete="off" spellcheck="false" aria-label="快速切换页面" />
       <div id="quick-results" role="listbox"></div>
     </div>
   </div>
@@ -357,6 +375,28 @@
               <span>图标颜色(给图标上色,保留原来的明暗)</span>
               <div id="set-ball-color" class="accent-swatches"></div>
             </div>
+            <h3>小窗</h3>
+            <label class="row check"><input id="set-mini" type="checkbox" /> <span>可以把一页放进单独的小窗(把标签拖到窗口外、标签右键「在小窗中打开」、标签上的 ↗、快速切换里 Shift+回车)</span></label>
+            <label class="row check mini-option"><input id="set-mini-top" type="checkbox" /> <span>新开的小窗默认置顶</span></label>
+            <label class="row check mini-option"><input id="set-mini-tab-button" type="checkbox" /> <span>鼠标移到标签上时显示 ↗ 按钮</span></label>
+            <label class="row mini-option">
+              <span>按热键时小窗</span>
+              <select id="set-mini-hotkey" title="按热键显示 / 隐藏主窗口时,小窗怎么办">
+                <option value="follow">跟着一起</option>
+                <option value="independent">不受影响</option>
+              </select>
+            </label>
+            <label class="row mini-option">
+              <span>新开小窗的不透明度</span>
+              <input id="set-mini-opacity" type="range" min="40" max="100" step="5" />
+              <span id="set-mini-opacity-val" class="muted"></span>
+            </label>
+            <label class="row check mini-option"><input id="set-mini-restore" type="checkbox" /> <span>重启后恢复上次开着的小窗</span></label>
+            <label class="row mini-option">
+              <span>最多同时开几个小窗</span>
+              <input id="set-mini-max" type="number" min="1" max="20" step="1" placeholder="不限" />
+            </label>
+            <div class="row mini-option"><span class="muted grow">小窗和主窗口外观一样;每一页的小窗分别记住位置、大小、置顶和透明度,鼠标移到小窗上时不透明。贴边隐藏和悬浮图标只管主窗口。</span></div>
           </section>
 
           <section id="set-page-edit" class="set-page" role="tabpanel" data-page="edit" hidden>
@@ -370,6 +410,12 @@
               <option value="ctrl">仅 Ctrl+Enter 退出</option>
             </select></label>
             <label class="row check"><input id="set-fold-save" type="checkbox" /> <span>把折叠状态写入 Markdown（关闭后仅改变界面显示）</span></label>
+            <label class="row check"><input id="set-image-paste" type="checkbox" /> <span>粘贴或拖进来的图片存进笔记本文件夹里的 assets,页面里写成 ![](assets/…)</span></label>
+            <label class="row"><span>图片显示大小</span><select id="set-image-size">
+              <option value="full">原图大小(最宽铺满)</option>
+              <option value="medium">中等(最宽一半多一点)</option>
+              <option value="small">小图(最宽 240 像素)</option>
+            </select></label>
             <label class="row"><span>F5 插入的日期时间</span><input id="set-date-format" type="text" spellcheck="false" autocomplete="off" /></label>
             <div class="row col">
               <span id="set-date-preview" class="muted"></span>

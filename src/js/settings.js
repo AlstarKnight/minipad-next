@@ -156,6 +156,14 @@ export function openSettings() {
   $("#set-gradient-shape").value = ["bar", "round"].includes(s.gradient_shape) ? s.gradient_shape : "square";
   $("#set-gradient-names").checked = s.gradient_names !== false;
   accentColor.show(s.accent || "");
+  $("#set-mini").checked = s.mini_enabled !== false;
+  $("#set-mini-top").checked = s.mini_on_top !== false;
+  $("#set-mini-tab-button").checked = s.mini_tab_button !== false;
+  $("#set-mini-hotkey").value = s.mini_hotkey === "independent" ? "independent" : "follow";
+  $("#set-mini-opacity").value = s.mini_opacity || 100;
+  $("#set-mini-restore").checked = s.mini_restore !== false;
+  $("#set-mini-max").value = s.mini_max || "";
+  updateMiniOptions();
   $("#set-ball").checked = !!s.ball_enabled;
   $("#set-ball-size").value = s.ball_size || 48;
   $("#set-ball-opacity").value = s.ball_opacity || 100;
@@ -185,6 +193,8 @@ export function openSettings() {
   $("#set-block-context").value = s.block_context_menu === "block" ? "block" : "system";
   $("#set-code-exit").value = ["blank2", "blank3", "ctrl"].includes(s.code_exit_mode) ? s.code_exit_mode : "blank3";
   $("#set-fold-save").checked = s.fold_save_state !== false;
+  $("#set-image-paste").checked = s.image_paste !== false;
+  $("#set-image-size").value = ["medium", "small"].includes(s.image_size) ? s.image_size : "full";
   $("#set-block-context").disabled = !$("#set-block-enabled").checked;
   $("#set-format-bar").checked = s.format_bar !== false;
   $("#set-outline").checked = !!s.outline_enabled;
@@ -421,6 +431,13 @@ async function pickBallIcon() {
 }
 
 // 箭头独立模式不显示细线控制；其余三种模式都能调细线长度、粗细。
+function updateMiniOptions() {
+  const off = !$("#set-mini").checked;
+  for (const el of document.querySelectorAll(".mini-option")) el.classList.toggle("off", off);
+  for (const el of document.querySelectorAll(".mini-option select, .mini-option input")) el.disabled = off;
+  $("#set-mini-opacity-val").textContent = ($("#set-mini-opacity").value || 100) + "%";
+}
+
 function updateEdgeOptions() {
   const off = !$("#set-edge").checked;
   const onlyArrow = $("#set-edge-style").value === "arrow-only";
@@ -506,6 +523,8 @@ export function saveSettings(next, { migrateNotes = false } = {}) {
     if (!Object.keys(changed).length) return state.settings;
     const merged = { ...state.settings, ...changed };
     const dirChanged = merged.notes_dir.trim() !== (state.settings.notes_dir || "").trim();
+    // 小窗还在按原来的文件夹存页面
+    if (dirChanged && state.minis.length) throw "还有页面在小窗里编辑,先把小窗都关掉再换笔记文件夹";
     if (dirChanged) {
       await flushAll();
       await saveMeta();
@@ -544,6 +563,13 @@ async function submitSettings() {
     ball_color: ballColor.value,
     ball_opacity: Number($("#set-ball-opacity").value) || 100,
     ball_open: $("#set-ball-open").value,
+    mini_enabled: $("#set-mini").checked,
+    mini_on_top: $("#set-mini-top").checked,
+    mini_tab_button: $("#set-mini-tab-button").checked,
+    mini_hotkey: $("#set-mini-hotkey").value,
+    mini_opacity: Number($("#set-mini-opacity").value) || 100,
+    mini_restore: $("#set-mini-restore").checked,
+    mini_max: Math.min(20, Math.max(0, Math.round(Number($("#set-mini-max").value)) || 0)),
     show_in_taskbar: $("#set-taskbar").checked,
     autostart: $("#set-autostart").checked,
     theme: $("#set-theme").value,
@@ -565,6 +591,8 @@ async function submitSettings() {
     block_context_menu: $("#set-block-context").value,
     code_exit_mode: $("#set-code-exit").value,
     fold_save_state: $("#set-fold-save").checked,
+    image_paste: $("#set-image-paste").checked,
+    image_size: $("#set-image-size").value,
     format_bar: $("#set-format-bar").checked,
     outline_enabled: $("#set-outline").checked,
     outline_mode: $("#set-outline-mode").value,
@@ -719,6 +747,7 @@ export function bindSettings() {
   }
   $("#set-import").addEventListener("click", openImport);
   for (const id of ["#set-ball", "#set-ball-size", "#set-ball-opacity"]) $(id).addEventListener("input", updateBall);
+  for (const id of ["#set-mini", "#set-mini-opacity"]) $(id).addEventListener("input", updateMiniOptions);
   for (const r of document.querySelectorAll('input[name="set-ball-icon"]')) r.addEventListener("change", updateBall);
   $("#set-ball-pick").addEventListener("click", pickBallIcon);
   $("#set-pick-dir").addEventListener("click", () => pickFolder("#set-dir", "选择笔记文件夹"));

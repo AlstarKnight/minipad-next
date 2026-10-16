@@ -1,6 +1,7 @@
 mod backup;
 mod ball;
 mod edge;
+mod images;
 mod mini;
 mod minipad2;
 mod notes;
@@ -221,6 +222,10 @@ pub struct Settings {
     mini_max: u32,
     /// 鼠标移到标签上时显示「在小窗中打开」的 ↗ 按钮
     mini_tab_button: bool,
+    /// 0.4.0 粘贴、拖进来的图片存进笔记本文件夹里的 assets
+    image_paste: bool,
+    /// 图片显示多大:full 最宽铺满 / medium 最宽一半多 / small 小图
+    image_size: String,
     /// 每页小窗的位置、大小、置顶和不透明度(程序自己记,保存设置时沿用这里的)
     mini_windows: Vec<mini::MiniWin>,
     window: Option<Geom>,
@@ -321,6 +326,8 @@ impl Default for Settings {
             mini_restore: true,
             mini_max: 0,
             mini_tab_button: true,
+            image_paste: true,
+            image_size: "full".into(),
             mini_windows: Vec::new(),
             window: None,
         }
@@ -827,6 +834,7 @@ fn tidy_settings(s: &mut Settings) {
     pick_one(&mut s.sel_bar, &["always", "nobar", "off"]);
     pick_one(&mut s.sel_bar_pos, &["above", "below"]);
     pick_one(&mut s.mini_hotkey, &["follow", "independent"]);
+    pick_one(&mut s.image_size, &["full", "medium", "small"]);
     s.mini_opacity = mini::clamp_opacity(s.mini_opacity);
     s.mini_max = s.mini_max.min(20);
     mini::tidy(&mut s.mini_windows);
@@ -1063,7 +1071,91 @@ fn delete_note(app: AppHandle, book: String, name: String) -> Result<(), String>
 #[tauri::command]
 fn move_note(app: AppHandle, book: String, name: String, target: String) -> Result<String, String> {
     maybe_backup(&app);
-    notes::move_note(&current_notes_dir(&app), &book, &name, &target)
+    let root = current_notes_dir(&app);
+    let new = notes::move_note(&root, &book, &name, &target)?;
+    // 页面里的图片(assets/…)也复制到那个笔记本,不然移过去就看不到了
+    if book != target {
+        if let (Ok(from), Ok(to), Ok(page)) = (
+            notes::book_dir(&root, &book),
+            notes::book_dir(&root, &target),
+            notes::page_path(&root, &target, &new),
+        ) {
+            let content = fs::read_to_string(&page).unwrap_or_default();
+            for rel in images::copy_referenced(&from, &to, &content) {
+                eprintln!("移动页面时没能复制图片 {rel}");
+            }
+        }
+    }
+    Ok(new)
+}
+
+#[derive(Deserialize)]
+struct ImageMeta {
+    book: String,
+    ext: String,
+}
+
+/// 粘贴、拖进来的图片:存进这个笔记本的 assets 文件夹,返回页面里写的相对路径。
+/// 图片内容直接作为二进制传过来,笔记本名字和扩展名放在 x-image 头里(encodeURIComponent 过的 JSON)
+#[tauri::command]
+fn save_image(app: AppHandle, request: tauri::ipc::Request<'_>) -> Result<String, String> {
+    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
+        return Err("图片数据不对".into());
+    };
+    let meta = request
+        .headers()
+        .get("x-image")
+        .and_then(|v| v.to_str().ok())
+        .and_then(images::percent_decode)
+        .ok_or("缺少图片信息")?;
+    let meta: ImageMeta = serde_json::from_str(&meta).map_err(|e| e.to_string())?;
+    let s = app.state::<AppState>().settings.lock().unwrap().clone();
+    if !s.image_paste {
+        return Err("粘贴图片已经关掉了,可以在 设置 → 编辑 里打开".into());
+    }
+    let dir = notes::book_dir(&notes_dir(&app, &s), &meta.book)?;
+    if !dir.is_dir() {
+        return Err("找不到这个笔记本".into());
+    }
+    let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S").to_string();
+    images::save(&dir, bytes, &meta.ext, &stamp)
+}
+
+/// 编辑器里显示图片:http://note.localhost/img?book=…&path=assets/…(Windows 上的写法)
+fn note_image(app: &AppHandle, uri: &tauri::http::Uri) -> tauri::http::Response<Vec<u8>> {
+    let not_found = || {
+        tauri::http::Response::builder()
+            .status(404)
+            .body(Vec::new())
+            .unwrap()
+    };
+    let query = uri.query().unwrap_or_default();
+    let (Some(book), Some(rel)) = (
+        images::query_value(query, "book"),
+        images::query_value(query, "path"),
+    ) else {
+        return not_found();
+    };
+    let root = current_notes_dir(app);
+    let Some(path) = notes::book_dir(&root, &book)
+        .ok()
+        .and_then(|dir| images::resolve(&dir, &rel))
+    else {
+        return not_found();
+    };
+    let mime = path
+        .extension()
+        .and_then(|x| x.to_str())
+        .and_then(images::mime_for)
+        .unwrap_or("application/octet-stream");
+    match fs::read(&path) {
+        Ok(bytes) => tauri::http::Response::builder()
+            .header("Content-Type", mime)
+            .header("Cache-Control", "no-cache")
+            .body(bytes)
+            .unwrap_or_else(|_| not_found()),
+        Err(_) => not_found(),
+    }
 }
 
 /// 参数和前端发来的字段一一对应
@@ -1684,7 +1776,11 @@ fn open_mini(
         name: name.into(),
     });
     update_entry(app, book, name, |m| m.open = true);
-    let _ = win.show();
+    // 开机自启时主窗口藏在托盘里:恢复的小窗也先藏着,按热键时跟主窗口一起出来
+    let hidden_main = !main_window(app).is_some_and(|m| m.is_visible().unwrap_or(false));
+    if focus || s.mini_hotkey != "follow" || !hidden_main {
+        let _ = win.show();
+    }
     if focus {
         let _ = win.set_focus();
     }
@@ -1693,9 +1789,10 @@ fn open_mini(
     Ok(())
 }
 
-/// 把一页放进小窗(主窗口已经先把这页存好了);x、y 是拖出标签时松手的屏幕位置
+/// 把一页放进小窗(主窗口已经先把这页存好了);x、y 是拖出标签时松手的屏幕位置。
+/// 建窗口的命令要用 async,在 Windows 上同步命令里建窗口会卡死
 #[tauri::command]
-fn mini_open(
+async fn mini_open(
     app: AppHandle,
     book: String,
     name: String,
@@ -1748,9 +1845,21 @@ fn mini_focus(app: AppHandle, book: String, name: String) -> bool {
     true
 }
 
+/// 主窗口里右键「放回主窗口」:让那个小窗存好页面后自己关掉
+#[tauri::command]
+fn mini_recall(app: AppHandle, book: String, name: String) -> bool {
+    let Some(m) = open_minis(&app)
+        .into_iter()
+        .find(|m| m.book == book && m.name == name)
+    else {
+        return false;
+    };
+    app.emit_to(m.label.as_str(), "mini-recall", ()).is_ok()
+}
+
 /// 小窗存好页面后关掉自己;back = 「放回主窗口」(主窗口出来并切到这页)
 #[tauri::command]
-fn mini_close(app: AppHandle, window: WebviewWindow, back: bool) {
+async fn mini_close(app: AppHandle, window: WebviewWindow, back: bool) {
     let Some(m) = mini_by_label(&app, window.label()) else {
         let _ = window.destroy();
         return;
@@ -1804,7 +1913,7 @@ fn mini_set(app: AppHandle, window: WebviewWindow, top: Option<bool>, opacity: O
 
 /// 主窗口读完笔记后调用:打开上次退出时还开着的小窗
 #[tauri::command]
-fn mini_restore(app: AppHandle) {
+async fn mini_restore(app: AppHandle) {
     let pending = std::mem::take(&mut *app.state::<AppState>().mini_restore.lock().unwrap());
     for (book, name) in pending {
         if let Err(e) = open_mini(&app, &book, &name, None, false) {
@@ -2348,6 +2457,9 @@ pub fn run() {
                 .build(),
         )
         .manage(AppState::default())
+        .register_uri_scheme_protocol("note", |ctx, request| {
+            note_image(ctx.app_handle(), request.uri())
+        })
         .invoke_handler(tauri::generate_handler![
             load_state,
             read_notes,
@@ -2387,11 +2499,13 @@ pub fn run() {
             expand_from_ball,
             open_notes_dir,
             open_link,
+            save_image,
             mini_open,
             mini_self,
             mini_list,
             mini_focus,
             mini_close,
+            mini_recall,
             mini_set,
             mini_restore,
             mini_flush_all,

@@ -40,6 +40,7 @@ import { colorSpans, colorHandlers, textColor, textBg } from "./colors.js";
 import { findPlugin, reapplyFind } from "./find.js";
 import { outlinePlugin } from "./outline.js";
 import { codeToText } from "./toolbar.js";
+import { imagePlugin, applyImageSettings } from "./images.js";
 
 let editor = null;
 let view = null;
@@ -429,7 +430,7 @@ export async function createEditor(opts) {
     .use(history)
     .use(clipboard)
     .use([colorSpans, textColor, textBg].flat())
-    .use([lineBreak, codeBlockWithTitle, codeBlockView, codeHighlight, readOnly, changes, placeholder, afterRule, findPlugin, outlinePlugin, selectionBar, formatBar, foldBlocks, blockManager])
+    .use([lineBreak, codeBlockWithTitle, codeBlockView, codeHighlight, readOnly, changes, placeholder, afterRule, findPlugin, outlinePlugin, selectionBar, formatBar, foldBlocks, blockManager, imagePlugin])
     .create();
   editor.action((c) => {
     ctx = c;
@@ -517,7 +518,7 @@ export function showInEditor(n) {
   n.emailLinkVersion = emailLinkVersion;
   view.updateState(st);
   shown = n;
-  view.setProps({ editable: () => !shown?.unreadable });
+  view.setProps({ editable: () => !shown?.unreadable && !shown?.mini });
   // 查找栏开着时,换过来的页面也按同样的条件高亮
   reapplyFind(view);
   scroller().scrollTop = scroll;
@@ -526,7 +527,7 @@ export function showInEditor(n) {
 // 编辑器里的页面的内容在别处变了(n.content 已经是新内容):换上新内容,可以撤销回去
 export function setEditorText(n) {
   if (n !== shown) return;
-  view.setProps({ editable: () => !shown?.unreadable });
+  view.setProps({ editable: () => !shown?.unreadable && !shown?.mini });
   if (n.unreadable) {
     n.state = null;
     return;
@@ -543,7 +544,7 @@ export function leaveEditor() {
 }
 
 export function focusEditorView() {
-  if (!shown?.unreadable) view.focus();
+  if (!shown?.unreadable && !shown?.mini) view.focus();
 }
 
 export function editorSelectionText() {
@@ -606,6 +607,7 @@ export function applyEditorSettings(s) {
   codeExitMode = ["blank2", "blank3", "ctrl"].includes(s.code_exit_mode) ? s.code_exit_mode : "blank3";
   setFoldPersistence(s.fold_save_state !== false);
   applyBlockSettings(s);
+  applyImageSettings(s);
   $("#editor").classList.toggle("code-lines", s.code_line_numbers !== false);
   const bar = s.format_bar !== false;
   $("#format-bar").hidden = !bar;
