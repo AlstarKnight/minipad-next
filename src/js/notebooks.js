@@ -243,6 +243,7 @@ export function openBookManager() {
   selectedBook = state.books.includes(selectedBook) ? selectedBook : book();
   $("#book-manager").hidden = false;
   renderManager();
+  notebookColorEditor?.reopen();
   $("#bm-close").focus();
 }
 
@@ -325,6 +326,7 @@ function renderManager() {
   // “跟随强调色”保留，其余颜色统一来自可编辑的颜色库。
   addColorButton(colors, "", "跟随强调色");
   if (!notebookColorEditor) notebookColorEditor = makeSharedColorTools({
+    id: "notebook",
     getValue: () => selectedBook?.icon_color || state.settings?.accent || "#d9822b",
     onApply: (value) => selectedBook && saveAppearance(selectedBook, selectedBook.icon || "book", value),
   });

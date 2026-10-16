@@ -825,6 +825,7 @@ html[data-find-pos="bottom"] #status { order: 2; }
 .form .small:hover { border-color: var(--accent); }
 .form input:disabled, .form .small:disabled { opacity: 0.5; cursor: default; }
 .form .small:disabled:hover { border-color: var(--bar-border); }
+.inline-buttons { display: inline-flex; flex-wrap: wrap; gap: 6px; }
 .form h3 { margin: 16px 0 4px; padding-top: 12px; border-top: 1px solid var(--code-border); font-size: 13px; }
 .muted { color: var(--muted); }
 #set-backup-info { flex: 1; font-size: 12px; }
@@ -1217,6 +1218,21 @@ html[data-edge-style="hover"][data-edge-peek][data-edge="right"] #edge-expand { 
   min-width: 0; width: 100%; color: var(--text); font-size: 12px;
 }
 .uc-title { font-size: 11.5px; font-weight: 600; color: var(--muted); }
+/* 0.3.11：标题旁的「纯色 | 渐变」切换 */
+.uc-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
+.uc-head[hidden], .uc-kinds[hidden] { display: none; }
+.uc-kinds { display: inline-flex; gap: 2px; padding: 2px; border: 1px solid var(--bar-border); border-radius: 7px; }
+.uc-kinds .uc-kind {
+  padding: 1px 9px; border: 0; border-radius: 5px; background: transparent;
+  color: var(--muted); font-size: 11.5px; line-height: 1.5;
+}
+.uc-kinds .uc-kind[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.uc-break { grid-column: 1 / -1; height: 0; }
+.uc-presets > .uc-empty { grid-column: 1 / -1; font-size: 11.5px; }
+/* 渐变色块形状：长条占两格，圆形 */
+.uc-preset.bar { grid-column: span 2; width: 100%; }
+.uc-preset.bar .uc-swatch { width: 100%; }
+[data-gradient-shape="round"] .uc-swatch.gradient { width: 25px; border-radius: 50%; }
 .uc-presets {
   display: grid; grid-template-columns: repeat(6, 31px); gap: 7px 6px;
   align-items: center; min-height: 25px; min-width: 0;
@@ -1300,7 +1316,9 @@ html[data-edge-style="hover"][data-edge-peek][data-edge="right"] #edge-expand { 
 /* 设置页显示设定数量的快捷色块；展开才显示完整库、编辑与保存。 */
 .shared-colors.compact { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 5px; padding: 2px 0; }
 .shared-colors.compact .uc-title { white-space: nowrap; }
+.shared-colors.compact .uc-head { grid-column: 1 / -1; justify-content: flex-start; }
 .shared-colors.compact .uc-presets { grid-column: 2; }
+.shared-colors.compact .uc-head:not([hidden]) ~ .uc-presets { grid-column: 1 / -1; }
 .shared-colors.compact .uc-presets.expanded {
   grid-column: 1 / -1; width: 100%; box-sizing: border-box;
   max-height: none; overflow: visible;
@@ -1320,6 +1338,8 @@ html[data-edge-style="hover"][data-edge-peek][data-edge="right"] #edge-expand { 
 }
 .menu .shared-colors .uc-delete:hover { background: var(--bg); color: var(--danger); }
 .menu .shared-colors .uc-more { width: 27px; height: 25px; min-width: 27px; padding: 0; }
+.menu .shared-colors .uc-kinds .uc-kind { width: auto; padding: 1px 9px; border: 0; }
+.menu .shared-colors .uc-preset.bar .uc-swatch { width: 100%; }
 .menu .shared-colors .uc-presets.expanded .uc-more { width: 27px; }
 .menu .shared-colors .uc-stop .uc-remove { flex: none; width: 24px; height: 24px; padding: 0; }
 .menu .shared-colors .uc-actions button { white-space: normal; border: 1px solid var(--bar-border); border-radius: 5px; }

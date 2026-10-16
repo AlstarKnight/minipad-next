@@ -333,6 +333,7 @@ class Bar {
     // 所有色块来自可编辑的颜色库；清除格式单独保留。
     const parts = [clear];
     const shared = makeSharedColorTools({
+      id: mark,
       getValue: () => colorAt(this.view.state, mark) || btn.dataset.last || "#d9822b",
       onApply: (value) => pick(value),
       previewMode: mark === "text_color" ? "text" : "background",
