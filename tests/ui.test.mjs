@@ -3375,9 +3375,12 @@ describe("v0.3.5 editable color library", () => {
     await expandLibrary(p, "#ge-colors .shared-colors");
     const palette = p.locator("#ge-colors .shared-colors");
     await palette.locator(":scope > .uc-actions button").first().click();
+    // 弹窗变高后由 ResizeObserver 在下一帧挪回屏幕里,机器忙时会晚一点
     for (const id of ["#ge-collapse", "#ge-ungroup"]) {
-      const rect = await p.locator(id).boundingBox();
-      assert.ok(rect && rect.y >= 0 && rect.y + rect.height <= 540, id + " remains visible");
+      await until(async () => {
+        const rect = await p.locator(id).boundingBox();
+        return !!rect && rect.y >= 0 && rect.y + rect.height <= 540;
+      }, true, id + " remains visible");
     }
     const presets = await palette.locator(".uc-presets").evaluate((el) =>
       [el.clientHeight, el.scrollHeight]);
