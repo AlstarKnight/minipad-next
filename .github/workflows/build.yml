@@ -108,6 +108,14 @@ jobs:
           path: dist/*.exe
           if-no-files-found: error
 
+      # 只有安装版,测试时直接下这个
+      - name: Upload setup
+        uses: actions/upload-artifact@v6
+        with:
+          name: minipad-next-setup
+          path: dist/*-setup.exe
+          if-no-files-found: error
+
   # 发布单独放一个 job,等格式检查、界面测试和 Windows 构建都通过以后才发。
   # PR 里也跑一遍,只检查(能不能拿到安装包、CHANGELOG 里有没有这一节),不发布
   release:
