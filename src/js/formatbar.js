@@ -394,7 +394,8 @@ class Bar {
         btn.querySelector(".swatch").style.fill = parseAccent(shown)?.from || shown;
         btn.classList.toggle("on", !!c);
       } else btn.classList.toggle("on", !!it.active?.(state));
-      btn.disabled = (it.inline && code) || (it.enabled ? !it.enabled(state) : false);
+      // 代码块里只能改字体颜色和背景颜色
+      btn.disabled = (it.inline && code && !it.palette) || (it.enabled ? !it.enabled(state) : false);
     }
   }
 }
@@ -510,7 +511,7 @@ class SelectionBar extends Bar {
     const sel = state.selection;
     const wanted = selMode === "always" || (selMode === "nobar" && document.getElementById("format-bar")?.hidden !== false);
     const show =
-      wanted && this.el.childElementCount > 0 && !sel.empty && sel.$from.parent.inlineContent && !sel.$from.parent.type.spec.code && (view.hasFocus() || !this.pop.hidden) && view.editable;
+      wanted && this.el.childElementCount > 0 && !sel.empty && sel.$from.parent.inlineContent && (view.hasFocus() || !this.pop.hidden) && view.editable;
     if (!show) {
       this.el.hidden = true;
       if (!this.pop.hidden && sel.empty) this.closePop();

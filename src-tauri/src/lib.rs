@@ -116,6 +116,8 @@ pub struct Settings {
     date_format: String,
     /// 代码块显示行号
     code_line_numbers: bool,
+    /// 点代码块的语言时列出常用语言
+    code_lang_menu: bool,
     /// 自动把裸邮箱识别为 mailto 链接；默认关闭，手动链接始终保留。
     email_auto_link: bool,
     /// 块管理手柄与块操作菜单的开关。
@@ -269,6 +271,7 @@ impl Default for Settings {
             line_numbers: false,
             date_format: DEFAULT_DATE_FORMAT.into(),
             code_line_numbers: true,
+            code_lang_menu: true,
             email_auto_link: false,
             block_enabled: true,
             block_context_menu: "system".into(),
@@ -2903,6 +2906,7 @@ mod tests {
         let s: Settings = serde_json::from_str(json).unwrap();
         assert!(!s.line_numbers);
         assert!(s.code_line_numbers);
+        assert!(s.code_lang_menu);
         assert_eq!(s.date_format, DEFAULT_DATE_FORMAT);
         assert_eq!(s.hotkey, "Ctrl+Alt+M");
         assert!(!s.always_on_top && s.show_in_taskbar && !s.backup_enabled);

@@ -188,6 +188,7 @@ export function openSettings() {
   $("#set-date-format").value = s.date_format;
   updateDatePreview();
   $("#set-code-lines").checked = s.code_line_numbers;
+  $("#set-code-lang-menu").checked = s.code_lang_menu !== false;
   $("#set-email-links").checked = s.email_auto_link === true;
   $("#set-block-enabled").checked = s.block_enabled !== false;
   $("#set-block-context").value = s.block_context_menu === "block" ? "block" : "system";
@@ -586,6 +587,7 @@ async function submitSettings() {
     notes_dir: $("#set-dir").value.trim(),
     date_format: $("#set-date-format").value.trim(),
     code_line_numbers: $("#set-code-lines").checked,
+    code_lang_menu: $("#set-code-lang-menu").checked,
     email_auto_link: $("#set-email-links").checked,
     block_enabled: $("#set-block-enabled").checked,
     block_context_menu: $("#set-block-context").value,

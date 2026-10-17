@@ -6261,3 +6261,180 @@ describe("0.4.0: images", () => {
       "the image is copied to the other notebook");
   });
 });
+
+// ---------- 0.4.2:Prompt 上色、高亮配色、语言列表 ----------
+const PROMPT_PAGE = [
+  "```prompt 提示词",
+  "# 角色",
+  "System: 你是一位{{领域}}专家。",
+  "<rules>",
+  "- **必须**用中文回答",
+  "- 不超过 {字数} 字",
+  "</rules>",
+  "<!-- 备注 -->",
+  "```",
+].join("\n");
+
+describe("0.4.2: code highlighting", () => {
+  ui("prompt blocks color tags, variables, roles, headings and emphasis", {
+    seed: seed({ "": { 页: PROMPT_PAGE } }),
+  }, async (h) => {
+    const { p } = h;
+    const code = p.locator("#editor .codeblock code");
+    const spans = (cls) => code.locator(`.hljs-${cls}`).allTextContents();
+    await until(() => spans("section"), ["# 角色"], "headings");
+    assert.deepEqual(await spans("type"), ["System"], "roles");
+    assert.deepEqual(await spans("template-variable"), ["{{领域}}", "{字数}"], "variables");
+    assert.deepEqual(await spans("name"), ["rules", "rules"], "tag names");
+    assert.deepEqual(await spans("keyword"), ["必须"], "emphasis words");
+    assert.equal((await spans("comment")).join(""), "<!-- 备注 -->", "comments");
+    assert.equal(await h.editor(), PROMPT_PAGE, "coloring never changes the text");
+  });
+
+  ui("unlabelled code is never guessed as a prompt", {
+    seed: seed({ "": { 页: "```\nSystem: hi {{x}}\n```" } }),
+  }, async (h) => {
+    await h.p.locator("#editor .codeblock").waitFor();
+    assert.equal(await h.p.locator("#editor .codeblock .hljs-template-variable").count(), 0);
+  });
+
+  ui("each code block picks its own highlight theme from a dropdown in its header", {
+    seed: seed({ "": { 页: "```js\nconst a = 1;\n```\n\n```js\nconst b = 2;\n```" } }),
+  }, async (h) => {
+    const { p } = h;
+    const blocks = p.locator("#editor .codeblock");
+    const keyword = (i) => blocks.nth(i).locator(".hljs-keyword").first().evaluate((el) => getComputedStyle(el).color);
+    await until(() => keyword(0), "rgb(166, 38, 164)", "the default theme");
+    assert.equal(await p.locator("#set-code-theme").count(), 0, "no theme option in settings");
+    await blocks.first().hover();
+    await blocks.first().locator(".cb-theme").click();
+    const menu = p.locator(".cb-theme-menu");
+    await menu.waitFor();
+    assert.deepEqual(await menu.locator("button").allTextContents(),
+      ["默认", "GitHub", "Dracula", "Nord", "Solarized", "Monokai", "梦幻", "星空", "彩虹"]);
+    assert.equal(await menu.locator("button.on").getAttribute("data-theme"), "", "the current theme is marked");
+    if (process.env.SHOTS) await p.screenshot({ path: `${process.env.SHOTS}/theme-menu.png` });
+    await menu.locator('button[data-theme="dracula"]').click();
+    await until(() => keyword(0), "rgb(163, 20, 77)", "the first block switches");
+    assert.equal(await keyword(1), "rgb(166, 38, 164)", "the second block keeps its own theme");
+    assert.ok(await menu.isHidden());
+    await until(h.editor, "```js [minipad-theme dracula]\nconst a = 1;\n```\n\n```js\nconst b = 2;\n```",
+      "the theme is kept on the fence line");
+    await p.evaluate(() => { document.documentElement.dataset.theme = "dark"; });
+    await until(() => keyword(0), "rgb(255, 121, 198)", "each theme has a dark variant");
+    await p.evaluate(() => window.__minipad.flush());
+    await p.reload();
+    await blocks.first().waitFor();
+    assert.equal(await blocks.first().getAttribute("data-code-theme"), "dracula", "remembered after restart");
+    await blocks.first().hover();
+    await blocks.first().locator(".cb-theme").click();
+    await p.locator('.cb-theme-menu button[data-theme=""]').click();
+    await until(h.editor, "```js\nconst a = 1;\n```\n\n```js\nconst b = 2;\n```", "back to the default removes the marker");
+  });
+
+  ui("theme, title, colors and folding read back together", {
+    seed: seed({ "": { 页: "```prompt 标题 [minipad-theme starry] [minipad-colors c0-2=#e5484d] [minipad-folded]\nabc\n```" } }),
+  }, async (h) => {
+    const { p } = h;
+    const block = p.locator("#editor .codeblock");
+    await block.waitFor();
+    assert.equal(await block.getAttribute("data-code-theme"), "starry");
+    assert.equal(await block.locator(".cb-title").inputValue(), "标题");
+    assert.equal(await block.locator(".cb-lang").inputValue(), "prompt");
+    assert.ok(await block.locator("pre").isHidden());
+    assert.equal(await h.editor(), "```prompt 标题 [minipad-theme starry] [minipad-colors c0-2=#e5484d] [minipad-folded]\nabc\n```");
+  });
+
+  ui("the language box lists common languages and still accepts typing", {
+    seed: seed({ "": { 页: "```\nprint(1)\n```" } }),
+  }, async (h) => {
+    const { p } = h;
+    const lang = p.locator("#editor .cb-lang");
+    const menu = p.locator(".cb-lang-menu");
+    await lang.click();
+    await until(() => menu.isVisible(), true, "focusing the box opens the list");
+    assert.equal(await menu.locator("button").first().getAttribute("data-lang"), "prompt", "Prompt comes first");
+    if (process.env.SHOTS) await p.screenshot({ path: `${process.env.SHOTS}/lang-menu.png` });
+    await p.keyboard.type("pyt");
+    assert.deepEqual(await menu.locator("button").evaluateAll((bs) => bs.map((b) => b.dataset.lang)), ["python"],
+      "typing filters the list");
+    await p.keyboard.press("Enter");
+    await until(h.editor, "```python\nprint(1)\n```", "Enter picks the highlighted language");
+    assert.ok(await menu.isHidden());
+    await lang.click();
+    await menu.locator('button[data-lang="prompt"]').click();
+    await until(h.editor, "```prompt\nprint(1)\n```", "clicking picks a language");
+    await lang.click();
+    await p.keyboard.press("Control+a");
+    await p.keyboard.type("brainfuck");
+    assert.ok(await menu.isHidden(), "no match hides the list");
+    await p.keyboard.press("Enter");
+    await until(h.editor, "```brainfuck\nprint(1)\n```", "languages outside the list can still be typed");
+  });
+
+  ui("the language list can be turned off", {
+    seed: { ...seed({ "": { 页: "```\nx\n```" } }), settings: { ...SETTINGS, code_lang_menu: false } },
+  }, async (h) => {
+    const { p } = h;
+    await p.locator("#editor .cb-lang").click();
+    await sleep(150);
+    assert.equal(await p.locator(".cb-lang-menu:visible").count(), 0);
+  });
+});
+
+describe("0.4.2: colors inside code blocks", () => {
+  const fbBtn = (cmd) => `#format-bar [data-cmd="${cmd}"]`;
+  const line = "System: 你是一位{{领域}}专家";
+
+  ui("text in a code block can be colored like normal text and the code stays plain", {
+    seed: { ...seed({ "": { 页: "```prompt\n" + line + "\n```" } }), settings: { ...SETTINGS, format_bar: true } },
+  }, async (h) => {
+    const { p } = h;
+    await p.locator("#editor .codeblock .hljs-template-variable").waitFor();
+    await p.click("#editor .codeblock code");
+    await p.keyboard.press("End");
+    await p.keyboard.press("Shift+Home");
+    await until(h.selection, line);
+    assert.equal(await p.locator(fbBtn("strong")).isDisabled(), true, "bold stays off in code");
+    await p.click(fbBtn("color"));
+    await expandLibrary(p, ".fb-pop");
+    await p.click('.fb-pop .uc-swatch[data-color="#3b82f6"]');
+    const saved = "```prompt [minipad-colors c0-" + line.length + "=#3b82f6]\n" + line + "\n```";
+    await until(h.editor, saved, "the color goes on the fence line, the code itself is untouched");
+    assert.equal(await p.locator("#editor .codeblock .hljs-template-variable").evaluate((el) => getComputedStyle(el).color),
+      "rgb(59, 130, 246)", "the chosen color wins over the highlight");
+    await until(() => h.mockFile("", "页"), saved, "saved");
+    await p.reload();
+    await p.locator('#editor .codeblock span[data-color="#3b82f6"]').waitFor();
+    assert.equal(await p.locator("#editor .codeblock code").textContent(), line, "after restart the code is the same");
+    assert.equal(await p.locator("#editor .cb-lang").inputValue(), "prompt", "the marker is not taken as the language");
+  });
+
+  ui("gradients, backgrounds, titles and folding all fit on the fence line", {
+    seed: seed({ "": { 页: "```prompt 一行提示 [minipad-colors c0-6=linear-gradient(90deg, #ff5f6d, #4dabf7);b10-12=#fbe9a6] [minipad-folded]\n" + line + "\n```" } }),
+  }, async (h) => {
+    const { p } = h;
+    const block = p.locator("#editor .codeblock");
+    await block.waitFor();
+    assert.ok(await block.locator("pre").isHidden(), "still collapsed");
+    assert.equal(await block.locator(".cb-title").inputValue(), "一行提示");
+    assert.equal(await block.locator(".cb-lang").inputValue(), "prompt");
+    assert.equal(await block.locator('span[data-color^="linear-gradient"]').textContent(), "System");
+    assert.equal(await block.locator("span[data-bg]").textContent(), "一位");
+    await block.locator(".cb-toggle").click();
+    await p.evaluate(() => window.__minipad.flush());
+    assert.equal(await h.mockFile("", "页"),
+      "```prompt 一行提示 [minipad-colors c0-6=linear-gradient(90deg, #ff5f6d, #4dabf7);b10-12=#fbe9a6]\n" + line + "\n```",
+      "expanding keeps the colors and drops only the fold marker");
+  });
+
+  ui("a code block with only colors and no language or title reads back the same", {
+    seed: seed({ "": { 页: "```[minipad-colors c0-2=#e5484d]\nabc\n```" } }),
+  }, async (h) => {
+    const { p } = h;
+    await p.locator('#editor .codeblock span[data-color="#e5484d"]').waitFor();
+    assert.equal(await p.locator("#editor .cb-lang").inputValue(), "");
+    assert.equal(await p.locator("#editor .cb-title").inputValue(), "");
+    assert.equal(await h.editor(), "```[minipad-colors c0-2=#e5484d]\nabc\n```");
+  });
+});

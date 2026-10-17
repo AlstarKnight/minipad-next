@@ -33,6 +33,7 @@ const DEFAULT_SETTINGS = {
   line_numbers: false,
   date_format: DEFAULT_DATE_FORMAT,
   code_line_numbers: true,
+  code_lang_menu: true,
   email_auto_link: false,
   block_enabled: true,
   block_context_menu: "system",
