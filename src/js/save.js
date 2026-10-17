@@ -11,6 +11,9 @@ let saveTimer = null;
 let metaTimer = null;
 let noteFlush = null;
 let inFlightNote = null;
+let diskRevision = 0;
+export function noteDiskRevision() { return diskRevision; }
+export function noteSaveInFlight() { return inFlightNote != null; }
 let metaFlush = null;
 const metaDirty = new Set();
 let bookDirty = false;
@@ -106,6 +109,7 @@ async function writeDirtyNotes() {
         n.dirty = true;
         firstError ??= e;
       } finally {
+        diskRevision++;
         if (inFlightNote === n) inFlightNote = null;
       }
     }

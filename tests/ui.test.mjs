@@ -2403,6 +2403,37 @@ describe("block handle within reach", () => {
 });
 
 // ---------- 代码块 ----------
+describe("disk sync and saving", () => {
+  ui("a disk read started before a completed save cannot restore stale content", {
+    seed: seed({ "": { 页: "原内容" } }),
+  }, async (h) => {
+    const { p } = h;
+    await p.evaluate(async () => {
+      const { api } = await import("./js/api.js");
+      const invoke = api.invoke;
+      let delayed = false;
+      api.invoke = async (...args) => {
+        const result = await invoke(...args);
+        if (args[0] === "read_notes" && !delayed) {
+          delayed = true;
+          await new Promise((resolve) => { window.__releaseDiskRead = resolve; });
+        }
+        return result;
+      };
+    });
+    // 切回窗口时的那次读取还没回来
+    await p.evaluate(() => void window.__minipad.sync());
+    await until(() => p.evaluate(() => typeof window.__releaseDiskRead), "function");
+    await p.click("#editor .ProseMirror");
+    await p.keyboard.press("Control+End");
+    await p.keyboard.type(" local");
+    await until(() => h.mockFile("", "页"), "原内容 local");
+    await p.evaluate(() => window.__releaseDiskRead());
+    await sleep(100);
+    assert.equal(await h.editor(), "原内容 local", "stale read never replaces the just-saved edit");
+  });
+});
+
 const CODE_PAGE = {
   "": {
     代码: [
@@ -2421,6 +2452,86 @@ const CODE_PAGE = {
 };
 
 describe("code blocks", () => {
+  ui("collapsed code blocks survive saving, changing pages and restarting", {
+    seed: seed({ "": { ...CODE_PAGE[""], 其他: "另一页" } }),
+  }, async (h) => {
+    const { p } = h;
+    const blocks = p.locator("#editor .codeblock");
+    for (let i = 0; i < 2; i++) await blocks.nth(i).locator(".cb-toggle").click();
+    await p.evaluate(() => window.__minipad.flush());
+    await h.tab("其他").click();
+    await h.tab("代码").click();
+    assert.equal(await blocks.locator("pre:visible").count(), 0, "changing pages keeps both blocks collapsed");
+    await p.reload();
+    await blocks.first().waitFor();
+    assert.equal(await blocks.locator("pre:visible").count(), 0, "restart keeps both blocks collapsed");
+    assert.deepEqual(await blocks.locator(".cb-title").evaluateAll((els) => els.map((el) => el.value)), ["牛奶测试", ""]);
+    assert.deepEqual(await blocks.locator(".cb-lang").evaluateAll((els) => els.map((el) => el.value)), ["js", ""]);
+    for (let i = 0; i < 2; i++) await blocks.nth(i).locator(".cb-toggle").click();
+    await p.evaluate(() => window.__minipad.flush());
+    assert.equal(await h.mockFile("", "代码"), CODE_PAGE[""].代码, "expanding restores the original Markdown");
+    await p.reload();
+    await blocks.first().waitFor();
+    assert.equal(await blocks.locator("pre:visible").count(), 2, "expanded state survives restart too");
+  });
+
+  ui("a collapsed copy-text block turns into an expanded code block", {
+    seed: seed({ "": { 页: "```copy [minipad-folded]\n复制这段\n```" } }),
+  }, async (h) => {
+    const { p } = h;
+    const block = p.locator("#editor .codeblock");
+    assert.ok(await block.locator("pre").isHidden(), "starts collapsed");
+    await block.click({ button: "right" });
+    await p.click('#ctx button[data-act="block-convert"]');
+    await p.click('#ctx button[data-act="block-type-code_block"]');
+    await until(() => block.locator("pre").isVisible(), true, "the converted code block is expanded");
+    await p.evaluate(() => window.__minipad.flush());
+    assert.equal(await h.mockFile("", "页"), "```\n复制这段\n```");
+  });
+
+  for (const readOnly of [false, true]) {
+    ui(`code folding is temporary when ${readOnly ? "the page is read-only" : "persistence is disabled"}`, {
+      seed: { ...seed(CODE_PAGE), settings: { ...SETTINGS, fold_save_state: readOnly } },
+    }, async (h) => {
+      const { p } = h;
+      if (readOnly) {
+        await p.evaluate(() => {
+          window.__mockControl = { unreadable: { "": { 代码: "测试读取失败" } } };
+        });
+        await h.sync();
+      }
+      const first = p.locator("#editor .codeblock").first();
+      await first.locator(".cb-toggle").click();
+      assert.ok(await first.locator("pre").isHidden());
+      await p.evaluate(() => window.__minipad.flush());
+      assert.equal(await h.mockFile("", "代码"), CODE_PAGE[""].代码);
+      assert.equal(await h.editor(), CODE_PAGE[""].代码, "temporary state never enters Markdown");
+      await p.reload();
+      await first.waitFor();
+      assert.ok(await first.locator("pre").isVisible());
+    });
+  }
+
+  ui("external code fold changes preserve titles and code content", {
+    seed: seed({ "": { 页: "```中文标题\n原代码\n```" } }),
+  }, async (h) => {
+    const { p } = h;
+    const block = p.locator("#editor .codeblock");
+    await block.locator(".cb-toggle").click();
+    await p.evaluate(() => window.__minipad.flush());
+    assert.equal(await h.mockFile("", "页"), "```中文标题 [minipad-folded]\n原代码\n```");
+    await p.reload();
+    await block.waitFor();
+    assert.equal(await block.locator(".cb-title").inputValue(), "中文标题");
+    assert.equal(await block.locator(".cb-lang").inputValue(), "");
+    assert.ok(await block.locator("pre").isHidden());
+    await p.evaluate(() => { window.__mockFiles.页 = "```python 新标题\n新代码\n```"; });
+    await h.sync();
+    assert.ok(await block.locator("pre").isVisible(), "external expanded state is applied");
+    assert.equal(await block.locator(".cb-title").inputValue(), "新标题");
+    assert.equal(await block.locator("code").textContent(), "新代码");
+  });
+
   ui("a code block shows its title, language, line numbers and wraps long lines; it folds and copies", { seed: seed(CODE_PAGE) }, async (h) => {
     const { p } = h;
     await p.locator("#editor .codeblock").first().waitFor();
@@ -2651,6 +2762,7 @@ describe("format bar", () => {
     await p.click('.fb-pop .uc-swatch[data-color="#3b82f6"]');
     assert.equal(await h.editor(), '红<span style="color: #3b82f6">字</span>', "a new text color");
     await p.keyboard.press("Shift+Home");
+    await until(h.selection, "红字", "the expanded selection is ready before applying the background");
     await p.click(fb("bg"));
     await expandLibrary(p, ".fb-pop");
     await p.click('.fb-pop .uc-swatch[data-color="#fbe9a6"]');

@@ -32,7 +32,7 @@ import {
   splitListItem,
 } from "../vendor/milkdown.js";
 import { $ } from "./dom.js";
-import { codeBlockWithTitle, codeBlockView, codeHighlight } from "./codeblock.js";
+import { codeBlockWithTitle, codeBlockView, codeHighlight, setCodeFoldPersistence } from "./codeblock.js";
 import { blockManager, applyBlockSettings } from "./blocks.js";
 import { foldBlocks, revealFolds, safeDocumentEnd, setFoldPersistence } from "./foldblocks.js";
 import { formatBar, selectionBar, setFormatBarItems, setSelectionBar } from "./formatbar.js";
@@ -552,6 +552,8 @@ export function editorSelectionText() {
   return view.state.doc.textBetween(from, to, "\n");
 }
 
+export function editorIsComposing() { return !!view?.composing; }
+
 // 选中文档里第 nth 个 query(不分大小写),找不到就选第一个;滚到窗口中间
 export function selectMatch(query, nth = 0) {
   const q = query.toLowerCase();
@@ -606,6 +608,7 @@ export function applyEditorSettings(s) {
   }
   codeExitMode = ["blank2", "blank3", "ctrl"].includes(s.code_exit_mode) ? s.code_exit_mode : "blank3";
   setFoldPersistence(s.fold_save_state !== false);
+  setCodeFoldPersistence(s.fold_save_state !== false);
   applyBlockSettings(s);
   applyImageSettings(s);
   $("#editor").classList.toggle("code-lines", s.code_line_numbers !== false);

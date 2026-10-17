@@ -3,7 +3,8 @@ import { api, isMiniWindow } from "./api.js";
 import { tabsEl } from "./dom.js";
 import { state, book, current, makeNote, noteFromDisk, bookFromDisk, sortBooks, inMini } from "./state.js";
 import { toast } from "./ui.js";
-import { scheduleMeta, scheduleBooks, scheduleSave } from "./save.js";
+import { scheduleMeta, scheduleBooks, scheduleSave, noteDiskRevision, noteSaveInFlight } from "./save.js";
+import { editorIsComposing } from "./editor.js";
 import { showNote, refreshCurrent } from "./page.js";
 import { renderTabs, ensurePage } from "./tabs.js";
 import { renderBook } from "./notebooks.js";
@@ -66,16 +67,18 @@ export function showPendingNotice() {
 }
 
 export async function syncFromDisk(force = false) {
-  if (syncing || busy || !state.books.length || tabsEl.querySelector("input")) return;
+  if (syncing || busy || editorIsComposing() || noteSaveInFlight() || !state.books.length || tabsEl.querySelector("input")) return;
   const now = Date.now();
   if (!force && now - lastSync < 800) return;
   lastSync = now;
   syncing = true;
   const g = gen;
+  const revision = noteDiskRevision();
   try {
     let disk = await api.invoke("read_notes");
     // 读的时候页面或笔记本有变动,这次的结果就不用了
-    const fresh = () => !busy && gen === g && !tabsEl.querySelector("input");
+    const fresh = () => !busy && gen === g && !editorIsComposing() && !noteSaveInFlight() &&
+      noteDiskRevision() === revision && !tabsEl.querySelector("input");
     if (!fresh()) return;
     if (isMiniWindow) disk = onlyThisPage(disk);
     if (!disk) return;
