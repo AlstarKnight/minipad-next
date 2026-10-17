@@ -56,6 +56,8 @@ impl Default for Geom {
 pub struct Settings {
     hotkey: String,
     always_on_top: bool,
+    /// 启动时检查 GitHub 上有没有新版本,有就在状态栏提示
+    update_check: bool,
     edge_hide: bool,
     /// arrow 细线+箭头 / arrow-only 只有箭头 / line 仅细线 / hover 悬浮按钮
     edge_style: String,
@@ -118,6 +120,8 @@ pub struct Settings {
     code_line_numbers: bool,
     /// 点代码块的语言时列出常用语言
     code_lang_menu: bool,
+    /// 代码块标题旁显示选颜色的色块
+    code_title_color: bool,
     /// 自动把裸邮箱识别为 mailto 链接；默认关闭，手动链接始终保留。
     email_auto_link: bool,
     /// 块管理手柄与块操作菜单的开关。
@@ -238,6 +242,7 @@ impl Default for Settings {
         Settings {
             hotkey: "Ctrl+M".into(),
             always_on_top: true,
+            update_check: true,
             edge_hide: true,
             edge_style: "arrow".into(),
             edge_line_width: edge::LINE_STRIP as u32,
@@ -272,6 +277,7 @@ impl Default for Settings {
             date_format: DEFAULT_DATE_FORMAT.into(),
             code_line_numbers: true,
             code_lang_menu: true,
+            code_title_color: true,
             email_auto_link: false,
             block_enabled: true,
             block_context_menu: "system".into(),
@@ -2907,6 +2913,8 @@ mod tests {
         assert!(!s.line_numbers);
         assert!(s.code_line_numbers);
         assert!(s.code_lang_menu);
+        assert!(s.code_title_color);
+        assert!(s.update_check);
         assert_eq!(s.date_format, DEFAULT_DATE_FORMAT);
         assert_eq!(s.hotkey, "Ctrl+Alt+M");
         assert!(!s.always_on_top && s.show_in_taskbar && !s.backup_enabled);

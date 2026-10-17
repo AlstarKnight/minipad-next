@@ -615,6 +615,9 @@ html[data-find-pos="bottom"] #status { order: 2; }
 }
 #st-save.dirty { color: var(--accent); }
 #st-save.err { color: var(--danger); }
+/* 有新版本时状态栏右边的提示,点它打开下载页 */
+#st-update { padding: 0; font-size: inherit; color: var(--accent); }
+#st-update:hover { text-decoration: underline; }
 
 /* ---------- 代码块卡片 ---------- */
 /* 顶栏:折叠按钮、标题(点一下就能改)、折叠后的行数、语言(也能改)、复制按钮 */
@@ -712,12 +715,14 @@ html[data-find-pos="bottom"] #status { order: 2; }
 .hljs-title, .hljs-section, .hljs-function .hljs-title { color: var(--hl-title); }
 .hljs-type, .hljs-class .hljs-title, .hljs-variable.language_ { color: var(--hl-type); }
 .hljs-attr, .hljs-attribute, .hljs-name, .hljs-tag, .hljs-deletion, .hljs-property { color: var(--hl-attr); }
+/* 标签里的属性值(<a href="x">、Prompt 里的 <tag type="good">)用字符串的颜色,不跟着标签 */
+.hljs-tag.hljs-string { color: var(--hl-string); }
 .hljs-template-variable, .hljs-variable { color: var(--hl-var); }
 .hljs-strong { font-weight: 600; }
 .hljs-emphasis { font-style: italic; }
 .hljs-code { color: var(--hl-string); }
 
-/* ---------- 代码高亮配色(设置 → 编辑 → 代码高亮配色),每套分浅色和深色 ---------- */
+/* ---------- 代码高亮配色(每个代码块顶栏里的配色下拉),每套分浅色和深色 ---------- */
 /* 每个代码块自己带 data-code-theme(没有就是默认那套),配色下拉里的色点也一样 */
 [data-code-theme="one"] { --hl-keyword: #a626a4; --hl-string: #50a14f; --hl-number: #986801; --hl-comment: #a0a1a7; --hl-title: #4078f2; --hl-type: #c18401; --hl-attr: #e45649; --hl-var: #0184bc; }
 [data-theme="dark"][data-code-theme="one"], [data-theme="dark"] [data-code-theme="one"] { --hl-keyword: #c678dd; --hl-string: #98c379; --hl-number: #d19a66; --hl-comment: #7f848e; --hl-title: #61afef; --hl-type: #e5c07b; --hl-attr: #e06c75; --hl-var: #56b6c2; }
@@ -1801,3 +1806,14 @@ html[data-image-size="small"] #editor .ProseMirror img { max-width: min(100%, 24
 .cb-theme-dots i:nth-child(2) { background: var(--hl-string); }
 .cb-theme-dots i:nth-child(3) { background: var(--hl-title); }
 .cb-theme-dots i:nth-child(4) { background: var(--hl-var); }
+
+/* 代码块标题旁的色块:选标题颜色。没选时是一圈淡淡的彩虹,选了就是那个颜色 */
+.cb-head .cb-title-color { padding: 4px; opacity: 0; transition: opacity .12s; }
+.cb-head .cb-title-color::before {
+  content: ""; width: 11px; height: 11px; border-radius: 50%;
+  background: var(--tc, conic-gradient(#f87171, #fbbf24, #34d399, #60a5fa, #a78bfa, #f472b6, #f87171));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text) 18%, transparent);
+}
+.codeblock:hover .cb-title-color, .codeblock .cb-title-color:focus-visible, .codeblock .cb-title-color[aria-expanded="true"] { opacity: 1; }
+@media (hover: none) { .codeblock .cb-title-color { opacity: 1; } }
+.codeblock.no-title .cb-title-color, .codeblock.copyline .cb-title-color, .codeblock.no-title-color-btn .cb-title-color, .cb-title-color:disabled { display: none; }
