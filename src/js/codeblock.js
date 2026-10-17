@@ -5,7 +5,8 @@
 import { codeBlockSchema, $prose, Plugin, PluginKey, Decoration, DecorationSet, TextSelection } from "../vendor/milkdown.js";
 
 import { promptLanguage } from "./prompt-lang.js";
-import { cleanMarkColor } from "./colors.js";
+import { cleanMarkColor, colorStyle } from "./colors.js";
+import { makeSharedColorTools } from "./sharedcolors.js";
 
 hljs.registerLanguage("prompt", promptLanguage);
 
@@ -14,6 +15,8 @@ const FOLDED = "[minipad-folded]";
 // 颜色写在 ``` 那一行的末尾:[minipad-colors c0-5=#df2a3f;b8-12=#fbe9a6],c 是字体颜色,b 是背景颜色,数字是第几个字到第几个字
 const COLORS = /(?:^|\s)\[minipad-colors ([^\]]*)\]$/;
 const MARKS = { c: ["text_color", "color"], b: ["text_bg", "bg"] };
+// 标题的颜色(0.4.3):整条标题一个颜色,写成 [minipad-title-color #df2a3f]
+const TITLE_COLOR = /(?:^|\s)\[minipad-title-color ([^\]]*)\]$/;
 
 function readColors(spec, length) {
   const out = [];
@@ -118,6 +121,63 @@ const themeMenu = {
   close() {
     if (this.el) this.el.hidden = true;
     this.owner?.themeBtn.setAttribute("aria-expanded", "false");
+    this.owner = null;
+  },
+};
+
+// ---- 标题旁的色块:选标题的颜色(纯色、渐变、材质),和正文的字体颜色用同一个颜色库 ----
+let titleColorButton = true;
+export function setTitleColorButton(enabled) {
+  titleColorButton = enabled;
+  document.querySelectorAll(".codeblock").forEach((el) => el.classList.toggle("no-title-color-btn", !enabled));
+  if (!enabled) titleColorMenu.close();
+}
+
+const titleColorMenu = {
+  el: null,
+  owner: null,
+  open(owner) {
+    if (!this.el) {
+      this.el = document.createElement("div");
+      this.el.className = "menu fb-pop cb-title-color-menu";
+      document.body.append(this.el);
+      document.addEventListener("mousedown", (e) => {
+        if (this.owner && !this.el.contains(e.target) && !this.owner.titleColorBtn.contains(e.target)) this.close();
+      }, true);
+      document.addEventListener("keydown", (e) => this.owner && e.key === "Escape" && (e.stopPropagation(), this.close()), true);
+      document.addEventListener("scroll", () => this.owner && this.place(), true);
+    }
+    this.close();
+    this.owner = owner;
+    owner.titleColorBtn.setAttribute("aria-expanded", "true");
+    const pick = (value) => {
+      this.close();
+      owner.setTitleColor(value);
+    };
+    const clear = document.createElement("button");
+    clear.className = "fb-none";
+    clear.textContent = "默认颜色";
+    clear.addEventListener("click", () => pick(""));
+    const shared = makeSharedColorTools({
+      id: "text_color",
+      getValue: () => owner.node.attrs.title_color || "#d9822b",
+      onApply: pick,
+      previewMode: "text",
+    });
+    this.el.replaceChildren(clear, shared.root);
+    this.el.hidden = false;
+    this.place();
+  },
+  place() {
+    const r = this.owner.titleColorBtn.getBoundingClientRect();
+    const h = this.el.offsetHeight;
+    const below = window.innerHeight - r.bottom - 6;
+    this.el.style.top = `${below >= h || below >= r.top ? r.bottom + 2 : Math.max(4, r.top - h - 2)}px`;
+    this.el.style.left = `${Math.max(4, Math.min(r.left, window.innerWidth - this.el.offsetWidth - 4))}px`;
+  },
+  close() {
+    if (this.el) this.el.hidden = true;
+    this.owner?.titleColorBtn.setAttribute("aria-expanded", "false");
     this.owner = null;
   },
 };
@@ -253,24 +313,28 @@ export const codeBlockWithTitle = codeBlockSchema.extendSchema((prev) => (ctx) =
       title: { default: "", validate: "string" },
       folded: { default: false, validate: "boolean" },
       theme: { default: "", validate: "string" },
+      title_color: { default: "", validate: "string" },
     },
     // 代码块里只能用字体颜色和背景颜色
     marks: "text_color text_bg",
     parseMarkdown: {
       match: base.parseMarkdown.match,
       runner: (state, node, type) => {
-        // ``` 那一行末尾的标记:配色、颜色,最后是收起
+        // ``` 那一行末尾的标记:配色、标题颜色、颜色,最后是收起
         let info = [node.lang, node.meta].filter(Boolean).join(" ");
         const folded = info === FOLDED || info.endsWith(" " + FOLDED);
         if (folded) info = info.slice(0, -FOLDED.length).trimEnd();
         const colors = COLORS.exec(info);
         if (colors) info = info.slice(0, colors.index).trimEnd();
+        const titleColor = TITLE_COLOR.exec(info);
+        if (titleColor) info = info.slice(0, titleColor.index).trimEnd();
         const themed = THEME.exec(info);
         if (themed) info = info.slice(0, themed.index).trimEnd();
         const theme = CODE_THEMES.some(([v]) => v && v === themed?.[1]) ? themed[1] : "";
         const [lang, ...rest] = info.split(" ");
         const { language, title } = splitInfo(lang, rest.join(" "));
-        state.openNode(type, { language, title, folded, theme });
+        const title_color = (title && cleanMarkColor(titleColor?.[1])) || "";
+        state.openNode(type, { language, title, folded, theme, title_color });
         const text = node.value || "";
         if (colors) addColoredText(state, type.schema, text, readColors(colors[1], text.length));
         else if (text) state.addText(text);
@@ -282,7 +346,9 @@ export const codeBlockWithTitle = codeBlockSchema.extendSchema((prev) => (ctx) =
       runner: (state, node) => {
         const { lang, meta } = joinInfo(node.attrs.language, node.attrs.title);
         const theme = node.attrs.theme && `[minipad-theme ${node.attrs.theme}]`;
-        const info = [lang, meta, theme, writeColors(node), node.attrs.folded && FOLDED].filter(Boolean).join(" ");
+        // 没有标题时颜色也不用写
+        const titleColor = meta && node.attrs.title_color && `[minipad-title-color ${node.attrs.title_color}]`;
+        const info = [lang, meta, theme, titleColor, writeColors(node), node.attrs.folded && FOLDED].filter(Boolean).join(" ");
         const at = info.indexOf(" ");
         state.addNode("code", undefined, node.textContent, at < 0 ? { lang: info || null, meta: null } : { lang: info.slice(0, at), meta: info.slice(at + 1) });
       },
@@ -306,7 +372,7 @@ class CodeBlockView {
     this.foldOverride = null;
 
     this.dom = document.createElement("div");
-    this.dom.className = "codeblock";
+    this.dom.className = titleColorButton ? "codeblock" : "codeblock no-title-color-btn";
     const head = (this.head = document.createElement("div"));
     head.className = "cb-head";
     head.contentEditable = "false";
@@ -319,6 +385,12 @@ class CodeBlockView {
     this.toggle.addEventListener("click", () => this.setFolded(!this.dom.classList.contains("folded")));
 
     this.title = this.field("cb-title", "添加标题", "title", "代码块标题");
+    this.titleColorBtn = document.createElement("button");
+    this.titleColorBtn.className = "cb-title-color";
+    this.titleColorBtn.setAttribute("aria-haspopup", "dialog");
+    this.titleColorBtn.setAttribute("aria-label", "标题颜色");
+    this.titleColorBtn.title = "标题颜色";
+    this.titleColorBtn.addEventListener("click", () => (titleColorMenu.owner === this ? titleColorMenu.close() : titleColorMenu.open(this)));
     this.count = document.createElement("span");
     this.count.className = "cb-count";
     this.lang = this.field("cb-lang", "语言", "language", "代码的语言,比如 js、python");
@@ -336,7 +408,7 @@ class CodeBlockView {
     this.themeBtn.setAttribute("aria-haspopup", "listbox");
     this.themeBtn.addEventListener("click", () => (themeMenu.owner === this ? themeMenu.close() : themeMenu.open(this)));
 
-    head.append(this.toggle, this.title, this.count, this.lang, this.themeBtn, this.copy);
+    head.append(this.toggle, this.title, this.titleColorBtn, this.count, this.lang, this.themeBtn, this.copy);
     const pre = (this.pre = document.createElement("pre"));
     // 行号放在代码左边单独的一栏里,按每一行在屏幕上的位置摆(长行换行以后行号对着这一行的开头)
     this.gutter = document.createElement("div");
@@ -466,6 +538,13 @@ class CodeBlockView {
     this.view.dispatch(this.view.state.tr.setNodeMarkup(pos, null, { ...this.node.attrs, theme }));
   }
 
+  setTitleColor(value) {
+    const pos = this.getPos();
+    const title_color = cleanMarkColor(value);
+    if (pos == null || !this.view.editable || title_color === this.node.attrs.title_color) return;
+    this.view.dispatch(this.view.state.tr.setNodeMarkup(pos, null, { ...this.node.attrs, title_color }));
+  }
+
   setFolded(folded) {
     const pos = this.getPos();
     if (persistFolds && this.view.editable && pos != null) {
@@ -502,11 +581,16 @@ class CodeBlockView {
 
   // 把节点的属性放到顶栏上
   sync() {
-    const { title, language, theme } = this.node.attrs;
+    const { title, language, theme, title_color } = this.node.attrs;
     if (theme) this.dom.dataset.codeTheme = theme;
     else delete this.dom.dataset.codeTheme;
     this.themeBtn.title = `代码配色:${themeName(theme)}`;
     this.themeBtn.disabled = !this.view.editable;
+    this.titleColorBtn.disabled = !this.view.editable;
+    // 标题和色块按钮都用这个颜色
+    this.title.style.cssText = title_color ? colorStyle(title_color) : "";
+    if (title_color) this.titleColorBtn.style.setProperty("--tc", title_color);
+    else this.titleColorBtn.style.removeProperty("--tc");
     if (document.activeElement !== this.title) this.title.value = title;
     if (document.activeElement !== this.lang) this.lang.value = language;
     this.fit(this.title);
@@ -547,6 +631,7 @@ class CodeBlockView {
     this.resize.disconnect();
     if (menu.input === this.lang) menu.close();
     if (themeMenu.owner === this) themeMenu.close();
+    if (titleColorMenu.owner === this) titleColorMenu.close();
   }
 }
 

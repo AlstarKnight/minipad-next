@@ -19,10 +19,14 @@ export function promptLanguage(hljs) {
     scope: "tag",
     begin: new RegExp(`</?(?=${NAME.source})`),
     end: /\/?>/,
+    // 紧跟 < 的是标签名,后面的 type="good" 是属性名和属性值
     contains: [
-      { scope: "name", begin: NAME, relevance: 0 },
-      { scope: "attr", begin: /[\w-]+(?=\s*=)/, relevance: 0 },
-      ...string,
+      {
+        scope: "name",
+        begin: NAME,
+        relevance: 0,
+        starts: { endsWithParent: true, contains: [{ scope: "attr", begin: /[\w-]+(?=\s*=)/, relevance: 0 }, ...string] },
+      },
     ],
   };
   const stress = {

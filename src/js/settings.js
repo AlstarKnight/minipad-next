@@ -15,6 +15,7 @@ import { applyFindAppearance, findColors } from "./findbar.js";
 import { openImport } from "./importer.js";
 import { applyOutlineSettings, outlineVars } from "./outline.js";
 import { applyTabBarSettings } from "./tabbar.js";
+import { applyUpdateCheck } from "./update.js";
 import { ALL_ITEMS, DEFAULT_SEL_ITEMS, itemChecklist, orderedItems } from "./formatbar.js";
 import { renderTabs } from "./tabs.js";
 import { comboOf } from "./quickswitch.js";
@@ -45,6 +46,7 @@ export function applySettings() {
   applyEditorSettings(s);
   applyOutlineSettings(s);
   applyTabBarSettings(s);
+  applyUpdateCheck();
   // 分组开关、分组样式变了要重画标签
   renderTabs();
 }
@@ -133,6 +135,7 @@ export function openSettings() {
   const s = state.settings;
   $("#set-hotkey").value = s.hotkey;
   $("#set-top").checked = s.always_on_top;
+  $("#set-update-check").checked = s.update_check !== false;
   $("#set-edge").checked = s.edge_hide;
   $("#set-edge-button").checked = s.edge_button !== false;
   $("#set-quick-key").value = s.quick_switch_key || "";
@@ -189,6 +192,7 @@ export function openSettings() {
   updateDatePreview();
   $("#set-code-lines").checked = s.code_line_numbers;
   $("#set-code-lang-menu").checked = s.code_lang_menu !== false;
+  $("#set-code-title-color").checked = s.code_title_color !== false;
   $("#set-email-links").checked = s.email_auto_link === true;
   $("#set-block-enabled").checked = s.block_enabled !== false;
   $("#set-block-context").value = s.block_context_menu === "block" ? "block" : "system";
@@ -546,6 +550,7 @@ async function submitSettings() {
     ...state.settings,
     hotkey: $("#set-hotkey").value || state.settings.hotkey,
     always_on_top: $("#set-top").checked,
+    update_check: $("#set-update-check").checked,
     edge_hide: $("#set-edge").checked,
     edge_button: $("#set-edge-button").checked,
     quick_switch_key: $("#set-quick-key").value,
@@ -588,6 +593,7 @@ async function submitSettings() {
     date_format: $("#set-date-format").value.trim(),
     code_line_numbers: $("#set-code-lines").checked,
     code_lang_menu: $("#set-code-lang-menu").checked,
+    code_title_color: $("#set-code-title-color").checked,
     email_auto_link: $("#set-email-links").checked,
     block_enabled: $("#set-block-enabled").checked,
     block_context_menu: $("#set-block-context").value,

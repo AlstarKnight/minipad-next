@@ -34,6 +34,8 @@ const DEFAULT_SETTINGS = {
   date_format: DEFAULT_DATE_FORMAT,
   code_line_numbers: true,
   code_lang_menu: true,
+  code_title_color: true,
+  update_check: true,
   email_auto_link: false,
   block_enabled: true,
   block_context_menu: "system",
@@ -273,7 +275,8 @@ export function mockApi() {
         settings_error: null,
         // 测试用 __mockControl.settingsNotice 模拟后端的提示(比如设置文件损坏、已改名留底)
         settings_notice: window.__mockControl?.settingsNotice ?? null,
-        version: "预览",
+        // 测试用 __mockControl.version 模拟正式版本号(新版本提醒只在版本号像 0.4.3 时检查)
+        version: window.__mockControl?.version ?? "预览",
         debug: true,
       };
     },

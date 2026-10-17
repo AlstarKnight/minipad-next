@@ -22,6 +22,7 @@ import { createEditor, editorDebug, insertText, toggleTask } from "./editor.js";
 import { setLinkPrompt, setTaskCommand } from "./toolbar.js";
 import { formatDate } from "./datetime.js";
 import { initMini, bindMiniMain } from "./mini.js";
+import { bindUpdate } from "./update.js";
 
 // ---------- 启动 ----------
 async function init() {
@@ -160,6 +161,7 @@ function bindUi() {
   $("#btn-new").addEventListener("click", newNote);
   $("#btn-search").addEventListener("click", openSearch);
   $("#btn-settings").addEventListener("click", openSettings);
+  bindUpdate();
   $("#btn-hide").addEventListener("click", hideWindow);
   // 缩成悬浮图标(设置里开了悬浮图标才有这个按钮)
   $("#btn-ball").addEventListener("click", () => api.invoke("collapse_to_ball").catch((e) => toast(String(e))));

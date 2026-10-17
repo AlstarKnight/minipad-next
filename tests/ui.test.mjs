@@ -219,7 +219,8 @@ function helpers(p) {
 function ui(name, ...args) {
   const fn = args.pop();
   // url:打开别的网址(比如小窗 index.html?mini=1&book=&page=页)
-  const { seed: db, url = "/index.html" } = args[0] ?? {};
+  // mockControl:页面加载前放进 window.__mockControl;routes:{ 网址: 处理函数 },拦下这些网络请求
+  const { seed: db, url = "/index.html", mockControl, routes = {} } = args[0] ?? {};
   test(name, { timeout: 60_000 }, async (t) => {
     const ctx = await browser.newContext({
       viewport: { width: 440, height: 540 },
@@ -230,6 +231,8 @@ function ui(name, ...args) {
     const dialogs = [];
     try {
       if (db) await ctx.addInitScript(seedStorage, [KEY, JSON.stringify(db)]);
+      if (mockControl) await ctx.addInitScript((c) => { window.__mockControl = c; }, mockControl);
+      for (const [pattern, handler] of Object.entries(routes)) await ctx.route(pattern, handler);
       const page = await ctx.newPage();
       page.on("pageerror", (e) => errors.push(`pageerror: ${e.message}`));
       page.on("console", (m) => m.type() === "error" && errors.push(`console.error: ${m.text()}`));
@@ -6436,5 +6439,165 @@ describe("0.4.2: colors inside code blocks", () => {
     assert.equal(await p.locator("#editor .cb-lang").inputValue(), "");
     assert.equal(await p.locator("#editor .cb-title").inputValue(), "");
     assert.equal(await h.editor(), "```[minipad-colors c0-2=#e5484d]\nabc\n```");
+  });
+});
+
+describe("0.4.3: code block title colors", () => {
+  const pick = async (h, i) => {
+    const block = h.p.locator("#editor .codeblock").first();
+    await block.hover();
+    await block.locator(".cb-title-color").click();
+    const menu = h.p.locator(".cb-title-color-menu");
+    await menu.waitFor();
+    return menu;
+  };
+
+  ui("a code block title takes a solid, gradient or material color from the swatch next to it", {
+    seed: seed({ "": { 页: "```js 示例\nconst a = 1;\n```" } }),
+  }, async (h) => {
+    const { p } = h;
+    const title = p.locator("#editor .cb-title");
+    let menu = await pick(h);
+    assert.deepEqual(await menu.locator(".uc-kind").allTextContents(), ["纯色", "渐变", "材质"], "the shared color library");
+    if (process.env.SHOTS) await p.screenshot({ path: `${process.env.SHOTS}/title-color-menu.png` });
+    const solid = await menu.locator(".uc-swatch").first().getAttribute("data-color");
+    await menu.locator(".uc-swatch").first().click();
+    assert.ok(await menu.isHidden(), "the menu closes after picking");
+    await until(h.editor, "```js 示例 [minipad-title-color " + solid + "]\nconst a = 1;\n```", "kept on the fence line");
+    assert.match(await title.getAttribute("style"), /color:/, "the title shows the color");
+
+    menu = await pick(h);
+    await menu.locator('.uc-kind[data-kind="gradient"]').click();
+    const gradient = await menu.locator(".uc-swatch").first().getAttribute("data-color");
+    await menu.locator(".uc-swatch").first().click();
+    await until(h.editor, "```js 示例 [minipad-title-color " + gradient + "]\nconst a = 1;\n```", "gradients too");
+    assert.match(await title.getAttribute("style"), /background-clip: text/);
+    await p.evaluate(() => window.__minipad.flush());
+    await p.reload();
+    await title.waitFor();
+    assert.match(await title.getAttribute("style"), /background-clip: text/, "remembered after restart");
+
+    menu = await pick(h);
+    await menu.locator(".fb-none").click();
+    await until(h.editor, "```js 示例\nconst a = 1;\n```", "默认颜色 removes the marker");
+    assert.doesNotMatch((await title.getAttribute("style")) || "", /color:/);
+  });
+
+  ui("title color, theme, text colors and folding read back together", {
+    seed: seed({ "": { 页: "```prompt 标题 [minipad-theme starry] [minipad-title-color #e5484d] [minipad-colors c0-2=#3b82f6] [minipad-folded]\nabc\n```" } }),
+  }, async (h) => {
+    const { p } = h;
+    const block = p.locator("#editor .codeblock");
+    await block.waitFor();
+    assert.equal(await block.locator(".cb-title").inputValue(), "标题");
+    assert.match(await block.locator(".cb-title").getAttribute("style"), /color: rgb\(229, 72, 77\)|color: #e5484d/);
+    assert.equal(await block.getAttribute("data-code-theme"), "starry");
+    assert.ok(await block.evaluate((el) => el.classList.contains("folded")));
+    await block.locator(".cb-title").click();
+    await p.keyboard.press("End");
+    await p.keyboard.type("2");
+    await p.keyboard.press("Enter");
+    await until(h.editor, "```prompt 标题2 [minipad-theme starry] [minipad-title-color #e5484d] [minipad-colors c0-2=#3b82f6] [minipad-folded]\nabc\n```",
+      "editing the title keeps every marker");
+  });
+
+  ui("no title, no swatch; clearing the title drops its color", {
+    seed: seed({ "": { 页: "```js\nx\n```\n\n```js 有标题 [minipad-title-color #e5484d]\ny\n```" } }),
+  }, async (h) => {
+    const { p } = h;
+    const blocks = p.locator("#editor .codeblock");
+    await blocks.first().hover();
+    assert.ok(await blocks.first().locator(".cb-title-color").isHidden(), "nothing to color without a title");
+    const title = blocks.nth(1).locator(".cb-title");
+    await title.fill("");
+    await title.press("Enter");
+    await until(h.editor, "```js\nx\n```\n\n```js\ny\n```", "the color goes with the title");
+  });
+
+  ui("the swatch can be turned off in settings", {
+    seed: { ...seed({ "": { 页: "```js 示例 [minipad-title-color #e5484d]\nx\n```" } }), settings: { ...SETTINGS, code_title_color: false } },
+  }, async (h) => {
+    const { p } = h;
+    const block = p.locator("#editor .codeblock");
+    await block.hover();
+    assert.ok(await block.locator(".cb-title-color").isHidden(), "no swatch");
+    assert.match(await block.locator(".cb-title").getAttribute("style"), /color:/, "existing colors still show");
+    await p.click("#btn-settings");
+    await p.click('#set-nav [data-page="edit"]');
+    assert.equal(await p.locator("#set-code-title-color").isChecked(), false);
+    await p.check("#set-code-title-color");
+    await p.click("#set-save");
+    await block.hover();
+    await block.locator(".cb-title-color").waitFor();
+  });
+});
+
+describe("0.4.3: prompt tag attributes", () => {
+  ui("attribute values inside prompt tags take the string color, not the tag color", {
+    seed: seed({ "": { 页: '```prompt\n<example type="good">x</example>\n```' } }),
+  }, async (h) => {
+    const code = h.p.locator("#editor .codeblock code");
+    const value = code.locator(".hljs-string", { hasText: "good" });
+    await value.waitFor();
+    const color = (loc) => loc.evaluate((el) => getComputedStyle(el).color);
+    const string = await h.p.evaluate(() => getComputedStyle(document.querySelector("#editor .codeblock")).getPropertyValue("--hl-string").trim());
+    assert.deepEqual(await code.locator(".hljs-name").allTextContents(), ["example", "example"], "tag names");
+    assert.deepEqual(await code.locator(".hljs-attr").allTextContents(), ["type"], "attribute names");
+    assert.notEqual(await color(value), await color(code.locator(".hljs-name").first()), "differs from the tag name");
+    assert.equal(await value.evaluate((el, c) => { const probe = document.createElement("span"); probe.style.color = c; document.body.append(probe); const v = getComputedStyle(probe).color; probe.remove(); return v === getComputedStyle(el).color; }, string), true, "uses --hl-string");
+  });
+});
+
+describe("0.4.3: new version notice", () => {
+  const LATEST = "https://api.github.com/repos/AlstarKnight/minipad-next/releases/latest";
+  const reply = (tag, hits = []) => (route) => {
+    hits.push(route.request().url());
+    return route.fulfill({ json: { tag_name: tag, html_url: `https://github.com/AlstarKnight/minipad-next/releases/tag/${tag}` } });
+  };
+
+  const newer = [];
+  ui("a newer release shows in the status bar and opens its page", {
+    mockControl: { version: "0.4.3" },
+    routes: { [LATEST]: reply("v0.5.0", newer) },
+  }, async (h) => {
+    const { p } = h;
+    const notice = p.locator("#st-update");
+    await notice.waitFor();
+    assert.equal(await notice.textContent(), "新版本 0.5.0");
+    assert.equal(newer.length, 1, "checked once at startup");
+    if (process.env.SHOTS) await p.screenshot({ path: `${process.env.SHOTS}/update-notice.png` });
+    await p.evaluate(() => {
+      window.__opened = [];
+      window.open = (url) => window.__opened.push(url);
+    });
+    await notice.click();
+    await until(() => p.evaluate(() => window.__opened), ["https://github.com/AlstarKnight/minipad-next/releases/tag/v0.5.0"], "opens the release page");
+    // 关掉以后提示也收起来
+    await p.click("#btn-settings");
+    assert.equal(await p.locator("#set-update-check").isChecked(), true, "on by default");
+    await p.uncheck("#set-update-check");
+    await p.click("#set-save");
+    await until(() => notice.isHidden(), true, "hidden when turned off");
+  });
+
+  const same = [];
+  ui("nothing shows when this is the latest version", {
+    mockControl: { version: "0.4.3" },
+    routes: { [LATEST]: reply("v0.4.3", same) },
+  }, async (h) => {
+    await until(() => same.length, 1, "checked");
+    await h.p.waitForTimeout(200);
+    assert.ok(await h.p.locator("#st-update").isHidden());
+  });
+
+  const off = [];
+  ui("turned off: GitHub is never asked", {
+    mockControl: { version: "0.4.3" },
+    seed: { ...seed({ "": { 页: "x" } }), settings: { ...SETTINGS, update_check: false } },
+    routes: { [LATEST]: reply("v0.5.0", off) },
+  }, async (h) => {
+    await h.p.waitForTimeout(300);
+    assert.equal(off.length, 0);
+    assert.ok(await h.p.locator("#st-update").isHidden());
   });
 });

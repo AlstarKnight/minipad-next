@@ -119,6 +119,7 @@
     <span id="st-count"></span>
     <span class="spacer" data-tauri-drag-region></span>
     <span id="st-save"></span>
+    <button id="st-update" class="link" title="打开下载页" hidden></button>
   </footer>
 
   <!-- 搜索 -->
@@ -158,6 +159,7 @@
             <label class="row check"><input id="set-autostart" type="checkbox" /> <span>开机启动(启动后藏在托盘)</span></label>
             <label class="row check"><input id="set-taskbar" type="checkbox" /> <span>在任务栏显示</span></label>
             <label class="row check"><input id="set-top" type="checkbox" /> <span>窗口总在最前</span></label>
+            <label class="row check"><input id="set-update-check" type="checkbox" /> <span>启动时检查新版本,有新版在状态栏右下角提示</span></label>
             <h3>快速切换页面</h3>
             <label class="row">
               <span>快捷键</span>
@@ -404,6 +406,7 @@
             <label class="row check"><input id="set-format-bar" type="checkbox" /> <span>标签下面显示格式栏(顶栏的格式栏按钮也能切换)</span></label>
             <label class="row check"><input id="set-code-lines" type="checkbox" /> <span>代码块显示行号</span></label>
             <label class="row check"><input id="set-code-lang-menu" type="checkbox" /> <span>点代码块的语言时列出常用语言(也可以直接输入)</span></label>
+            <label class="row check"><input id="set-code-title-color" type="checkbox" /> <span>代码块标题旁显示色块,可以给标题选颜色</span></label>
             <label class="row check"><input id="set-email-links" type="checkbox" /> <span>自动将邮箱地址识别为链接（默认关闭；手动链接不受影响）</span></label>
             <label class="row"><span>代码块退出方式</span><select id="set-code-exit">
               <option value="blank3">第三次 Enter 退出（默认）</option>

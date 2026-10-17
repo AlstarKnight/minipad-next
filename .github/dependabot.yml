@@ -1,0 +1,27 @@
+# 依赖自动更新(0.4.3):每月查一次 npm、Cargo 和 GitHub Actions 的新版本,
+# 每类的小版本和补丁合成一个 PR,大版本单独提;CI 绿了再 merge,版本号不变所以不会发新版
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      npm-minor:
+        update-types: [minor, patch]
+
+  - package-ecosystem: cargo
+    directory: /src-tauri
+    schedule:
+      interval: monthly
+    groups:
+      cargo-minor:
+        update-types: [minor, patch]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns: ["*"]
