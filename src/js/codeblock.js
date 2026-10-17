@@ -55,17 +55,72 @@ function addColoredText(state, schema, text, colors) {
   }
 }
 
-// ---- 代码高亮配色(颜色在 style.css 里,每套分浅色和深色) ----
-export const CODE_THEMES = ["one", "github", "dracula", "nord", "solarized", "monokai", "dreamy", "starry", "rainbow"];
-
-export function applyCodeTheme(s) {
-  document.documentElement.dataset.codeTheme = CODE_THEMES.includes(s.code_theme) ? s.code_theme : "one";
-}
-
-const PREVIEW = [
-  ["javascript", "// 统计字数\nfunction count(text, limit = 100) {\n  const words = text.split(\" \");\n  return words.length > limit;\n}"],
-  ["prompt", "# 角色\nSystem: 你是一位{{领域}}专家。\n<rules>\n- **必须**用中文回答\n- 不超过 {字数} 字\n</rules>"],
+// ---- 代码高亮配色:每个代码块在顶栏自己选(颜色在 style.css 里,每套分浅色和深色) ----
+// 选了默认以外的配色时,``` 那一行末尾记一个 [minipad-theme dracula]
+const CODE_THEMES = [
+  ["", "默认"], ["github", "GitHub"], ["dracula", "Dracula"], ["nord", "Nord"], ["solarized", "Solarized"],
+  ["monokai", "Monokai"], ["dreamy", "梦幻"], ["starry", "星空"], ["rainbow", "彩虹"],
 ];
+const THEME = /(?:^|\s)\[minipad-theme ([a-z]+)\]$/;
+const themeName = (t) => CODE_THEMES.find(([v]) => v === t)?.[1] || "默认";
+
+// 配色的下拉列表,整个页面共用一个
+const themeMenu = {
+  el: null,
+  owner: null,
+  open(owner) {
+    if (!this.el) {
+      this.el = document.createElement("div");
+      this.el.className = "menu cb-theme-menu";
+      this.el.setAttribute("role", "listbox");
+      this.el.setAttribute("aria-label", "代码配色");
+      document.body.append(this.el);
+      document.addEventListener("mousedown", (e) => {
+        if (this.owner && !this.el.contains(e.target) && !this.owner.themeBtn.contains(e.target)) this.close();
+      }, true);
+      document.addEventListener("keydown", (e) => this.owner && e.key === "Escape" && (e.stopPropagation(), this.close()), true);
+      document.addEventListener("scroll", () => this.owner && this.place(), true);
+    }
+    this.close();
+    this.owner = owner;
+    owner.themeBtn.setAttribute("aria-expanded", "true");
+    const current = owner.node.attrs.theme || "";
+    this.el.replaceChildren(...CODE_THEMES.map(([v, name]) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.setAttribute("role", "option");
+      b.dataset.theme = v;
+      b.classList.toggle("on", v === current);
+      b.setAttribute("aria-selected", String(v === current));
+      const dots = document.createElement("span");
+      dots.className = "cb-theme-dots";
+      if (v) dots.dataset.codeTheme = v;
+      dots.innerHTML = "<i></i><i></i><i></i><i></i>";
+      const label = document.createElement("span");
+      label.textContent = name;
+      b.append(dots, label);
+      b.addEventListener("click", () => {
+        this.close();
+        owner.setTheme(v);
+      });
+      return b;
+    }));
+    this.el.hidden = false;
+    this.place();
+  },
+  place() {
+    const r = this.owner.themeBtn.getBoundingClientRect();
+    const h = this.el.offsetHeight;
+    const below = window.innerHeight - r.bottom - 6;
+    this.el.style.top = `${below >= h || below >= r.top ? r.bottom + 2 : Math.max(4, r.top - h - 2)}px`;
+    this.el.style.left = `${Math.max(4, Math.min(r.right - this.el.offsetWidth, window.innerWidth - this.el.offsetWidth - 4))}px`;
+  },
+  close() {
+    if (this.el) this.el.hidden = true;
+    this.owner?.themeBtn.setAttribute("aria-expanded", "false");
+    this.owner = null;
+  },
+};
 
 // ---- 点语言时的常用语言列表(列表里没有的也可以直接输入) ----
 const LANGS = [
@@ -156,16 +211,6 @@ const menu = {
 // 页面滚动时列表跟着语言框走
 document.addEventListener("scroll", () => menu.input && menu.place(), true);
 
-// 设置里的预览:选了哪套配色马上用哪套显示
-export function paintCodePreview(el, theme) {
-  el.dataset.codeTheme = theme;
-  if (el.childElementCount) return;
-  for (const [language, code] of PREVIEW) {
-    const pre = document.createElement("pre");
-    pre.innerHTML = hljs.highlight(code, { language }).value;
-    el.append(pre);
-  }
-}
 let persistFolds = true;
 export function setCodeFoldPersistence(enabled) { persistFolds = enabled; }
 
@@ -203,21 +248,29 @@ export const codeBlockWithTitle = codeBlockSchema.extendSchema((prev) => (ctx) =
   const base = prev(ctx);
   return {
     ...base,
-    attrs: { ...base.attrs, title: { default: "", validate: "string" }, folded: { default: false, validate: "boolean" } },
+    attrs: {
+      ...base.attrs,
+      title: { default: "", validate: "string" },
+      folded: { default: false, validate: "boolean" },
+      theme: { default: "", validate: "string" },
+    },
     // 代码块里只能用字体颜色和背景颜色
     marks: "text_color text_bg",
     parseMarkdown: {
       match: base.parseMarkdown.match,
       runner: (state, node, type) => {
-        // ``` 那一行末尾的标记:先是颜色,最后是收起
+        // ``` 那一行末尾的标记:配色、颜色,最后是收起
         let info = [node.lang, node.meta].filter(Boolean).join(" ");
         const folded = info === FOLDED || info.endsWith(" " + FOLDED);
         if (folded) info = info.slice(0, -FOLDED.length).trimEnd();
         const colors = COLORS.exec(info);
         if (colors) info = info.slice(0, colors.index).trimEnd();
+        const themed = THEME.exec(info);
+        if (themed) info = info.slice(0, themed.index).trimEnd();
+        const theme = CODE_THEMES.some(([v]) => v && v === themed?.[1]) ? themed[1] : "";
         const [lang, ...rest] = info.split(" ");
         const { language, title } = splitInfo(lang, rest.join(" "));
-        state.openNode(type, { language, title, folded });
+        state.openNode(type, { language, title, folded, theme });
         const text = node.value || "";
         if (colors) addColoredText(state, type.schema, text, readColors(colors[1], text.length));
         else if (text) state.addText(text);
@@ -228,7 +281,8 @@ export const codeBlockWithTitle = codeBlockSchema.extendSchema((prev) => (ctx) =
       match: base.toMarkdown.match,
       runner: (state, node) => {
         const { lang, meta } = joinInfo(node.attrs.language, node.attrs.title);
-        const info = [lang, meta, writeColors(node), node.attrs.folded && FOLDED].filter(Boolean).join(" ");
+        const theme = node.attrs.theme && `[minipad-theme ${node.attrs.theme}]`;
+        const info = [lang, meta, theme, writeColors(node), node.attrs.folded && FOLDED].filter(Boolean).join(" ");
         const at = info.indexOf(" ");
         state.addNode("code", undefined, node.textContent, at < 0 ? { lang: info || null, meta: null } : { lang: info.slice(0, at), meta: info.slice(at + 1) });
       },
@@ -239,6 +293,7 @@ export const codeBlockWithTitle = codeBlockSchema.extendSchema((prev) => (ctx) =
 // ---------- 卡片 ----------
 const ICON_COPY = '<svg viewBox="0 0 16 16"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M10.5 3.5v-.5A1.5 1.5 0 0 0 9 1.5H4A1.5 1.5 0 0 0 2.5 3v5A1.5 1.5 0 0 0 4 9.5h.5"/></svg>';
 const ICON_DONE = '<svg viewBox="0 0 16 16"><path d="M3 8.5 6.5 12 13 4.5"/></svg>';
+const ICON_THEME = '<svg viewBox="0 0 16 16"><path d="M8 1.8a6.2 6.2 0 1 0 0 12.4c.9 0 1.3-.6 1.3-1.2 0-.8-.7-1.1-.7-1.9 0-.8.6-1.3 1.4-1.3h1.6a2.9 2.9 0 0 0 2.9-2.9C14.5 4.2 11.6 1.8 8 1.8Z"/><circle cx="4.9" cy="7.4" r=".9"/><circle cx="6.9" cy="4.8" r=".9"/><circle cx="10.1" cy="4.9" r=".9"/></svg>';
 const ICON_FOLD = '<svg viewBox="0 0 16 16"><path d="M4.5 6.5 8 10l3.5-3.5"/></svg>';
 
 const lineCount = (node) => node.textContent.split("\n").length;
@@ -275,7 +330,13 @@ class CodeBlockView {
     this.copy.innerHTML = ICON_COPY;
     this.copy.addEventListener("click", () => this.copyCode());
 
-    head.append(this.toggle, this.title, this.count, this.lang, this.copy);
+    this.themeBtn = document.createElement("button");
+    this.themeBtn.className = "cb-theme";
+    this.themeBtn.innerHTML = ICON_THEME;
+    this.themeBtn.setAttribute("aria-haspopup", "listbox");
+    this.themeBtn.addEventListener("click", () => (themeMenu.owner === this ? themeMenu.close() : themeMenu.open(this)));
+
+    head.append(this.toggle, this.title, this.count, this.lang, this.themeBtn, this.copy);
     const pre = (this.pre = document.createElement("pre"));
     // 行号放在代码左边单独的一栏里,按每一行在屏幕上的位置摆(长行换行以后行号对着这一行的开头)
     this.gutter = document.createElement("div");
@@ -399,6 +460,12 @@ class CodeBlockView {
     input.style.width = `calc(${[...text].reduce((w, c) => w + (c.charCodeAt(0) > 0xff ? 2 : 1), 0)}ch + 10px)`;
   }
 
+  setTheme(theme) {
+    const pos = this.getPos();
+    if (pos == null || !this.view.editable || theme === this.node.attrs.theme) return;
+    this.view.dispatch(this.view.state.tr.setNodeMarkup(pos, null, { ...this.node.attrs, theme }));
+  }
+
   setFolded(folded) {
     const pos = this.getPos();
     if (persistFolds && this.view.editable && pos != null) {
@@ -435,7 +502,11 @@ class CodeBlockView {
 
   // 把节点的属性放到顶栏上
   sync() {
-    const { title, language } = this.node.attrs;
+    const { title, language, theme } = this.node.attrs;
+    if (theme) this.dom.dataset.codeTheme = theme;
+    else delete this.dom.dataset.codeTheme;
+    this.themeBtn.title = `代码配色:${themeName(theme)}`;
+    this.themeBtn.disabled = !this.view.editable;
     if (document.activeElement !== this.title) this.title.value = title;
     if (document.activeElement !== this.lang) this.lang.value = language;
     this.fit(this.title);
@@ -475,6 +546,7 @@ class CodeBlockView {
   destroy() {
     this.resize.disconnect();
     if (menu.input === this.lang) menu.close();
+    if (themeMenu.owner === this) themeMenu.close();
   }
 }
 

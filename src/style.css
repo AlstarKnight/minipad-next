@@ -718,7 +718,7 @@ html[data-find-pos="bottom"] #status { order: 2; }
 .hljs-code { color: var(--hl-string); }
 
 /* ---------- 代码高亮配色(设置 → 编辑 → 代码高亮配色),每套分浅色和深色 ---------- */
-/* html 上的 data-code-theme 管编辑器;设置里的预览自己也带一个,选了马上能看到 */
+/* 每个代码块自己带 data-code-theme(没有就是默认那套),配色下拉里的色点也一样 */
 [data-code-theme="one"] { --hl-keyword: #a626a4; --hl-string: #50a14f; --hl-number: #986801; --hl-comment: #a0a1a7; --hl-title: #4078f2; --hl-type: #c18401; --hl-attr: #e45649; --hl-var: #0184bc; }
 [data-theme="dark"][data-code-theme="one"], [data-theme="dark"] [data-code-theme="one"] { --hl-keyword: #c678dd; --hl-string: #98c379; --hl-number: #d19a66; --hl-comment: #7f848e; --hl-title: #61afef; --hl-type: #e5c07b; --hl-attr: #e06c75; --hl-var: #56b6c2; }
 [data-code-theme="github"] { --hl-keyword: #cf222e; --hl-string: #0a3069; --hl-number: #0550ae; --hl-comment: #6e7781; --hl-title: #8250df; --hl-type: #953800; --hl-attr: #116329; --hl-var: #bc4c00; }
@@ -1776,20 +1776,6 @@ html[data-image-size="small"] #editor .ProseMirror img { max-width: min(100%, 24
 /* 找不到的图片:一个带虚线框的小占位,鼠标移上去看是哪个文件 */
 #editor .ProseMirror img.broken { display: inline-block; min-width: 48px; min-height: 32px; border: 1px dashed var(--bar-border); }
 
-/* 设置里的代码高亮配色预览 */
-.code-theme-preview { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-.code-theme-preview pre {
-  margin: 0;
-  padding: 8px 10px;
-  background: var(--code-bg);
-  border: 1px solid var(--code-border);
-  border-radius: 7px;
-  color: var(--code-text);
-  font: 12px/1.55 var(--mono);
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
 /* 代码块语言的常用语言列表 */
 .cb-lang-menu { max-height: 260px; overflow-y: auto; min-width: 180px; }
 .cb-lang-menu button { display: flex; align-items: baseline; gap: 12px; justify-content: space-between; }
@@ -1801,3 +1787,17 @@ html[data-image-size="small"] #editor .ProseMirror img { max-width: min(100%, 24
 #editor .codeblock code [class*="hljs-"] span[data-color] { -webkit-text-fill-color: currentColor; }
 #editor .codeblock code span[data-color][style*="background-clip"] { -webkit-text-fill-color: transparent; }
 #editor .codeblock code span[data-bg] { padding: 0; }
+
+/* 代码块顶栏的配色按钮和下拉列表 */
+.codeblock .cb-theme { opacity: 0; transition: opacity .12s; }
+.codeblock:hover .cb-theme, .codeblock .cb-theme:focus-visible, .codeblock .cb-theme[aria-expanded="true"] { opacity: 1; }
+@media (hover: none) { .codeblock .cb-theme { opacity: 1; } }
+.cb-theme-menu { min-width: 150px; }
+.cb-theme-menu button { display: flex; align-items: center; gap: 10px; }
+.cb-theme-menu button.on { background: var(--accent-soft); }
+.cb-theme-dots { display: inline-flex; gap: 3px; }
+.cb-theme-dots i { width: 8px; height: 8px; border-radius: 50%; }
+.cb-theme-dots i:nth-child(1) { background: var(--hl-keyword); }
+.cb-theme-dots i:nth-child(2) { background: var(--hl-string); }
+.cb-theme-dots i:nth-child(3) { background: var(--hl-title); }
+.cb-theme-dots i:nth-child(4) { background: var(--hl-var); }

@@ -6298,30 +6298,51 @@ describe("0.4.2: code highlighting", () => {
     assert.equal(await h.p.locator("#editor .codeblock .hljs-template-variable").count(), 0);
   });
 
-  ui("the highlight theme comes from settings and the preview follows the dropdown", {
-    seed: seed({ "": { 页: "```js\nconst a = 1;\n```" } }),
+  ui("each code block picks its own highlight theme from a dropdown in its header", {
+    seed: seed({ "": { 页: "```js\nconst a = 1;\n```\n\n```js\nconst b = 2;\n```" } }),
   }, async (h) => {
     const { p } = h;
-    const keyword = () => p.locator("#editor .hljs-keyword").first().evaluate((el) => getComputedStyle(el).color);
-    await until(keyword, "rgb(166, 38, 164)", "the default theme");
-    await p.click("#btn-settings");
-    await settingsPage(p, "edit");
-    assert.equal(await p.locator("#set-code-theme").inputValue(), "one");
-    assert.equal(await p.locator("#code-theme-preview pre").count(), 2, "a code and a prompt sample");
-    await p.selectOption("#set-code-theme", "dracula");
-    const previewKeyword = () => p.locator("#code-theme-preview .hljs-keyword").first().evaluate((el) => getComputedStyle(el).color);
-    await until(previewKeyword, "rgb(163, 20, 77)", "the preview shows the chosen theme before saving");
-    assert.equal(await keyword(), "rgb(166, 38, 164)", "the page keeps its theme until saved");
-    if (process.env.SHOTS) {
-      await p.locator("#code-theme-preview").scrollIntoViewIfNeeded();
-      await p.screenshot({ path: `${process.env.SHOTS}/settings-theme.png` });
-    }
-    await p.click("#set-save");
-    await until(keyword, "rgb(163, 20, 77)", "saved theme applies to the page");
-    assert.equal((await h.stored()).settings.code_theme, "dracula");
+    const blocks = p.locator("#editor .codeblock");
+    const keyword = (i) => blocks.nth(i).locator(".hljs-keyword").first().evaluate((el) => getComputedStyle(el).color);
+    await until(() => keyword(0), "rgb(166, 38, 164)", "the default theme");
+    assert.equal(await p.locator("#set-code-theme").count(), 0, "no theme option in settings");
+    await blocks.first().hover();
+    await blocks.first().locator(".cb-theme").click();
+    const menu = p.locator(".cb-theme-menu");
+    await menu.waitFor();
+    assert.deepEqual(await menu.locator("button").allTextContents(),
+      ["默认", "GitHub", "Dracula", "Nord", "Solarized", "Monokai", "梦幻", "星空", "彩虹"]);
+    assert.equal(await menu.locator("button.on").getAttribute("data-theme"), "", "the current theme is marked");
+    if (process.env.SHOTS) await p.screenshot({ path: `${process.env.SHOTS}/theme-menu.png` });
+    await menu.locator('button[data-theme="dracula"]').click();
+    await until(() => keyword(0), "rgb(163, 20, 77)", "the first block switches");
+    assert.equal(await keyword(1), "rgb(166, 38, 164)", "the second block keeps its own theme");
+    assert.ok(await menu.isHidden());
+    await until(h.editor, "```js [minipad-theme dracula]\nconst a = 1;\n```\n\n```js\nconst b = 2;\n```",
+      "the theme is kept on the fence line");
     await p.evaluate(() => { document.documentElement.dataset.theme = "dark"; });
-    await until(keyword, "rgb(255, 121, 198)", "each theme has a dark variant");
-    if (process.env.SHOTS) await p.screenshot({ path: `${process.env.SHOTS}/theme-dark.png` });
+    await until(() => keyword(0), "rgb(255, 121, 198)", "each theme has a dark variant");
+    await p.evaluate(() => window.__minipad.flush());
+    await p.reload();
+    await blocks.first().waitFor();
+    assert.equal(await blocks.first().getAttribute("data-code-theme"), "dracula", "remembered after restart");
+    await blocks.first().hover();
+    await blocks.first().locator(".cb-theme").click();
+    await p.locator('.cb-theme-menu button[data-theme=""]').click();
+    await until(h.editor, "```js\nconst a = 1;\n```\n\n```js\nconst b = 2;\n```", "back to the default removes the marker");
+  });
+
+  ui("theme, title, colors and folding read back together", {
+    seed: seed({ "": { 页: "```prompt 标题 [minipad-theme starry] [minipad-colors c0-2=#e5484d] [minipad-folded]\nabc\n```" } }),
+  }, async (h) => {
+    const { p } = h;
+    const block = p.locator("#editor .codeblock");
+    await block.waitFor();
+    assert.equal(await block.getAttribute("data-code-theme"), "starry");
+    assert.equal(await block.locator(".cb-title").inputValue(), "标题");
+    assert.equal(await block.locator(".cb-lang").inputValue(), "prompt");
+    assert.ok(await block.locator("pre").isHidden());
+    assert.equal(await h.editor(), "```prompt 标题 [minipad-theme starry] [minipad-colors c0-2=#e5484d] [minipad-folded]\nabc\n```");
   });
 
   ui("the language box lists common languages and still accepts typing", {
