@@ -1795,3 +1795,9 @@ html[data-image-size="small"] #editor .ProseMirror img { max-width: min(100%, 24
 .cb-lang-menu button { display: flex; align-items: baseline; gap: 12px; justify-content: space-between; }
 .cb-lang-menu button small { color: var(--muted); font: 11px var(--mono); }
 .cb-lang-menu button.active { background: var(--accent-soft); }
+
+/* 代码块里自己上的颜色盖过高亮的颜色;渐变字的高亮部分也一起用渐变 */
+#editor .codeblock code span[data-color] [class*="hljs-"] { color: inherit; -webkit-text-fill-color: inherit; }
+#editor .codeblock code [class*="hljs-"] span[data-color] { -webkit-text-fill-color: currentColor; }
+#editor .codeblock code span[data-color][style*="background-clip"] { -webkit-text-fill-color: transparent; }
+#editor .codeblock code span[data-bg] { padding: 0; }

@@ -746,7 +746,6 @@ fn tidy_color(c: &mut String) {
     *c = notes::normalized_book_color(c).unwrap_or_default();
 }
 
-/// 只能是几个选项之一的设置:不认识的值换成第一个(默认的那个)
 /// 代码高亮配色,第一个是默认(颜色在 style.css 里)
 const CODE_THEMES: &[&str] = &[
     "one",
@@ -760,6 +759,7 @@ const CODE_THEMES: &[&str] = &[
     "rainbow",
 ];
 
+/// 只能是几个选项之一的设置:不认识的值换成第一个(默认的那个)
 fn pick_one(value: &mut String, options: &[&str]) {
     if !options.contains(&value.as_str()) {
         *value = options[0].to_string();

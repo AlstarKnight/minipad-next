@@ -17,6 +17,8 @@ const cleanColor = (v) => {
 // 渐变色:只认 linear-gradient(角度, #颜色, #颜色) 这种写法
 const cleanGradient = (v) => (parseAccent(v)?.to ? tidyAccent(v) : "");
 const isGradient = (v) => (v || "").startsWith("linear-gradient(");
+// 认识的字体 / 背景颜色(纯色或渐变),不认识就是空
+export const cleanMarkColor = (v) => cleanColor(v) || cleanGradient(v);
 
 // 字体颜色在页面上和文件里的 style
 export function colorStyle(value) {

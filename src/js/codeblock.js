@@ -5,10 +5,55 @@
 import { codeBlockSchema, $prose, Plugin, PluginKey, Decoration, DecorationSet, TextSelection } from "../vendor/milkdown.js";
 
 import { promptLanguage } from "./prompt-lang.js";
+import { cleanMarkColor } from "./colors.js";
 
 hljs.registerLanguage("prompt", promptLanguage);
 
 const FOLDED = "[minipad-folded]";
+// 代码块里也能像正文一样给文字上颜色;代码本身保持纯文字(复制出去不带颜色),
+// 颜色写在 ``` 那一行的末尾:[minipad-colors c0-5=#df2a3f;b8-12=#fbe9a6],c 是字体颜色,b 是背景颜色,数字是第几个字到第几个字
+const COLORS = /(?:^|\s)\[minipad-colors ([^\]]*)\]$/;
+const MARKS = { c: ["text_color", "color"], b: ["text_bg", "bg"] };
+
+function readColors(spec, length) {
+  const out = [];
+  for (const part of spec.split(";")) {
+    const m = /^([cb])(\d+)-(\d+)=(.+)$/.exec(part.trim());
+    if (!m) continue;
+    const [from, to] = [Number(m[2]), Math.min(Number(m[3]), length)];
+    const value = cleanMarkColor(m[4]);
+    if (value && from < to) out.push({ kind: m[1], from, to, value });
+  }
+  return out;
+}
+
+function writeColors(node) {
+  const out = [];
+  node.forEach((child, offset) => {
+    for (const mark of child.marks) {
+      const kind = Object.keys(MARKS).find((k) => MARKS[k][0] === mark.type.name);
+      if (!kind) continue;
+      const value = mark.attrs[MARKS[kind][1]];
+      const last = out.findLast((x) => x.kind === kind);
+      // 挨着的同一种颜色合成一段
+      if (last && last.to === offset && last.value === value) last.to = offset + child.nodeSize;
+      else out.push({ kind, from: offset, to: offset + child.nodeSize, value });
+    }
+  });
+  return out.length ? `[minipad-colors ${out.map((x) => `${x.kind}${x.from}-${x.to}=${x.value}`).join(";")}]` : "";
+}
+
+// 按颜色标记把代码切成几段放进文档
+function addColoredText(state, schema, text, colors) {
+  const cuts = [...new Set([0, text.length, ...colors.flatMap((c) => [c.from, c.to])])].sort((a, b) => a - b);
+  for (let i = 0; i < cuts.length - 1; i++) {
+    const [from, to] = [cuts[i], cuts[i + 1]];
+    const marks = colors.filter((c) => c.from <= from && c.to >= to);
+    for (const c of marks) state.openMark(schema.marks[MARKS[c.kind][0]], { [MARKS[c.kind][1]]: c.value });
+    state.addText(text.slice(from, to));
+    for (const c of marks.reverse()) state.closeMark(schema.marks[MARKS[c.kind][0]]);
+  }
+}
 
 // ---- 代码高亮配色(颜色在 style.css 里,每套分浅色和深色) ----
 export const CODE_THEMES = ["one", "github", "dracula", "nord", "solarized", "monokai", "dreamy", "starry", "rainbow"];
@@ -159,30 +204,33 @@ export const codeBlockWithTitle = codeBlockSchema.extendSchema((prev) => (ctx) =
   return {
     ...base,
     attrs: { ...base.attrs, title: { default: "", validate: "string" }, folded: { default: false, validate: "boolean" } },
+    // 代码块里只能用字体颜色和背景颜色
+    marks: "text_color text_bg",
     parseMarkdown: {
       match: base.parseMarkdown.match,
       runner: (state, node, type) => {
-        let { lang, meta } = node;
-        const folded = (!meta && lang === FOLDED) || /(?:^|\s)\[minipad-folded\]$/.test(meta || "");
-        if (folded) {
-          if (lang === FOLDED && !meta) lang = null;
-          else meta = meta.slice(0, -FOLDED.length).trimEnd();
-        }
-        const { language, title } = splitInfo(lang, meta);
+        // ``` 那一行末尾的标记:先是颜色,最后是收起
+        let info = [node.lang, node.meta].filter(Boolean).join(" ");
+        const folded = info === FOLDED || info.endsWith(" " + FOLDED);
+        if (folded) info = info.slice(0, -FOLDED.length).trimEnd();
+        const colors = COLORS.exec(info);
+        if (colors) info = info.slice(0, colors.index).trimEnd();
+        const [lang, ...rest] = info.split(" ");
+        const { language, title } = splitInfo(lang, rest.join(" "));
         state.openNode(type, { language, title, folded });
-        if (node.value) state.addText(node.value);
+        const text = node.value || "";
+        if (colors) addColoredText(state, type.schema, text, readColors(colors[1], text.length));
+        else if (text) state.addText(text);
         state.closeNode();
       },
     },
     toMarkdown: {
       match: base.toMarkdown.match,
       runner: (state, node) => {
-        const info = joinInfo(node.attrs.language, node.attrs.title);
-        if (node.attrs.folded) {
-          if (info.lang) info.meta = [info.meta, FOLDED].filter(Boolean).join(" ");
-          else info.lang = FOLDED;
-        }
-        state.addNode("code", undefined, node.content.firstChild?.text || "", info);
+        const { lang, meta } = joinInfo(node.attrs.language, node.attrs.title);
+        const info = [lang, meta, writeColors(node), node.attrs.folded && FOLDED].filter(Boolean).join(" ");
+        const at = info.indexOf(" ");
+        state.addNode("code", undefined, node.textContent, at < 0 ? { lang: info || null, meta: null } : { lang: info.slice(0, at), meta: info.slice(at + 1) });
       },
     },
   };
