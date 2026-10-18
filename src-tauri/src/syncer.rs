@@ -125,6 +125,47 @@ pub fn plan<'a>(
         .collect()
 }
 
+/// 笔记本元数据按字段三方合并。当前页和阅读/编辑模式只留在本机。
+/// 同一字段两边都更改且值不同时返回冲突，调用方必须留副本。
+pub fn merge_metadata(
+    base: Option<&serde_json::Value>,
+    local: &serde_json::Value,
+    remote: &serde_json::Value,
+) -> Result<serde_json::Value, Vec<String>> {
+    use serde_json::{Map, Value};
+    let (Some(l), Some(r)) = (local.as_object(), remote.as_object()) else {
+        return Err(vec![".minipad.json 不是对象".into()]);
+    };
+    let before = base.and_then(Value::as_object);
+    let mut output: Map<String, Value> = l.clone();
+    let mut conflicts = Vec::new();
+    let keys: BTreeSet<_> = l.keys().chain(r.keys()).collect();
+    for key in keys {
+        if matches!(key.as_str(), "active" | "modes" | "current_book") {
+            continue;
+        }
+        let lv = l.get(key);
+        let rv = r.get(key);
+        let bv = before.and_then(|m| m.get(key));
+        if lv == rv {
+            continue;
+        }
+        let result = if lv == bv {
+            rv
+        } else if rv == bv {
+            lv
+        } else {
+            conflicts.push(key.clone());
+            continue;
+        };
+        match result {
+            Some(value) => { output.insert(key.clone(), value.clone()); }
+            None => { output.remove(key); }
+        }
+    }
+    if conflicts.is_empty() { Ok(Value::Object(output)) } else { Err(conflicts) }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -203,6 +244,29 @@ mod tests {
         ] {
             assert!(!should_sync(p, true), "{p}");
         }
+    }
+
+    #[test]
+    fn notebook_meta_merges_shared_fields_without_navigation() {
+        use serde_json::json;
+        let base = json!({"active": "甲", "modes": {"甲":"edit"}, "order":["甲"], "icon":"book", "pinned":[]});
+        let local = json!({"active": "乙", "modes": {"甲":"read"}, "order":["甲","乙"], "icon":"book", "pinned":[]});
+        let remote = json!({"active": "甲", "modes": {"甲":"edit"}, "order":["甲"], "icon":"star", "pinned":[]});
+        let combined = merge_metadata(Some(&base), &local, &remote).unwrap();
+        assert_eq!(combined["active"], "乙");
+        assert_eq!(combined["modes"]["甲"], "read");
+        assert_eq!(combined["order"], json!(["甲","乙"]));
+        assert_eq!(combined["icon"], "star");
+    }
+
+    #[test]
+    fn notebook_meta_conflicts_are_not_silently_discarded() {
+        use serde_json::json;
+        let base = json!({"icon":"book", "active":"a"});
+        let local = json!({"icon":"star", "active":"b"});
+        let remote = json!({"icon":"heart", "active":"c"});
+        assert_eq!(merge_metadata(Some(&base), &local, &remote), Err(vec!["icon".to_string()]));
+        assert!(merge_metadata(None, &json!([]), &remote).is_err());
     }
 
     #[test]
