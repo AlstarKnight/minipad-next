@@ -12,7 +12,8 @@
     "dev": "tauri dev",
     "build": "tauri build",
     "android:init": "tauri android init",
-    "android:build": "tauri android build --apk --debug --target aarch64"
+    "android:build": "tauri android build --apk --target aarch64",
+    "prepare-mobile": "node scripts/prepare-mobile.mjs"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.12.1",
