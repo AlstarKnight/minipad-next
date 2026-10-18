@@ -8,7 +8,7 @@ const el = (id) => document.getElementById(id);
 const status = el("status");
 const booksSelect = el("book");
 const notesSelect = el("note");
-const toolbar = el("toolbar");
+const toolbar = el("mobile-dock");
 const fileInput = el("image-file");
 const source = el("source");
 
