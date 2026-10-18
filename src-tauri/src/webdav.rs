@@ -1,6 +1,6 @@
 //! WebDAV PROPFIND Depth:1 响应解析（网络客户端会调用该模块）。
 use quick_xml::events::Event;
-use quick_xml::Reader;
+use quick_xml::{Reader, XmlVersion};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RemoteEntry {
@@ -12,8 +12,8 @@ pub struct RemoteEntry {
 }
 
 /// 不依赖 WebDAV 的 XML 前缀名称（D:、d:、其他自定义前缀）。
-fn local(name: &[u8]) -> &[u8] {
-    name.rsplit(|b| *b == b':').next().unwrap_or(name)
+fn local(name: &str) -> &str {
+    name.rsplit(':').next().unwrap_or(name)
 }
 
 /// 只读取 Depth:1 当前目录的 response。错误 XML 必须失败，而不能被当成空目录。
@@ -31,9 +31,9 @@ pub fn parse_multistatus(xml: &str) -> Result<Vec<RemoteEntry>, String> {
             .map_err(|e| format!("WebDAV 列目录响应不是有效 XML：{e}"))?;
         match event {
             Event::Start(e) => {
-                let name = local(e.name().as_ref()).to_vec();
-                match name.as_slice() {
-                    b"response" => {
+                let name = local(e.name().as_ref()).to_string();
+                match name.as_str() {
+                    "response" => {
                         item = Some(RemoteEntry {
                             href: String::new(),
                             etag: None,
@@ -43,13 +43,13 @@ pub fn parse_multistatus(xml: &str) -> Result<Vec<RemoteEntry>, String> {
                         });
                         status_ok = true;
                     }
-                    b"propstat" => {
+                    "propstat" => {
                         valid_property = true;
                     }
-                    b"href" | b"getetag" | b"getcontentlength" | b"getlastmodified" | b"status" => {
+                    "href" | "getetag" | "getcontentlength" | "getlastmodified" | "status" => {
                         field = String::from_utf8_lossy(&name).to_string();
                     }
-                    b"collection" if valid_property => {
+                    "collection" if valid_property => {
                         if let Some(ref mut entry) = item {
                             entry.directory = true;
                         }
@@ -58,16 +58,14 @@ pub fn parse_multistatus(xml: &str) -> Result<Vec<RemoteEntry>, String> {
                 }
             }
             Event::Empty(e) => {
-                if local(e.name().as_ref()) == b"collection" && valid_property {
+                if local(e.name().as_ref()) == "collection" && valid_property {
                     if let Some(ref mut entry) = item {
                         entry.directory = true;
                     }
                 }
             }
             Event::Text(t) => {
-                let value = t
-                    .decode()
-                    .map_err(|e| format!("WebDAV 列目录文本无法解码：{e}"))?;
+                let value = t.xml_content(XmlVersion::Implicit1_0);
                 if let Some(ref mut entry) = item {
                     match field.as_str() {
                         "href" => entry.href.push_str(&value),
@@ -84,13 +82,13 @@ pub fn parse_multistatus(xml: &str) -> Result<Vec<RemoteEntry>, String> {
                 }
             }
             Event::End(e) => {
-                let name = local(e.name().as_ref()).to_vec();
-                match name.as_slice() {
-                    b"href" | b"getetag" | b"getcontentlength" | b"getlastmodified" | b"status" => {
+                let name = local(e.name().as_ref()).to_string();
+                match name.as_str() {
+                    "href" | "getetag" | "getcontentlength" | "getlastmodified" | "status" => {
                         field.clear()
                     }
-                    b"propstat" => valid_property = false,
-                    b"response" => {
+                    "propstat" => valid_property = false,
+                    "response" => {
                         if let Some(entry) = item.take() {
                             if !entry.href.is_empty() && status_ok {
                                 entries.push(entry);
@@ -125,7 +123,7 @@ mod tests {
         assert!(entries[0].directory);
         assert_eq!(entries[1].href, "/MinipadNext/中文%20笔记.md");
         assert_eq!(entries[1].size, Some(31));
-        assert_eq!(entries[1].etag.as_deref(), Some(""abc""));
+        assert_eq!(entries[1].etag.as_deref(), Some(r#""abc""#));
     }
 
     #[test]
