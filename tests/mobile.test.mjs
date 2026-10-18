@@ -42,7 +42,7 @@ async function open() {
     const writes = [];
     const images = {};
     const calls = { list: 0, read: 0, readImage: 0 };
-    window.__mobileTest = { disk, writes, images, calls, failSaves: 0 };
+    window.__mobileTest = { disk, writes, images, calls, failSaves: 0, readDelay: 0, conflictNext: false };
     window.__TAURI__ = { core: {
       async invoke(command, args = {}) {
         const book = disk.find((b) => b.name === args.book) || disk[0];
@@ -52,6 +52,7 @@ async function open() {
         }
         if (command === "mobile_read_note") {
           calls.read++;
+          if (window.__mobileTest.readDelay) await new Promise((r) => setTimeout(r, window.__mobileTest.readDelay));
           const { content, unreadable } = book.notes.find((n) => n.name === args.name);
           return { content, unreadable, reason: null };
         }
@@ -61,6 +62,11 @@ async function open() {
           if (note.content !== args.expected) throw new Error("stale expected content");
           note.content = args.content;
           writes.push({ ...args });
+          if (window.__mobileTest.conflictNext) {
+            window.__mobileTest.conflictNext = false;
+            book.notes.push({ name: args.name + " 冲突副本", content: "旧内容", unreadable: false });
+            return { conflict_name: args.name + " 冲突副本" };
+          }
           return { conflict_name: null };
         }
         if (command === "mobile_create_book") {
@@ -303,6 +309,93 @@ test("inserted images are cached and not read back over IPC", async () => {
     assert.equal(await page.evaluate(() => window.__mobileTest.calls.readImage), 0);
     assert.equal(await page.locator(".ProseMirror img:not(.ProseMirror-separator)").getAttribute("src"),
       "data:image/png;base64," + TINY_PNG.toString("base64"));
+    assert.deepEqual(errors, []);
+  } finally {
+    await context.close();
+  }
+});
+
+test("a new notebook gets its own first page and shows an empty editor", async () => {
+  const { context, page, errors } = await open();
+  try {
+    const answers = ["工作", "第一页"];
+    page.on("dialog", (dialog) => { void dialog.accept(answers.shift()); });
+    await page.click("#open-drawer");
+    await page.click("#add-book");
+    await page.waitForFunction(() => document.getElementById("book-title").textContent.startsWith("工作"));
+    await page.waitForFunction(() => document.querySelector("#editor .ProseMirror")?.textContent === "");
+    assert.equal(await page.locator(".ProseMirror").getAttribute("contenteditable"), "false");
+    await page.click("#add-note");
+    await page.waitForFunction(() => document.getElementById("page-title").textContent === "第一页");
+    const disk = await page.evaluate(() => window.__mobileTest.disk.map((b) => [b.name, b.notes.map((n) => n.name)]));
+    assert.deepEqual(disk, [["", ["一", "二"]], ["工作", ["第一页"]]]);
+    assert.equal(await page.locator(".ProseMirror").getAttribute("contenteditable"), "true");
+    assert.deepEqual(errors, []);
+  } finally {
+    await context.close();
+  }
+});
+
+test("the old page is read-only while another page loads", async () => {
+  const { context, page, errors } = await open();
+  try {
+    await page.evaluate(() => { window.__mobileTest.readDelay = 600; });
+    await page.click("#open-drawer");
+    await page.locator("#notes-list button").filter({ hasText: "二" }).click();
+    assert.equal(await page.locator(".ProseMirror").getAttribute("contenteditable"), "false");
+    await page.locator(".ProseMirror p").filter({ hasText: "第二页" }).waitFor();
+    assert.equal(await page.locator(".ProseMirror").getAttribute("contenteditable"), "true");
+    assert.deepEqual(errors, []);
+  } finally {
+    await context.close();
+  }
+});
+
+test("switching pages right after a failed save keeps the edit and retries it", async () => {
+  const { context, page, errors } = await open();
+  try {
+    await page.evaluate(() => { window.__mobileTest.failSaves = 1; });
+    await page.locator(".ProseMirror p").first().click();
+    await page.keyboard.press("End");
+    await page.keyboard.type("别丢");
+    await chooseNote(page, "二");
+    await page.waitForFunction(() => document.getElementById("status").textContent.startsWith("无法切换"));
+    assert.equal(await page.locator("#page-title").textContent(), "一");
+    await page.waitForFunction(() => window.__mobileTest.disk[0].notes[0].content.includes("第一段别丢"),
+      null, { timeout: 9000 });
+    assert.deepEqual(errors, []);
+  } finally {
+    await context.close();
+  }
+});
+
+test("Markdown autolinks stay in the rich editor", async () => {
+  const { context, page, errors } = await open();
+  try {
+    await page.evaluate(() => window.__mobileTest.disk[0].notes.push({
+      name: "链接", content: "见 <https://example.com> 或 <me@example.com>", unreadable: false,
+    }));
+    await page.click("#refresh");
+    await chooseNote(page, "链接");
+    await page.locator(".ProseMirror p").filter({ hasText: "见" }).waitFor();
+    assert.equal(await page.locator("#source").isVisible(), false);
+    assert.deepEqual(errors, []);
+  } finally {
+    await context.close();
+  }
+});
+
+test("a conflict copy shows up in the page list right away", async () => {
+  const { context, page, errors } = await open();
+  try {
+    await page.evaluate(() => { window.__mobileTest.conflictNext = true; });
+    await page.locator(".ProseMirror p").first().click();
+    await page.keyboard.press("End");
+    await page.keyboard.type("改动");
+    await page.waitForFunction(() => document.getElementById("status").textContent.includes("冲突副本"));
+    await page.click("#open-drawer");
+    await page.locator("#notes-list button").filter({ hasText: "一 冲突副本" }).waitFor();
+    assert.equal(await page.locator("#page-title").textContent(), "一");
     assert.deepEqual(errors, []);
   } finally {
     await context.close();

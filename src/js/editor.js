@@ -433,9 +433,9 @@ export async function createEditor(opts) {
     .use([colorSpans, textColor, textBg].flat())
     // Mobile shares the exact desktop Markdown schema and document commands.
     // Only mouse/window-specific plugins are replaced or left off on Android.
-    .use([lineBreak, codeBlockWithTitle, codeBlockView, codeHighlight, readOnly, changes,
-      placeholder, afterRule, formatBar, foldBlocks,
-      ...(mobile ? [blockManager, opts.mobileImagePlugin] : [findPlugin, outlinePlugin, selectionBar, blockManager, imagePlugin])])
+    .use(mobile
+      ? [lineBreak, codeBlockWithTitle, codeBlockView, codeHighlight, readOnly, changes, placeholder, afterRule, formatBar, foldBlocks, blockManager, opts.mobileImagePlugin]
+      : [lineBreak, codeBlockWithTitle, codeBlockView, codeHighlight, readOnly, changes, placeholder, afterRule, findPlugin, outlinePlugin, selectionBar, formatBar, foldBlocks, blockManager, imagePlugin])
     .create();
   editor.action((c) => {
     ctx = c;

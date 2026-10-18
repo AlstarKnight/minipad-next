@@ -7,7 +7,7 @@ on:
       - 'src/mobile*'
       - 'src/js/**'
       - 'src/style.css'
-      - 'src/vendor/**'
+      - 'scripts/**'
       - 'tests/mobile.test.mjs'
       - 'scripts/prepare-mobile.mjs'
       - 'package*.json'
@@ -16,6 +16,11 @@ on:
 
 permissions:
   contents: read
+
+# A newer push to the same PR replaces the running build instead of queueing a second one.
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   android:

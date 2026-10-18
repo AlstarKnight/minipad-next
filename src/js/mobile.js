@@ -14,6 +14,8 @@ const source = el("source");
 
 let books = [];
 let selected = null; // { book, name, disk, unreadable }
+let currentBook = ""; // the notebook on screen; stays set while it has no pages (selected is null then)
+let switching = false; // a page switch is in flight: the old page must not take new edits
 let view = null;
 let dirty = false;
 let saving = null;
@@ -30,23 +32,22 @@ const allowedImage = { "image/jpeg": true, "image/png": true, "image/gif": true,
 // HTML tag cannot be round-tripped by Milkdown, so those notes open as raw Markdown instead of
 // risking silent loss. Tags inside code blocks and inline code are plain text, not HTML.
 const CODE = /^(`{3,}|~{3,})[^\n]*(?:\n[\s\S]*?^\1[^\n]*$|[\s\S]*)|`[^`\n]+`/gm;
-const needsSource = (md) => /<(?!\/?span\b)[A-Za-z][^>]*>/i.test(md.replace(CODE, ""));
+// <https://example.com> and <me@example.com> are Markdown autolinks, not HTML.
+const AUTOLINK = /<(?:[A-Za-z][A-Za-z0-9+.-]{1,31}:[^\s<>]*|[^\s<>@]+@[^\s<>]+)>/g;
+const needsSource = (md) => /<(?!\/?span\b)[A-Za-z][^>]*>/i.test(md.replace(CODE, "").replace(AUTOLINK, ""));
 
-// A failed save keeps the note dirty; retry a few times so a brief storage error heals itself.
+// A failed save keeps the note dirty; flush() retries a few times, from whichever path called it,
+// so a brief storage error heals itself.
 const RETRY_MS = 5000;
 const MAX_RETRIES = 5;
 let retries = 0;
 function saveSoon(delay) {
   clearTimeout(timer);
-  timer = setTimeout(() => {
-    flush().then(() => { retries = 0; }, () => {
-      if (dirty && ++retries <= MAX_RETRIES) saveSoon(RETRY_MS);
-    });
-  }, delay);
+  timer = setTimeout(() => { void flush().catch(() => {}); }, delay);
 }
 
 function scheduleSave() {
-  if (loading || !selected || selected.unreadable || reading) return;
+  if (loading || switching || !selected || selected.unreadable || reading) return;
   dirty = true;
   retries = 0;
   notify("尚未保存");
@@ -70,8 +71,13 @@ function cacheImage(book, path, data) {
   }
 }
 async function readImage(book, path) {
-  const hit = imageCache.get(book + "\0" + path);
-  if (hit) return hit;
+  const key = book + "\0" + path;
+  const hit = imageCache.get(key);
+  if (hit) {
+    imageCache.delete(key); // most recently used goes last
+    imageCache.set(key, hit);
+    return hit;
+  }
   const data = await invoke("mobile_read_image", { book, path });
   cacheImage(book, path, data);
   return data;
@@ -160,7 +166,7 @@ function toggleDrawer(open) {
 }
 
 function renderDrawer() {
-  const bookName = selected?.book ?? books[0]?.name ?? "";
+  const bookName = currentBook;
   const book = books.find((b) => b.name === bookName);
   const bookList = el("books-list");
   const noteList = el("notes-list");
@@ -176,7 +182,7 @@ function renderDrawer() {
     button.append(name);
     button.addEventListener("click", async () => {
       await refresh(b.name, null);
-      if (selected?.book === b.name || (!b.notes.length && books.some((x) => x.name === b.name))) toggleDrawer(false);
+      if (currentBook === b.name) toggleDrawer(false);
     });
     bookList.append(button);
   }
@@ -205,7 +211,7 @@ function renderDrawer() {
 }
 
 function render() {
-  const bookName = selected?.book ?? books[0]?.name ?? "";
+  const bookName = currentBook;
   const book = books.find((b) => b.name === bookName);
   options(booksSelect, books.map((b) => [b.name, b.name || "默认"]), bookName);
   options(notesSelect, (book?.notes || []).map((n) => [n.name, n.name]), selected?.name);
@@ -216,7 +222,7 @@ function render() {
   })());
   el("page-title").textContent = selected?.name || "新页面";
   renderDrawer();
-  const editable = !!selected && !selected.unreadable && !reading;
+  const editable = !!selected && !selected.unreadable && !reading && !switching;
   const raw = !!selected?.sourceOnly;
   if (view) view.setProps({ editable: () => editable && !raw });
   el("editor").hidden = raw;
@@ -226,12 +232,12 @@ function render() {
   el("mode").textContent = reading ? "编辑" : "阅读";
   el("mode").setAttribute("aria-pressed", String(reading));
   toolbar.hidden = !editable || raw;
-  el("add-note").disabled = !book;
+  el("add-note").disabled = !book || switching;
   el("insert-image").disabled = !editable || raw;
   el("find-open").disabled = !selected || raw;
   el("block-actions").disabled = !editable || raw;
   el("hint").textContent = selected?.unreadable ? "文件内容无法识别，仅允许查看" :
-    raw ? "该笔记包含桌面扩展，使用保真源码模式" :
+    raw ? "该笔记包含无法富文本编辑的 HTML，使用保真源码模式" :
       reading ? "阅读模式" : "本地自动保存 · 支持图片和 Markdown";
 }
 
@@ -249,10 +255,13 @@ async function flush() {
     try {
       const result = await saving;
       note.disk = content;
+      retries = 0;
       notify(result?.conflict_name ? "已保存，产生冲突副本" : "已保存");
+      if (result?.conflict_name) await showNewPages();
     } catch (error) {
       dirty = true;
       notify("保存失败：" + error);
+      if (++retries <= MAX_RETRIES) saveSoon(RETRY_MS);
       throw error;
     } finally {
       saving = null;
@@ -260,19 +269,35 @@ async function flush() {
   }
 }
 
-async function refresh(bookName = selected?.book, noteName = selected?.name) {
+// Only names are listed; just the opened page is read, so many pages stay cheap to switch.
+async function listBooks() {
+  return (await invoke("mobile_list_books")).map((b) => ({
+    name: b.name, notes: b.notes.map((name) => ({ name })),
+  }));
+}
+
+// A conflict copy is a new page: show it in the lists without leaving the page being edited.
+async function showNewPages() {
+  try {
+    books = await listBooks();
+    render();
+  } catch { /* the next page switch lists them again */ }
+}
+
+async function refresh(bookName = currentBook, noteName = selected?.name) {
   if (busy) return;
   busy = true;
   try {
     await flush();
-    // Only names are listed; just the opened page is read, so many pages stay cheap to switch.
-    const loaded = (await invoke("mobile_list_books")).map((b) => ({
-      name: b.name, notes: b.notes.map((name) => ({ name })),
-    }));
+    // Nothing typed while the new page loads may land on the old page or be lost.
+    switching = true;
+    render();
+    const loaded = await listBooks();
     const book = loaded.find((b) => b.name === bookName) || loaded[0];
     const noteInfo = book?.notes.find((n) => n.name === noteName) || book?.notes[0];
     const note = noteInfo && await invoke("mobile_read_note", { book: book.name, name: noteInfo.name });
     books = loaded;
+    currentBook = book?.name ?? "";
     selected = note ? {
       book: book.name, name: noteInfo.name, content: note.content, disk: note.content,
       unreadable: note.unreadable, sourceOnly: needsSource(note.content),
@@ -280,13 +305,17 @@ async function refresh(bookName = selected?.book, noteName = selected?.name) {
     } : null;
     source.value = note?.content ?? "";
     loading = true;
-    if (selected && !selected.sourceOnly) showInEditor(selected);
+    // An empty notebook shows an empty page instead of the previous page's text.
+    if (!selected) showInEditor({ content: "", state: null, scroll: 0 });
+    else if (!selected.sourceOnly) showInEditor(selected);
     loading = false;
+    switching = false;
     render();
     notify(note?.unreadable ? "只读：原始文件不可安全解码" : "已保存");
     el("page").scrollTop = 0;
   } catch (error) {
     loading = false;
+    switching = false;
     render();
     notify("无法切换：" + error);
   } finally {
@@ -423,7 +452,7 @@ el("block-actions").addEventListener("click", () => {
   }));
 });
 booksSelect.addEventListener("change", () => { void refresh(booksSelect.value, null); });
-notesSelect.addEventListener("change", () => { void refresh(booksSelect.value, notesSelect.value); });
+notesSelect.addEventListener("change", () => { void refresh(currentBook, notesSelect.value); });
 
 el("add-book").addEventListener("click", async () => {
   const name = prompt("新笔记本名称");
@@ -440,7 +469,7 @@ el("add-note").addEventListener("click", async () => {
   if (!name?.trim()) return;
   try {
     await flush();
-    const book = booksSelect.value;
+    const book = currentBook;
     const created = await invoke("mobile_create_note", { book, name: name.trim() });
     await refresh(book, created);
   } catch (error) { notify("新建页面失败：" + error); }
@@ -456,7 +485,7 @@ el("mode").addEventListener("click", async () => {
 });
 el("refresh").addEventListener("click", () => { void refresh(); });
 document.addEventListener("visibilitychange", () => {
-  if (document.hidden) void flush().catch(() => saveSoon(RETRY_MS));
+  if (document.hidden) void flush().catch(() => {});
 });
 
 async function start() {
