@@ -154,7 +154,18 @@ test("desktop code titles and fold blocks use the shared rich editor without met
     }), content);
     await page.click("#refresh");
     await chooseNote(page, "扩展语法");
-    await page.locator(".ProseMirror .fold-block").waitFor();
+    try {
+      await page.locator(".ProseMirror .fold-block").waitFor({ timeout: 2500 });
+    } catch {
+      const state = await page.evaluate(() => ({
+        html: document.querySelector("#editor")?.innerHTML.slice(0, 3500),
+        source: document.getElementById("source")?.value,
+        sourceVisible: !document.getElementById("source")?.hidden,
+        savedContent: window.__mobileTest.disk[0].notes[2].content,
+        status: document.getElementById("status")?.textContent,
+      }));
+      throw new Error("Fold block missing: " + JSON.stringify(state));
+    }
     await page.locator(".codeblock .cb-title").waitFor();
     assert.equal(await page.locator("#source").isVisible(), false);
     assert.equal(await page.locator(".codeblock .cb-title").inputValue(), "描述");
