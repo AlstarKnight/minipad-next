@@ -6,9 +6,9 @@ include!("desktop.rs");
 #[cfg(mobile)]
 mod images;
 #[cfg(mobile)]
-mod notes;
-#[cfg(mobile)]
 mod mobile;
+#[cfg(mobile)]
+mod notes;
 
 #[cfg(mobile)]
 #[tauri::mobile_entry_point]
