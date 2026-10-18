@@ -22,5 +22,10 @@
       "icons/128x128.png",
       "icons/128x128@2x.png"
     ]
+  },
+  "build": {
+    "frontendDist": "../mobile-dist",
+    "beforeBuildCommand": "npm run prepare-mobile",
+    "beforeDevCommand": "npm run prepare-mobile"
   }
 }
