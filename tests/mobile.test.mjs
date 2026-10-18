@@ -24,6 +24,12 @@ after(async () => {
   if (server) await new Promise((done) => server.close(done));
 });
 
+async function chooseNote(page, name) {
+  await page.click("#open-drawer");
+  await page.locator("#note-filter").fill("");
+  await page.locator("#notes-list button").filter({ hasText: name }).click();
+}
+
 async function open() {
   const context = await browser.newContext({ viewport: { width: 390, height: 740 } });
   await context.addInitScript(() => {
@@ -88,9 +94,9 @@ test("mobile Milkdown renders notes, saves edits and switches pages", async () =
     await page.keyboard.type("追加");
     await page.waitForFunction(() => window.__mobileTest.disk[0].notes[0].content.includes("第一段追加"));
     assert.equal(await page.locator("#status").textContent(), "已保存");
-    await page.selectOption("#note", "二");
+    await chooseNote(page, "二");
     await page.locator(".ProseMirror p").filter({ hasText: "第二页" }).waitFor();
-    await page.selectOption("#note", "一");
+    await chooseNote(page, "一");
     await page.locator(".ProseMirror p").filter({ hasText: "第一段追加" }).waitFor();
     assert.deepEqual(errors, []);
   } finally {
@@ -109,7 +115,7 @@ test("touch formatting and reading mode do not mutate the file", async () => {
     const saved = await page.evaluate(() => window.__mobileTest.disk[0].notes[0].content);
     await page.click("#mode");
     assert.equal(await page.locator(".ProseMirror").getAttribute("contenteditable"), "false");
-    assert.equal(await page.locator("#toolbar").isVisible(), false);
+    assert.equal(await page.locator("#mobile-dock").isVisible(), false);
     await page.click("#mode");
     assert.equal(await page.locator(".ProseMirror").getAttribute("contenteditable"), "true");
     assert.equal(await page.evaluate(() => window.__mobileTest.disk[0].notes[0].content), saved);
@@ -147,7 +153,7 @@ test("desktop code titles and fold blocks use the shared rich editor without met
       name: "扩展语法", content, unreadable: false,
     }), content);
     await page.click("#refresh");
-    await page.selectOption("#note", "扩展语法");
+    await chooseNote(page, "扩展语法");
     await page.locator(".ProseMirror .fold-block").waitFor();
     await page.locator(".codeblock .cb-title").waitFor();
     assert.equal(await page.locator("#source").isVisible(), false);
@@ -171,7 +177,7 @@ test("unknown HTML keeps the lossless Markdown source fallback", async () => {
       name: "自定义语法", content, unreadable: false,
     }), content);
     await page.click("#refresh");
-    await page.selectOption("#note", "自定义语法");
+    await chooseNote(page, "自定义语法");
     await page.locator("#source").waitFor({ state: "visible" });
     assert.equal(await page.locator("#source").inputValue(), content);
     await page.locator("#source").fill(content + "\n新的说明");
