@@ -188,8 +188,10 @@ function render() {
   el("mode").textContent = reading ? "编辑" : "阅读";
   el("mode").setAttribute("aria-pressed", String(reading));
   toolbar.hidden = !editable || raw;
-  for (const button of toolbar.querySelectorAll("button")) button.disabled = !editable;
   el("add-note").disabled = !book;
+  el("insert-image").disabled = !editable || raw;
+  el("find-open").disabled = !selected || raw;
+  el("block-actions").disabled = !editable || raw;
   el("hint").textContent = selected?.unreadable ? "文件内容无法识别，仅允许查看" :
     raw ? "该笔记包含桌面扩展，使用保真源码模式" :
       reading ? "阅读模式" : "本地自动保存 · 支持图片和 Markdown";
