@@ -30,8 +30,10 @@ async function chooseNote(page, name) {
   await page.locator("#notes-list button").filter({ hasText: name }).click();
 }
 
-async function open({ colorScheme, keyboard } = {}) {
+// look: the saved appearance (0.4.4). Older tests were written for the original look, so they get "classic".
+async function open({ colorScheme, keyboard, look = { ui: "classic" } } = {}) {
   const context = await browser.newContext({ viewport: { width: 390, height: 740 }, colorScheme });
+  if (look) await context.addInitScript((v) => { if (!localStorage.getItem("minipad-mobile-look")) localStorage.setItem("minipad-mobile-look", v); }, JSON.stringify(look));
   if (keyboard) {
     // Android WebViews can shrink only the visual viewport when the soft keyboard opens.
     await context.addInitScript(() => {
@@ -594,6 +596,230 @@ test("pinch-zooming is not mistaken for the soft keyboard", async () => {
       return document.documentElement.style.getPropertyValue("--keyboard-inset");
     });
     assert.equal(inset, "250px");
+    assert.deepEqual(errors, []);
+  } finally {
+    await context.close();
+  }
+});
+
+// ---------- 0.4.4 interface styles ----------
+const shown = (page, selector) => page.locator(selector).first().evaluate((e) => getComputedStyle(e).display !== "none" && !e.closest("[hidden]"));
+const rootAttr = (page, name) => page.evaluate((n) => document.documentElement.getAttribute(n), name);
+
+test("a fresh install is starry: reading | editing segment and the categorized toolbar", async () => {
+  const { context, page, errors } = await open({ look: null });
+  try {
+    assert.equal(await rootAttr(page, "data-ui"), "starry");
+    assert.equal(await shown(page, "#mode"), false, "the single mode button gives way to the segment");
+    const pressed = () => page.$$eval("#mode-seg button", (bs) => bs.map((b) => b.dataset.mode + ":" + b.getAttribute("aria-pressed")));
+    assert.deepEqual(await pressed(), ["read:false", "edit:true"]);
+    assert.equal(await shown(page, '#format-bar [data-cmd="strong"]'), true);
+    assert.equal(await shown(page, '#format-bar [data-cmd="list"]'), false, "lists live under 段落");
+    await page.click('#dock-cats [data-cat="para"]');
+    assert.equal(await shown(page, '#format-bar [data-cmd="list"]'), true);
+    assert.equal(await shown(page, '#format-bar [data-cmd="strong"]'), false);
+    await page.click('#dock-cats [data-cat="color"]');
+    assert.deepEqual(await page.$$eval("#format-bar [data-cmd]", (bs) => bs.filter((b) => getComputedStyle(b).display !== "none").map((b) => b.dataset.cmd)), ["color", "bg"]);
+    await page.click('#mode-seg [data-mode="read"]');
+    assert.deepEqual(await pressed(), ["read:true", "edit:false"]);
+    assert.equal(await page.locator("#mobile-dock").isHidden(), true, "reading hides the toolbar");
+    // tapping the side already chosen changes nothing
+    await page.click('#mode-seg [data-mode="read"]');
+    assert.deepEqual(await pressed(), ["read:true", "edit:false"]);
+    await page.click('#mode-seg [data-mode="edit"]');
+    assert.deepEqual(await pressed(), ["read:false", "edit:true"]);
+    assert.deepEqual(errors, []);
+  } finally {
+    await context.close();
+  }
+});
+
+test("appearance settings switch style, light/dark and accent at once and are remembered", async () => {
+  const { context, page, errors } = await open({ look: null, colorScheme: "light" });
+  try {
+    await page.click("#open-drawer");
+    await page.click("#open-settings");
+    assert.equal(await page.locator("#mobile-drawer").isHidden(), true, "the drawer makes way for the sheet");
+    const checked = () => page.$$eval("#ui-styles [aria-checked=true]", (bs) => bs.map((b) => b.dataset.ui));
+    assert.deepEqual(await checked(), ["starry"]);
+    assert.equal(await page.locator("#look-stars").isVisible(), true, "starry shows its own switches");
+    await page.click('#ui-styles [data-ui="material"]');
+    assert.equal(await rootAttr(page, "data-ui"), "material");
+    assert.equal(await page.locator("#look-stars").isVisible(), false);
+    await page.click('#look-theme [data-theme-choice="dark"]');
+    assert.equal(await rootAttr(page, "data-theme"), "dark", "dark even though the phone is light");
+    const accent = () => page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--accent").trim());
+    assert.equal(await accent(), "#c3c0ff", "the Material dark primary");
+    await page.click('#look-accent [data-color="#16a34a"]');
+    assert.equal(await accent(), "#16a34a");
+    assert.deepEqual(await page.$$eval("#look-accent [aria-checked=true]", (bs) => bs.map((b) => b.dataset.color)), ["#16a34a"]);
+    await page.click('#ui-styles [data-ui="classic"]');
+    assert.equal(await rootAttr(page, "data-ui"), null, "classic has no style attribute");
+    assert.equal(await accent(), "#16a34a", "the picked accent survives a style change");
+    await page.click('#look-accent [data-color=""]');
+    assert.equal(await accent(), "#b6d1b8", "follow the style: the original dark green");
+    await page.click('#look-theme [data-theme-choice="system"]');
+    assert.equal(await rootAttr(page, "data-theme"), "light");
+    await page.keyboard.press("Escape");
+    assert.equal(await page.locator("#mobile-settings").isHidden(), true);
+    await page.click('#open-drawer');
+    await page.click("#open-settings");
+    await page.click('#ui-styles [data-ui="starry"]');
+    await page.uncheck("#look-stars");
+    await page.reload();
+    await page.locator("#editor .ProseMirror h1").waitFor();
+    assert.equal(await rootAttr(page, "data-ui"), "starry", "remembered after a restart");
+    assert.equal(await rootAttr(page, "data-stars"), null);
+    assert.deepEqual(errors, []);
+  } finally {
+    await context.close();
+  }
+});
+
+test("paper: the drawer is an outline tree and keeps the drawer open while changing notebooks", async () => {
+  const { context, page, errors } = await open({ look: { ui: "paper" } });
+  try {
+    await page.evaluate(() => window.__mobileTest.disk.push({ name: "工作", notes: [{ name: "周报", content: "# 周报", unreadable: false }] }));
+    await page.click("#refresh");
+    await page.click("#open-drawer");
+    const rows = () => page.$$eval("#notes-list button", (bs) => bs.map((b) => b.className + ":" + b.textContent));
+    await page.waitForFunction(() => document.querySelectorAll("#notes-list .tree-book").length === 2);
+    assert.deepEqual(await rows(), ["tree-book open:默认笔记本", "tree-page active:一", "tree-page:二", "tree-book:工作"]);
+    assert.equal(await page.locator("#pages-heading").textContent(), "目录");
+    await page.locator("#notes-list .tree-book").filter({ hasText: "工作" }).click();
+    await page.waitForFunction(() => document.getElementById("page-title").textContent === "周报");
+    assert.equal(await page.locator("#mobile-drawer").isHidden(), false, "the drawer stays to pick a page");
+    assert.deepEqual(await rows(), ["tree-book:默认笔记本", "tree-book open:工作", "tree-page active:周报"]);
+    await page.locator("#notes-list .tree-book").filter({ hasText: "默认笔记本" }).click();
+    await page.waitForFunction(() => document.getElementById("page-title").textContent === "一");
+    await page.locator("#notes-list .tree-page").filter({ hasText: "二" }).click();
+    await page.waitForFunction(() => document.getElementById("page-title").textContent === "二");
+    assert.equal(await page.locator("#mobile-drawer").isHidden(), true, "picking a page closes the drawer");
+    assert.deepEqual(errors, []);
+  } finally {
+    await context.close();
+  }
+});
+
+test("the hide-keyboard button shows while the keyboard is up and takes the focus away", async () => {
+  const { context, page, errors } = await open({ keyboard: true, look: null });
+  try {
+    await page.locator(".ProseMirror p").first().click();
+    assert.equal(await page.locator("#hide-keyboard").isVisible(), false);
+    await page.evaluate(() => {
+      window.visualViewport.height = innerHeight - 300;
+      window.visualViewport.dispatchEvent(new Event("resize"));
+    });
+    await page.click("#hide-keyboard");
+    assert.equal(await page.evaluate(() => !!document.activeElement?.closest(".ProseMirror")), false);
+    assert.deepEqual(errors, []);
+  } finally {
+    await context.close();
+  }
+});
+
+test("a WebView that resizes the page for the keyboard and also shrinks the visual viewport leaves no gap", async () => {
+  const { context, page, errors } = await open({ keyboard: true });
+  try {
+    // The page itself got 300px shorter, and the visual viewport reports another 300px on top.
+    await page.setViewportSize({ width: 390, height: 440 });
+    await page.evaluate(() => {
+      window.visualViewport.height = innerHeight - 300;
+      window.visualViewport.dispatchEvent(new Event("resize"));
+    });
+    const layout = await page.evaluate(() => ({
+      body: document.body.getBoundingClientRect().height,
+      dockBottom: Math.ceil(document.getElementById("mobile-dock").getBoundingClientRect().bottom),
+      keyboard: document.documentElement.hasAttribute("data-keyboard"),
+      inset: document.documentElement.style.getPropertyValue("--keyboard-inset"),
+    }));
+    const { dockBottom, ...rest } = layout;
+    assert.deepEqual(rest, { body: 440, keyboard: true, inset: "0px" });
+    assert.ok(dockBottom >= 436 && dockBottom <= 440, `the toolbar ends at the keyboard (${dockBottom})`);
+    await page.setViewportSize({ width: 390, height: 740 });
+    await page.evaluate(() => {
+      window.visualViewport.height = innerHeight;
+      window.visualViewport.dispatchEvent(new Event("resize"));
+    });
+    assert.equal(await rootAttr(page, "data-keyboard"), null);
+    assert.deepEqual(errors, []);
+  } finally {
+    await context.close();
+  }
+});
+
+test("the floating new-page button creates a page, steps aside for the keyboard and can be turned off", async () => {
+  for (const ui of ["starry", "material", "paper", "classic"]) {
+    const { context, page, errors } = await open({ keyboard: true, look: { ui } });
+    try {
+      page.on("dialog", (dialog) => { void dialog.accept("三"); });
+      const fab = page.locator("#new-page");
+      await fab.waitFor({ state: "visible" });
+      const box = await fab.boundingBox();
+      const dockTop = await page.locator("#mobile-dock").evaluate((d) => d.getBoundingClientRect().top);
+      assert.ok(box.y + box.height <= dockTop - 8, `${ui}: the button sits above the toolbar`);
+      assert.ok(box.width >= 44 && box.height >= 44, `${ui}: finger-sized`);
+      await fab.click();
+      await page.waitForFunction(() => document.getElementById("page-title").textContent === "三");
+      assert.deepEqual(await page.evaluate(() => window.__mobileTest.disk[0].notes.map((n) => n.name)), ["一", "二", "三"]);
+      await page.evaluate(() => {
+        window.visualViewport.height = innerHeight - 300;
+        window.visualViewport.dispatchEvent(new Event("resize"));
+      });
+      assert.equal(await fab.isVisible(), false, `${ui}: hidden while typing`);
+      await page.evaluate(() => {
+        window.visualViewport.height = innerHeight;
+        window.visualViewport.dispatchEvent(new Event("resize"));
+      });
+      await fab.waitFor({ state: "visible" });
+      await page.click("#open-drawer");
+      await page.click("#open-settings");
+      await page.uncheck("#look-fab");
+      await page.click("#close-settings");
+      assert.equal(await fab.isVisible(), false, `${ui}: turned off`);
+      assert.deepEqual(errors, []);
+    } finally {
+      await context.close();
+    }
+  }
+});
+
+test("when the WebView pans the visual viewport down for the keyboard, the page follows it", async () => {
+  const { context, page, errors } = await open({ keyboard: true });
+  try {
+    // Only the visual viewport shrank, and it was scrolled down 300px to show the caret.
+    await page.evaluate(() => {
+      Object.assign(window.visualViewport, { height: innerHeight - 300, offsetTop: 300 });
+      window.visualViewport.dispatchEvent(new Event("resize"));
+    });
+    const layout = () => page.evaluate(() => ({
+      top: Math.round(document.body.getBoundingClientRect().top),
+      header: Math.round(document.querySelector(".app-header").getBoundingClientRect().top),
+      dockBottom: Math.ceil(document.getElementById("mobile-dock").getBoundingClientRect().bottom),
+    }));
+    let now = await layout();
+    assert.equal(now.top, 300, "the page starts where the visible area starts");
+    assert.ok(now.header >= 300 && now.header <= 302, `the header stays in sight (${now.header})`);
+    assert.ok(now.dockBottom >= 736 && now.dockBottom <= 740, `the toolbar ends at the keyboard (${now.dockBottom})`);
+    // The pan moves without a resize: the visual viewport's scroll event alone moves the page.
+    await page.evaluate(() => {
+      window.visualViewport.offsetTop = 120;
+      window.visualViewport.dispatchEvent(new Event("scroll"));
+    });
+    now = await layout();
+    assert.equal(now.top, 120);
+    await page.evaluate(() => {
+      Object.assign(window.visualViewport, { height: innerHeight, offsetTop: 0 });
+      window.visualViewport.dispatchEvent(new Event("resize"));
+    });
+    assert.equal((await layout()).top, 0, "back in place once the keyboard closes");
+    // The debug readout, switched on in the appearance sheet, shows the numbers behind it.
+    await page.click("#open-drawer");
+    await page.click("#open-settings");
+    await page.check("#look-debug");
+    await page.click("#close-settings");
+    await page.locator("#viewport-debug").waitFor();
+    assert.match(await page.locator("#viewport-debug").textContent(), /innerHeight 740[\s\S]*visualViewport 740/);
     assert.deepEqual(errors, []);
   } finally {
     await context.close();

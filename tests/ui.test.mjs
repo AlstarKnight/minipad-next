@@ -45,6 +45,7 @@ const SETTINGS = {
   show_in_taskbar: false,
   autostart: false,
   theme: "system",
+  ui_style: "classic", // 旧测试按原来的样子量尺寸和颜色;三种界面风格有自己的测试
   color_library_rev: 1, // 测试里的颜色库按最新内置颜色算，启动时不再补 0.3.11 的渐变
   material_library: [], // 旧测试只看纯色和渐变；材质色的测试自己放默认材质库
   block_context_menu: "block", // 既有块管理测试仍使用右键块菜单；实际默认改回系统右键
@@ -3723,7 +3724,7 @@ describe("theme and accent", () => {
     assert.equal(await p.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--accent").trim()), "#123abc");
     await p.click("#btn-settings");
     await settingsPage(p, "look");
-    await p.click('#set-accent button[title="默认(橙色)"]');
+    await p.click('#set-accent button[title="跟随风格"]');
     await p.click("#set-save");
     await until(async () => (await h.stored())?.settings?.accent, "", "back to the default");
     assert.equal(await marker(), "none");
@@ -6599,5 +6600,134 @@ describe("0.4.3: new version notice", () => {
     await h.p.waitForTimeout(300);
     assert.equal(off.length, 0);
     assert.ok(await h.p.locator("#st-update").isHidden());
+  });
+});
+
+describe("0.4.4: interface styles", () => {
+  const styled = (ui, extra = {}) => ({
+    ...seed({ "": { 甲: "一", 乙: "二" }, 工作: { 周报: "三" } }),
+    settings: { ...SETTINGS, ui_style: ui, ...extra },
+  });
+  const root = (p, name) => p.evaluate((n) => document.documentElement.getAttribute(n), name);
+
+  ui("a fresh install uses the starry style with the notebook rail; the rail switches and adds notebooks", async (h) => {
+    const { p } = h;
+    assert.equal(await root(p, "data-ui"), "starry");
+    assert.equal(await root(p, "data-side"), "rail");
+    assert.deepEqual(await p.$$eval("#side .side-rail-book", (bs) => bs.map((b) => b.textContent)), ["默认"]);
+    await p.click("#side .side-add");
+    await h.answer("工作");
+    await until(h.bookName, "工作", "the new notebook is opened");
+    assert.deepEqual(await p.$$eval("#side .side-rail-book", (bs) => bs.map((b) => [b.textContent, b.classList.contains("current")])), [["默认", false], ["工作", true]]);
+    await p.locator("#side .side-rail-book").filter({ hasText: "默认" }).click();
+    await until(h.bookName, "默认", "a rail click switches the notebook");
+    // 窗口太窄时不显示侧栏
+    await p.setViewportSize({ width: 380, height: 540 });
+    await until(() => root(p, "data-side"), null, "too narrow: no rail");
+    assert.ok(await p.locator("#side").isHidden());
+  });
+
+  ui("paper: the outline tree lists notebooks and pages, opens pages, and the notebook button folds it", { seed: styled("paper") }, async (h) => {
+    const { p } = h;
+    await p.setViewportSize({ width: 900, height: 600 });
+    await until(() => root(p, "data-side"), "tree", "the tree shows in a wide window");
+    const rows = () => p.$$eval("#side .side-list > :is(.side-book, .side-page)", (bs) => bs.map((b) => b.className.replace("side-", "") + ":" + b.textContent));
+    assert.deepEqual(await rows(), ["book current:默认", "page current:甲", "page:乙", "book:工作"]);
+    await p.locator("#side .side-page").filter({ hasText: "乙" }).click();
+    await until(h.activeTab, "乙", "a page click opens it");
+    await p.locator("#side .side-book").filter({ hasText: "工作" }).click();
+    await until(h.bookName, "工作", "another notebook is opened");
+    await until(rows, ["book:默认", "book current:工作", "page current:周报"], "the current notebook unfolds");
+    const left = () => p.$eval("#main", (m) => Math.round(m.getBoundingClientRect().left));
+    const open = await left();
+    await p.click("#btn-book");
+    await until(() => root(p, "data-side"), null, "the notebook button folds the tree");
+    assert.equal(open - (await left()), 208, "the page made room for the tree");
+    assert.ok(await p.locator("#books").isHidden(), "and does not open the list");
+    await p.click("#btn-book");
+    await until(() => root(p, "data-side"), "tree", "and unfolds it again");
+    // 改名、删除这些还在原来的笔记本列表里
+    await p.click("#side .side-more");
+    await p.locator("#books").waitFor();
+    assert.equal((await h.items()).length, 2);
+  });
+
+  ui("settings: style cards show only their own options, save at once, and turning a sidebar off brings back the list", { seed: styled("starry") }, async (h) => {
+    const { p } = h;
+    await p.click("#btn-settings");
+    await settingsPage(p, "look");
+    const checked = () => p.$$eval("#set-ui-style [aria-checked=true]", (bs) => bs.map((b) => b.dataset.ui));
+    const visible = () => p.$$eval("[data-ui-only]", (rows) => rows.filter((r) => !r.hidden).map((r) => r.querySelector("input").id));
+    assert.deepEqual(await checked(), ["starry"]);
+    assert.deepEqual(await visible(), ["set-ui-rail", "set-ui-stars"]);
+    await p.click('#set-ui-style [data-ui="paper"]');
+    assert.deepEqual(await checked(), ["paper"]);
+    assert.deepEqual(await visible(), ["set-ui-tree"]);
+    await p.click('#set-ui-style [data-ui="material"]');
+    assert.deepEqual(await visible(), []);
+    await p.click("#set-save");
+    await until(async () => (await h.stored())?.settings?.ui_style, "material", "saved");
+    assert.equal(await root(p, "data-ui"), "material");
+    assert.equal(await root(p, "data-side"), null, "material has no sidebar");
+    // 星空渐变关掉笔记本侧栏
+    await p.click("#btn-settings");
+    await settingsPage(p, "look");
+    await p.click('#set-ui-style [data-ui="starry"]');
+    await p.uncheck("#set-ui-rail");
+    await p.click("#set-save");
+    await until(async () => (await h.stored())?.settings?.ui_rail, false, "the rail switch is saved");
+    assert.equal(await root(p, "data-ui"), "starry");
+    assert.equal(await root(p, "data-side"), null);
+    await h.openBooks();
+    assert.equal((await h.items()).length, 2, "the notebook button opens the list as before");
+    // 经典:不加 data-ui,回到原来的样子
+    await h.closeBooks();
+    await p.click("#btn-settings");
+    await settingsPage(p, "look");
+    await p.click('#set-ui-style [data-ui="classic"]');
+    await p.click("#set-save");
+    await until(() => root(p, "data-ui"), null, "classic has no style attribute");
+    assert.equal(await p.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--accent").trim()), "#d9822b", "the old orange");
+  });
+
+  ui("the accent follows the style unless one was picked, and a picked accent survives a style change", { seed: styled("paper", { accent: "#16a34a" }) }, async (h) => {
+    const { p } = h;
+    const accent = () => p.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--accent").trim());
+    assert.equal(await accent(), "#16a34a", "an existing accent is kept");
+    await p.click("#btn-settings");
+    await settingsPage(p, "look");
+    await p.click('#set-ui-style [data-ui="starry"]');
+    await p.click("#set-save");
+    await until(() => root(p, "data-ui"), "starry");
+    assert.equal(await accent(), "#16a34a", "still the picked accent");
+    // 选回「跟随风格」(第一个色块)
+    await p.click("#btn-settings");
+    await settingsPage(p, "look");
+    await p.click('#set-accent button[data-color=""]');
+    await p.click("#set-save");
+    await until(async () => (await h.stored())?.settings?.accent, "", "follow the style is saved");
+    assert.equal(await accent(), "#5b47d6", "the starry accent");
+    await p.evaluate(() => (document.documentElement.dataset.theme = "dark"));
+    assert.equal(await accent(), "#b3a6ff", "and its dark variant");
+  });
+
+  ui("starry dark: the stars switch follows the setting", { seed: styled("starry", { theme: "dark" }) }, async (h) => {
+    const { p } = h;
+    const stars = () => p.$eval("#bar", (b) => getComputedStyle(b).backgroundImage);
+    assert.match(await stars(), /radial-gradient/);
+    await p.click("#btn-settings");
+    await settingsPage(p, "look");
+    await p.uncheck("#set-ui-stars");
+    await p.click("#set-save");
+    await until(stars, "none", "no stars");
+    assert.equal(await root(p, "data-stars"), null);
+  });
+
+  ui("small windows have no sidebar", { seed: styled("starry"), url: miniUrl("", "甲") }, async (h) => {
+    const { p } = h;
+    await p.waitForTimeout(300);
+    assert.equal(await root(p, "data-ui"), "starry", "the small window follows the style");
+    assert.equal(await root(p, "data-side"), null);
+    assert.ok(await p.locator("#side").isHidden());
   });
 });

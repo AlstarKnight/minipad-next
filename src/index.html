@@ -7,6 +7,8 @@
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
+  <!-- 界面风格的侧栏(见 js/sidebar.js):语雀纸感是目录树,星空渐变是一列笔记本图标 -->
+  <aside id="side" data-tauri-drag-region hidden></aside>
   <header id="bar" data-tauri-drag-region>
     <!-- 小窗(见 js/mini.js):顶栏只有页面名字和下面几个小窗按钮,名字太长就换行 -->
     <span id="mini-title" class="mini-only" data-tauri-drag-region></span>
@@ -177,8 +179,20 @@
 
           <section id="set-page-look" class="set-page" role="tabpanel" data-page="look" hidden>
             <h3>主题</h3>
+            <div class="row col">
+              <span>界面风格</span>
+              <div id="set-ui-style" class="ui-styles" role="radiogroup" aria-label="界面风格">
+                <button type="button" role="radio" data-ui="material" aria-checked="false"><span class="ui-thumb" aria-hidden="true"><i></i><i></i><i></i><i></i></span><b>A · Material You</b><small>色块胶囊、圆角图标,接近安卓原生</small></button>
+                <button type="button" role="radio" data-ui="paper" aria-checked="false"><span class="ui-thumb" aria-hidden="true"><i></i><i></i><i></i><i></i></span><b>B · 语雀纸感</b><small>白纸、细线和目录树,最克制</small></button>
+                <button type="button" role="radio" data-ui="starry" aria-checked="false"><span class="ui-thumb" aria-hidden="true"><i></i><i></i><i></i><i></i></span><b>C · 星空渐变</b><small>笔记本侧栏、渐变点缀,深色是星空</small></button>
+                <button type="button" role="radio" data-ui="classic" aria-checked="false"><span class="ui-thumb" aria-hidden="true"><i></i><i></i><i></i><i></i></span><b>经典</b><small>原来的暖色样子</small></button>
+              </div>
+            </div>
+            <label class="row check" data-ui-only="paper"><input id="set-ui-tree" type="checkbox" /> <span>目录侧栏:左边显示笔记本和页面的目录树,点笔记本按钮展开 / 收起</span></label>
+            <label class="row check" data-ui-only="starry"><input id="set-ui-rail" type="checkbox" /> <span>笔记本侧栏:左边一列笔记本图标,点一下切换笔记本</span></label>
+            <label class="row check" data-ui-only="starry"><input id="set-ui-stars" type="checkbox" /> <span>深色时顶栏和侧栏有星光</span></label>
             <label class="row">
-              <span>外观</span>
+              <span>明暗</span>
               <select id="set-theme">
                 <option value="system">跟随系统</option>
                 <option value="light">浅色</option>

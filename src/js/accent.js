@@ -1,6 +1,6 @@
 // ---------- 强调色和渐变色 ----------
 // 强调色用在活跃标签上面那条线、亮起来的按钮、勾选框、主要按钮、链接等地方。
-// 设置里存成一个字符串:空着是主题自带的橙色,"#3b82f6" 是纯色,"linear-gradient(135deg, #a, #b)" 是渐变色。
+// 设置里存成一个字符串:空着跟随界面风格(经典风格是橙色),"#3b82f6" 是纯色,"linear-gradient(135deg, #a, #b)" 是渐变色。
 // 字体颜色的渐变色也用同样的写法(见 colors.js)
 
 const HEX = /^#[0-9a-f]{6}$/i;
@@ -42,7 +42,7 @@ export const GRADIENTS = [
 ];
 
 export const ACCENTS = [
-  { name: "默认(橙色)", value: "" },
+  { name: "跟随风格", value: "" },
   { name: "蓝色", value: "#3b82f6" },
   { name: "绿色", value: "#16a34a" },
   { name: "紫色", value: "#8b5cf6" },

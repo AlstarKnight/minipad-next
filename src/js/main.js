@@ -6,10 +6,10 @@ import { toast, dialogOpen, closeDialog, closeMenu, closeOverlays, focusEditor, 
 import { markDirty, flushAll, saveMeta, pendingNoteCount, resetActivity } from "./save.js";
 import { reload, syncFromDisk, addConflictCopy, showPendingNotice } from "./sync.js";
 import { rememberView } from "./page.js";
-import { switchTo, newNote, deleteNote } from "./tabs.js";
+import { switchTo, newNote, deleteNote, goTo } from "./tabs.js";
 import { bindTabBar } from "./tabbar.js";
 import { bindGroups } from "./groups.js";
-import { toggleBooks, closeBooks, bindBooks } from "./notebooks.js";
+import { toggleBooks, closeBooks, bindBooks, switchBook, createBook, openBooks } from "./notebooks.js";
 import { openSearch, bindSearch } from "./search.js";
 import { openFind, closeFind, findAgain, bindFind } from "./findbar.js";
 import { bindImport, closeImport } from "./importer.js";
@@ -23,6 +23,7 @@ import { setLinkPrompt, setTaskCommand } from "./toolbar.js";
 import { formatDate } from "./datetime.js";
 import { initMini, bindMiniMain } from "./mini.js";
 import { bindUpdate } from "./update.js";
+import { bindSidebar } from "./sidebar.js";
 
 // ---------- 启动 ----------
 async function init() {
@@ -162,6 +163,7 @@ function bindUi() {
   $("#btn-search").addEventListener("click", openSearch);
   $("#btn-settings").addEventListener("click", openSettings);
   bindUpdate();
+  bindSidebar({ switchBook, goTo, createBook, openBooks: () => openBooks() });
   $("#btn-hide").addEventListener("click", hideWindow);
   // 缩成悬浮图标(设置里开了悬浮图标才有这个按钮)
   $("#btn-ball").addEventListener("click", () => api.invoke("collapse_to_ball").catch((e) => toast(String(e))));

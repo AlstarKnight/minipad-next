@@ -3,6 +3,7 @@ import { $prose, Plugin, TextSelection } from "../vendor/milkdown.js";
 import { createEditor, editorDebug, showInEditor, syncContent } from "./editor.js";
 import { state as desktopState } from "./state.js";
 import { setSelectionBar } from "./formatbar.js";
+import { ACCENTS, applyAccent, tidyAccent } from "./accent.js";
 
 const invoke = window.__TAURI__?.core?.invoke;
 const el = (id) => document.getElementById(id);
@@ -173,6 +174,29 @@ function renderDrawer() {
   const noteList = el("notes-list");
   bookList.replaceChildren();
   noteList.replaceChildren();
+  // 语雀纸感:页面列表是目录树,笔记本一行一行排下来,当前笔记本的页面缩进排在它下面
+  const tree = look.ui === "paper";
+  el("pages-heading").textContent = tree ? "目录" : "页面";
+  if (tree) {
+    for (const b of books) {
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "tree-book";
+      row.classList.toggle("open", b.name === bookName);
+      row.setAttribute("aria-expanded", String(b.name === bookName));
+      const name = document.createElement("span");
+      name.textContent = b.name || "默认笔记本";
+      row.append(name);
+      // 点别的笔记本:换过去,抽屉留着,好接着点它的页面
+      row.addEventListener("click", () => {
+        if (b.name !== currentBook) void refresh(b.name, null);
+        else toggleDrawer(false);
+      });
+      noteList.append(row);
+      if (b.name === bookName) noteList.append(...pageButtons(book, bookName, "tree-page"));
+    }
+    return;
+  }
   for (const b of books) {
     const button = document.createElement("button");
     button.type = "button";
@@ -188,10 +212,17 @@ function renderDrawer() {
     });
     bookList.append(button);
   }
+  noteList.append(...pageButtons(book, bookName, ""));
+}
+
+// 当前笔记本里和搜索框对得上的页面
+function pageButtons(book, bookName, className) {
   const query = el("note-filter").value.trim().toLowerCase();
   const notes = (book?.notes || []).filter((n) => n.name.toLowerCase().includes(query));
+  const out = [];
   for (const n of notes) {
     const button = document.createElement("button");
+    button.className = className;
     button.type = "button";
     button.classList.toggle("active", selected?.name === n.name);
     button.setAttribute("aria-current", selected?.name === n.name ? "page" : "false");
@@ -202,14 +233,15 @@ function renderDrawer() {
       await refresh(bookName, n.name);
       if (selected?.name === n.name && selected?.book === bookName) toggleDrawer(false);
     });
-    noteList.append(button);
+    out.push(button);
   }
   if (!notes.length) {
     const empty = document.createElement("p");
     empty.className = "drawer-empty";
     empty.textContent = "当前没有匹配的页面";
-    noteList.append(empty);
+    out.push(empty);
   }
+  return out;
 }
 
 function render() {
@@ -236,9 +268,14 @@ function render() {
   el("mode").disabled = !selected || selected.unreadable;
   el("mode").textContent = reading ? "编辑" : "阅读";
   el("mode").setAttribute("aria-pressed", String(reading));
+  for (const b of el("mode-seg").children) {
+    b.disabled = el("mode").disabled;
+    b.setAttribute("aria-pressed", String((b.dataset.mode === "read") === reading));
+  }
   toolbar.hidden = !canEdit || raw;
   toolbar.inert = switching;
   el("add-note").disabled = !book || switching;
+  fab.disabled = el("add-note").disabled;
   el("insert-image").disabled = !canEdit || raw;
   el("find-open").disabled = !selected || raw;
   el("block-actions").disabled = !canEdit || raw;
@@ -394,7 +431,8 @@ el("close-drawer").addEventListener("click", () => toggleDrawer(false));
 backdrop.addEventListener("click", () => toggleDrawer(false));
 el("note-filter").addEventListener("input", renderDrawer);
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && !drawer.hidden) toggleDrawer(false);
+  if (e.key === "Escape" && !settingsSheet.hidden) showSettings(false);
+  else if (e.key === "Escape" && !drawer.hidden) toggleDrawer(false);
 });
 el("insert-image").addEventListener("click", () => {
   if (view?.editable && selected && !selected.sourceOnly) fileInput.click();
@@ -496,50 +534,185 @@ el("add-note").addEventListener("click", async () => {
   } catch (error) { notify("新建页面失败：" + error); }
 });
 
-el("mode").addEventListener("click", async () => {
+async function toggleMode() {
   if (!reading) {
     try { await flush(); } catch { return; }
   }
   reading = !reading;
   render();
   if (!reading) (selected?.sourceOnly ? source : view).focus();
-});
+}
+el("mode").addEventListener("click", toggleMode);
+// 星空渐变的「阅读 | 编辑」分段:点已经选中的那一边不动
+for (const b of el("mode-seg").children) {
+  b.addEventListener("click", () => { if ((b.dataset.mode === "read") !== reading) void toggleMode(); });
+}
+// 收起键盘:编辑区失去焦点,键盘就收起来了
+el("hide-keyboard").addEventListener("click", () => document.activeElement?.blur?.());
+// 星空渐变的分类工具栏:文字 / 段落 / 插入 / 颜色,格式栏只显示这一类的按钮
+for (const b of el("dock-cats").children) {
+  b.addEventListener("click", () => {
+    toolbar.dataset.cat = b.dataset.cat;
+    for (const x of el("dock-cats").children) x.setAttribute("aria-selected", String(x === b));
+  });
+}
+toolbar.dataset.cat = "text";
 el("refresh").addEventListener("click", () => { void refresh(); });
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) void flush().catch(() => {});
 });
 
-// The shared menus and bars are themed by data-theme; follow the system light/dark setting.
+// ---- 外观(0.4.4):界面风格、明暗、强调色,只存在这台手机上 ----
+// 界面风格写在 <html data-ui>,和 data-theme 一起决定整套颜色(共用的菜单和浮条也跟着变);
+// 经典是原来的绿色样子,不加 data-ui。
+const LOOK_KEY = "minipad-mobile-look";
+const UI_STYLES = ["starry", "material", "paper", "classic"];
+const THEMES = ["system", "light", "dark"];
 const systemDark = window.matchMedia("(prefers-color-scheme: dark)");
-function applyTheme() {
-  document.documentElement.dataset.theme = systemDark.matches ? "dark" : "light";
+const settingsSheet = el("mobile-settings");
+const settingsBackdrop = el("settings-backdrop");
+let look = loadLook();
+
+function loadLook() {
+  let saved = {};
+  try { saved = JSON.parse(localStorage.getItem(LOOK_KEY) || "{}") || {}; } catch { /* 用默认 */ }
+  return {
+    ui: UI_STYLES.includes(saved.ui) ? saved.ui : "starry",
+    theme: THEMES.includes(saved.theme) ? saved.theme : "system",
+    accent: tidyAccent(typeof saved.accent === "string" ? saved.accent : ""),
+    stars: saved.stars !== false,
+    cats: saved.cats !== false,
+    fab: saved.fab !== false,
+    debug: saved.debug === true,
+  };
 }
-applyTheme();
-systemDark.addEventListener("change", applyTheme);
+
+function setLook(change) {
+  look = { ...look, ...change };
+  try { localStorage.setItem(LOOK_KEY, JSON.stringify(look)); } catch { /* 这次照样生效,只是下次打开不记得 */ }
+  applyLook();
+}
+
+function applyLook() {
+  const root = document.documentElement;
+  if (look.ui === "classic") delete root.dataset.ui;
+  else root.dataset.ui = look.ui;
+  root.dataset.theme = look.theme === "system" ? (systemDark.matches ? "dark" : "light") : look.theme;
+  root.toggleAttribute("data-stars", look.stars);
+  root.toggleAttribute("data-cats", look.cats);
+  root.toggleAttribute("data-fab", look.fab);
+  applyAccent(look.accent);
+  // 自选的强调色也给按钮的浅底换色(经典风格的浅底是写死的绿色)
+  if (look.accent) root.style.setProperty("--soft-accent", "var(--accent-soft)");
+  else root.style.removeProperty("--soft-accent");
+  document.querySelector('meta[name="theme-color"]')?.setAttribute("content", getComputedStyle(root).getPropertyValue("--paper").trim());
+  for (const b of el("ui-styles").children) b.setAttribute("aria-checked", String(b.dataset.ui === look.ui));
+  for (const b of document.querySelectorAll("[data-theme-choice]")) b.setAttribute("aria-pressed", String(b.dataset.themeChoice === look.theme));
+  for (const b of el("look-accent").children) b.setAttribute("aria-checked", String(b.dataset.color === look.accent));
+  for (const row of settingsSheet.querySelectorAll("[data-ui-only]")) row.hidden = row.dataset.uiOnly !== look.ui;
+  el("look-stars").checked = look.stars;
+  el("look-cats").checked = look.cats;
+  el("look-fab").checked = look.fab;
+  el("look-debug").checked = look.debug;
+  el("viewport-debug").hidden = !look.debug;
+  if (look.debug) requestAnimationFrame(fitViewport);
+  renderDrawer();
+}
+
+for (const a of ACCENTS) {
+  const b = document.createElement("button");
+  b.type = "button";
+  b.setAttribute("role", "radio");
+  b.dataset.color = a.value;
+  b.title = a.name;
+  b.setAttribute("aria-label", a.name);
+  b.style.setProperty("--sw", a.value || "var(--style-accent)");
+  b.addEventListener("click", () => setLook({ accent: a.value }));
+  el("look-accent").append(b);
+}
+for (const b of el("ui-styles").children) b.addEventListener("click", () => setLook({ ui: b.dataset.ui }));
+for (const b of document.querySelectorAll("[data-theme-choice]")) b.addEventListener("click", () => setLook({ theme: b.dataset.themeChoice }));
+el("look-stars").addEventListener("change", (e) => setLook({ stars: e.target.checked }));
+el("look-cats").addEventListener("change", (e) => setLook({ cats: e.target.checked }));
+el("look-fab").addEventListener("change", (e) => setLook({ fab: e.target.checked }));
+el("look-debug").addEventListener("change", (e) => setLook({ debug: e.target.checked }));
+systemDark.addEventListener("change", applyLook);
+
+function showSettings(open) {
+  settingsSheet.hidden = !open;
+  settingsBackdrop.hidden = !open;
+  if (open) {
+    if (!drawer.hidden) toggleDrawer(false);
+    el("close-settings").focus();
+  }
+}
+el("open-settings").addEventListener("click", () => showSettings(true));
+el("close-settings").addEventListener("click", () => showSettings(false));
+settingsBackdrop.addEventListener("click", () => showSettings(false));
+applyLook();
 
 // The soft keyboard must not cover the toolbar. Some WebViews shrink only the visual viewport,
 // so the page height follows it, and the status line steps aside while the keyboard is up.
+// Others resize the whole page for the keyboard and still shrink the visual viewport on top of
+// that: following the visual viewport there would leave a keyboard-sized gap under the toolbar,
+// so once the page itself got shorter its own height wins.
+// When only the visual viewport shrinks, the WebView also pans it down (offsetTop) to show the
+// caret. The page is fixed to the layout viewport, so it moves down by the same amount: otherwise
+// its top slides out of sight and an offsetTop-sized gap opens between the toolbar and keyboard.
 let fullHeight = 0;
 let fullWidth = 0;
+let fullInner = 0;
 function fitViewport() {
   const vv = window.visualViewport;
   // Pinch-zooming shrinks the visual viewport in CSS pixels too; scale puts it back to screen size.
   const scale = vv?.scale ?? 1;
   const width = Math.round((vv?.width ?? window.innerWidth) * scale);
   const height = Math.round((vv?.height ?? window.innerHeight) * scale);
-  if (width !== fullWidth) { fullWidth = width; fullHeight = 0; } // rotated: measure again
+  if (width !== fullWidth) { fullWidth = width; fullHeight = 0; fullInner = 0; } // rotated: measure again
   fullHeight = Math.max(fullHeight, height);
+  fullInner = Math.max(fullInner, window.innerHeight);
   const root = document.documentElement;
-  const keyboard = fullHeight - height > 120;
-  root.style.setProperty("--app-height", height + "px");
+  const resized = fullInner - window.innerHeight > 120;
+  const keyboard = resized || fullHeight - height > 120;
+  root.style.setProperty("--app-height", (resized ? window.innerHeight : height) + "px");
+  // Pinch-zoom panning is the reader moving around the page, not the keyboard: leave it alone.
+  const panned = !resized && Math.abs(scale - 1) < 0.01 ? Math.max(0, Math.round(vv?.offsetTop ?? 0)) : 0;
+  root.style.setProperty("--app-top", panned + "px");
   // How much of the layout viewport the keyboard covers (0 when the layout already shrank).
   // offsetTop is already in layout-viewport pixels, so it is not scaled.
-  root.style.setProperty("--keyboard-inset", Math.max(0, window.innerHeight - height - Math.round(vv?.offsetTop ?? 0)) + "px");
+  root.style.setProperty("--keyboard-inset", (resized ? 0 : Math.max(0, window.innerHeight - height - Math.round(vv?.offsetTop ?? 0))) + "px");
   const was = root.hasAttribute("data-keyboard");
   root.toggleAttribute("data-keyboard", keyboard);
   if (keyboard && !was && view?.hasFocus()) requestAnimationFrame(() => view.dispatch(view.state.tr.scrollIntoView()));
+  placeFab();
+  if (look.debug) showDebug({ resized, keyboard, panned });
 }
+
+// 外观设置里打开“键盘调试信息”时,右上角显示这些数字:键盘弹出时截一张图,就能看出空隙是哪来的
+function showDebug(d) {
+  const vv = window.visualViewport;
+  const dock = el("mobile-dock").getBoundingClientRect();
+  const round = (v) => (v == null ? "-" : Math.round(v * 10) / 10);
+  el("viewport-debug").textContent = [
+    `innerHeight ${window.innerHeight} (最大 ${fullInner})`,
+    `visualViewport ${round(vv?.height)} · top ${round(vv?.offsetTop)} · scale ${round(vv?.scale)}`,
+    `screen ${screen.height} · dpr ${round(devicePixelRatio)}`,
+    `body ${round(document.body.getBoundingClientRect().height)} · top ${d.panned}`,
+    `工具栏底边 ${round(dock.bottom)} · 可见底边 ${round((vv?.offsetTop ?? 0) + (vv?.height ?? window.innerHeight))}`,
+    `键盘 ${d.keyboard ? "是" : "否"} · 页面被缩 ${d.resized ? "是" : "否"} · 遮住 ${document.documentElement.style.getPropertyValue("--keyboard-inset")}`,
+  ].join("\n");
+}
+
+// 新建页面的悬浮按钮停在页面区域的右下角,工具栏和状态栏变高变矮时跟着挪
+const fab = el("new-page");
+function placeFab() {
+  const bottom = el("page").getBoundingClientRect().bottom;
+  document.documentElement.style.setProperty("--fab-bottom", Math.max(0, Math.round(window.innerHeight - bottom)) + 16 + "px");
+}
+fab.addEventListener("click", () => el("add-note").click());
+new ResizeObserver(placeFab).observe(el("page"));
 window.visualViewport?.addEventListener("resize", fitViewport);
+window.visualViewport?.addEventListener("scroll", fitViewport);
 window.addEventListener("resize", fitViewport);
 fitViewport();
 
