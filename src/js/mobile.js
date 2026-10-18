@@ -115,11 +115,77 @@ function options(select, pairs, value) {
   if (value != null) select.value = value;
 }
 
+const drawer = el("drawer");
+const backdrop = el("drawer-backdrop");
+function toggleDrawer(open) {
+  drawer.hidden = !open;
+  backdrop.hidden = !open;
+  el("open-drawer").setAttribute("aria-expanded", String(open));
+  if (open) {
+    renderDrawer();
+    el("close-drawer").focus();
+  } else {
+    el("open-drawer").focus();
+  }
+}
+
+function renderDrawer() {
+  const bookName = selected?.book ?? books[0]?.name ?? "";
+  const book = books.find((b) => b.name === bookName);
+  const bookList = el("books-list");
+  const noteList = el("notes-list");
+  bookList.replaceChildren();
+  noteList.replaceChildren();
+  for (const b of books) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.classList.toggle("active", b.name === bookName);
+    button.setAttribute("aria-current", b.name === bookName ? "true" : "false");
+    const name = document.createElement("span");
+    name.textContent = b.name || "默认笔记本";
+    button.append(name);
+    button.addEventListener("click", async () => {
+      await refresh(b.name, null);
+      if (selected?.book === b.name || (!b.notes.length && books.some((x) => x.name === b.name))) toggleDrawer(false);
+    });
+    bookList.append(button);
+  }
+  const query = el("note-filter").value.trim().toLowerCase();
+  const notes = (book?.notes || []).filter((n) => n.name.toLowerCase().includes(query));
+  for (const n of notes) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.classList.toggle("active", selected?.name === n.name);
+    button.setAttribute("aria-current", selected?.name === n.name ? "page" : "false");
+    const name = document.createElement("span");
+    name.textContent = n.name;
+    button.append(name);
+    button.addEventListener("click", async () => {
+      await refresh(bookName, n.name);
+      if (selected?.name === n.name && selected?.book === bookName) toggleDrawer(false);
+    });
+    noteList.append(button);
+  }
+  if (!notes.length) {
+    const empty = document.createElement("p");
+    empty.className = "drawer-empty";
+    empty.textContent = "当前没有匹配的页面";
+    noteList.append(empty);
+  }
+}
+
 function render() {
   const bookName = selected?.book ?? books[0]?.name ?? "";
   const book = books.find((b) => b.name === bookName);
   options(booksSelect, books.map((b) => [b.name, b.name || "默认"]), bookName);
   options(notesSelect, (book?.notes || []).map((n) => [n.name, n.name]), selected?.name);
+  el("book-title").replaceChildren(document.createTextNode(book?.name || "默认笔记本"), (() => {
+    const arrow = document.createElement("span");
+    arrow.textContent = "⌄";
+    return arrow;
+  })());
+  el("page-title").textContent = selected?.name || "新页面";
+  renderDrawer();
   const editable = !!selected && !selected.unreadable && !reading;
   const raw = !!selected?.sourceOnly;
   if (view) view.setProps({ editable: () => editable && !raw });
@@ -281,6 +347,27 @@ fileInput.addEventListener("change", () => {
   if (file) void insertImage(file);
 });
 source.addEventListener("input", scheduleSave);
+el("open-drawer").addEventListener("click", () => toggleDrawer(true));
+el("book-title").addEventListener("click", () => toggleDrawer(true));
+el("close-drawer").addEventListener("click", () => toggleDrawer(false));
+backdrop.addEventListener("click", () => toggleDrawer(false));
+el("note-filter").addEventListener("input", renderDrawer);
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !drawer.hidden) toggleDrawer(false);
+});
+el("block-actions").addEventListener("pointerdown", (e) => e.preventDefault());
+el("block-actions").addEventListener("click", () => {
+  if (!view?.editable) return;
+  const point = view.domAtPos(view.state.selection.from);
+  const target = point.node.nodeType === 3 ? point.node.parentElement : point.node;
+  const element = target?.nodeType === 1 ? target : target?.parentElement;
+  if (!element?.getBoundingClientRect) return;
+  const rect = element.getBoundingClientRect();
+  element.dispatchEvent(new MouseEvent("contextmenu", {
+    bubbles: true, cancelable: true, clientX: rect.left + 5,
+    clientY: Math.min(window.innerHeight - 340, rect.bottom + 6),
+  }));
+});
 booksSelect.addEventListener("change", () => { void refresh(booksSelect.value, null); });
 notesSelect.addEventListener("change", () => { void refresh(booksSelect.value, notesSelect.value); });
 
@@ -322,6 +409,8 @@ async function start() {
   try {
     desktopState.settings = {};
     document.documentElement.dataset.mobile = "true";
+    const { applyBlockSettings } = await import("./blocks.js");
+    applyBlockSettings({ block_enabled: true, block_context_menu: "block" });
     await createEditor({
       mobile: true,
       mobileImagePlugin: images,
