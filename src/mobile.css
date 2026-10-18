@@ -1,0 +1,20 @@
+:root { color-scheme: light dark; font-family: system-ui, "Noto Sans CJK SC", sans-serif; }
+* { box-sizing: border-box; }
+html, body { margin: 0; min-height: 100%; height: 100%; }
+body { display: flex; flex-direction: column; background: Canvas; color: CanvasText; }
+header { padding: calc(env(safe-area-inset-top) + 12px) 16px 10px; display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+header strong { font-size: 18px; }
+#status { font-size: 12px; opacity: .8; text-align: right; }
+nav { padding: 4px 12px 10px; display: grid; gap: 8px; }
+.chooser { display: flex; align-items: center; gap: 8px; }
+label { flex: 0 0 50px; font-size: 13px; }
+select { min-width: 0; flex: 1; }
+button, select { min-height: 44px; border: 1px solid color-mix(in srgb, CanvasText 25%, transparent); border-radius: 9px; padding: 7px 10px; color: inherit; background: Canvas; font-size: 15px; }
+button:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px solid #d9822b; outline-offset: 2px; }
+.actions { display: flex; gap: 8px; padding: 0 12px 10px; }
+.actions button { flex: 1; }
+main { flex: 1; min-height: 0; padding: 0 12px 12px; display: flex; }
+#editor, #preview { display: block; flex: 1; width: 100%; min-width: 0; overflow: auto; border-radius: 10px; background: color-mix(in srgb, CanvasText 4%, Canvas); color: CanvasText; border: 1px solid color-mix(in srgb, CanvasText 18%, transparent); padding: 14px; font: 15px/1.7 ui-monospace, "Noto Sans Mono CJK SC", monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+#editor { resize: none; }
+[hidden] { display: none !important; }
+footer { padding: 8px 12px calc(env(safe-area-inset-bottom) + 8px); font-size: 11px; text-align: center; opacity: .65; }
