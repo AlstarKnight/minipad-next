@@ -181,7 +181,8 @@ function renderDrawer() {
     name.textContent = b.name || "默认笔记本";
     button.append(name);
     button.addEventListener("click", async () => {
-      await refresh(b.name, null);
+      // Tapping the notebook already on screen just closes the list; the open page stays.
+      if (b.name !== currentBook) await refresh(b.name, null);
       if (currentBook === b.name) toggleDrawer(false);
     });
     bookList.append(button);
@@ -220,9 +221,12 @@ function render() {
     arrow.textContent = "⌄";
     return arrow;
   })());
-  el("page-title").textContent = selected?.name || "新页面";
+  el("page-title").textContent = selected?.name || "空笔记本";
   renderDrawer();
-  const editable = !!selected && !selected.unreadable && !reading && !switching;
+  // While another page loads the editor is read-only, but the toolbar stays put (it only goes
+  // inert) so it does not flicker on every page switch.
+  const canEdit = !!selected && !selected.unreadable && !reading;
+  const editable = canEdit && !switching;
   const raw = !!selected?.sourceOnly;
   if (view) view.setProps({ editable: () => editable && !raw });
   el("editor").hidden = raw;
@@ -231,12 +235,14 @@ function render() {
   el("mode").disabled = !selected || selected.unreadable;
   el("mode").textContent = reading ? "编辑" : "阅读";
   el("mode").setAttribute("aria-pressed", String(reading));
-  toolbar.hidden = !editable || raw;
+  toolbar.hidden = !canEdit || raw;
+  toolbar.inert = switching;
   el("add-note").disabled = !book || switching;
-  el("insert-image").disabled = !editable || raw;
+  el("insert-image").disabled = !canEdit || raw;
   el("find-open").disabled = !selected || raw;
-  el("block-actions").disabled = !editable || raw;
+  el("block-actions").disabled = !canEdit || raw;
   el("hint").textContent = selected?.unreadable ? "文件内容无法识别，仅允许查看" :
+    !selected ? "这个笔记本还没有页面，点列表里的「＋ 新建」添加" :
     raw ? "该笔记包含无法富文本编辑的 HTML，使用保真源码模式" :
       reading ? "阅读模式" : "本地自动保存 · 支持图片和 Markdown";
 }
@@ -284,8 +290,12 @@ async function showNewPages() {
   } catch { /* the next page switch lists them again */ }
 }
 
+let queued = null; // the latest request made while a switch was in flight
 async function refresh(bookName = currentBook, noteName = selected?.name) {
-  if (busy) return;
+  if (busy) {
+    queued?.done();
+    return new Promise((done) => { queued = { bookName, noteName, done }; });
+  }
   busy = true;
   try {
     await flush();
@@ -320,6 +330,12 @@ async function refresh(bookName = currentBook, noteName = selected?.name) {
     notify("无法切换：" + error);
   } finally {
     busy = false;
+  }
+  if (queued) {
+    const next = queued;
+    queued = null;
+    await refresh(next.bookName, next.noteName);
+    next.done();
   }
 }
 

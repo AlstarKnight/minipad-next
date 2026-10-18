@@ -62,10 +62,17 @@ jobs:
         run: npm run tauri -- android init --ci
       - name: Build release APK
         run: npm run android:build
-      # Release APKs are unsigned by default. Sign the CI test copy with a
-      # temporary key so users can install it; this is NOT a publishing key.
-      - name: Sign and verify installable test APK
+      # Release APKs are unsigned by default. With the four ANDROID_* repository secrets set, sign
+      # with the stable key so a newer test APK installs over an older one. Without them, fall
+      # back to a throw-away key so CI still produces an installable (but not upgradable) APK.
+      # Passwords are only passed through environment variables, never printed.
+      - name: Sign and verify installable APK
         shell: bash
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
           set -euo pipefail
           apk_dir=src-tauri/gen/android/app/build/outputs/apk
@@ -75,22 +82,41 @@ jobs:
             find "$apk_dir" -type f -name '*.apk' -print
             exit 1
           fi
-          keytool -genkeypair -noprompt -keystore "$RUNNER_TEMP/minipad-ci.jks" \
-            -storepass android -keypass android -alias minipad-test \
-            -keyalg RSA -keysize 2048 -validity 365 \
-            -dname "CN=Minipad Android CI Test, O=Minipad Next, C=US"
+          keystore="$RUNNER_TEMP/minipad-signing.jks"
+          set_count=0
+          for name in KEYSTORE_BASE64 KEYSTORE_PASSWORD KEY_ALIAS KEY_PASSWORD; do
+            if [[ -n "${!name}" ]]; then set_count=$((set_count + 1)); fi
+          done
+          if (( set_count == 4 )); then
+            mode="stable key (repository secrets)"
+            printf '%s' "$KEYSTORE_BASE64" | base64 -d > "$keystore"
+            keytool -list -keystore "$keystore" -alias "$KEY_ALIAS" \
+              -storepass:env KEYSTORE_PASSWORD > /dev/null
+          elif (( set_count == 0 )); then
+            mode="temporary key (ANDROID_* secrets not set: this APK cannot be installed over another build)"
+            KEYSTORE_PASSWORD=android KEY_PASSWORD=android KEY_ALIAS=minipad-test
+            keytool -genkeypair -noprompt -keystore "$keystore" \
+              -storepass:env KEYSTORE_PASSWORD -keypass:env KEY_PASSWORD -alias "$KEY_ALIAS" \
+              -keyalg RSA -keysize 2048 -validity 365 \
+              -dname "CN=Minipad Android CI Test, O=Minipad Next, C=US"
+          else
+            echo "Set all four secrets (ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD) or none." >&2
+            exit 1
+          fi
+          export KEYSTORE_PASSWORD KEY_PASSWORD
           mkdir -p android-artifacts
+          out=android-artifacts/minipad-next-arm64-test.apk
           "$ANDROID_HOME/build-tools/36.0.0/zipalign" -f -P 16 4 \
             "$unsigned" "$RUNNER_TEMP/minipad-aligned.apk"
           "$ANDROID_HOME/build-tools/36.0.0/apksigner" sign \
-            --ks "$RUNNER_TEMP/minipad-ci.jks" --ks-key-alias minipad-test \
-            --ks-pass pass:android --key-pass pass:android \
-            --out android-artifacts/minipad-next-arm64-test.apk \
-            "$RUNNER_TEMP/minipad-aligned.apk"
-          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose \
-            android-artifacts/minipad-next-arm64-test.apk
-          ls -lh "$unsigned" android-artifacts/minipad-next-arm64-test.apk
-          stat -c 'APK bytes: %s' android-artifacts/minipad-next-arm64-test.apk
+            --ks "$keystore" --ks-key-alias "$KEY_ALIAS" \
+            --ks-pass env:KEYSTORE_PASSWORD --key-pass env:KEY_PASSWORD \
+            --out "$out" "$RUNNER_TEMP/minipad-aligned.apk"
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$out"
+          rm -f "$keystore"
+          ls -lh "$unsigned" "$out"
+          stat -c 'APK bytes: %s' "$out"
+          echo "APK signed with: $mode" | tee -a "$GITHUB_STEP_SUMMARY"
       # Uploaded as-is (not zipped), so the link downloads the .apk itself.
       - uses: actions/upload-artifact@v7
         with:

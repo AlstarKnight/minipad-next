@@ -20,16 +20,52 @@ npm run android:build
 The last command builds an optimized **Release** APK for `aarch64` devices.
 Release APKs are **unsigned by default** and cannot be installed directly.
 Find the raw APK under `src-tauri/gen/android/app/build/outputs/apk/`.
-The Android GitHub Actions job signs a test copy with an **ephemeral CI key**,
-verifies its signature and uploads `minipad-next-arm64-test.apk` as its own
-artifact (not zipped, so the download is the `.apk`). For local development, use
-`npm run tauri -- android dev`.
+The Android GitHub Actions job signs a test copy, verifies its signature and
+uploads `minipad-next-arm64-test.apk` as its own artifact (not zipped, so the
+download is the `.apk`). The job summary says which key signed it. For local
+development, use `npm run tauri -- android dev`.
 
-Each CI run generates a different test signing key, so installing a later
-artifact over an earlier one is not supported. Uninstalling an APK removes
-Android app-private notes: **do not keep important notes in this prototype**.
-A future stable signing key and data import/export are required before normal
-app upgrades. The ephemeral test key is not used for Play Store releases.
+### Signing key
+
+- **With the four repository secrets set** (below), CI signs with your stable key.
+  Every build then has the same signature, so a newer test APK installs **over**
+  an older one and keeps its notes.
+- **Without them**, CI signs with a throw-away key generated on each run. Such an
+  APK installs fine, but a later build cannot be installed over it (uninstall
+  first, which removes the app-private notes).
+
+Either way: **do not keep important notes in this prototype** until data
+import/export exists. None of these keys is a Play Store publishing key.
+
+Create the key once, on your own computer (any JDK or Android Studio's `keytool`),
+and keep the file and its passwords somewhere safe. Losing it means a new key and
+one uninstall; never commit it:
+
+```sh
+keytool -genkeypair -keystore minipad-release.jks -storetype PKCS12 \
+  -alias minipad -keyalg RSA -keysize 2048 -validity 10000
+```
+
+Then add these **repository secrets** (GitHub: Settings → Secrets and variables →
+Actions). Set all four or none; a partial set fails the signing step on purpose.
+
+| Secret | Value |
+| --- | --- |
+| `ANDROID_KEYSTORE_BASE64` | the `.jks` file as one base64 string |
+| `ANDROID_KEYSTORE_PASSWORD` | the keystore password |
+| `ANDROID_KEY_ALIAS` | the alias (`minipad` above) |
+| `ANDROID_KEY_PASSWORD` | the key password (the same as the keystore password for PKCS12) |
+
+To produce the base64 value (copy it into the secret; it is not a file to upload):
+
+```sh
+# Linux / macOS
+base64 -w0 minipad-release.jks
+# Windows PowerShell
+[Convert]::ToBase64String([IO.File]::ReadAllBytes("minipad-release.jks"))
+```
+
+Pull requests from forks never see the secrets, so their builds use the throw-away key.
 
 The Android-only `build.frontendDist` embeds five files from
 `mobile-dist/`: `mobile.html`, `mobile.css`, the bundled `js/mobile.js`, and the

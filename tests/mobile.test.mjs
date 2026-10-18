@@ -324,6 +324,8 @@ test("a new notebook gets its own first page and shows an empty editor", async (
     await page.click("#add-book");
     await page.waitForFunction(() => document.getElementById("book-title").textContent.startsWith("工作"));
     await page.waitForFunction(() => document.querySelector("#editor .ProseMirror")?.textContent === "");
+    assert.equal(await page.locator("#page-title").textContent(), "空笔记本");
+    assert.match(await page.locator("#hint").textContent(), /新建/);
     assert.equal(await page.locator(".ProseMirror").getAttribute("contenteditable"), "false");
     await page.click("#add-note");
     await page.waitForFunction(() => document.getElementById("page-title").textContent === "第一页");
@@ -396,6 +398,58 @@ test("a conflict copy shows up in the page list right away", async () => {
     await page.click("#open-drawer");
     await page.locator("#notes-list button").filter({ hasText: "一 冲突副本" }).waitFor();
     assert.equal(await page.locator("#page-title").textContent(), "一");
+    assert.deepEqual(errors, []);
+  } finally {
+    await context.close();
+  }
+});
+
+test("tapping the notebook already on screen keeps the open page", async () => {
+  const { context, page, errors } = await open();
+  try {
+    await chooseNote(page, "二");
+    await page.locator(".ProseMirror p").filter({ hasText: "第二页" }).waitFor();
+    await page.click("#open-drawer");
+    await page.locator("#books-list button.active").click();
+    await page.locator("#mobile-drawer").waitFor({ state: "hidden" });
+    assert.equal(await page.locator("#page-title").textContent(), "二");
+    assert.equal(await page.evaluate(() => window.__mobileTest.calls.read), 2);
+    assert.deepEqual(errors, []);
+  } finally {
+    await context.close();
+  }
+});
+
+test("the toolbar stays visible while another page loads", async () => {
+  const { context, page, errors } = await open();
+  try {
+    await page.evaluate(() => {
+      window.__mobileTest.readDelay = 600;
+      window.__toolbarHidden = [];
+      new MutationObserver(() => window.__toolbarHidden.push(document.getElementById("mobile-dock").hidden))
+        .observe(document.getElementById("mobile-dock"), { attributes: true, attributeFilter: ["hidden"] });
+    });
+    await chooseNote(page, "二");
+    await page.locator(".ProseMirror p").filter({ hasText: "第二页" }).waitFor();
+    assert.deepEqual(await page.evaluate(() => window.__toolbarHidden), []);
+    assert.equal(await page.evaluate(() => document.getElementById("mobile-dock").hidden), false);
+    assert.deepEqual(errors, []);
+  } finally {
+    await context.close();
+  }
+});
+
+test("a notebook created while a page is loading is still opened", async () => {
+  const { context, page, errors } = await open();
+  try {
+    page.on("dialog", (dialog) => { void dialog.accept("新书"); });
+    await page.evaluate(() => { window.__mobileTest.readDelay = 600; });
+    await page.click("#open-drawer");
+    await page.locator("#notes-list button").filter({ hasText: "二" }).click();
+    await page.click("#add-book");
+    await page.waitForFunction(() => document.getElementById("book-title").textContent.startsWith("新书"),
+      null, { timeout: 8000 });
+    assert.equal(await page.locator("#page-title").textContent(), "空笔记本");
     assert.deepEqual(errors, []);
   } finally {
     await context.close();
