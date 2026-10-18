@@ -26,15 +26,20 @@ pub fn parse_multistatus(xml: &str) -> Result<Vec<RemoteEntry>, String> {
     let mut valid_property = false;
     let mut status_ok = true;
     loop {
-        let event = reader.read_event().map_err(|e| format!("WebDAV 列目录响应不是有效 XML：{e}"))?;
+        let event = reader
+            .read_event()
+            .map_err(|e| format!("WebDAV 列目录响应不是有效 XML：{e}"))?;
         match event {
             Event::Start(e) => {
                 let name = local(e.name().as_ref()).to_vec();
                 match name.as_slice() {
                     b"response" => {
                         item = Some(RemoteEntry {
-                            href: String::new(), etag: None, size: None,
-                            modified: None, directory: false,
+                            href: String::new(),
+                            etag: None,
+                            size: None,
+                            modified: None,
+                            directory: false,
                         });
                         status_ok = true;
                     }
@@ -45,24 +50,32 @@ pub fn parse_multistatus(xml: &str) -> Result<Vec<RemoteEntry>, String> {
                         field = String::from_utf8_lossy(&name).to_string();
                     }
                     b"collection" if valid_property => {
-                        if let Some(ref mut entry) = item { entry.directory = true; }
+                        if let Some(ref mut entry) = item {
+                            entry.directory = true;
+                        }
                     }
                     _ => {}
                 }
             }
             Event::Empty(e) => {
                 if local(e.name().as_ref()) == b"collection" && valid_property {
-                    if let Some(ref mut entry) = item { entry.directory = true; }
+                    if let Some(ref mut entry) = item {
+                        entry.directory = true;
+                    }
                 }
             }
             Event::Text(t) => {
-                let value = t.decode().map_err(|e| format!("WebDAV 列目录文本无法解码：{e}"))?;
+                let value = t
+                    .decode()
+                    .map_err(|e| format!("WebDAV 列目录文本无法解码：{e}"))?;
                 if let Some(ref mut entry) = item {
                     match field.as_str() {
                         "href" => entry.href.push_str(&value),
                         "getetag" if valid_property => entry.etag = Some(value.into_owned()),
                         "getcontentlength" if valid_property => entry.size = value.parse().ok(),
-                        "getlastmodified" if valid_property => entry.modified = Some(value.into_owned()),
+                        "getlastmodified" if valid_property => {
+                            entry.modified = Some(value.into_owned())
+                        }
                         "status" if valid_property => {
                             status_ok = value.contains(" 200 ");
                         }
@@ -73,7 +86,9 @@ pub fn parse_multistatus(xml: &str) -> Result<Vec<RemoteEntry>, String> {
             Event::End(e) => {
                 let name = local(e.name().as_ref()).to_vec();
                 match name.as_slice() {
-                    b"href" | b"getetag" | b"getcontentlength" | b"getlastmodified" | b"status" => field.clear(),
+                    b"href" | b"getetag" | b"getcontentlength" | b"getlastmodified" | b"status" => {
+                        field.clear()
+                    }
                     b"propstat" => valid_property = false,
                     b"response" => {
                         if let Some(entry) = item.take() {
