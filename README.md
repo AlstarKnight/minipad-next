@@ -30,6 +30,8 @@
 
 每个版本改了什么见 [CHANGELOG.md](CHANGELOG.md)。
 
+Android 试验版正在独立开发（目前仅本地 Markdown 查看/编辑，无 WebDAV），构建说明见 [Android 开发文档](docs/android.md)。
+
 ---
 
 ## 一、下载安装
