@@ -39,14 +39,6 @@ function scheduleSave() {
   timer = setTimeout(() => { void flush().catch(() => {}); }, 500);
 }
 
-const changes = $prose(() => new Plugin({
-  view: () => ({
-    update(v, prev) {
-      if (!prev.doc.eq(v.state.doc)) scheduleSave();
-    },
-  }),
-}));
-
 class MobileImageView {
   constructor(node) {
     this.dom = document.createElement("img");
