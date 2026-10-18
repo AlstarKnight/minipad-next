@@ -193,11 +193,11 @@ test("touch drawer navigates notes without covering the editor permanently", asy
   const { context, page, errors } = await open();
   try {
     await page.click("#open-drawer");
-    assert.equal(await page.locator("#drawer").isVisible(), true);
+    assert.equal(await page.locator("#mobile-drawer").isVisible(), true);
     await page.locator("#note-filter").fill("二");
     await page.locator('#notes-list button').filter({hasText:"二"}).click();
     await page.locator(".ProseMirror p").filter({hasText:"第二页"}).waitFor();
-    assert.equal(await page.locator("#drawer").isVisible(), false);
+    assert.equal(await page.locator("#mobile-drawer").isVisible(), false);
     assert.equal(await page.locator("#page-title").textContent(), "二");
     assert.equal(await page.locator('#format-bar [data-cmd="codeblock"]').count(), 1);
     assert.deepEqual(errors, []);
