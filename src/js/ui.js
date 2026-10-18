@@ -61,6 +61,7 @@ export function ask(message, okLabel = "确定", danger = false, keepOverlays = 
 
 // 得到去掉首尾空白的文字,取消时得到 null
 export function askText(message, value = "", okLabel = "确定") {
+  if (document.documentElement.dataset.mobile === "true") return Promise.resolve(window.prompt(message, value));
   return openDialog(message, okLabel, false, value);
 }
 
