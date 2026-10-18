@@ -1,9 +1,9 @@
 # Android prototype (PR 1/4)
 
-This is a deliberately small **local-only** Android prototype, separate from
-the Windows application. It opens and edits the same `.md` note files using a
-plain-text editor. The touch-friendly Milkdown editor and WebDAV are planned
-for separate PRs; **this APK does not sync notes yet**.
+This is a **local-first** Android prototype, separate from the Windows desktop
+interface. The mobile editor uses Milkdown to display and edit the same `.md`
+files with headings, lists, emphasis, links, tables, code and inline images.
+There is no WebDAV yet; **this APK does not sync notes between devices**.
 
 ## Build and try
 
@@ -43,27 +43,40 @@ dispatch.
 
 ## Current scope
 
-- Choose a notebook and page, edit raw Markdown, view raw Markdown, and autosave.
-- Add notebooks and pages without using desktop-only window commands.
+- Choose notebooks and pages with touch-sized selectors; switch between Milkdown
+  reading and editing modes and format content with a horizontally scrollable
+  touch toolbar.
+- Edit headings, emphasis, links, lists, quotations and inline code.
+- Insert images from the Android file picker or paste images from a compatible
+  clipboard. Files are restricted to PNG/JPG/GIF/WebP/BMP and 10 MiB, saved in
+  the current notebook's `assets/` directory and referenced by relative paths
+  in Markdown, consistent with Windows.
+- Add notebooks and pages without any desktop-only window commands.
 - Store notes in the Android app-private data directory under `notes/`.
 - Preserve the desktop `.md` and notebook directory layout. Saving uses the
   shared Rust collision-safe note writer and keeps conflict copies when its
   expected file version differs.
 - The desktop entry point and Windows installer are unchanged.
 
-**No WebDAV, media editor, image import, import/export, background sync, or
-touch-rich Markdown UI yet.** Android-private app storage can be removed by
-uninstalling the APK, so treat this stage as a test build and back up notes
-manually before uninstalling.
+**No WebDAV, note import/export, background sync, image cropping, or desktop-only
+floating UI.** A browser-based Android-shell test covers editing, saving,
+read-only mode, and attachment insertion, but it cannot substitute for actual
+Android devices. In particular, file pickers and Chinese IMEs need on-device
+testing. Android-private app storage can be removed by uninstalling the APK,
+so treat this stage as a test build and avoid storing important notes.
 
 ## Planned follow-ups
 
-1. **PR 2:** touch-sized notebook/page navigation and the Milkdown reading and
-   editing UI, keyboard/IME tests, images and Android back handling.
-2. **PR 3:** WebDAV settings, credential storage, remote list/download/upload,
-   ETag checking and manual foreground sync, shared with Windows.
-3. **PR 4:** tombstones/deletions, conflicts, retry/offline behavior, server
-   compatibility matrix, Android test coverage and release documentation.
+The touch interface, Milkdown editor and image import were added **within PR #38**
+to keep the Android work together, as requested. Future milestones:
+
+1. **WebDAV foundation:** settings, credential storage, remote list/download/upload,
+   ETag checking and manual foreground sync shared with Windows.
+2. **Sync hardening:** tombstones/deletions, conflicts, retry/offline behavior,
+   compatibility testing with different WebDAV servers and stable Android update
+   signing.
+3. **Device validation:** Chinese input methods, keyboards, system back navigation,
+   external file-picker compatibility and image rendering on actual devices.
 
 WebDAV work must not treat HTTP/network failure as a deletion or overwrite local
 unsaved changes. A sync implementation is not complete until that can be
