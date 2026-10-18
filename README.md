@@ -37,7 +37,7 @@ Android 试验版正在独立开发（目前仅本地 Markdown 查看/编辑，�
 
 ## 一、下载安装
 
-- **正式版本**:在 [Releases](https://github.com/AlstarKnight/minipad-next/releases) 页面下载 `Minipad-Next-版本号-setup.exe`(安装版)或 `Minipad-Next-版本号-portable.exe`(免安装,直接运行)。
+- **正式版本**:在 [Releases](https://github.com/AlstarKnight/minipad-next/releases) 页面下载 `Minipad-Next-版本号-setup.exe`(安装版)或 `Minipad-Next-版本号-portable.exe`(免安装,直接运行)。安卓版是同一个 Release 里的 `Minipad-Next-版本号-android-arm64.apk`(仅 arm64 手机;需要仓库配置了固定签名密钥,没配置时 Release 里不会有这个文件)。
 - **最新构建**:每次推送代码后,[Actions](https://github.com/AlstarKnight/minipad-next/actions/workflows/build.yml) 里对应那次运行的页面底部有 `minipad-next-windows` 压缩包,里面是同样的两个文件(需要登录 GitHub 才能下载)。
 
 程序没有数字签名,第一次运行时 Windows 可能提示“已保护你的电脑”,点“更多信息”再点“仍要运行”即可。
@@ -562,7 +562,7 @@ npx tauri build --target x86_64-pc-windows-gnu
 
 Rust 检查和打包各自缓存依赖,失败时也保留已编译的依赖,方便修复后重跑。界面测试只下载所需的 Chromium 无头版本。PR 和正式发布使用相同的编译参数,PR 也会生成可下载的测试安装包。三组任务全部通过后才进入发布检查;PR 只检查安装包和发布说明,不会发布 Release。
 
-要发布新版本:把 `package.json`、`package-lock.json`、`src-tauri/Cargo.toml`、`src-tauri/Cargo.lock` 里的版本号改好(`src-tauri/tauri.conf.json` 直接用 `package.json` 里的版本号,不用改;这几处对不上时构建会失败),在 `CHANGELOG.md` 加上 `## 版本号` 这一节,然后合并到 main。三组 CI 任务全部通过后,如果这个版本还没有发布,会自动建标签 `v版本号`、发布 Release,并附上安装版和免安装版,Release 的说明就是 CHANGELOG 里这个版本的那一节。已经发布过的版本不会重复发布;上次发布到一半失败了(比如上传安装包出错),重新运行这次构建就会补上。
+要发布新版本:把 `package.json`、`package-lock.json`、`src-tauri/Cargo.toml`、`src-tauri/Cargo.lock` 里的版本号改好(`src-tauri/tauri.conf.json` 直接用 `package.json` 里的版本号,不用改;这几处对不上时构建会失败),在 `CHANGELOG.md` 加上 `## 版本号` 这一节,然后合并到 main。三组 CI 任务全部通过后,如果这个版本还没有发布,会自动建标签 `v版本号`、发布 Release,并附上安装版和免安装版(以及安卓安装包,见下),Release 的说明就是 CHANGELOG 里这个版本的那一节。安卓安装包只在要发布 Release 时才构建,使用仓库 Actions secrets 里的 `ANDROID_KEYSTORE_BASE64`、`ANDROID_KEYSTORE_PASSWORD`、`ANDROID_KEY_ALIAS`、`ANDROID_KEY_PASSWORD` 签名,这样新版能直接覆盖安装旧版;这四项都没配置时会跳过 apk、只发 Windows 安装包(不会用临时密钥签名后发出去),已经发布过的版本不会因为缺 apk 被重新发布(缺的 apk 可以手动补传)。已经发布过的版本不会重复发布;上次发布到一半失败了(比如上传安装包出错),重新运行这次构建就会补上。
 
 `CHANGELOG.md` 里没有这个版本的那一节时,构建会失败,提醒你补上。想手动发布也可以:推送一个 `v` 开头的标签,或者在 GitHub 的 Releases 页面点“Draft a new release”新建标签再发布,构建通过后同样会附上安装包。
 
