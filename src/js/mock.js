@@ -549,6 +549,7 @@ export function mockApi() {
       return { size: s.ball_size ?? 48, icon: s.ball_icon || "app", color: s.ball_color || "", opacity: s.ball_opacity ?? 100, open: s.ball_open || "click", image: window.__mockControl?.ballImage || null };
     },
     pick_ball_icon: () => window.__mockControl?.pickBallImage ?? null,
+    refresh_ball_icon: () => window.__mockControl?.ballImage || null,
     collapse_to_ball: () => {
       if (window.__mockControl) window.__mockControl.collapsed = (window.__mockControl.collapsed || 0) + 1;
       toast("(预览)窗口会缩成悬浮图标,点图标再放出来");
