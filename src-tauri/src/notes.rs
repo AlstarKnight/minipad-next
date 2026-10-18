@@ -635,6 +635,59 @@ pub fn load_books(root: &Path) -> Result<Vec<Book>, String> {
     Ok(books)
 }
 
+/// 手机端的目录:笔记本和页面名字(按保存过的顺序),不读页面内容
+#[cfg(any(mobile, test))]
+#[derive(Serialize, Clone, Debug, PartialEq)]
+pub struct BookIndex {
+    pub name: String,
+    pub notes: Vec<String>,
+}
+
+/// 和 load_books 一样,无法读取的子笔记本跳过,默认笔记本读不出来才报错
+#[cfg(any(mobile, test))]
+pub fn index_books(root: &Path) -> Result<Vec<BookIndex>, String> {
+    let index = |book: &str| -> Result<BookIndex, String> {
+        let dir = book_dir(root, book)?;
+        let meta = read_meta(&dir);
+        Ok(BookIndex {
+            name: book.to_string(),
+            notes: order_names(&list_names(&dir)?, &meta.order),
+        })
+    };
+    let mut books = vec![index("")?];
+    for name in list_books(root)? {
+        if let Ok(book) = index(&name) {
+            books.push(book);
+        }
+    }
+    Ok(books)
+}
+
+/// 手机端打开一页时才读它;读不出来或内容损坏的页面和 load_books 一样只读
+#[cfg(any(mobile, test))]
+#[derive(Serialize, Clone, Debug, PartialEq)]
+pub struct PageBody {
+    pub content: String,
+    pub unreadable: bool,
+    pub reason: Option<String>,
+}
+
+#[cfg(any(mobile, test))]
+pub fn read_page_body(root: &Path, book: &str, name: &str) -> Result<PageBody, String> {
+    // 名字不能带路径分隔符:先走一遍会检查名字的 page_path
+    page_path(root, book, name)?;
+    let (content, unreadable, reason) = match read_page(&book_dir(root, book)?, name) {
+        Ok((text, None)) => (text, false, None),
+        Ok((text, Some(why))) => (text, true, Some(why)),
+        Err(e) => (String::new(), true, Some(e)),
+    };
+    Ok(PageBody {
+        content,
+        unreadable,
+        reason,
+    })
+}
+
 /// 保存一个笔记本的页面顺序、当前页面、模式和分组(groups 是 None 时分组保持原样)。
 /// 笔记本已经不在了就不写,免得把删掉的文件夹又建出来。
 pub fn save_book_meta(
@@ -2026,6 +2079,46 @@ mod tests {
         assert_eq!(books[1].notes[0].mode, "edit");
         assert!(books[2].notes.is_empty());
         assert_eq!(books[2].active, "");
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn the_mobile_index_lists_the_same_pages_as_load_books_and_pages_are_read_on_demand() {
+        let root = temp_dir("mobile-index");
+        fs::write(note_path(&root, "欢迎"), "根目录的页面").unwrap();
+        fs::create_dir_all(root.join("工作")).unwrap();
+        fs::create_dir_all(root.join(".trash")).unwrap();
+        fs::write(note_path(&root.join("工作"), "周报"), "本周").unwrap();
+        fs::write(note_path(&root.join("工作"), "计划"), "").unwrap();
+        fs::write(note_path(&root.join("工作"), "乱码"), [0xD6, 0xD0, 0xFF]).unwrap();
+        save_book_meta(
+            &root,
+            "工作",
+            vec!["计划".into(), "周报".into()],
+            "周报".into(),
+            HashMap::new(),
+            None,
+            None,
+        )
+        .unwrap();
+
+        let index = index_books(&root).unwrap();
+        let loaded = load_books(&root).unwrap();
+        assert_eq!(index.len(), loaded.len());
+        for (listed, book) in index.iter().zip(&loaded) {
+            assert_eq!(listed.name, book.name);
+            assert_eq!(listed.notes, names(book));
+        }
+        assert_eq!(index[1].notes, vec!["计划", "周报", "乱码"]);
+
+        let page = read_page_body(&root, "工作", "周报").unwrap();
+        assert_eq!((page.content.as_str(), page.unreadable), ("本周", false));
+        let damaged = read_page_body(&root, "工作", "乱码").unwrap();
+        assert!(damaged.unreadable && damaged.reason.is_some());
+        let missing = read_page_body(&root, "工作", "不存在").unwrap();
+        assert!(missing.unreadable && missing.content.is_empty());
+        assert!(read_page_body(&root, "工作", "../欢迎").is_err());
+        assert!(read_page_body(&root, "../工作", "周报").is_err());
         fs::remove_dir_all(&root).unwrap();
     }
 

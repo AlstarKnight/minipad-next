@@ -26,17 +26,55 @@ const notify = (message) => { status.textContent = message; };
 const markdown = () => { syncContent(selected); return selected?.content ?? ""; };
 const allowedImage = { "image/jpeg": true, "image/png": true, "image/gif": true, "image/webp": true, "image/bmp": true };
 
-// These desktop extensions cannot yet be faithfully round-tripped by basic mobile Milkdown.
-// Show raw Markdown for these notes rather than risking silent loss of fold/code metadata.
-// Desktop folds, styled spans and titled code are handled by the shared editor.
-const needsSource = (md) => /<(?!\/?span\b)[A-Za-z][^>]*>/i.test(md);
+// Desktop folds, styled spans and titled code are handled by the shared editor. Any other raw
+// HTML tag cannot be round-tripped by Milkdown, so those notes open as raw Markdown instead of
+// risking silent loss. Tags inside code blocks and inline code are plain text, not HTML.
+const CODE = /^(`{3,}|~{3,})[^\n]*(?:\n[\s\S]*?^\1[^\n]*$|[\s\S]*)|`[^`\n]+`/gm;
+const needsSource = (md) => /<(?!\/?span\b)[A-Za-z][^>]*>/i.test(md.replace(CODE, ""));
+
+// A failed save keeps the note dirty; retry a few times so a brief storage error heals itself.
+const RETRY_MS = 5000;
+const MAX_RETRIES = 5;
+let retries = 0;
+function saveSoon(delay) {
+  clearTimeout(timer);
+  timer = setTimeout(() => {
+    flush().then(() => { retries = 0; }, () => {
+      if (dirty && ++retries <= MAX_RETRIES) saveSoon(RETRY_MS);
+    });
+  }, delay);
+}
 
 function scheduleSave() {
   if (loading || !selected || selected.unreadable || reading) return;
   dirty = true;
+  retries = 0;
   notify("尚未保存");
-  clearTimeout(timer);
-  timer = setTimeout(() => { void flush().catch(() => {}); }, 500);
+  saveSoon(500);
+}
+
+// Images are immutable (a new file name per save), so decoded data URLs can be kept for reuse.
+// Re-rendering a page, or switching back to it, then costs no IPC round trip.
+const IMAGE_CACHE_LIMIT = 24 * 1024 * 1024;
+const imageCache = new Map(); // oldest first
+let imageCacheSize = 0;
+function cacheImage(book, path, data) {
+  const key = book + "\0" + path;
+  if (data.length > IMAGE_CACHE_LIMIT || imageCache.has(key)) return;
+  imageCache.set(key, data);
+  imageCacheSize += data.length;
+  for (const [oldest, value] of imageCache) {
+    if (imageCacheSize <= IMAGE_CACHE_LIMIT) break;
+    imageCache.delete(oldest);
+    imageCacheSize -= value.length;
+  }
+}
+async function readImage(book, path) {
+  const hit = imageCache.get(book + "\0" + path);
+  if (hit) return hit;
+  const data = await invoke("mobile_read_image", { book, path });
+  cacheImage(book, path, data);
+  return data;
 }
 
 class MobileImageView {
@@ -60,7 +98,7 @@ class MobileImageView {
     const token = ++this.token;
     this.dom.removeAttribute("src");
     if (src.startsWith("assets/") || src.startsWith("./assets/")) {
-      void invoke("mobile_read_image", { book, path: src })
+      void readImage(book, src)
         .then((data) => {
           if (token === this.token) this.dom.src = data;
         })
@@ -227,12 +265,16 @@ async function refresh(bookName = selected?.book, noteName = selected?.name) {
   busy = true;
   try {
     await flush();
-    const loaded = await invoke("mobile_load_books");
+    // Only names are listed; just the opened page is read, so many pages stay cheap to switch.
+    const loaded = (await invoke("mobile_list_books")).map((b) => ({
+      name: b.name, notes: b.notes.map((name) => ({ name })),
+    }));
     const book = loaded.find((b) => b.name === bookName) || loaded[0];
-    const note = book?.notes.find((n) => n.name === noteName) || book?.notes[0];
+    const noteInfo = book?.notes.find((n) => n.name === noteName) || book?.notes[0];
+    const note = noteInfo && await invoke("mobile_read_note", { book: book.name, name: noteInfo.name });
     books = loaded;
     selected = note ? {
-      book: book.name, name: note.name, content: note.content, disk: note.content,
+      book: book.name, name: noteInfo.name, content: note.content, disk: note.content,
       unreadable: note.unreadable, sourceOnly: needsSource(note.content),
       state: null, mdStale: false, scroll: 0,
     } : null;
@@ -278,6 +320,7 @@ async function insertImage(file) {
     await flush();
     const data = await dataURL(file);
     const src = await invoke("mobile_save_image", { book: note.book, mime: file.type, data });
+    cacheImage(note.book, src, `data:${file.type};base64,${data}`);
     if (selected !== note || reading) return;
     const alt = (file.name || "").replace(/\.[^.]+$/, "").slice(0, 100);
     const image = view.state.schema.nodes.image.create({ src, alt });
@@ -413,7 +456,7 @@ el("mode").addEventListener("click", async () => {
 });
 el("refresh").addEventListener("click", () => { void refresh(); });
 document.addEventListener("visibilitychange", () => {
-  if (document.hidden) void flush().catch(() => {});
+  if (document.hidden) void flush().catch(() => saveSoon(RETRY_MS));
 });
 
 async function start() {

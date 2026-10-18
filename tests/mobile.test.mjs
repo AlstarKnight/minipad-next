@@ -41,12 +41,22 @@ async function open() {
     ];
     const writes = [];
     const images = {};
-    window.__mobileTest = { disk, writes, images };
+    const calls = { list: 0, read: 0, readImage: 0 };
+    window.__mobileTest = { disk, writes, images, calls, failSaves: 0 };
     window.__TAURI__ = { core: {
       async invoke(command, args = {}) {
         const book = disk.find((b) => b.name === args.book) || disk[0];
-        if (command === "mobile_load_books") return structuredClone(disk);
+        if (command === "mobile_list_books") {
+          calls.list++;
+          return disk.map((b) => ({ name: b.name, notes: b.notes.map((n) => n.name) }));
+        }
+        if (command === "mobile_read_note") {
+          calls.read++;
+          const { content, unreadable } = book.notes.find((n) => n.name === args.name);
+          return { content, unreadable, reason: null };
+        }
         if (command === "mobile_save_note") {
+          if (window.__mobileTest.failSaves-- > 0) throw new Error("disk full");
           const note = book.notes.find((n) => n.name === args.name);
           if (note.content !== args.expected) throw new Error("stale expected content");
           note.content = args.content;
@@ -65,7 +75,10 @@ async function open() {
           images["assets/test.png"] = "data:" + args.mime + ";base64," + args.data;
           return "assets/test.png";
         }
-        if (command === "mobile_read_image") return images[args.path] ?? Promise.reject("missing file");
+        if (command === "mobile_read_image") {
+          calls.readImage++;
+          return images[args.path] ?? Promise.reject("missing file");
+        }
         throw new Error("Unknown command " + command);
       },
     } };
@@ -211,6 +224,85 @@ test("touch drawer navigates notes without covering the editor permanently", asy
     assert.equal(await page.locator("#mobile-drawer").isVisible(), false);
     assert.equal(await page.locator("#page-title").textContent(), "二");
     assert.equal(await page.locator('#format-bar [data-cmd="codeblock"]').count(), 1);
+    assert.deepEqual(errors, []);
+  } finally {
+    await context.close();
+  }
+});
+
+test("switching pages lists names and reads only the opened page", async () => {
+  const { context, page, errors } = await open();
+  try {
+    const before = await page.evaluate(() => ({ ...window.__mobileTest.calls }));
+    assert.equal(before.read, 1, "startup reads only the first page");
+    await chooseNote(page, "二");
+    await page.locator(".ProseMirror p").filter({ hasText: "第二页" }).waitFor();
+    const after = await page.evaluate(() => ({ ...window.__mobileTest.calls }));
+    assert.equal(after.read, 2);
+    assert.equal(after.list, before.list + 1);
+    assert.deepEqual(errors, []);
+  } finally {
+    await context.close();
+  }
+});
+
+test("HTML tags inside code stay in the rich editor, real HTML still falls back to source", async () => {
+  const { context, page, errors } = await open();
+  try {
+    const content = "```prompt\n<example type=\"good\">x</example>\n```\n\n行内 `<br>` 和\n\n~~~\n<div>\n~~~";
+    await page.evaluate((content) => window.__mobileTest.disk[0].notes.push({
+      name: "代码里的标签", content, unreadable: false,
+    }), content);
+    await page.click("#refresh");
+    await chooseNote(page, "代码里的标签");
+    await page.locator(".ProseMirror .codeblock").first().waitFor();
+    assert.equal(await page.locator("#source").isVisible(), false);
+    const mixed = content + "\n\n<div>真的 HTML</div>";
+    await page.evaluate((mixed) => window.__mobileTest.disk[0].notes.push({
+      name: "混合", content: mixed, unreadable: false,
+    }), mixed);
+    await page.click("#refresh");
+    await chooseNote(page, "混合");
+    await page.locator("#source").waitFor({ state: "visible" });
+    assert.deepEqual(errors, []);
+  } finally {
+    await context.close();
+  }
+});
+
+test("a failed autosave is retried without another edit", async () => {
+  const { context, page, errors } = await open();
+  try {
+    await page.evaluate(() => { window.__mobileTest.failSaves = 1; });
+    await page.locator(".ProseMirror p").first().click();
+    await page.keyboard.press("End");
+    await page.keyboard.type("重试");
+    await page.waitForFunction(() => document.getElementById("status").textContent.startsWith("保存失败"));
+    await page.waitForFunction(() => window.__mobileTest.disk[0].notes[0].content.includes("第一段重试"),
+      null, { timeout: 9000 });
+    assert.equal(await page.locator("#status").textContent(), "已保存");
+    assert.deepEqual(errors, []);
+  } finally {
+    await context.close();
+  }
+});
+
+test("inserted images are cached and not read back over IPC", async () => {
+  const { context, page, errors } = await open();
+  try {
+    await page.locator(".ProseMirror p").first().click();
+    await page.locator("#image-file").setInputFiles({
+      name: "example.png", mimeType: "image/png", buffer: TINY_PNG,
+    });
+    await page.locator(".ProseMirror img:not(.ProseMirror-separator)").waitFor({ timeout: 10000 });
+    await page.waitForFunction(() => window.__mobileTest.disk[0].notes[0].content.includes("assets/test.png"));
+    await chooseNote(page, "二");
+    await page.locator(".ProseMirror p").filter({ hasText: "第二页" }).waitFor();
+    await chooseNote(page, "一");
+    await page.locator(".ProseMirror img:not(.ProseMirror-separator)").waitFor();
+    assert.equal(await page.evaluate(() => window.__mobileTest.calls.readImage), 0);
+    assert.equal(await page.locator(".ProseMirror img:not(.ProseMirror-separator)").getAttribute("src"),
+      "data:image/png;base64," + TINY_PNG.toString("base64"));
     assert.deepEqual(errors, []);
   } finally {
     await context.close();

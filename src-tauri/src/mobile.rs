@@ -15,9 +15,16 @@ fn root(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(dir)
 }
 
+// Notebook and page names only. Page text is read one page at a time by mobile_read_note,
+// so switching pages does not read every note in every notebook.
 #[tauri::command]
-fn mobile_load_books(app: AppHandle) -> Result<Vec<notes::Book>, String> {
-    notes::load_books(&root(&app)?)
+fn mobile_list_books(app: AppHandle) -> Result<Vec<notes::BookIndex>, String> {
+    notes::index_books(&root(&app)?)
+}
+
+#[tauri::command]
+fn mobile_read_note(app: AppHandle, book: String, name: String) -> Result<notes::PageBody, String> {
+    notes::read_page_body(&root(&app)?, &book, &name)
 }
 
 #[tauri::command]
@@ -135,7 +142,8 @@ fn mobile_read_image(app: AppHandle, book: String, path: String) -> Result<Strin
 pub fn run() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
-            mobile_load_books,
+            mobile_list_books,
+            mobile_read_note,
             mobile_create_book,
             mobile_create_note,
             mobile_save_note,
