@@ -1,14 +1,7 @@
 // Android-only Milkdown editor. Persist Markdown; binary images go to the book's assets folder.
-import { Editor, rootCtx, editorViewCtx, parserCtx, serializerCtx } from "@milkdown/kit/core";
-import { commonmark } from "@milkdown/kit/preset/commonmark";
-import { gfm } from "@milkdown/kit/preset/gfm";
-import { history } from "@milkdown/kit/plugin/history";
-import { clipboard } from "@milkdown/kit/plugin/clipboard";
-import { $prose } from "@milkdown/kit/utils";
-import { Plugin, EditorState } from "@milkdown/kit/prose/state";
-import { toggleMark, setBlockType, wrapIn } from "@milkdown/kit/prose/commands";
-import { wrapInList } from "@milkdown/kit/prose/schema-list";
-import { undo, redo } from "@milkdown/kit/prose/history";
+import { $prose, Plugin, toggleMark, setBlockType, wrapIn, wrapInList, undo, redo } from "../vendor/milkdown.js";
+import { createEditor, editorDebug, showInEditor, syncContent } from "./editor.js";
+import { state as desktopState } from "./state.js";
 
 const invoke = window.__TAURI__?.core?.invoke;
 const el = (id) => document.getElementById(id);
@@ -21,7 +14,6 @@ const source = el("source");
 
 let books = [];
 let selected = null; // { book, name, disk, unreadable }
-let editorCtx = null;
 let view = null;
 let dirty = false;
 let saving = null;
@@ -31,12 +23,13 @@ let busy = false;
 let reading = false;
 
 const notify = (message) => { status.textContent = message; };
-const markdown = () => editorCtx.get(serializerCtx)(view.state.doc);
+const markdown = () => { syncContent(selected); return selected?.content ?? ""; };
 const allowedImage = { "image/jpeg": true, "image/png": true, "image/gif": true, "image/webp": true, "image/bmp": true };
 
 // These desktop extensions cannot yet be faithfully round-tripped by basic mobile Milkdown.
 // Show raw Markdown for these notes rather than risking silent loss of fold/code metadata.
-const needsSource = (markdown) => /(^|\n)[ \t]*>[ \t]*\[!fold\][+-](?:[ \t]|$)|(^|\n)[ \t]{0,3}(?:`{3,}|~{3,})[^\n]*[ \t]+\S|<span\b[^>]*\bstyle\s*=/i.test(markdown);
+// Desktop folds, styled spans and titled code are handled by the shared editor.
+const needsSource = (md) => /<(?!\/?span\b)[A-Za-z][^>]*>/i.test(md);
 
 function scheduleSave() {
   if (loading || !selected || selected.unreadable || reading) return;
@@ -184,12 +177,7 @@ async function refresh(bookName = selected?.book, noteName = selected?.name) {
     } : null;
     source.value = note?.content ?? "";
     loading = true;
-    const state = view.state;
-    view.updateState(EditorState.create({
-      schema: state.schema,
-      doc: editorCtx.get(parserCtx)(selected?.sourceOnly ? "" : (note?.content ?? "")),
-      plugins: state.plugins,
-    }));
+    if (selected && !selected.sourceOnly) showInEditor(selected);
     loading = false;
     render();
     notify(note?.unreadable ? "只读：原始文件不可安全解码" : "已保存");
@@ -332,20 +320,16 @@ document.addEventListener("visibilitychange", () => {
 
 async function start() {
   try {
-    const editor = await Editor.make()
-      .config((ctx) => ctx.set(rootCtx, el("editor")))
-      .use(commonmark)
-      .use(gfm)
-      .use(history)
-      .use(clipboard)
-      .use(changes)
-      .use(images)
-      .create();
-    editor.action((ctx) => {
-      editorCtx = ctx;
-      view = ctx.get(editorViewCtx);
+    desktopState.settings = {};
+    document.documentElement.dataset.mobile = "true";
+    await createEditor({
+      mobile: true,
+      mobileImagePlugin: images,
+      onChange: (note) => { if (note === selected) scheduleSave(); },
+      openLink: (href) => { if (/^https?:\/\//i.test(href)) window.open(href, "_blank", "noopener"); },
+      emptyBold: () => {},
     });
-    view.dom.spellcheck = false;
+    view = editorDebug().view;
     if (!invoke) throw new Error("请使用 Android 应用打开");
     await refresh(null, null);
   } catch (error) {
