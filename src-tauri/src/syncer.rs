@@ -159,11 +159,19 @@ pub fn merge_metadata(
             continue;
         };
         match result {
-            Some(value) => { output.insert(key.clone(), value.clone()); }
-            None => { output.remove(key); }
+            Some(value) => {
+                output.insert(key.clone(), value.clone());
+            }
+            None => {
+                output.remove(key);
+            }
         }
     }
-    if conflicts.is_empty() { Ok(Value::Object(output)) } else { Err(conflicts) }
+    if conflicts.is_empty() {
+        Ok(Value::Object(output))
+    } else {
+        Err(conflicts)
+    }
 }
 
 #[cfg(test)]
@@ -255,7 +263,7 @@ mod tests {
         let combined = merge_metadata(Some(&base), &local, &remote).unwrap();
         assert_eq!(combined["active"], "乙");
         assert_eq!(combined["modes"]["甲"], "read");
-        assert_eq!(combined["order"], json!(["甲","乙"]));
+        assert_eq!(combined["order"], json!(["甲", "乙"]));
         assert_eq!(combined["icon"], "star");
     }
 
@@ -265,7 +273,10 @@ mod tests {
         let base = json!({"icon":"book", "active":"a"});
         let local = json!({"icon":"star", "active":"b"});
         let remote = json!({"icon":"heart", "active":"c"});
-        assert_eq!(merge_metadata(Some(&base), &local, &remote), Err(vec!["icon".to_string()]));
+        assert_eq!(
+            merge_metadata(Some(&base), &local, &remote),
+            Err(vec!["icon".to_string()])
+        );
         assert!(merge_metadata(None, &json!([]), &remote).is_err());
     }
 
