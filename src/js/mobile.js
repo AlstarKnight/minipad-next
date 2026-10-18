@@ -17,6 +17,7 @@ const booksSelect = el("book");
 const notesSelect = el("note");
 const toolbar = el("toolbar");
 const fileInput = el("image-file");
+const source = el("source");
 
 let books = [];
 let selected = null; // { book, name, disk, unreadable }
@@ -32,6 +33,10 @@ let reading = false;
 const notify = (message) => { status.textContent = message; };
 const markdown = () => editorCtx.get(serializerCtx)(view.state.doc);
 const allowedImage = { "image/jpeg": true, "image/png": true, "image/gif": true, "image/webp": true, "image/bmp": true };
+
+// These desktop extensions cannot yet be faithfully round-tripped by basic mobile Milkdown.
+// Show raw Markdown for these notes rather than risking silent loss of fold/code metadata.
+const needsSource = (markdown) => /(^|\n)[ \t]*>[ \t]*\[!fold\][+-](?:[ \t]|$)|(^|\n)[ \t]{0,3}(?:`{3,}|~{3,})[^\n]*[ \t]+\S|<span\b[^>]*\bstyle\s*=/i.test(markdown);
 
 function scheduleSave() {
   if (loading || !selected || selected.unreadable || reading) return;
@@ -123,15 +128,20 @@ function render() {
   options(booksSelect, books.map((b) => [b.name, b.name || "默认"]), bookName);
   options(notesSelect, (book?.notes || []).map((n) => [n.name, n.name]), selected?.name);
   const editable = !!selected && !selected.unreadable && !reading;
-  if (view) view.setProps({ editable: () => editable });
+  const raw = !!selected?.sourceOnly;
+  if (view) view.setProps({ editable: () => editable && !raw });
+  el("editor").hidden = raw;
+  source.hidden = !raw;
+  source.readOnly = !editable;
   el("mode").disabled = !selected || selected.unreadable;
   el("mode").textContent = reading ? "编辑" : "阅读";
   el("mode").setAttribute("aria-pressed", String(reading));
-  toolbar.hidden = !editable;
+  toolbar.hidden = !editable || raw;
   for (const button of toolbar.querySelectorAll("button")) button.disabled = !editable;
   el("add-note").disabled = !book;
   el("hint").textContent = selected?.unreadable ? "文件内容无法识别，仅允许查看" :
-    reading ? "阅读模式" : "本地自动保存 · 支持图片和 Markdown";
+    raw ? "该笔记包含桌面扩展，使用保真源码模式" :
+      reading ? "阅读模式" : "本地自动保存 · 支持图片和 Markdown";
 }
 
 async function flush() {
@@ -139,7 +149,7 @@ async function flush() {
   if (saving) await saving;
   while (dirty && selected) {
     const note = selected;
-    const content = markdown();
+    const content = note.sourceOnly ? source.value : markdown();
     dirty = false;
     notify("保存中…");
     saving = invoke("mobile_save_note", {
@@ -170,12 +180,14 @@ async function refresh(bookName = selected?.book, noteName = selected?.name) {
     books = loaded;
     selected = note ? {
       book: book.name, name: note.name, disk: note.content, unreadable: note.unreadable,
+      sourceOnly: needsSource(note.content),
     } : null;
+    source.value = note?.content ?? "";
     loading = true;
     const state = view.state;
     view.updateState(EditorState.create({
       schema: state.schema,
-      doc: editorCtx.get(parserCtx)(note?.content ?? ""),
+      doc: editorCtx.get(parserCtx)(selected?.sourceOnly ? "" : (note?.content ?? "")),
       plugins: state.plugins,
     }));
     loading = false;
@@ -280,6 +292,7 @@ fileInput.addEventListener("change", () => {
   fileInput.value = "";
   if (file) void insertImage(file);
 });
+source.addEventListener("input", scheduleSave);
 booksSelect.addEventListener("change", () => { void refresh(booksSelect.value, null); });
 notesSelect.addEventListener("change", () => { void refresh(booksSelect.value, notesSelect.value); });
 
@@ -310,7 +323,7 @@ el("mode").addEventListener("click", async () => {
   }
   reading = !reading;
   render();
-  if (!reading) view.focus();
+  if (!reading) (selected?.sourceOnly ? source : view).focus();
 });
 el("refresh").addEventListener("click", () => { void refresh(); });
 document.addEventListener("visibilitychange", () => {
