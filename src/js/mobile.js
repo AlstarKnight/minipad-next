@@ -523,15 +523,17 @@ let fullHeight = 0;
 let fullWidth = 0;
 function fitViewport() {
   const vv = window.visualViewport;
-  const width = Math.round(vv?.width ?? window.innerWidth);
-  const height = Math.round(vv?.height ?? window.innerHeight);
+  // Pinch-zooming shrinks the visual viewport in CSS pixels too; scale puts it back to screen size.
+  const scale = vv?.scale ?? 1;
+  const width = Math.round((vv?.width ?? window.innerWidth) * scale);
+  const height = Math.round((vv?.height ?? window.innerHeight) * scale);
   if (width !== fullWidth) { fullWidth = width; fullHeight = 0; } // rotated: measure again
   fullHeight = Math.max(fullHeight, height);
   const root = document.documentElement;
   const keyboard = fullHeight - height > 120;
   root.style.setProperty("--app-height", height + "px");
   // How much of the layout viewport the keyboard covers (0 when the layout already shrank).
-  root.style.setProperty("--keyboard-inset", Math.max(0, window.innerHeight - height - Math.round(vv?.offsetTop ?? 0)) + "px");
+  root.style.setProperty("--keyboard-inset", Math.max(0, window.innerHeight - height - Math.round((vv?.offsetTop ?? 0) * scale)) + "px");
   const was = root.hasAttribute("data-keyboard");
   root.toggleAttribute("data-keyboard", keyboard);
   if (keyboard && !was && view?.hasFocus()) requestAnimationFrame(() => view.dispatch(view.state.tr.scrollIntoView()));

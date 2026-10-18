@@ -35,7 +35,7 @@ async function open({ colorScheme, keyboard } = {}) {
   if (keyboard) {
     // Android WebViews can shrink only the visual viewport when the soft keyboard opens.
     await context.addInitScript(() => {
-      const fake = Object.assign(new EventTarget(), { width: innerWidth, height: innerHeight, offsetTop: 0 });
+      const fake = Object.assign(new EventTarget(), { width: innerWidth, height: innerHeight, offsetTop: 0, scale: 1 });
       Object.defineProperty(window, "visualViewport", { value: fake, configurable: true });
     });
   }
@@ -568,6 +568,25 @@ test("selecting text shows a floating format bar below the selection and it form
     // Collapsing the selection hides the bar again.
     await page.keyboard.press("ArrowRight");
     await page.locator("#toolbar").waitFor({ state: "hidden" });
+    assert.deepEqual(errors, []);
+  } finally {
+    await context.close();
+  }
+});
+
+test("pinch-zooming is not mistaken for the soft keyboard", async () => {
+  const { context, page, errors } = await open({ keyboard: true });
+  try {
+    await page.evaluate(() => {
+      Object.assign(window.visualViewport, { scale: 2, width: innerWidth / 2, height: innerHeight / 2 });
+      window.visualViewport.dispatchEvent(new Event("resize"));
+    });
+    const zoomed = await page.evaluate(() => ({
+      body: document.body.getBoundingClientRect().height,
+      keyboard: document.documentElement.hasAttribute("data-keyboard"),
+    }));
+    assert.equal(zoomed.keyboard, false);
+    assert.equal(zoomed.body, 740);
     assert.deepEqual(errors, []);
   } finally {
     await context.close();
