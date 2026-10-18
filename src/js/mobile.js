@@ -291,12 +291,16 @@ async function showNewPages() {
 }
 
 let queued = null; // the latest request made while a switch was in flight
-async function refresh(bookName = currentBook, noteName = selected?.name) {
+// Leaving an argument out (undefined) means "what is on screen", decided when the request runs;
+// null means "the first page / first notebook".
+async function refresh(bookName, noteName) {
   if (busy) {
     queued?.done();
     return new Promise((done) => { queued = { bookName, noteName, done }; });
   }
   busy = true;
+  if (bookName === undefined) bookName = currentBook;
+  if (noteName === undefined) noteName = selected?.name;
   try {
     await flush();
     // Nothing typed while the new page loads may land on the old page or be lost.

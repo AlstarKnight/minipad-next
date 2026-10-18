@@ -455,3 +455,21 @@ test("a notebook created while a page is loading is still opened", async () => {
     await context.close();
   }
 });
+
+test("a refresh requested during a page switch does not switch back to the old page", async () => {
+  const { context, page, errors } = await open();
+  try {
+    await page.evaluate(() => { window.__mobileTest.readDelay = 500; });
+    await chooseNote(page, "二");
+    await page.evaluate(() => document.getElementById("refresh").click());
+    // The queued refresh starts its read after the first switch, then takes readDelay to finish.
+    await page.waitForFunction(() => window.__mobileTest.calls.read === 3, null, { timeout: 8000 });
+    await page.waitForFunction(() => document.getElementById("mobile-drawer").hidden, null, { timeout: 8000 });
+    await page.waitForTimeout(900);
+    assert.equal(await page.locator("#page-title").textContent(), "二");
+    await page.locator(".ProseMirror p").filter({ hasText: "第二页" }).waitFor();
+    assert.deepEqual(errors, []);
+  } finally {
+    await context.close();
+  }
+});

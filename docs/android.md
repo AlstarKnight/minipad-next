@@ -59,8 +59,10 @@ Actions). Set all four or none; a partial set fails the signing step on purpose.
 To produce the base64 value (copy it into the secret; it is not a file to upload):
 
 ```sh
-# Linux / macOS
+# Linux
 base64 -w0 minipad-release.jks
+# macOS (its base64 has no -w option)
+base64 -i minipad-release.jks | tr -d '\n'
 # Windows PowerShell
 [Convert]::ToBase64String([IO.File]::ReadAllBytes("minipad-release.jks"))
 ```

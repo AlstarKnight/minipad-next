@@ -83,6 +83,7 @@ jobs:
             exit 1
           fi
           keystore="$RUNNER_TEMP/minipad-signing.jks"
+          trap 'rm -f "$keystore"' EXIT
           set_count=0
           for name in KEYSTORE_BASE64 KEYSTORE_PASSWORD KEY_ALIAS KEY_PASSWORD; do
             if [[ -n "${!name}" ]]; then set_count=$((set_count + 1)); fi
@@ -113,7 +114,6 @@ jobs:
             --ks-pass env:KEYSTORE_PASSWORD --key-pass env:KEY_PASSWORD \
             --out "$out" "$RUNNER_TEMP/minipad-aligned.apk"
           "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$out"
-          rm -f "$keystore"
           ls -lh "$unsigned" "$out"
           stat -c 'APK bytes: %s' "$out"
           echo "APK signed with: $mode" | tee -a "$GITHUB_STEP_SUMMARY"
