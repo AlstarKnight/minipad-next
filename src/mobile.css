@@ -72,6 +72,8 @@ html[data-mobile] #page {
   overflow-y: auto; overflow-x: hidden; overscroll-behavior-y: contain;
   background: var(--surface); -webkit-overflow-scrolling: touch;
 }
+html[data-mobile] #main { position: relative; min-height: 100%; width: 100%; }
+html[data-mobile] #main .block-handle { display: none; }
 html[data-mobile] #editor { width: 100%; height: auto; min-height: 100%; overflow: visible;
   padding: 0; margin: 0; border: 0; color: var(--ink); background: transparent; }
 html[data-mobile] #editor .ProseMirror {
@@ -108,6 +110,8 @@ html[data-mobile] .edit-dock {
   width: 100%; padding: 7px 8px 5px; border: 0; border-top: 1px solid var(--border);
   box-shadow: 0 -6px 18px rgba(35,45,38,.035); background: var(--paper);
 }
+html[data-mobile] #block-actions { border: 0; background: var(--soft-accent); color: var(--accent);
+  border-radius: 8px; font-size: 12px; font-weight: 650; padding: 5px 10px; min-height: 30px; }
 html[data-mobile] .dock-heading { display: flex; justify-content: space-between; align-items: center; gap: 8px;
   margin: 0 8px 5px; font-size: 11px; font-weight: 650; color: var(--subtle); }
 html[data-mobile] #dock-hint { font-weight: 400; font-size: 10px; opacity: .8; }
