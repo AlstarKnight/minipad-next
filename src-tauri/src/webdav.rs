@@ -121,7 +121,7 @@ mod tests {
           <d:response><d:href>/MinipadNext/中文%20笔记.md</d:href><d:propstat><d:prop>
             <d:getetag>"abc"</d:getetag><d:getcontentlength>31</d:getcontentlength>
             <d:getlastmodified>Sun, 18 Oct 2026 10:00:00 GMT</d:getlastmodified>
-          </d:prop><d:status>HTTP/1.1 200 OK</d:propstat></d:response>
+          </d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>
           </d:multistatus>"#;
         let entries = parse_multistatus(xml).unwrap();
         assert_eq!(entries.len(), 2);
