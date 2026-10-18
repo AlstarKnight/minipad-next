@@ -583,6 +583,7 @@ function loadLook() {
     stars: saved.stars !== false,
     cats: saved.cats !== false,
     fab: saved.fab !== false,
+    debug: saved.debug === true,
   };
 }
 
@@ -612,6 +613,9 @@ function applyLook() {
   el("look-stars").checked = look.stars;
   el("look-cats").checked = look.cats;
   el("look-fab").checked = look.fab;
+  el("look-debug").checked = look.debug;
+  el("viewport-debug").hidden = !look.debug;
+  if (look.debug) requestAnimationFrame(fitViewport);
   renderDrawer();
 }
 
@@ -631,6 +635,7 @@ for (const b of document.querySelectorAll("[data-theme-choice]")) b.addEventList
 el("look-stars").addEventListener("change", (e) => setLook({ stars: e.target.checked }));
 el("look-cats").addEventListener("change", (e) => setLook({ cats: e.target.checked }));
 el("look-fab").addEventListener("change", (e) => setLook({ fab: e.target.checked }));
+el("look-debug").addEventListener("change", (e) => setLook({ debug: e.target.checked }));
 systemDark.addEventListener("change", applyLook);
 
 function showSettings(open) {
@@ -651,6 +656,9 @@ applyLook();
 // Others resize the whole page for the keyboard and still shrink the visual viewport on top of
 // that: following the visual viewport there would leave a keyboard-sized gap under the toolbar,
 // so once the page itself got shorter its own height wins.
+// When only the visual viewport shrinks, the WebView also pans it down (offsetTop) to show the
+// caret. The page is fixed to the layout viewport, so it moves down by the same amount: otherwise
+// its top slides out of sight and an offsetTop-sized gap opens between the toolbar and keyboard.
 let fullHeight = 0;
 let fullWidth = 0;
 let fullInner = 0;
@@ -667,6 +675,9 @@ function fitViewport() {
   const resized = fullInner - window.innerHeight > 120;
   const keyboard = resized || fullHeight - height > 120;
   root.style.setProperty("--app-height", (resized ? window.innerHeight : height) + "px");
+  // Pinch-zoom panning is the reader moving around the page, not the keyboard: leave it alone.
+  const panned = !resized && Math.abs(scale - 1) < 0.01 ? Math.max(0, Math.round(vv?.offsetTop ?? 0)) : 0;
+  root.style.setProperty("--app-top", panned + "px");
   // How much of the layout viewport the keyboard covers (0 when the layout already shrank).
   // offsetTop is already in layout-viewport pixels, so it is not scaled.
   root.style.setProperty("--keyboard-inset", (resized ? 0 : Math.max(0, window.innerHeight - height - Math.round(vv?.offsetTop ?? 0))) + "px");
@@ -674,6 +685,22 @@ function fitViewport() {
   root.toggleAttribute("data-keyboard", keyboard);
   if (keyboard && !was && view?.hasFocus()) requestAnimationFrame(() => view.dispatch(view.state.tr.scrollIntoView()));
   placeFab();
+  if (look.debug) showDebug({ resized, keyboard, panned });
+}
+
+// 外观设置里打开“键盘调试信息”时,右上角显示这些数字:键盘弹出时截一张图,就能看出空隙是哪来的
+function showDebug(d) {
+  const vv = window.visualViewport;
+  const dock = el("mobile-dock").getBoundingClientRect();
+  const round = (v) => (v == null ? "-" : Math.round(v * 10) / 10);
+  el("viewport-debug").textContent = [
+    `innerHeight ${window.innerHeight} (最大 ${fullInner})`,
+    `visualViewport ${round(vv?.height)} · top ${round(vv?.offsetTop)} · scale ${round(vv?.scale)}`,
+    `screen ${screen.height} · dpr ${round(devicePixelRatio)}`,
+    `body ${round(document.body.getBoundingClientRect().height)} · top ${d.panned}`,
+    `工具栏底边 ${round(dock.bottom)} · 可见底边 ${round((vv?.offsetTop ?? 0) + (vv?.height ?? window.innerHeight))}`,
+    `键盘 ${d.keyboard ? "是" : "否"} · 页面被缩 ${d.resized ? "是" : "否"} · 遮住 ${document.documentElement.style.getPropertyValue("--keyboard-inset")}`,
+  ].join("\n");
 }
 
 // 新建页面的悬浮按钮停在页面区域的右下角,工具栏和状态栏变高变矮时跟着挪
@@ -685,6 +712,7 @@ function placeFab() {
 fab.addEventListener("click", () => el("add-note").click());
 new ResizeObserver(placeFab).observe(el("page"));
 window.visualViewport?.addEventListener("resize", fitViewport);
+window.visualViewport?.addEventListener("scroll", fitViewport);
 window.addEventListener("resize", fitViewport);
 fitViewport();
 

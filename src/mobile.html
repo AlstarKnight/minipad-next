@@ -146,10 +146,12 @@
       <label class="switch-row"><span>深色时顶栏和抽屉有星光</span><input id="look-stars" type="checkbox"></label>
       <label class="switch-row"><span>分类工具栏:文字 / 段落 / 插入 / 颜色</span><input id="look-cats" type="checkbox"></label>
     </div>
+    <label class="switch-row"><span>键盘调试信息:右上角显示屏幕和键盘的尺寸,截图发给开发者</span><input id="look-debug" type="checkbox"></label>
     <p class="sheet-note">只保存在这台手机上,改了马上生效。</p>
   </section>
   <div id="ctx" class="menu" role="menu" hidden></div>
   <div id="toast" class="mobile-toast" role="status" hidden></div>
+  <pre id="viewport-debug" class="viewport-debug" aria-hidden="true" hidden></pre>
   <input id="image-file" type="file" accept="image/jpeg,image/png,image/gif,image/webp,image/bmp" hidden>
 </body>
 </html>

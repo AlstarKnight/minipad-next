@@ -783,3 +783,45 @@ test("the floating new-page button creates a page, steps aside for the keyboard 
     }
   }
 });
+
+test("when the WebView pans the visual viewport down for the keyboard, the page follows it", async () => {
+  const { context, page, errors } = await open({ keyboard: true });
+  try {
+    // Only the visual viewport shrank, and it was scrolled down 300px to show the caret.
+    await page.evaluate(() => {
+      Object.assign(window.visualViewport, { height: innerHeight - 300, offsetTop: 300 });
+      window.visualViewport.dispatchEvent(new Event("resize"));
+    });
+    const layout = () => page.evaluate(() => ({
+      top: Math.round(document.body.getBoundingClientRect().top),
+      header: Math.round(document.querySelector(".app-header").getBoundingClientRect().top),
+      dockBottom: Math.ceil(document.getElementById("mobile-dock").getBoundingClientRect().bottom),
+    }));
+    let now = await layout();
+    assert.equal(now.top, 300, "the page starts where the visible area starts");
+    assert.ok(now.header >= 300 && now.header <= 302, `the header stays in sight (${now.header})`);
+    assert.ok(now.dockBottom >= 736 && now.dockBottom <= 740, `the toolbar ends at the keyboard (${now.dockBottom})`);
+    // The pan moves without a resize: the visual viewport's scroll event alone moves the page.
+    await page.evaluate(() => {
+      window.visualViewport.offsetTop = 120;
+      window.visualViewport.dispatchEvent(new Event("scroll"));
+    });
+    now = await layout();
+    assert.equal(now.top, 120);
+    await page.evaluate(() => {
+      Object.assign(window.visualViewport, { height: innerHeight, offsetTop: 0 });
+      window.visualViewport.dispatchEvent(new Event("resize"));
+    });
+    assert.equal((await layout()).top, 0, "back in place once the keyboard closes");
+    // The debug readout, switched on in the appearance sheet, shows the numbers behind it.
+    await page.click("#open-drawer");
+    await page.click("#open-settings");
+    await page.check("#look-debug");
+    await page.click("#close-settings");
+    await page.locator("#viewport-debug").waitFor();
+    assert.match(await page.locator("#viewport-debug").textContent(), /innerHeight 740[\s\S]*visualViewport 740/);
+    assert.deepEqual(errors, []);
+  } finally {
+    await context.close();
+  }
+});
