@@ -68,7 +68,14 @@ async function open() {
   const errors = [];
   page.on("pageerror", (error) => errors.push(String(error)));
   await page.goto(url);
-  await page.locator("#editor .ProseMirror h1").waitFor({ timeout: 10000 });
+  try {
+    await page.locator("#editor .ProseMirror h1").waitFor({ timeout: 3500 });
+  } catch (error) {
+    const status = await page.locator("#status").textContent();
+    const snippet = await page.locator("#editor").innerHTML();
+    throw new Error("Android editor did not initialize: " +
+      JSON.stringify({ status, errors, snippet: snippet.slice(0, 500), reason: String(error) }));
+  }
   return { context, page, errors };
 }
 
