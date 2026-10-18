@@ -391,6 +391,8 @@ struct QuitState {
 #[derive(Default)]
 struct AppState {
     settings: Mutex<Settings>,
+    /// 自定义悬浮图片缓存，避免重复读磁盘和 base64 编码。
+    ball_image_cache: Mutex<ball::ImageCache>,
     /// 配置文件不存在、成功读取或损坏的原文件已改名留底时才可以写回。读不出来时保持原文件。
     settings_write_allowed: AtomicBool,
     settings_read_error: Mutex<Option<String>>,
@@ -2030,10 +2032,26 @@ fn ball_image_path(app: &AppHandle) -> Option<PathBuf> {
 }
 
 fn ball_image_data(app: &AppHandle) -> Option<String> {
-    let path = ball_image_path(app)?;
+    let st = app.state::<AppState>();
+    let Some(path) = ball_image_path(app) else {
+        st.ball_image_cache.lock().unwrap().clear();
+        return None;
+    };
     let mime = ball::mime_for(path.extension()?.to_str()?)?;
-    let bytes = fs::read(&path).ok()?;
-    Some(ball::data_url(mime, &bytes))
+    let meta = fs::metadata(&path).ok()?;
+    let modified = meta.modified().ok()?;
+    st.ball_image_cache.lock().unwrap().get_or_load(&path, meta.len(), modified, || {
+        let bytes = fs::read(&path).ok()?;
+        Some(ball::data_url(mime, &bytes))
+    })
+}
+
+#[tauri::command]
+fn refresh_ball_icon(app: AppHandle) -> Option<String> {
+    app.state::<AppState>().ball_image_cache.lock().unwrap().clear();
+    let image = ball_image_data(&app);
+    let _ = app.emit_to("ball", "ball-update", ());
+    image
 }
 
 #[derive(Serialize)]
@@ -2096,6 +2114,7 @@ async fn pick_ball_icon(app: AppHandle) -> Result<Option<String>, String> {
     for other in ball::IMAGE_EXTS.iter().filter(|e| **e != ext) {
         let _ = fs::remove_file(dir.join(format!("ball-icon.{other}")));
     }
+    app.state::<AppState>().ball_image_cache.lock().unwrap().clear();
     let _ = app.emit_to("ball", "ball-update", ());
     Ok(Some(ball::data_url(
         ball::mime_for(&ext).unwrap_or("image/png"),
@@ -2517,6 +2536,7 @@ pub fn run() {
             expand_edge,
             ball_info,
             pick_ball_icon,
+            refresh_ball_icon,
             collapse_to_ball,
             expand_from_ball,
             open_notes_dir,
