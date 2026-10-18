@@ -118,12 +118,12 @@ test("picker image is stored under assets and Markdown keeps a relative path", a
     await page.locator("#image-file").setInputFiles({
       name: "example.png", mimeType: "image/png", buffer: TINY_PNG,
     });
-    await page.locator(".ProseMirror img").waitFor({ timeout: 10000 });
+    await page.locator(".ProseMirror img:not(.ProseMirror-separator)").waitFor({ timeout: 10000 });
     await page.waitForFunction(() =>
       window.__mobileTest.disk[0].notes[0].content.includes("assets/test.png"));
     const content = await page.evaluate(() => window.__mobileTest.disk[0].notes[0].content);
     assert.match(content, /!\[example\]\(assets\/test\.png\)/);
-    assert.equal(await page.locator(".ProseMirror img").getAttribute("src"),
+    assert.equal(await page.locator(".ProseMirror img:not(.ProseMirror-separator)").getAttribute("src"),
       "data:image/png;base64," + TINY_PNG.toString("base64"));
     assert.deepEqual(errors, []);
   } finally {
