@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="zh-CN" data-mobile="true">
+<html lang="zh-CN" data-mobile="true" data-ui="starry">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
@@ -20,6 +20,10 @@
       <strong id="page-title">我的笔记</strong>
     </div>
     <button id="mode" type="button" class="mode-button" aria-pressed="false" disabled>阅读</button>
+    <div id="mode-seg" class="mode-seg" role="group" aria-label="阅读或编辑">
+      <button type="button" data-mode="read" aria-pressed="false" disabled>阅读</button>
+      <button type="button" data-mode="edit" aria-pressed="true" disabled>编辑</button>
+    </div>
   </header>
 
   <div class="context-strip">
@@ -40,7 +44,16 @@
         <button id="insert-image" type="button" aria-label="插入图片">＋ 图片</button>
         <button id="find-open" type="button" aria-label="查找或替换">查找</button>
         <button id="block-actions" type="button" aria-label="管理当前块">块操作 ···</button>
+        <button id="hide-keyboard" type="button" aria-label="收起键盘" title="收起键盘">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="11" rx="2"/><path d="M7 8h.01M11 8h.01M15 8h.01M8 11.5h8M9 19l3 2.5 3-2.5"/></svg>
+        </button>
       </div>
+    </div>
+    <div id="dock-cats" class="dock-cats" role="tablist" aria-label="工具分类">
+      <button type="button" role="tab" data-cat="text" aria-selected="true">文字</button>
+      <button type="button" role="tab" data-cat="para" aria-selected="false">段落</button>
+      <button type="button" role="tab" data-cat="insert" aria-selected="false">插入</button>
+      <button type="button" role="tab" data-cat="color" aria-selected="false">颜色</button>
     </div>
     <nav id="format-bar" aria-label="完整编辑格式"></nav>
   </div>
@@ -81,7 +94,7 @@
       <select id="book" aria-label="选择笔记本" class="test-select"></select>
     </section>
     <section class="drawer-section page-section">
-      <div class="section-heading"><h3>页面</h3><button id="add-note" type="button" aria-label="新建页面">＋ 新建</button></div>
+      <div class="section-heading"><h3 id="pages-heading">页面</h3><button id="add-note" type="button" aria-label="新建页面">＋ 新建</button></div>
       <label class="search-wrap">
         <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10" cy="10" r="6"/><path d="m15 15 5 5"/></svg>
         <input id="note-filter" placeholder="搜索当前笔记本的页面" aria-label="筛选页面" autocomplete="off">
@@ -89,8 +102,47 @@
       <div id="notes-list" class="note-list"></div>
       <select id="note" aria-label="选择页面" class="test-select"></select>
     </section>
+    <div class="drawer-actions">
+      <div id="drawer-theme" class="seg" role="group" aria-label="明暗">
+        <button type="button" data-theme-choice="light">浅色</button>
+        <button type="button" data-theme-choice="dark">深色</button>
+        <button type="button" data-theme-choice="system">跟随系统</button>
+      </div>
+      <button id="open-settings" type="button" class="drawer-settings">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M5.5 18.5l1.7-1.7M16.8 7.2l1.7-1.7"/></svg>
+        <span>外观设置</span>
+      </button>
+    </div>
     <p class="drawer-footnote">本地优先 · WebDAV 同步功能正在开发</p>
   </aside>
+  <div id="settings-backdrop" class="drawer-backdrop" hidden></div>
+  <section id="mobile-settings" class="sheet" role="dialog" aria-modal="true" aria-labelledby="settings-title" hidden>
+    <div class="sheet-grip" aria-hidden="true"></div>
+    <div class="sheet-top">
+      <h2 id="settings-title">外观</h2>
+      <button id="close-settings" type="button" class="icon-button" aria-label="关闭外观设置">✕</button>
+    </div>
+    <h3>界面风格</h3>
+    <div id="ui-styles" class="style-rows" role="radiogroup" aria-label="界面风格">
+      <button type="button" role="radio" data-ui="starry" aria-checked="false"><span class="style-dot"></span><span class="style-text"><b>C · 星空渐变</b><small>渐变点缀,深色是星空</small></span></button>
+      <button type="button" role="radio" data-ui="material" aria-checked="false"><span class="style-dot"></span><span class="style-text"><b>A · Material You</b><small>色块胶囊、整条工具栏,接近安卓原生</small></span></button>
+      <button type="button" role="radio" data-ui="paper" aria-checked="false"><span class="style-dot"></span><span class="style-text"><b>B · 语雀纸感</b><small>白纸、细线、目录树和悬浮工具栏</small></span></button>
+      <button type="button" role="radio" data-ui="classic" aria-checked="false"><span class="style-dot"></span><span class="style-text"><b>经典</b><small>原来的绿色样子</small></span></button>
+    </div>
+    <h3>明暗</h3>
+    <div id="look-theme" class="seg" role="group" aria-label="明暗">
+      <button type="button" data-theme-choice="system">跟随系统</button>
+      <button type="button" data-theme-choice="light">浅色</button>
+      <button type="button" data-theme-choice="dark">深色</button>
+    </div>
+    <h3>强调色</h3>
+    <div id="look-accent" class="accent-swatches" role="radiogroup" aria-label="强调色"></div>
+    <div class="style-only" data-ui-only="starry">
+      <label class="switch-row"><span>深色时顶栏和抽屉有星光</span><input id="look-stars" type="checkbox"></label>
+      <label class="switch-row"><span>分类工具栏:文字 / 段落 / 插入 / 颜色</span><input id="look-cats" type="checkbox"></label>
+    </div>
+    <p class="sheet-note">只保存在这台手机上,改了马上生效。</p>
+  </section>
   <div id="ctx" class="menu" role="menu" hidden></div>
   <div id="toast" class="mobile-toast" role="status" hidden></div>
   <input id="image-file" type="file" accept="image/jpeg,image/png,image/gif,image/webp,image/bmp" hidden>

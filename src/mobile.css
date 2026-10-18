@@ -8,6 +8,7 @@
   --subtle: #777971;
   --border: #e5e5dc;
   --accent: #5b725e;
+  --style-accent: #5b725e;
   --soft-accent: #edf2ea;
   --mobile-shadow: 0 14px 35px rgba(24, 31, 23, .10);
 }
@@ -47,9 +48,10 @@ html[data-mobile] #book-title {
   background: transparent; color: var(--accent); font-size: 12px; font-weight: 600;
 }
 html[data-mobile] #book-title span { margin-left: 3px; }
+/* 标题永远完整显示:太长就换行 */
 html[data-mobile] #page-title {
   display: block; min-width: 0; font-size: 18px; font-weight: 690; line-height: 1.3;
-  text-overflow: ellipsis; white-space: nowrap; overflow: hidden; letter-spacing: -.3px;
+  overflow-wrap: anywhere; letter-spacing: -.3px;
 }
 html[data-mobile] .mode-button {
   flex: none; min-width: 68px; min-height: 38px; border-radius: 11px;
@@ -167,7 +169,7 @@ html[data-mobile] .book-list button.active, html[data-mobile] .note-list button.
   background: var(--soft-accent); color: var(--accent); font-weight: 720;
 }
 html[data-mobile] .book-list button span, html[data-mobile] .note-list button span {
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  min-width: 0; overflow-wrap: anywhere;
 }
 html[data-mobile] .search-wrap {
   display: flex; gap: 9px; align-items: center; margin: 2px 7px 12px; padding: 0 12px;
@@ -192,14 +194,14 @@ html[data-mobile] .cb-lang-menu.menu { z-index: 52; max-width: calc(100vw - 12px
   :root {
     --paper: #181c19; --surface: #1e231e; --canvas: #2a312a;
     --ink: #edf0eb; --subtle: #a8b2a7; --border: #3b463c;
-    --accent: #b6d1b8; --soft-accent: #354638;
+    --accent: #b6d1b8; --style-accent: #b6d1b8; --soft-accent: #354638;
     --mobile-shadow: 0 12px 32px rgba(0,0,0,.38);
   }
 }
-html[data-mobile][data-theme="dark"] {
+html[data-mobile][data-theme="dark"]:not([data-ui]) {
   --paper: #181c19; --surface: #1e231e; --canvas: #2a312a;
   --ink: #edf0eb; --subtle: #a8b2a7; --border: #3b463c;
-  --accent: #b6d1b8; --soft-accent: #354638;
+  --accent: #b6d1b8; --style-accent: #b6d1b8; --soft-accent: #354638;
   --mobile-shadow: 0 12px 32px rgba(0,0,0,.38);
 }
 /* The status line gives its space to the toolbar while the soft keyboard is up. */
@@ -236,3 +238,130 @@ html[data-mobile] .find-controls button { flex: 1 1 20%; white-space: nowrap; mi
   background: var(--soft-accent); color: var(--accent); border: 0; border-radius: 9px; font: inherit; font-size: 12px; }
 html[data-mobile] #find-count { display: block; font-size: 11px; color: var(--subtle); margin-top: 7px; }
 @media (max-width: 360px) { html[data-mobile] .dock-actions button { padding: 4px 6px; font-size: 10px; } }
+
+/* ---------- 界面风格(0.4.4) ----------
+   三种风格的颜色在 desktop-editor.css(style.css)里按 data-ui 和 data-theme 给出,这里把手机壳用的几个变量接上去,
+   菜单、选中浮条、颜色面板和代码块就和桌面一样跟着变。经典风格没有 data-ui,还是上面原来的绿色。 */
+html[data-mobile][data-ui] {
+  --paper: var(--bar); --surface: var(--bg); --canvas: var(--code-bg);
+  --ink: var(--text); --subtle: var(--muted); --border: var(--bar-border);
+  --soft-accent: var(--accent-soft); --mobile-shadow: var(--pop-shadow);
+}
+/* 脚本跑起来之前(还没有 data-theme)手机是深色的:先按星空的深色画,免得闪一下白 */
+@media (prefers-color-scheme: dark) {
+  html[data-mobile][data-ui="starry"]:not([data-theme]) {
+    --bg: #0e1024; --bar: #0e1024; --bar-border: #272b50; --code-bg: #161935;
+    --text: #e8e7f8; --muted: #b4b2d4; --accent: #b3a6ff; --accent-soft: #2e2a6c;
+  }
+}
+html[data-mobile][data-ui] #format-bar button.on { border-color: transparent; }
+html[data-mobile][data-ui] .mobile-toast { color: var(--panel); background: var(--text); }
+
+/* 阅读 | 编辑 分段(只有星空渐变用),收起键盘按钮(键盘弹出时才有) */
+html[data-mobile] .mode-seg { display: none; }
+html[data-mobile] #hide-keyboard { display: none; }
+html[data-mobile][data-keyboard] #hide-keyboard { display: grid; place-items: center; min-width: 44px; padding: 4px 8px; }
+html[data-mobile] #hide-keyboard svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+
+/* 抽屉底部:明暗分段(星空渐变)和外观设置 */
+html[data-mobile] .drawer-actions { display: grid; gap: 10px; padding: 14px 20px 0; border-top: 1px solid var(--border); }
+html[data-mobile] .drawer-actions #drawer-theme { display: none; }
+html[data-mobile] .drawer-settings { display: flex; align-items: center; gap: 12px; min-height: 48px; padding: 0 12px;
+  border: 0; border-radius: 12px; background: transparent; color: var(--ink); text-align: left; }
+html[data-mobile] .drawer-settings svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; }
+html[data-mobile] .seg { display: flex; gap: 2px; padding: 3px; border-radius: 14px; background: var(--canvas); }
+html[data-mobile] .seg button { flex: 1; min-height: 40px; border: 0; border-radius: 11px; background: transparent;
+  color: var(--subtle); font-size: 13px; font-weight: 600; }
+html[data-mobile] .seg button[aria-pressed="true"] { background: var(--surface); color: var(--ink); box-shadow: 0 0 0 1px var(--border); }
+
+/* 外观设置:从底下弹出来 */
+html[data-mobile] .sheet {
+  position: fixed; z-index: 31; left: 0; right: 0; bottom: 0; max-height: 88dvh; overflow-y: auto; overscroll-behavior: contain;
+  padding: 8px 20px calc(env(safe-area-inset-bottom) + 20px); background: var(--paper); color: var(--ink);
+  border-radius: 24px 24px 0 0; box-shadow: var(--mobile-shadow);
+}
+html[data-mobile] .sheet-grip { width: 36px; height: 4px; margin: 4px auto 6px; border-radius: 2px; background: var(--border); }
+html[data-mobile] .sheet-top { display: flex; align-items: center; justify-content: space-between; }
+html[data-mobile] .sheet-top h2 { margin: 0; font-size: 20px; }
+html[data-mobile] .sheet h3 { margin: 18px 0 8px; font-size: 12px; letter-spacing: .6px; color: var(--subtle); font-weight: 720; }
+html[data-mobile] .style-rows { display: grid; gap: 6px; }
+html[data-mobile] .style-rows button { display: flex; align-items: center; gap: 12px; min-height: 60px; padding: 8px 14px;
+  border: 1px solid var(--border); border-radius: 16px; background: var(--surface); color: var(--ink); text-align: left; }
+html[data-mobile] .style-rows button[aria-checked="true"] { border-color: var(--accent); background: var(--soft-accent); }
+html[data-mobile] .style-dot { width: 20px; height: 20px; flex: none; border-radius: 50%; border: 2px solid var(--subtle); }
+html[data-mobile] .style-rows button[aria-checked="true"] .style-dot { border: 6px solid var(--accent); }
+html[data-mobile] .style-text { display: grid; gap: 2px; min-width: 0; }
+html[data-mobile] .style-text small { color: var(--subtle); font-size: 12px; }
+html[data-mobile] .accent-swatches { display: flex; flex-wrap: wrap; gap: 6px; }
+html[data-mobile] .accent-swatches button { width: 44px; height: 44px; padding: 0; border: 0; border-radius: 50%; background: transparent; position: relative; }
+html[data-mobile] .accent-swatches button::before { content: ""; position: absolute; inset: 7px; border-radius: 50%; background: var(--sw); }
+html[data-mobile] .accent-swatches button[aria-checked="true"] { box-shadow: inset 0 0 0 2px var(--ink); }
+html[data-mobile] .switch-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 48px; margin-top: 8px; }
+html[data-mobile] .switch-row input { width: 22px; height: 22px; flex: none; accent-color: var(--accent); }
+html[data-mobile] .sheet-note { margin: 16px 0 0; font-size: 12px; color: var(--subtle); }
+
+/* 星空渐变的分类工具栏:上面一排分类,格式栏只显示这一类 */
+html[data-mobile] .dock-cats { display: none; }
+html[data-mobile][data-ui="starry"][data-cats] .dock-cats { display: flex; gap: 2px; margin: 0 4px 2px; }
+html[data-mobile] .dock-cats button { flex: 1; min-height: 36px; border: 0; background: transparent; color: var(--subtle);
+  font-size: 13px; font-weight: 600; position: relative; }
+html[data-mobile] .dock-cats button[aria-selected="true"] { color: var(--ink); }
+html[data-mobile] .dock-cats button[aria-selected="true"]::after { content: ""; position: absolute; left: 30%; right: 30%; bottom: 2px;
+  height: 3px; border-radius: 2px; background: var(--ui-grad); }
+html[data-mobile][data-ui="starry"][data-cats] #format-bar .sep { display: none; }
+html[data-mobile][data-ui="starry"][data-cats] #mobile-dock[data-cat="text"] #format-bar [data-cmd]:not([data-cmd="undo"], [data-cmd="redo"], [data-cmd="strong"], [data-cmd="em"], [data-cmd="strike"], [data-cmd="code"], [data-cmd="link"]),
+html[data-mobile][data-ui="starry"][data-cats] #mobile-dock[data-cat="para"] #format-bar [data-cmd]:not([data-cmd="block"], [data-cmd="list"], [data-cmd="ol"], [data-cmd="task"], [data-cmd="quote"]),
+html[data-mobile][data-ui="starry"][data-cats] #mobile-dock[data-cat="insert"] #format-bar [data-cmd]:not([data-cmd="codeblock"], [data-cmd="copytext"], [data-cmd="table"], [data-cmd="hr"], [data-cmd="find"]),
+html[data-mobile][data-ui="starry"][data-cats] #mobile-dock[data-cat="color"] #format-bar [data-cmd]:not([data-cmd="color"], [data-cmd="bg"]) { display: none; }
+html[data-mobile][data-ui="starry"][data-cats] #format-bar .fb-items > button { flex: 1 0 44px; }
+
+/* A · Material You:整条工具栏贴在键盘上面,按钮和列表项是全圆角胶囊,选中的是次要色容器 */
+html[data-mobile][data-ui="material"] .app-header { border-bottom: 0; }
+html[data-mobile][data-ui="material"] .mode-button { min-height: 40px; border: 0; border-radius: 20px; padding: 6px 18px;
+  background: var(--tab-active); color: var(--text); }
+html[data-mobile][data-ui="material"] .edit-dock { border-top: 0; box-shadow: none; background: var(--panel); padding-top: 6px; }
+html[data-mobile][data-ui="material"] #format-bar button { border-radius: 20px; background: transparent; }
+html[data-mobile][data-ui="material"] #format-bar button.on { background: var(--tab-active); color: var(--text); }
+html[data-mobile][data-ui="material"] :is(.dock-actions button, #block-actions, .section-heading button, .find-controls button) { border-radius: 16px; }
+html[data-mobile][data-ui="material"] .drawer { border-radius: 0 16px 16px 0; width: min(88vw, 304px); }
+html[data-mobile][data-ui="material"] .drawer-section { border-top: 0; }
+html[data-mobile][data-ui="material"] :is(.book-list, .note-list) button { min-height: 56px; border-radius: 28px; padding: 10px 18px; }
+html[data-mobile][data-ui="material"] :is(.book-list, .note-list) button.active { background: var(--tab-active); color: var(--text); }
+html[data-mobile][data-ui="material"] .search-wrap { border-radius: 28px; min-height: 52px; }
+
+/* B · 语雀纸感:白纸细线;工具栏是离键盘一点距离的悬浮卡片;页面列表是目录树 */
+html[data-mobile][data-ui="paper"] .mode-button { border-radius: 8px; background: transparent; color: var(--accent); }
+html[data-mobile][data-ui="paper"] .edit-dock { width: auto; margin: 0 8px 8px; padding: 6px; border: 1px solid var(--border);
+  border-radius: 20px; background: var(--panel); box-shadow: var(--pop-shadow); }
+html[data-mobile][data-ui="paper"] #format-bar button { border-radius: 6px; background: transparent; color: var(--muted); }
+html[data-mobile][data-ui="paper"] #format-bar button.on { background: var(--accent-soft); color: var(--accent-on-soft); }
+html[data-mobile][data-ui="paper"] #page-title { font-weight: 700; }
+html[data-mobile][data-ui="paper"] #books-list { display: none; }
+html[data-mobile][data-ui="paper"] .drawer-section:first-of-type .section-heading { padding-bottom: 0; }
+html[data-mobile][data-ui="paper"] .note-list button.tree-book { font-weight: 650; min-height: 46px; }
+html[data-mobile][data-ui="paper"] .note-list button.tree-book::before { content: "›"; width: 15px; font-size: 18px; color: var(--subtle); transition: transform .15s; }
+html[data-mobile][data-ui="paper"] .note-list button.tree-book.open::before { transform: rotate(90deg); }
+html[data-mobile][data-ui="paper"] .note-list button.tree-page { padding-left: 38px; min-height: 44px; }
+html[data-mobile][data-ui="paper"] .note-list button.tree-page::before { content: none; }
+html[data-mobile][data-ui="paper"] .note-list button.tree-page.active { background: var(--accent-soft); color: var(--accent-on-soft); }
+
+/* C · 星空渐变:笔记本是一排能横滑的标签,活跃的下面一条渐变线;顶栏「阅读 | 编辑」分段;深色有几颗星 */
+html[data-mobile][data-ui="starry"] .mode-button { display: none; }
+html[data-mobile][data-ui="starry"] .mode-seg { display: flex; flex: none; padding: 3px; gap: 2px; border-radius: 14px; background: var(--canvas); }
+html[data-mobile] .mode-seg button { min-height: 38px; min-width: 48px; padding: 4px 10px; border: 0; border-radius: 11px;
+  background: transparent; color: var(--subtle); font-size: 13px; font-weight: 650; }
+html[data-mobile] .mode-seg button[aria-pressed="true"] { background: var(--ui-grad); color: #fff; }
+html[data-mobile][data-ui="starry"] .drawer-actions #drawer-theme { display: flex; }
+html[data-mobile][data-ui="starry"] #books-list { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; padding: 0 6px 4px; }
+html[data-mobile][data-ui="starry"] #books-list::-webkit-scrollbar { display: none; }
+html[data-mobile][data-ui="starry"] #books-list button { width: auto; flex: none; min-height: 44px; padding: 8px 14px;
+  border-radius: 16px; background: var(--canvas); position: relative; white-space: nowrap; }
+html[data-mobile][data-ui="starry"] #books-list button::before { width: 8px; height: 8px; border: 0; border-radius: 50%; background: var(--ui-grad); }
+html[data-mobile][data-ui="starry"] #books-list button.active { background: var(--soft-accent); color: var(--accent-on-soft); }
+html[data-mobile][data-ui="starry"] #books-list button.active::after { content: ""; position: absolute; left: 14px; right: 14px; bottom: 3px;
+  height: 3px; border-radius: 2px; background: var(--ui-grad); }
+html[data-mobile][data-ui="starry"] .note-list button { border-radius: 16px; }
+html[data-mobile][data-ui="starry"] .note-list button.active { color: var(--accent-on-soft); }
+html[data-mobile][data-ui="starry"] .section-heading button { color: #fff; background: var(--ui-grad); }
+html[data-mobile][data-ui="starry"] #format-bar button { border-radius: 10px; }
+html[data-mobile][data-ui="starry"][data-theme="dark"][data-stars] :is(.app-header, .drawer-top) { background-image: var(--stars); }

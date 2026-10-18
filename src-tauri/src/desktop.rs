@@ -77,7 +77,15 @@ pub struct Settings {
     show_in_taskbar: bool,
     autostart: bool,
     theme: String,
-    /// 强调色:空着是默认的橙色,"#3b82f6" 是纯色,"linear-gradient(135deg, #a, #b)" 是渐变色
+    /// 界面风格(0.4.4):starry 星空渐变 / material / paper 语雀纸感 / classic 原来的样子
+    ui_style: String,
+    /// 语雀纸感的目录侧栏
+    ui_tree: bool,
+    /// 星空渐变的笔记本侧栏
+    ui_rail: bool,
+    /// 星空渐变深色时顶栏的星光
+    ui_stars: bool,
+    /// 强调色:空着跟随界面风格,"#3b82f6" 是纯色,"linear-gradient(135deg, #a, #b)" 是渐变色
     accent: String,
     /// 只读取旧配置供首次迁移，不再写回 settings.json。
     #[serde(skip_serializing)]
@@ -255,6 +263,10 @@ impl Default for Settings {
             show_in_taskbar: false,
             autostart: false,
             theme: "system".into(),
+            ui_style: "starry".into(),
+            ui_tree: true,
+            ui_rail: true,
+            ui_stars: true,
             accent: String::new(),
             book_color_presets: Vec::new(),
             color_presets: None,
@@ -875,6 +887,7 @@ fn tidy_settings(s: &mut Settings) {
     if !["line", "fill", "border"].contains(&s.tab_style.as_str()) {
         s.tab_style = "line".into();
     }
+    pick_one(&mut s.ui_style, &["starry", "material", "paper", "classic"]);
     // 日期格式最多 64 个字(按字算,不按字节),空着就用默认的
     let format: String = s.date_format.trim().chars().take(64).collect();
     s.date_format = match format.trim_end() {
@@ -3061,6 +3074,30 @@ mod tests {
             tidy_settings(&mut s);
             assert_eq!(s.tab_style, kept, "{given}");
         }
+    }
+
+    #[test]
+    fn tidy_settings_falls_back_to_starry_for_unknown_ui_styles() {
+        assert_eq!(Settings::default().ui_style, "starry");
+        for (given, kept) in [
+            ("material", "material"),
+            ("paper", "paper"),
+            ("starry", "starry"),
+            ("classic", "classic"),
+            ("", "starry"),
+            ("neon", "starry"),
+        ] {
+            let mut s = Settings {
+                ui_style: given.into(),
+                ..Settings::default()
+            };
+            tidy_settings(&mut s);
+            assert_eq!(s.ui_style, kept, "{given}");
+        }
+        // 0.4.3 及以前的设置里没有这几项:用默认的星空渐变,侧栏和星光都开着
+        let old: Settings = serde_json::from_str(r#"{"theme":"dark"}"#).unwrap();
+        assert_eq!(old.ui_style, "starry");
+        assert!(old.ui_tree && old.ui_rail && old.ui_stars);
     }
 
     #[test]

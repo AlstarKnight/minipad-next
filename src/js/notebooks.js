@@ -11,6 +11,7 @@ import { BOOK_ICONS, bookIcon, iconColor } from "./bookicons.js";
 import { tidyAccent } from "./accent.js";
 import { refuseInMini } from "./mini.js";
 import { makeSharedColorTools } from "./sharedcolors.js";
+import { renderSidebar, toggleTree } from "./sidebar.js";
 
 // 为了"移到笔记本…"打开列表时是要移动的页面,平时是 null
 let moving = null;
@@ -32,6 +33,7 @@ export function renderBook() {
   $("#book-icon").style.color = iconColor(currentBook);
   renderList();
   if (!$("#book-manager").hidden) renderManager();
+  renderSidebar();
 }
 
 function renderList() {
@@ -101,6 +103,8 @@ export function closeBooks() {
 }
 
 export function toggleBooks() {
+  // 语雀纸感的目录侧栏开着时,笔记本按钮展开 / 收起目录
+  if ($("#books").hidden && toggleTree()) return;
   if ($("#books").hidden) openBooks();
   else closeOverlays();
 }

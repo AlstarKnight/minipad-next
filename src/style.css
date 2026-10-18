@@ -7,6 +7,8 @@
   --text: #2b2a26;
   --muted: #8a8577;
   --accent: #d9822b;
+  /* 设置里“跟随风格”那个色块的颜色:自选强调色会盖掉 --accent,这个不会 */
+  --style-accent: #d9822b;
   --accent-soft: #fbe8d0;
   /* 强调色可以在设置里换,换成渐变色时 --accent-grad 是渐变(见 js/accent.js) */
   --accent-grad: var(--accent);
@@ -43,6 +45,7 @@
   --text: #e3e1db;
   --muted: #8d8a83;
   --accent: #f0a04b;
+  --style-accent: #f0a04b;
   --accent-soft: #3a2f22;
   --code-bg: #26282c;
   --code-border: #34363b;
@@ -1817,3 +1820,197 @@ html[data-image-size="small"] #editor .ProseMirror img { max-width: min(100%, 24
 .codeblock:hover .cb-title-color, .codeblock .cb-title-color:focus-visible, .codeblock .cb-title-color[aria-expanded="true"] { opacity: 1; }
 @media (hover: none) { .codeblock .cb-title-color { opacity: 1; } }
 .codeblock.no-title .cb-title-color, .codeblock.copyline .cb-title-color, .codeblock.no-title-color-btn .cb-title-color, .cb-title-color:disabled { display: none; }
+
+/* ---------- 界面风格(0.4.4):设置 → 外观 → 界面风格 ----------
+   <html data-ui="material | paper | starry"> 和 data-theme 组合出一套颜色、圆角和阴影,
+   没有 data-ui 时是原来的样子(经典)。组件只用这些变量,所以菜单、弹层也跟着风格和深浅色走。
+   手机版也加载这个文件,所以变量两边共用;只给桌面的布局写在 html:not([data-mobile]) 下面 */
+:root {
+  --faint: var(--muted);
+  --accent-on-soft: var(--accent);
+  --pop-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
+  --r-lg: 10px;
+  --r-md: 8px;
+  --r-sm: 5px;
+  --ui-grad: var(--accent-grad);
+  --side-bg: var(--bar);
+}
+
+/* A · Material You */
+html[data-ui="material"] {
+  --bg: #fcf8ff; --bar: #f6f2fc; --bar-border: #dcd9e3; --tab-active: #e3e0f9;
+  --text: #1b1b21; --muted: #47464f; --faint: #787680;
+  --accent: #5452c2; --style-accent: #5452c2; --accent-soft: #e2dfff; --accent-on-soft: #100c6e; --accent-fg: #fff;
+  --code-bg: #f6f2fc; --code-border: #dcd9e3; --selection: rgba(84, 82, 194, 0.22); --selection-blur: #eae6f0;
+  --overlay: rgba(27, 27, 33, 0.32); --panel: #f0ecf6; --danger: #ba1a1a; --side-bg: #f6f2fc;
+  --pop-shadow: 0 4px 14px rgba(30, 20, 80, 0.16);
+  --r-lg: 28px; --r-md: 16px; --r-sm: 8px;
+}
+html[data-ui="material"][data-theme="dark"] {
+  --bg: #131318; --bar: #1b1b21; --bar-border: #3a3940; --tab-active: #45455a;
+  --text: #e5e1e9; --muted: #c8c5d0; --faint: #928f9a;
+  --accent: #c3c0ff; --style-accent: #c3c0ff; --accent-soft: #403fab; --accent-on-soft: #e2dfff; --accent-fg: #2a2785;
+  --code-bg: #1b1b21; --code-border: #3a3940; --selection: rgba(195, 192, 255, 0.32); --selection-blur: #2a292f;
+  --overlay: rgba(0, 0, 0, 0.5); --panel: #2a292f; --danger: #ffb4ab; --side-bg: #1b1b21;
+  --pop-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+}
+
+/* B · 语雀纸感 */
+html[data-ui="paper"] {
+  --bg: #fff; --bar: #fff; --bar-border: #e8e8e4; --tab-active: #fff;
+  --text: #1f2023; --muted: #55575d; --faint: #76787e;
+  --accent: #3e63dd; --style-accent: #3e63dd; --accent-soft: #ebf0ff; --accent-on-soft: #1e3a9e; --accent-fg: #fff;
+  --code-bg: #f7f7f5; --code-border: #e8e8e4; --selection: rgba(62, 99, 221, 0.2); --selection-blur: #f0f0ed;
+  --overlay: rgba(31, 32, 35, 0.22); --panel: #fff; --danger: #d93036; --side-bg: #f7f7f5;
+  --pop-shadow: 0 6px 20px rgba(0, 0, 0, 0.08), 0 0 0 1px rgba(0, 0, 0, 0.07);
+  --r-lg: 20px; --r-md: 12px; --r-sm: 6px;
+}
+html[data-ui="paper"][data-theme="dark"] {
+  --bg: #1e1e20; --bar: #1e1e20; --bar-border: #303033; --tab-active: #1e1e20;
+  --text: #ececec; --muted: #b4b5b9; --faint: #8c8d92;
+  --accent: #8da4ff; --style-accent: #8da4ff; --accent-soft: #232e58; --accent-on-soft: #dce3ff; --accent-fg: #0f1d57;
+  --code-bg: #28282b; --code-border: #303033; --selection: rgba(141, 164, 255, 0.3); --selection-blur: #28282b;
+  --overlay: rgba(0, 0, 0, 0.5); --panel: #252527; --danger: #ff8a80; --side-bg: #19191a;
+  --pop-shadow: 0 6px 20px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.08);
+}
+
+/* C · 星空渐变(浅色是“梦幻”,深色是“星空”)。渐变只用在细线、新建按钮、勾选框和开关这些小地方 */
+html[data-ui="starry"] {
+  --bg: #faf9ff; --bar: #faf9ff; --bar-border: #e2def3; --tab-active: #faf9ff;
+  --text: #1d1b2e; --muted: #514d6c; --faint: #716d8e;
+  --accent: #5b47d6; --style-accent: #5b47d6; --accent-soft: #e9e4ff; --accent-on-soft: #2a1b86; --accent-fg: #fff;
+  --accent-grad: linear-gradient(135deg, #4f6bef, #7b4fe0 55%, #b34fd8);
+  --code-bg: #f1effc; --code-border: #e2def3; --selection: rgba(100, 80, 224, 0.22); --selection-blur: #f1effc;
+  --overlay: rgba(29, 27, 46, 0.28); --panel: #fff; --danger: #c62a4b; --side-bg: #f1effc;
+  --pop-shadow: 0 6px 20px rgba(70, 50, 160, 0.14);
+  --r-lg: 22px; --r-md: 16px; --r-sm: 10px;
+}
+html[data-ui="starry"][data-theme="dark"] {
+  --bg: #0e1024; --bar: #0e1024; --bar-border: #272b50; --tab-active: #0e1024;
+  --text: #e8e7f8; --muted: #b4b2d4; --faint: #8f8cb4;
+  --accent: #b3a6ff; --style-accent: #b3a6ff; --accent-soft: #2e2a6c; --accent-on-soft: #e6e1ff; --accent-fg: #fff;
+  --code-bg: #161935; --code-border: #272b50; --selection: rgba(179, 166, 255, 0.3); --selection-blur: #161935;
+  --overlay: rgba(0, 0, 0, 0.55); --panel: #20244a; --danger: #ff8fa6; --side-bg: #161935;
+  --pop-shadow: 0 6px 20px rgba(0, 0, 0, 0.55);
+  /* 深色顶栏、侧栏头上的几颗星(设置里可以关掉) */
+  --stars: radial-gradient(1.4px 1.4px at 8% 30%, rgba(255, 255, 255, 0.7), transparent),
+    radial-gradient(1px 1px at 22% 72%, rgba(255, 255, 255, 0.45), transparent),
+    radial-gradient(1.2px 1.2px at 37% 25%, rgba(255, 255, 255, 0.6), transparent),
+    radial-gradient(1px 1px at 51% 60%, rgba(255, 255, 255, 0.5), transparent),
+    radial-gradient(1.5px 1.5px at 66% 20%, rgba(255, 255, 255, 0.8), transparent),
+    radial-gradient(1px 1px at 79% 66%, rgba(255, 255, 255, 0.4), transparent),
+    radial-gradient(1.2px 1.2px at 91% 35%, rgba(255, 255, 255, 0.6), transparent);
+}
+
+/* 弹层:细边 + 很浅的阴影,圆角跟风格走 */
+html[data-ui] .menu, html[data-ui] #toolbar, html[data-ui] .panel { box-shadow: var(--pop-shadow); }
+html[data-ui] .menu { border-radius: var(--r-md); padding: 6px; }
+html[data-ui] .menu button { border-radius: var(--r-sm); padding: 6px 10px; }
+html[data-ui] .panel { border-radius: var(--r-md); }
+html[data-ui="paper"] .menu, html[data-ui="paper"] #toolbar, html[data-ui="paper"] .panel { border-color: transparent; }
+
+/* ---- 桌面:顶栏、标签、格式栏、选中文字的工具条 ---- */
+html[data-ui]:not([data-mobile]) #btn-book, html[data-ui]:not([data-mobile]) #bar .icon { border-radius: var(--r-sm); }
+html[data-ui]:not([data-mobile]) #format-bar { background: var(--bg); }
+html[data-ui]:not([data-mobile]) #format-bar button { border-radius: var(--r-sm); }
+html[data-ui]:not([data-mobile]) #format-bar button.on { color: var(--accent-on-soft); }
+html[data-ui]:not([data-mobile]) #toolbar { padding: 4px; }
+html[data-ui]:not([data-mobile]) #toolbar button { border-radius: var(--r-sm); }
+html[data-ui]:not([data-mobile]) #toolbar button.on { color: var(--accent-on-soft); }
+
+/* 标签的“细线”高亮(设置里的默认样式)在每种风格里长得不一样;整块填色、边框两种照旧 */
+html[data-ui][data-tab-style="line"]:not([data-mobile]) #bar:not([data-expanded="true"]) .tab.active { border-color: transparent; margin-bottom: 0; height: 28px; }
+html[data-ui="material"][data-tab-style="line"]:not([data-mobile]) #bar .tab.active { background: var(--tab-active); color: var(--accent-on-soft); }
+html[data-ui="material"][data-tab-style="line"]:not([data-mobile]) #bar .tab.active::before { display: none; }
+html[data-ui="material"]:not([data-mobile]) #tabs { align-items: center; }
+html[data-ui="material"]:not([data-mobile]) #bar .tab { height: 26px; margin: 0 2px; border: 0; border-radius: 13px; }
+html[data-ui="material"]:not([data-mobile]) #bar { align-items: center; }
+html[data-ui="paper"][data-tab-style="line"]:not([data-mobile]) #bar .tab.active,
+html[data-ui="starry"][data-tab-style="line"]:not([data-mobile]) #bar .tab.active { background: transparent; font-weight: 600; }
+html[data-ui="paper"][data-tab-style="line"]:not([data-mobile]) #bar .tab.active::before { top: auto; bottom: 0; left: 12px; right: 12px; height: 2px; border-radius: 2px 2px 0 0; background: var(--accent); }
+html[data-ui="starry"][data-tab-style="line"]:not([data-mobile]) #bar .tab.active::before { top: auto; bottom: 0; left: 10px; right: 10px; height: 3px; border-radius: 3px 3px 0 0; background: var(--accent-grad); }
+html[data-ui="starry"][data-tab-style="line"]:not([data-mobile]) #bar .tab.active { font-weight: 700; }
+
+/* A:格式栏和工具条是圆形图标按钮,工具条是胶囊 */
+html[data-ui="material"]:not([data-mobile]) #format-bar { background: var(--bar); }
+html[data-ui="material"]:not([data-mobile]) #format-bar button:not(.fb-block) { border-radius: 13px; }
+html[data-ui="material"]:not([data-mobile]) #toolbar { border-radius: 20px; border-color: transparent; background: var(--panel); }
+html[data-ui="material"]:not([data-mobile]) #toolbar button { border-radius: 14px; }
+/* B:灰色线框图标,工具条是细边白卡片 */
+html[data-ui="paper"]:not([data-mobile]) #format-bar button { color: var(--muted); }
+html[data-ui="paper"]:not([data-mobile]) #format-bar button:hover:not(:disabled) { background: var(--code-bg); color: var(--text); }
+html[data-ui="paper"]:not([data-mobile]) #toolbar { border-radius: 10px; }
+/* C:格式栏的分组用小圆点隔开,工具条是胶囊 */
+html[data-ui="starry"]:not([data-mobile]) #format-bar .sep { width: 4px; height: 4px; margin: 0 6px; border-radius: 2px; background: var(--faint); opacity: 0.6; }
+html[data-ui="starry"]:not([data-mobile]) #format-bar button { border-radius: 10px; }
+html[data-ui="starry"]:not([data-mobile]) #toolbar { border-radius: 20px; border-color: transparent; }
+html[data-ui="starry"]:not([data-mobile]) #toolbar button { border-radius: 14px; }
+html[data-ui="starry"][data-theme="dark"][data-stars]:not([data-mobile]) #bar { background-image: var(--stars); }
+
+/* 侧栏:固定在窗口左边,顶栏、格式栏、编辑区和状态栏往右让出它的宽度 */
+#side {
+  position: fixed;
+  top: 0; bottom: 0; left: 0;
+  z-index: 6;
+  width: var(--side-w);
+  display: flex;
+  flex-direction: column;
+  background: var(--side-bg);
+  border-right: 1px solid var(--bar-border);
+  user-select: none;
+}
+html[data-side="tree"] { --side-w: 208px; }
+html[data-side="rail"] { --side-w: 60px; }
+html[data-side] :is(#bar, #format-bar, #find-bar, #main, #status) { margin-left: var(--side-w); }
+html[data-side][data-drawer="pinned"][data-drawer-side="left"] :is(#format-bar, #find-bar, #main, #status) { margin-left: calc(var(--side-w) + var(--dr-w, 200px)); }
+html[data-side] #drawer[data-side="left"] { left: var(--side-w); }
+html[data-side] .overlay { left: var(--side-w); }
+html[data-ui="starry"][data-theme="dark"][data-stars] #side { background-image: var(--stars); background-size: 100% 120px; background-repeat: no-repeat; }
+.side-list { flex: 1; min-height: 0; overflow-y: auto; scrollbar-width: thin; padding: 10px 8px; display: flex; flex-direction: column; gap: 1px; }
+.side-icon { display: inline-flex; flex: none; align-items: center; justify-content: center; }
+.side-icon svg { width: 16px; height: 16px; stroke-width: 1.6; }
+/* 目录树:名字总是完整显示,太长就换行 */
+.side-book, .side-page {
+  display: flex; align-items: flex-start; gap: 6px;
+  width: 100%; min-height: 30px; padding: 6px 8px; border-radius: var(--r-sm);
+  color: var(--text); text-align: left; font-size: 13px; line-height: 18px;
+}
+.side-book { font-weight: 600; }
+.side-page { padding-left: 32px; color: var(--muted); }
+.side-book:hover, .side-page:hover { background: var(--code-bg); }
+.side-page.current { background: var(--accent-soft); color: var(--accent-on-soft); }
+.side-more { margin-top: 6px; padding: 6px 10px; border-radius: var(--r-sm); color: var(--muted); font-size: 12px; text-align: left; }
+.side-more:hover { background: var(--code-bg); color: var(--text); }
+.side-chev { display: inline-flex; flex: none; color: var(--faint); }
+.side-chev svg { width: 12px; height: 12px; margin-top: 3px; }
+.side-book .side-icon svg { margin-top: 1px; }
+.side-name { min-width: 0; overflow-wrap: anywhere; }
+/* 笔记本图标栏 */
+html[data-side="rail"] .side-list { align-items: center; gap: 6px; padding: 10px 0; }
+.side-rail-book { width: 52px; display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 0; color: var(--muted); font-size: 10px; line-height: 13px; }
+.side-rail-book .side-icon { width: 40px; height: 30px; border-radius: 15px; }
+.side-rail-book:hover .side-icon { background: var(--code-border); }
+.side-rail-book.current { color: var(--text); }
+.side-rail-book.current .side-icon { background: var(--accent-soft); }
+.side-rail-book .side-name { text-align: center; }
+.side-add { display: grid; place-items: center; width: 36px; height: 36px; margin-top: 4px; border-radius: 18px; color: var(--muted); }
+.side-add:hover { background: var(--code-border); color: var(--text); }
+
+/* 设置 → 外观 → 界面风格:四张带缩略图的卡片 */
+.ui-styles { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 8px; }
+.ui-styles button {
+  display: flex; flex-direction: column; gap: 4px; padding: 7px; text-align: left;
+  border: 1px solid var(--code-border); border-radius: var(--r-md); background: var(--bg); color: var(--text);
+}
+.ui-styles button[aria-checked="true"] { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.ui-styles b { font-size: 12.5px; font-weight: 600; }
+.ui-styles small { font-size: 11px; line-height: 1.45; color: var(--muted); }
+.ui-thumb { display: flex; flex-direction: column; gap: 4px; height: 50px; padding: 7px; border-radius: 8px; background: var(--t1); box-shadow: inset 0 0 0 1px rgba(127, 127, 127, 0.2); }
+.ui-thumb i { display: block; height: 4px; border-radius: 2px; background: var(--t3); }
+.ui-thumb i:first-child { width: 60%; height: 6px; background: var(--t4); }
+.ui-thumb i:nth-child(3) { width: 80%; }
+.ui-thumb i:last-child { width: 40%; height: 7px; margin-top: auto; align-self: flex-end; border-radius: 4px; background: var(--t5); }
+.ui-styles [data-ui="material"] .ui-thumb { --t1: #fcf8ff; --t3: #dcd9e3; --t4: #5452c2; --t5: #e2dfff; }
+.ui-styles [data-ui="paper"] .ui-thumb { --t1: #fff; --t3: #e6e6e1; --t4: #1f2023; --t5: #3e63dd; }
+.ui-styles [data-ui="starry"] .ui-thumb { --t1: #0e1024; --t3: #2c3058; --t4: #b3a6ff; --t5: linear-gradient(90deg, #4f6bef, #b34fd8); }
+.ui-styles [data-ui="classic"] .ui-thumb { --t1: #fffdf6; --t3: #e2dac4; --t4: #2b2a26; --t5: #d9822b; }

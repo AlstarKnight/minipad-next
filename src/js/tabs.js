@@ -11,6 +11,7 @@ import { openBooks, renderBook } from "./notebooks.js";
 import { groupsOn, groupOf, tidyGroups, groupChip, groupMenuItems, joinNeighbour, revealNote, groupVars } from "./groups.js";
 import { refreshTabBar, afterSwitch, tabsVertical, revealActive } from "./tabbar.js";
 import { openInMini, focusMini, recallMini, refuseInMini, miniAllowed } from "./mini.js";
+import { renderSidebar } from "./sidebar.js";
 
 // 正在拖动的标签对应的页面
 let dragged = null;
@@ -178,6 +179,7 @@ export function renderTabs() {
   });
   revealActive();
   refreshTabBar();
+  renderSidebar();
 }
 
 // 拖动标签:放到 target 旁边(打开分组时也就进了 target 所在的分组)

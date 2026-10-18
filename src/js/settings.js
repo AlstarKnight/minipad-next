@@ -9,6 +9,9 @@ import { applyEditorSettings } from "./editor.js";
 import { DEFAULT_DATE_FORMAT, formatDate } from "./datetime.js";
 // 活跃标签的高亮:顶部线条 / 整个标签 / 整圈边框(见 style.css)
 const TAB_STYLES = ["line", "fill", "border"];
+// 界面风格(0.4.4):经典是原来的样子,不加 data-ui
+const UI_STYLES = ["material", "paper", "starry", "classic"];
+const uiStyle = (s) => (UI_STYLES.includes(s.ui_style) ? s.ui_style : "starry");
 import { ACCENTS, applyAccent, parseAccent, tidyAccent, gradientOf } from "./accent.js";
 import { APP_ICON, paintBall } from "./ballicon.js";
 import { applyFindAppearance, findColors } from "./findbar.js";
@@ -28,6 +31,10 @@ export function applySettings() {
   const theme =
     s.theme === "system" ? (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light") : s.theme;
   document.documentElement.dataset.theme = theme;
+  const ui = uiStyle(s);
+  if (ui === "classic") delete document.documentElement.dataset.ui;
+  else document.documentElement.dataset.ui = ui;
+  document.documentElement.toggleAttribute("data-stars", s.ui_stars !== false);
   document.documentElement.style.setProperty("--font-size", (s.font_size || 14) + "px");
   $("#btn-pin").classList.toggle("on", s.always_on_top);
   $("#btn-edge").hidden = s.edge_button === false;
@@ -130,6 +137,12 @@ function applyNavPos(value) {
   $("#settings").dataset.nav = value === "top" ? "top" : "left";
 }
 
+// 界面风格的卡片:标出选中的那张,只显示这种风格自己的开关
+function showUiStyle(ui) {
+  for (const b of document.querySelectorAll("#set-ui-style button")) b.setAttribute("aria-checked", String(b.dataset.ui === ui));
+  for (const row of document.querySelectorAll("[data-ui-only]")) row.hidden = row.dataset.uiOnly !== ui;
+}
+
 export function openSettings() {
   closeOverlays();
   const s = state.settings;
@@ -151,6 +164,10 @@ export function openSettings() {
   $("#set-taskbar").checked = s.show_in_taskbar;
   $("#set-autostart").checked = s.autostart;
   $("#set-theme").value = s.theme;
+  showUiStyle(uiStyle(s));
+  $("#set-ui-tree").checked = s.ui_tree !== false;
+  $("#set-ui-rail").checked = s.ui_rail !== false;
+  $("#set-ui-stars").checked = s.ui_stars !== false;
   $("#set-quick-limit").value = s.quick_color_limit || "";
   $("#set-quick-gradient-limit").value = s.quick_gradient_limit || "";
   $("#set-quick-material-limit").value = s.quick_material_limit || "";
@@ -271,7 +288,7 @@ function colorPicker(prefix, box, options, firstSwatch, onChange) {
     if (sharedTool) return;
     sharedTool = makeSharedColorTools({
       id: "settings-" + prefix,
-      getValue: () => picker.value || state.settings?.accent || "#d9822b",
+      getValue: () => picker.value || state.settings?.accent || getComputedStyle(document.documentElement).getPropertyValue("--style-accent").trim() || "#d9822b",
       onApply: (value) => picker.show(value),
       getPreview: colorPreview,
       compact: true,
@@ -300,7 +317,7 @@ function colorPicker(prefix, box, options, firstSwatch, onChange) {
   picker.reopen = () => sharedTool?.reopen();
   return picker;
 }
-const accentColor = colorPicker("accent", "#set-accent", ACCENTS, "#d9822b", () => {
+const accentColor = colorPicker("accent", "#set-accent", ACCENTS, "var(--style-accent)", () => {
   updateFindPreview();
   updateEdgeLinePreview();
 });
@@ -579,6 +596,10 @@ async function submitSettings() {
     show_in_taskbar: $("#set-taskbar").checked,
     autostart: $("#set-autostart").checked,
     theme: $("#set-theme").value,
+    ui_style: $("#set-ui-style [aria-checked=\"true\"]")?.dataset.ui || "starry",
+    ui_tree: $("#set-ui-tree").checked,
+    ui_rail: $("#set-ui-rail").checked,
+    ui_stars: $("#set-ui-stars").checked,
     accent: accentColor.value,
     quick_color_limit: quickLimit($("#set-quick-limit").value),
     quick_gradient_limit: quickLimit($("#set-quick-gradient-limit").value),
@@ -746,6 +767,7 @@ export function bindSettings() {
   });
   $("#set-dir").addEventListener("input", updateMigration);
   $("#set-cancel").addEventListener("click", () => closeOverlays());
+  for (const b of document.querySelectorAll("#set-ui-style button")) b.addEventListener("click", () => showUiStyle(b.dataset.ui));
   for (const id of ["#set-outline", "#set-outline-width", "#set-outline-opacity"]) $(id).addEventListener("input", updateOutline);
   for (const id of ["#set-tab-overflow", "#set-tab-fade", "#set-tab-list", "#set-drawer-side", "#set-drawer-width", "#set-tab-groups"]) $(id).addEventListener("input", updateTabOptions);
   $("#set-sel-bar").addEventListener("input", updateSelOptions);
