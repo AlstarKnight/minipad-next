@@ -47,3 +47,7 @@ main { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; p
 footer { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 6px 12px calc(env(safe-area-inset-bottom) + 6px); border-top: 1px solid var(--edge); font-size: 11px; color: color-mix(in srgb, CanvasText 70%, Canvas); }
 footer button { min-height: 40px; font-size: 12px; }
 [hidden] { display: none !important; }
+
+/* Desktop-only Markdown extensions remain editable as raw source until supported on mobile. */
+#source { width: 100%; min-height: 100%; display: block; padding: 14px; background: var(--tint); color: CanvasText; border: 1px solid var(--edge); border-radius: 8px; resize: none; font: 15px/1.65 ui-monospace, monospace; tab-size: 2; overflow-wrap: anywhere; }
+#source[readonly] { opacity: .8; }
