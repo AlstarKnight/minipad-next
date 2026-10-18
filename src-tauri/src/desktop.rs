@@ -2040,10 +2040,11 @@ fn ball_image_data(app: &AppHandle) -> Option<String> {
     let mime = ball::mime_for(path.extension()?.to_str()?)?;
     let meta = fs::metadata(&path).ok()?;
     let modified = meta.modified().ok()?;
-    st.ball_image_cache.lock().unwrap().get_or_load(&path, meta.len(), modified, || {
+    let result = st.ball_image_cache.lock().unwrap().get_or_load(&path, meta.len(), modified, || {
         let bytes = fs::read(&path).ok()?;
         Some(ball::data_url(mime, &bytes))
-    })
+    });
+    result
 }
 
 #[tauri::command]
