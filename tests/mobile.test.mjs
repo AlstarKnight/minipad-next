@@ -95,7 +95,8 @@ test("touch formatting and reading mode do not mutate the file", async () => {
   const { context, page, errors } = await open();
   try {
     await page.locator(".ProseMirror p").first().click();
-    await page.click('[data-command="heading"]');
+    await page.click('#format-bar [data-cmd="block"]');
+    await page.click('#ctx [data-act="h2"]');
     await page.locator(".ProseMirror h2").filter({ hasText: "第一段" }).waitFor();
     await page.waitForFunction(() => window.__mobileTest.disk[0].notes[0].content.includes("## 第一段"));
     const saved = await page.evaluate(() => window.__mobileTest.disk[0].notes[0].content);
@@ -131,25 +132,61 @@ test("picker image is stored under assets and Markdown keeps a relative path", a
   }
 });
 
-test("desktop-only Markdown features use a lossless source fallback", async () => {
+test("desktop code titles and fold blocks use the shared rich editor without metadata loss", async () => {
   const { context, page, errors } = await open();
   try {
     const content = "> [!fold]- 标题\n> 内容\n\n```python 描述\nprint(1)\n```";
-    await page.evaluate((content) => {
-      window.__mobileTest.disk[0].notes.push({
-        name: "扩展语法", content, unreadable: false,
-      });
-    }, content);
+    await page.evaluate((content) => window.__mobileTest.disk[0].notes.push({
+      name: "扩展语法", content, unreadable: false,
+    }), content);
     await page.click("#refresh");
     await page.selectOption("#note", "扩展语法");
+    await page.locator(".ProseMirror .fold-block").waitFor();
+    await page.locator(".codeblock .cb-title").waitFor();
+    assert.equal(await page.locator("#source").isVisible(), false);
+    assert.equal(await page.locator(".codeblock .cb-title").inputValue(), "描述");
+    assert.equal(await page.locator(".codeblock .cb-lang").inputValue(), "python");
+    const before = await page.evaluate(() => window.__mobileTest.disk[0].notes[2].content);
+    await page.click("#mode");
+    await page.click("#mode");
+    assert.equal(await page.evaluate(() => window.__mobileTest.disk[0].notes[2].content), before);
+    assert.deepEqual(errors, []);
+  } finally {
+    await context.close();
+  }
+});
+
+test("unknown HTML keeps the lossless Markdown source fallback", async () => {
+  const { context, page, errors } = await open();
+  try {
+    const content = "<div class='custom'>自定义 HTML</div>";
+    await page.evaluate((content) => window.__mobileTest.disk[0].notes.push({
+      name: "自定义语法", content, unreadable: false,
+    }), content);
+    await page.click("#refresh");
+    await page.selectOption("#note", "自定义语法");
     await page.locator("#source").waitFor({ state: "visible" });
-    assert.equal(await page.locator("#editor").isVisible(), false);
     assert.equal(await page.locator("#source").inputValue(), content);
     await page.locator("#source").fill(content + "\n新的说明");
-    await page.waitForFunction(() =>
-      window.__mobileTest.disk[0].notes[2].content.endsWith("新的说明"));
-    assert.equal(await page.evaluate(() => window.__mobileTest.disk[0].notes[2].content),
-      content + "\n新的说明");
+    await page.waitForFunction(() => window.__mobileTest.disk[0].notes[2].content.endsWith("新的说明"));
+    assert.equal(await page.evaluate(() => window.__mobileTest.disk[0].notes[2].content), content + "\n新的说明");
+    assert.deepEqual(errors, []);
+  } finally {
+    await context.close();
+  }
+});
+
+test("touch drawer navigates notes without covering the editor permanently", async () => {
+  const { context, page, errors } = await open();
+  try {
+    await page.click("#open-drawer");
+    assert.equal(await page.locator("#drawer").isVisible(), true);
+    await page.locator("#note-filter").fill("二");
+    await page.locator('#notes-list button').filter({hasText:"二"}).click();
+    await page.locator(".ProseMirror p").filter({hasText:"第二页"}).waitFor();
+    assert.equal(await page.locator("#drawer").isVisible(), false);
+    assert.equal(await page.locator("#page-title").textContent(), "二");
+    assert.equal(await page.locator('#format-bar [data-cmd="codeblock"]').count(), 1);
     assert.deepEqual(errors, []);
   } finally {
     await context.close();
