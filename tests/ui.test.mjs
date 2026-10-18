@@ -4829,6 +4829,8 @@ describe("0.3.1: floating outline", () => {
     await until(() => current(p), ["做法"], "the heading lights up");
     assert.deepEqual(await strip(p), ["", "", "", "", "on", ""], "so does its line");
 
+    // 点击后的平滑滚动要等 scrollend(没收到时最多一秒)记下落点;落点还没记下就手动滚回顶部,会被当成还停在原处
+    await sleep(1100);
     await p.$eval("#editor", (e) => (e.scrollTop = 0));
     await until(() => current(p), ["项目计划"], "back at the top");
     await p.$eval("#editor", (e) => {

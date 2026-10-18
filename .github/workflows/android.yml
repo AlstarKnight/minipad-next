@@ -13,19 +13,33 @@ on:
       - 'package*.json'
       - '.github/workflows/android.yml'
   workflow_dispatch:
+  # Called by build.yml when a version is about to be released (release: true). In that mode the
+  # APK is only produced when the stable signing key is available, and gets a versioned name.
+  workflow_call:
+    inputs:
+      release:
+        type: boolean
+        default: false
+    outputs:
+      apk:
+        description: File name of the signed release APK ('' when it was skipped)
+        value: ${{ jobs.android.outputs.apk }}
 
 permissions:
   contents: read
 
 # A newer push to the same PR replaces the running build instead of queueing a second one.
+# Release builds on main are never cancelled, so a quick second merge cannot lose the first release.
 concurrency:
   group: android-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   android:
     runs-on: ubuntu-latest
     timeout-minutes: 75
+    outputs:
+      apk: ${{ steps.sign.outputs.apk }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -67,8 +81,10 @@ jobs:
       # back to a throw-away key so CI still produces an installable (but not upgradable) APK.
       # Passwords are only passed through environment variables, never printed.
       - name: Sign and verify installable APK
+        id: sign
         shell: bash
         env:
+          RELEASE: ${{ inputs.release }}
           KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
           KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
@@ -93,6 +109,12 @@ jobs:
             printf '%s' "$KEYSTORE_BASE64" | base64 -d > "$keystore"
             keytool -list -keystore "$keystore" -alias "$KEY_ALIAS" \
               -storepass:env KEYSTORE_PASSWORD > /dev/null
+          elif (( set_count == 0 )) && [[ "$RELEASE" == "true" ]]; then
+            # A throw-away key must never end up on a public Release: nobody could update from it.
+            msg="Release APK skipped: ANDROID_* repository secrets are not set, so it would only be signed with a temporary key. Set them and re-run the build to add the APK to the release."
+            echo "::warning::$msg"
+            echo "$msg" | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
           elif (( set_count == 0 )); then
             mode="temporary key (ANDROID_* secrets not set: this APK cannot be installed over another build)"
             KEYSTORE_PASSWORD=android KEY_PASSWORD=android KEY_ALIAS=minipad-test
@@ -106,7 +128,11 @@ jobs:
           fi
           export KEYSTORE_PASSWORD KEY_PASSWORD
           mkdir -p android-artifacts
-          out=android-artifacts/minipad-next-arm64-test.apk
+          apk=minipad-next-arm64-test.apk
+          if [[ "$RELEASE" == "true" ]]; then
+            apk="Minipad-Next-$(node -p "require('./package.json').version")-android-arm64.apk"
+          fi
+          out="android-artifacts/$apk"
           "$ANDROID_HOME/build-tools/36.0.0/zipalign" -f -P 16 4 \
             "$unsigned" "$RUNNER_TEMP/minipad-aligned.apk"
           "$ANDROID_HOME/build-tools/36.0.0/apksigner" sign \
@@ -117,9 +143,11 @@ jobs:
           ls -lh "$unsigned" "$out"
           stat -c 'APK bytes: %s' "$out"
           echo "APK signed with: $mode" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "apk=$apk" >> "$GITHUB_OUTPUT"
       # Uploaded as-is (not zipped), so the link downloads the .apk itself.
       - uses: actions/upload-artifact@v7
+        if: steps.sign.outputs.apk != ''
         with:
-          path: android-artifacts/minipad-next-arm64-test.apk
+          path: android-artifacts/${{ steps.sign.outputs.apk }}
           archive: false
           if-no-files-found: error

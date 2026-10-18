@@ -138,11 +138,54 @@ jobs:
           archive: false
           if-no-files-found: error
 
+  # 先看这个版本要不要发布:只有合并到 main、而且这个版本还没发布完(没有 Release,或者 Release 里缺安装包)
+  # 才需要,这时才去构建安卓安装包(耗时长),其余情况(PR、依赖更新合并等)都不用
+  plan:
+    name: Release plan
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      publish: ${{ steps.plan.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v7
+
+      # 数 Release 里的 Windows 安装包(.exe)。安卓安装包不算,所以以前发布过的版本不会因为没有 apk 被重新发布
+      - name: Check whether this version is released
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(node -p "require('./package.json').version")
+          installers=$(gh release view "v$version" --repo "$GITHUB_REPOSITORY" --json assets --jq '[.assets[].name | select(endswith(".exe"))] | length' 2>/dev/null || echo 0)
+          if [ "$installers" -ge 2 ]; then
+            echo "v$version 已经发布过"
+          elif [ "${{ github.event_name }}" = "push" ] && [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            echo "v$version 还没有发布(或者缺安装包)"
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "v$version 还没有发布,但不是 main 上的构建,只检查不发布"
+          fi
+
+  # 安卓安装包只在要发布时构建,和 Release 一起发。没有配置固定签名密钥时跳过,不会用临时密钥签名发出去
+  android:
+    name: Android release APK
+    needs: [plan]
+    if: needs.plan.outputs.publish == 'true'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/android.yml
+    with:
+      release: true
+    secrets: inherit
+
   # 发布单独放一个 job,等格式检查、界面测试、Rust 检查和 Windows 构建都通过以后才发。
   # PR 里也跑一遍,只检查(能不能拿到安装包、CHANGELOG 里有没有这一节),不发布
   release:
     name: Release
-    needs: [checks, rust, windows]
+    needs: [checks, rust, windows, plan, android]
+    # 安卓那一步在不需要发布时是跳过的,不能因此把发布拦住;它失败或被取消则不发
+    if: ${{ !cancelled() && needs.checks.result == 'success' && needs.rust.result == 'success' && needs.windows.result == 'success' && needs.plan.result == 'success' && contains(fromJSON('["success","skipped"]'), needs.android.result) }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -154,36 +197,35 @@ jobs:
           name: minipad-next-windows
           path: dist
 
-      # 合并到 main 时,如果 package.json 里的版本还没发布完(没有 Release,或者 Release 里缺安装包),
+      # 安卓安装包没生成(没配签名密钥)时这里是空的,只发 Windows 的
+      - uses: actions/download-artifact@v8
+        if: needs.android.outputs.apk != ''
+        with:
+          name: ${{ needs.android.outputs.apk }}
+          path: dist
+
+      # 合并到 main 时,如果 package.json 里的版本还没发布完(没有 Release,或者 Release 里缺 Windows 安装包),
       # 就建标签 v版本号 并发布 Release(说明取自 CHANGELOG.md 里这个版本那一节)。
       # 上次发布到一半失败了(比如上传安装包时出错),重跑这次构建就会补上
-      - name: Check whether this version is released
+      - name: Prepare release notes
         id: release
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           ls -l dist
           version=$(node -p "require('./package.json').version")
           echo "tag=v$version" >> "$GITHUB_OUTPUT"
           node scripts/release-notes.mjs "$version" > release-notes.md
-          assets=$(gh release view "v$version" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets | length' 2>/dev/null || echo 0)
-          if [ "$assets" -ge 2 ]; then
-            echo "v$version 已经发布过"
-          else
-            echo "v$version 还没有发布(或者缺安装包),说明:"
-            cat release-notes.md
-            echo "publish=true" >> "$GITHUB_OUTPUT"
-          fi
+          echo "说明:"
+          cat release-notes.md
 
       - name: Publish release for the new version
-        if: steps.release.outputs.publish == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: needs.plan.outputs.publish == 'true'
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.release.outputs.tag }}
           target_commitish: ${{ github.sha }}
           name: ${{ steps.release.outputs.tag }}
           body_path: release-notes.md
-          files: dist/*.exe
+          files: dist/*
           fail_on_unmatched_files: true
 
       # 手动推了 v 开头的标签(或者在 Releases 页面新建了标签):把安装包附到这个 Release 上
