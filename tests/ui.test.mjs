@@ -3958,6 +3958,9 @@ describe("theme and accent", () => {
     await p.click("#set-ball-pick");
     assert.equal(await p.isChecked('input[name="set-ball-icon"][value="custom"]'), true, "picking an image selects it");
     assert.equal(await p.getAttribute("#set-ball-preview img", "src"), "data:image/png;base64,iVBORw0KGgo=");
+    await p.evaluate(() => (window.__mockControl.ballImage = "data:image/png;base64,cmVmcmVzaGVk"));
+    await p.click("#set-ball-refresh");
+    assert.equal(await p.getAttribute("#set-ball-preview img", "src"), "data:image/png;base64,cmVmcmVzaGVk", "manual reload updates preview");
     await p.click("#set-save");
     await until(() => h.stored().then((s) => [s.settings.ball_enabled, s.settings.ball_size, s.settings.ball_icon, s.settings.ball_color, s.settings.ball_opacity, s.settings.ball_open]), [true, 64, "custom", "linear-gradient(135deg, #5fb4ff, #d66cf0)", 80, "dblclick"]);
     assert.equal(await p.isVisible("#btn-ball"), true, "the top bar now has the collapse button");
