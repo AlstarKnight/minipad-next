@@ -128,7 +128,11 @@ mod tests {
         assert!(entries[0].directory);
         assert_eq!(entries[1].href, "/MinipadNext/中文%20笔记.md");
         assert_eq!(entries[1].size, Some(31));
-        assert!(entries[1].modified.as_deref().unwrap().starts_with("Sun, 18 Oct"));
+        assert!(entries[1]
+            .modified
+            .as_deref()
+            .unwrap()
+            .starts_with("Sun, 18 Oct"));
         assert_eq!(entries[1].etag.as_deref(), Some(r#""abc""#));
     }
 
