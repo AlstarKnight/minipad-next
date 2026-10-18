@@ -37,6 +37,10 @@
     <textarea id="source" aria-label="保真 Markdown 源码编辑" spellcheck="false" hidden></textarea>
   </main>
 
+  <button id="new-page" type="button" class="new-page" aria-label="新建页面" title="新建页面" disabled>
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg><span>新页面</span>
+  </button>
+
   <div id="mobile-dock" class="edit-dock" role="region" aria-label="桌面同款完整格式工具栏">
     <div class="dock-heading">
       <span>完整编辑工具</span>
@@ -137,6 +141,7 @@
     </div>
     <h3>强调色</h3>
     <div id="look-accent" class="accent-swatches" role="radiogroup" aria-label="强调色"></div>
+    <label class="switch-row"><span>右下角的新建页面按钮</span><input id="look-fab" type="checkbox"></label>
     <div class="style-only" data-ui-only="starry">
       <label class="switch-row"><span>深色时顶栏和抽屉有星光</span><input id="look-stars" type="checkbox"></label>
       <label class="switch-row"><span>分类工具栏:文字 / 段落 / 插入 / 颜色</span><input id="look-cats" type="checkbox"></label>

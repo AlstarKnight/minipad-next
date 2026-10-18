@@ -365,3 +365,21 @@ html[data-mobile][data-ui="starry"] .note-list button.active { color: var(--acce
 html[data-mobile][data-ui="starry"] .section-heading button { color: #fff; background: var(--ui-grad); }
 html[data-mobile][data-ui="starry"] #format-bar button { border-radius: 10px; }
 html[data-mobile][data-ui="starry"][data-theme="dark"][data-stars] :is(.app-header, .drawer-top) { background-image: var(--stars); }
+
+/* 新建页面的悬浮按钮:页面区域右下角;打字时(键盘弹出)让开。三种风格各有样子,设置里可以关 */
+html[data-mobile] .new-page { display: none; }
+html[data-mobile][data-fab]:not([data-keyboard]) .new-page {
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  position: fixed; z-index: 15; right: 16px; bottom: var(--fab-bottom, 120px);
+  min-width: 56px; height: 56px; padding: 0 16px; border: 0; border-radius: 16px;
+  background: var(--soft-accent); color: var(--accent); font-size: 14px; font-weight: 650;
+  box-shadow: 0 3px 10px rgba(0, 0, 0, .12);
+}
+html[data-mobile] .new-page svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
+html[data-mobile] .new-page span { display: none; }
+html[data-mobile][data-fab][data-ui="material"] .new-page { background: var(--tab-active); color: var(--text); padding: 0 20px 0 16px; }
+html[data-mobile][data-ui="material"] .new-page span { display: inline; }
+html[data-mobile][data-fab][data-ui="paper"] .new-page { width: 52px; min-width: 52px; height: 52px; padding: 0; border-radius: 14px;
+  background: var(--accent); color: var(--accent-fg); box-shadow: 0 2px 8px rgba(0, 0, 0, .1); }
+html[data-mobile][data-fab][data-ui="starry"] .new-page { width: 60px; height: 60px; padding: 0; border-radius: 50%;
+  background: var(--ui-grad); color: #fff; box-shadow: 0 4px 14px rgba(91, 71, 214, .3); }

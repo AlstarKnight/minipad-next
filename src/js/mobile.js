@@ -275,6 +275,7 @@ function render() {
   toolbar.hidden = !canEdit || raw;
   toolbar.inert = switching;
   el("add-note").disabled = !book || switching;
+  fab.disabled = el("add-note").disabled;
   el("insert-image").disabled = !canEdit || raw;
   el("find-open").disabled = !selected || raw;
   el("block-actions").disabled = !canEdit || raw;
@@ -581,6 +582,7 @@ function loadLook() {
     accent: tidyAccent(typeof saved.accent === "string" ? saved.accent : ""),
     stars: saved.stars !== false,
     cats: saved.cats !== false,
+    fab: saved.fab !== false,
   };
 }
 
@@ -597,6 +599,7 @@ function applyLook() {
   root.dataset.theme = look.theme === "system" ? (systemDark.matches ? "dark" : "light") : look.theme;
   root.toggleAttribute("data-stars", look.stars);
   root.toggleAttribute("data-cats", look.cats);
+  root.toggleAttribute("data-fab", look.fab);
   applyAccent(look.accent);
   // 自选的强调色也给按钮的浅底换色(经典风格的浅底是写死的绿色)
   if (look.accent) root.style.setProperty("--soft-accent", "var(--accent-soft)");
@@ -608,6 +611,7 @@ function applyLook() {
   for (const row of settingsSheet.querySelectorAll("[data-ui-only]")) row.hidden = row.dataset.uiOnly !== look.ui;
   el("look-stars").checked = look.stars;
   el("look-cats").checked = look.cats;
+  el("look-fab").checked = look.fab;
   renderDrawer();
 }
 
@@ -626,6 +630,7 @@ for (const b of el("ui-styles").children) b.addEventListener("click", () => setL
 for (const b of document.querySelectorAll("[data-theme-choice]")) b.addEventListener("click", () => setLook({ theme: b.dataset.themeChoice }));
 el("look-stars").addEventListener("change", (e) => setLook({ stars: e.target.checked }));
 el("look-cats").addEventListener("change", (e) => setLook({ cats: e.target.checked }));
+el("look-fab").addEventListener("change", (e) => setLook({ fab: e.target.checked }));
 systemDark.addEventListener("change", applyLook);
 
 function showSettings(open) {
@@ -643,26 +648,42 @@ applyLook();
 
 // The soft keyboard must not cover the toolbar. Some WebViews shrink only the visual viewport,
 // so the page height follows it, and the status line steps aside while the keyboard is up.
+// Others resize the whole page for the keyboard and still shrink the visual viewport on top of
+// that: following the visual viewport there would leave a keyboard-sized gap under the toolbar,
+// so once the page itself got shorter its own height wins.
 let fullHeight = 0;
 let fullWidth = 0;
+let fullInner = 0;
 function fitViewport() {
   const vv = window.visualViewport;
   // Pinch-zooming shrinks the visual viewport in CSS pixels too; scale puts it back to screen size.
   const scale = vv?.scale ?? 1;
   const width = Math.round((vv?.width ?? window.innerWidth) * scale);
   const height = Math.round((vv?.height ?? window.innerHeight) * scale);
-  if (width !== fullWidth) { fullWidth = width; fullHeight = 0; } // rotated: measure again
+  if (width !== fullWidth) { fullWidth = width; fullHeight = 0; fullInner = 0; } // rotated: measure again
   fullHeight = Math.max(fullHeight, height);
+  fullInner = Math.max(fullInner, window.innerHeight);
   const root = document.documentElement;
-  const keyboard = fullHeight - height > 120;
-  root.style.setProperty("--app-height", height + "px");
+  const resized = fullInner - window.innerHeight > 120;
+  const keyboard = resized || fullHeight - height > 120;
+  root.style.setProperty("--app-height", (resized ? window.innerHeight : height) + "px");
   // How much of the layout viewport the keyboard covers (0 when the layout already shrank).
   // offsetTop is already in layout-viewport pixels, so it is not scaled.
-  root.style.setProperty("--keyboard-inset", Math.max(0, window.innerHeight - height - Math.round(vv?.offsetTop ?? 0)) + "px");
+  root.style.setProperty("--keyboard-inset", (resized ? 0 : Math.max(0, window.innerHeight - height - Math.round(vv?.offsetTop ?? 0))) + "px");
   const was = root.hasAttribute("data-keyboard");
   root.toggleAttribute("data-keyboard", keyboard);
   if (keyboard && !was && view?.hasFocus()) requestAnimationFrame(() => view.dispatch(view.state.tr.scrollIntoView()));
+  placeFab();
 }
+
+// 新建页面的悬浮按钮停在页面区域的右下角,工具栏和状态栏变高变矮时跟着挪
+const fab = el("new-page");
+function placeFab() {
+  const bottom = el("page").getBoundingClientRect().bottom;
+  document.documentElement.style.setProperty("--fab-bottom", Math.max(0, Math.round(window.innerHeight - bottom)) + 16 + "px");
+}
+fab.addEventListener("click", () => el("add-note").click());
+new ResizeObserver(placeFab).observe(el("page"));
 window.visualViewport?.addEventListener("resize", fitViewport);
 window.addEventListener("resize", fitViewport);
 fitViewport();

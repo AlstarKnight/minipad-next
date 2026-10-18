@@ -717,3 +717,69 @@ test("the hide-keyboard button shows while the keyboard is up and takes the focu
     await context.close();
   }
 });
+
+test("a WebView that resizes the page for the keyboard and also shrinks the visual viewport leaves no gap", async () => {
+  const { context, page, errors } = await open({ keyboard: true });
+  try {
+    // The page itself got 300px shorter, and the visual viewport reports another 300px on top.
+    await page.setViewportSize({ width: 390, height: 440 });
+    await page.evaluate(() => {
+      window.visualViewport.height = innerHeight - 300;
+      window.visualViewport.dispatchEvent(new Event("resize"));
+    });
+    const layout = await page.evaluate(() => ({
+      body: document.body.getBoundingClientRect().height,
+      dockBottom: Math.ceil(document.getElementById("mobile-dock").getBoundingClientRect().bottom),
+      keyboard: document.documentElement.hasAttribute("data-keyboard"),
+      inset: document.documentElement.style.getPropertyValue("--keyboard-inset"),
+    }));
+    const { dockBottom, ...rest } = layout;
+    assert.deepEqual(rest, { body: 440, keyboard: true, inset: "0px" });
+    assert.ok(dockBottom >= 436 && dockBottom <= 440, `the toolbar ends at the keyboard (${dockBottom})`);
+    await page.setViewportSize({ width: 390, height: 740 });
+    await page.evaluate(() => {
+      window.visualViewport.height = innerHeight;
+      window.visualViewport.dispatchEvent(new Event("resize"));
+    });
+    assert.equal(await rootAttr(page, "data-keyboard"), null);
+    assert.deepEqual(errors, []);
+  } finally {
+    await context.close();
+  }
+});
+
+test("the floating new-page button creates a page, steps aside for the keyboard and can be turned off", async () => {
+  for (const ui of ["starry", "material", "paper", "classic"]) {
+    const { context, page, errors } = await open({ keyboard: true, look: { ui } });
+    try {
+      page.on("dialog", (dialog) => { void dialog.accept("三"); });
+      const fab = page.locator("#new-page");
+      await fab.waitFor({ state: "visible" });
+      const box = await fab.boundingBox();
+      const dockTop = await page.locator("#mobile-dock").evaluate((d) => d.getBoundingClientRect().top);
+      assert.ok(box.y + box.height <= dockTop - 8, `${ui}: the button sits above the toolbar`);
+      assert.ok(box.width >= 44 && box.height >= 44, `${ui}: finger-sized`);
+      await fab.click();
+      await page.waitForFunction(() => document.getElementById("page-title").textContent === "三");
+      assert.deepEqual(await page.evaluate(() => window.__mobileTest.disk[0].notes.map((n) => n.name)), ["一", "二", "三"]);
+      await page.evaluate(() => {
+        window.visualViewport.height = innerHeight - 300;
+        window.visualViewport.dispatchEvent(new Event("resize"));
+      });
+      assert.equal(await fab.isVisible(), false, `${ui}: hidden while typing`);
+      await page.evaluate(() => {
+        window.visualViewport.height = innerHeight;
+        window.visualViewport.dispatchEvent(new Event("resize"));
+      });
+      await fab.waitFor({ state: "visible" });
+      await page.click("#open-drawer");
+      await page.click("#open-settings");
+      await page.uncheck("#look-fab");
+      await page.click("#close-settings");
+      assert.equal(await fab.isVisible(), false, `${ui}: turned off`);
+      assert.deepEqual(errors, []);
+    } finally {
+      await context.close();
+    }
+  }
+});
