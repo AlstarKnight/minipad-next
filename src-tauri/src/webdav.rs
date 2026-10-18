@@ -98,7 +98,12 @@ pub fn parse_multistatus(xml: &str) -> Result<Vec<RemoteEntry>, String> {
                     _ => {}
                 }
             }
-            Event::Eof => break,
+            Event::Eof => {
+                if item.is_some() {
+                    return Err("WebDAV 列目录响应提前结束".into());
+                }
+                break;
+            }
             _ => {}
         }
     }
@@ -123,6 +128,7 @@ mod tests {
         assert!(entries[0].directory);
         assert_eq!(entries[1].href, "/MinipadNext/中文%20笔记.md");
         assert_eq!(entries[1].size, Some(31));
+        assert!(entries[1].modified.as_deref().unwrap().starts_with("Sun, 18 Oct"));
         assert_eq!(entries[1].etag.as_deref(), Some(r#""abc""#));
     }
 
