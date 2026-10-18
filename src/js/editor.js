@@ -435,7 +435,7 @@ export async function createEditor(opts) {
     // Only mouse/window-specific plugins are replaced or left off on Android.
     .use([lineBreak, codeBlockWithTitle, codeBlockView, codeHighlight, readOnly, changes,
       placeholder, afterRule, formatBar, foldBlocks,
-      ...(mobile ? [opts.mobileImagePlugin] : [findPlugin, outlinePlugin, selectionBar, blockManager, imagePlugin])])
+      ...(mobile ? [blockManager, opts.mobileImagePlugin] : [findPlugin, outlinePlugin, selectionBar, blockManager, imagePlugin])])
     .create();
   editor.action((c) => {
     ctx = c;
