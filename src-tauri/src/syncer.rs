@@ -83,17 +83,16 @@ pub fn should_sync(path: &str, images: bool) -> bool {
     let parts: Vec<&str> = path.split('/').collect();
     if parts.is_empty()
         || parts.len() > 3
-        || parts.iter().any(|p| p.is_empty() || *p == "." || *p == ".." || p.starts_with('.')
-            && *p != ".minipad.json")
+        || parts.iter().any(|p| {
+            p.is_empty() || *p == "." || *p == ".." || p.starts_with('.') && *p != ".minipad.json"
+        })
         || path.contains('\\')
     {
         return false;
     }
     match parts.as_slice() {
         [name] => name.ends_with(".md") || *name == ".minipad.json",
-        [book, name] => {
-            !book.is_empty() && (name.ends_with(".md") || *name == ".minipad.json")
-        }
+        [book, name] => !book.is_empty() && (name.ends_with(".md") || *name == ".minipad.json"),
         [book, dir, name] => images && !book.is_empty() && *dir == "assets" && !name.is_empty(),
         _ => false,
     }
@@ -106,17 +105,24 @@ pub fn plan<'a>(
     remote: &'a BTreeMap<String, String>,
     mode: FirstSync,
 ) -> Vec<(String, Action)> {
-    let paths: BTreeSet<_> = base.keys().chain(local.keys()).chain(remote.keys()).collect();
-    paths.into_iter().map(|path| {
-        let l = local.get(path).map(String::as_str);
-        let r = remote.get(path).map(String::as_str);
-        let action = if base.is_empty() {
-            first_sync(l, r, mode)
-        } else {
-            decide(base.get(path).map(String::as_str), l, r)
-        };
-        (path.clone(), action)
-    }).collect()
+    let paths: BTreeSet<_> = base
+        .keys()
+        .chain(local.keys())
+        .chain(remote.keys())
+        .collect();
+    paths
+        .into_iter()
+        .map(|path| {
+            let l = local.get(path).map(String::as_str);
+            let r = remote.get(path).map(String::as_str);
+            let action = if base.is_empty() {
+                first_sync(l, r, mode)
+            } else {
+                decide(base.get(path).map(String::as_str), l, r)
+            };
+            (path.clone(), action)
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -141,7 +147,11 @@ mod tests {
             (Some("a"), None, None, Skip),
         ];
         for (base, local, remote, expected) in cases {
-            assert_eq!(decide(base, local, remote), expected, "{base:?} {local:?} {remote:?}");
+            assert_eq!(
+                decide(base, local, remote),
+                expected,
+                "{base:?} {local:?} {remote:?}"
+            );
         }
     }
 
@@ -149,7 +159,10 @@ mod tests {
     fn first_sync_modes() {
         use Action::*;
         assert_eq!(first_sync(Some("a"), Some("b"), FirstSync::Merge), Conflict);
-        assert_eq!(first_sync(Some("a"), Some("b"), FirstSync::Remote), Download);
+        assert_eq!(
+            first_sync(Some("a"), Some("b"), FirstSync::Remote),
+            Download
+        );
         assert_eq!(first_sync(Some("a"), Some("b"), FirstSync::Local), Upload);
         assert_eq!(first_sync(Some("a"), None, FirstSync::Remote), DeleteLocal);
         assert_eq!(first_sync(None, Some("a"), FirstSync::Local), DeleteRemote);
@@ -167,14 +180,27 @@ mod tests {
 
     #[test]
     fn file_scope_and_exclusions() {
-        for p in ["页面.md", ".minipad.json", "工作/笔记.md", "工作/.minipad.json"] {
+        for p in [
+            "页面.md",
+            ".minipad.json",
+            "工作/笔记.md",
+            "工作/.minipad.json",
+        ] {
             assert!(should_sync(p, false), "{p}");
         }
         assert!(should_sync("工作/assets/图 片.png", true));
         assert!(!should_sync("工作/assets/图 片.png", false));
-        for p in [".trash/x.md", ".import-old/x.md", ".tmp.md", "工作/深层/子/页.md",
-                  "../secret.md", "工作/../页.md", "设置.json", "工作/a.tmp",
-                  "工作\\文件.md"] {
+        for p in [
+            ".trash/x.md",
+            ".import-old/x.md",
+            ".tmp.md",
+            "工作/深层/子/页.md",
+            "../secret.md",
+            "工作/../页.md",
+            "设置.json",
+            "工作/a.tmp",
+            "工作\\文件.md",
+        ] {
             assert!(!should_sync(p, true), "{p}");
         }
     }
@@ -184,7 +210,12 @@ mod tests {
         let base = BTreeMap::from([("a.md".into(), "a".into())]);
         let local = BTreeMap::from([("a.md".into(), "a".into()), ("b.md".into(), "b".into())]);
         let remote = BTreeMap::from([("a.md".into(), "c".into())]);
-        assert_eq!(plan(&base, &local, &remote, FirstSync::Merge),
-            vec![("a.md".into(), Action::Download), ("b.md".into(), Action::Upload)]);
+        assert_eq!(
+            plan(&base, &local, &remote, FirstSync::Merge),
+            vec![
+                ("a.md".into(), Action::Download),
+                ("b.md".into(), Action::Upload)
+            ]
+        );
     }
 }
