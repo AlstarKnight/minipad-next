@@ -104,6 +104,7 @@ pub fn plan<'a>(
     local: &'a BTreeMap<String, String>,
     remote: &'a BTreeMap<String, String>,
     mode: FirstSync,
+    first_run: bool,
 ) -> Vec<(String, Action)> {
     let paths: BTreeSet<_> = base
         .keys()
@@ -115,7 +116,7 @@ pub fn plan<'a>(
         .map(|path| {
             let l = local.get(path).map(String::as_str);
             let r = remote.get(path).map(String::as_str);
-            let action = if base.is_empty() {
+            let action = if first_run {
                 first_sync(l, r, mode)
             } else {
                 decide(base.get(path).map(String::as_str), l, r)
@@ -281,12 +282,27 @@ mod tests {
     }
 
     #[test]
+    fn an_empty_snapshot_is_not_always_a_first_sync() {
+        let base = BTreeMap::new();
+        let local = BTreeMap::from([("note.md".into(), "text".into())]);
+        let remote = BTreeMap::new();
+        assert_eq!(
+            plan(&base, &local, &remote, FirstSync::Remote, true),
+            vec![("note.md".into(), Action::DeleteLocal)]
+        );
+        assert_eq!(
+            plan(&base, &local, &remote, FirstSync::Remote, false),
+            vec![("note.md".into(), Action::Upload)]
+        );
+    }
+
+    #[test]
     fn stable_plan() {
         let base = BTreeMap::from([("a.md".into(), "a".into())]);
         let local = BTreeMap::from([("a.md".into(), "a".into()), ("b.md".into(), "b".into())]);
         let remote = BTreeMap::from([("a.md".into(), "c".into())]);
         assert_eq!(
-            plan(&base, &local, &remote, FirstSync::Merge),
+            plan(&base, &local, &remote, FirstSync::Merge, false),
             vec![
                 ("a.md".into(), Action::Download),
                 ("b.md".into(), Action::Upload)
