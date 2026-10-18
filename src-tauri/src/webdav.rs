@@ -47,7 +47,7 @@ pub fn parse_multistatus(xml: &str) -> Result<Vec<RemoteEntry>, String> {
                         valid_property = true;
                     }
                     "href" | "getetag" | "getcontentlength" | "getlastmodified" | "status" => {
-                        field = String::from_utf8_lossy(&name).to_string();
+                        field = name.clone();
                     }
                     "collection" if valid_property => {
                         if let Some(ref mut entry) = item {
