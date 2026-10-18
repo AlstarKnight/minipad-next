@@ -347,6 +347,69 @@ el("note-filter").addEventListener("input", renderDrawer);
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && !drawer.hidden) toggleDrawer(false);
 });
+el("insert-image").addEventListener("click", () => {
+  if (view?.editable && selected && !selected.sourceOnly) fileInput.click();
+});
+const findPanel = el("find-panel");
+const findInput = el("find-input");
+const replaceInput = el("replace-input");
+let findIndex = -1;
+function findHits() {
+  if (!view || !findInput.value) return [];
+  const query = findInput.value.toLowerCase();
+  const matches = [];
+  view.state.doc.descendants((node, pos) => {
+    if (!node.isTextblock) return true;
+    let text = "";
+    const positions = [];
+    node.forEach((child, offset) => {
+      const part = child.isText ? child.text : child.type.name === "hardbreak" ? "\n" : "\uFFFC";
+      for (let i = 0; i < part.length; i++) positions.push(pos + 1 + offset + (child.isText ? i : 0));
+      text += part;
+    });
+    const lower = text.toLowerCase();
+    for (let i = lower.indexOf(query); i >= 0; i = lower.indexOf(query, i + query.length))
+      matches.push({ from: positions[i], to: positions[i + query.length - 1] + 1 });
+    return false;
+  });
+  return matches;
+}
+function showFind(open) {
+  findPanel.hidden = !open;
+  if (open) findInput.focus();
+  else view?.focus();
+}
+function navigateFind(delta = 1) {
+  const hits = findHits();
+  if (!hits.length) { el("find-count").textContent = "没有匹配的内容"; return; }
+  findIndex = (findIndex + delta + hits.length) % hits.length;
+  const hit = hits[findIndex];
+  view.dispatch(view.state.tr.setSelection(
+    view.state.selection.constructor.create(view.state.doc, hit.from, hit.to)
+  ).scrollIntoView());
+  el("find-count").textContent = `${findIndex + 1} / ${hits.length}`;
+}
+function replaceFound(all) {
+  if (!view?.editable || !findInput.value) return;
+  const hits = findHits();
+  if (!hits.length) return;
+  const chosen = all ? hits : [hits[findIndex < 0 ? 0 : Math.min(findIndex, hits.length - 1)]];
+  const tr = view.state.tr;
+  for (const hit of chosen.slice().reverse()) tr.insertText(replaceInput.value, hit.from, hit.to);
+  view.dispatch(tr.scrollIntoView());
+  findIndex = -1;
+  el("find-count").textContent = `已替换 ${chosen.length} 处`;
+}
+el("find-open").addEventListener("click", () => showFind(findPanel.hidden));
+el("find-close").addEventListener("click", () => showFind(false));
+findInput.addEventListener("input", () => {
+  findIndex = -1;
+  el("find-count").textContent = `找到 ${findHits().length} 处`;
+});
+el("find-next").addEventListener("click", () => navigateFind(1));
+el("find-prev").addEventListener("click", () => navigateFind(-1));
+el("replace-one").addEventListener("click", () => replaceFound(false));
+el("replace-all").addEventListener("click", () => replaceFound(true));
 el("block-actions").addEventListener("pointerdown", (e) => e.preventDefault());
 el("block-actions").addEventListener("click", () => {
   if (!view?.editable) return;
@@ -411,6 +474,7 @@ async function start() {
       emptyBold: () => {},
     });
     view = editorDebug().view;
+    view.dom.addEventListener("open-find", () => showFind(true));
     if (!invoke) throw new Error("请使用 Android 应用打开");
     await refresh(null, null);
   } catch (error) {
