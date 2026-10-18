@@ -49,12 +49,14 @@ const readErrorObserver = new ResizeObserver(() => {
   const box = $("#read-error");
   $("#main").style.setProperty("--read-error-height", box.hidden ? "0px" : box.getBoundingClientRect().height + 12 + "px");
 });
-readErrorObserver.observe($("#read-error"));
-
-// 主窗口里正在小窗里编辑的页面也用这个横幅(只读),点一下切到小窗
-$("#read-error").addEventListener("click", (e) => {
-  if (e.currentTarget.classList.contains("in-mini")) document.dispatchEvent(new CustomEvent("focus-mini"));
-});
+// The read-only banner is desktop-only; its element is not present in Android.
+const readErrorBox = $("#read-error");
+if (readErrorBox) {
+  readErrorObserver.observe(readErrorBox);
+  readErrorBox.addEventListener("click", (e) => {
+    if (e.currentTarget.classList.contains("in-mini")) document.dispatchEvent(new CustomEvent("focus-mini"));
+  });
+}
 
 function showReadError(n) {
   const box = $("#read-error");
