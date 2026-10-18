@@ -1,5 +1,5 @@
 // Android-only Milkdown editor. Persist Markdown; binary images go to the book's assets folder.
-import { $prose, Plugin, toggleMark, setBlockType, wrapIn, wrapInList, undo, redo } from "../vendor/milkdown.js";
+import { $prose, Plugin, TextSelection } from "../vendor/milkdown.js";
 import { createEditor, editorDebug, showInEditor, syncContent } from "./editor.js";
 import { state as desktopState } from "./state.js";
 
@@ -249,56 +249,9 @@ async function refresh(bookName = selected?.book, noteName = selected?.name) {
   }
 }
 
-function dispatch(command) {
-  if (!view || !selected || selected.unreadable || reading) return false;
-  const handled = command(view.state, view.dispatch);
-  if (handled) view.focus();
-  return handled;
-}
-
-function format(kind) {
-  const state = view.state;
-  const { nodes, marks } = state.schema;
-  if (kind === "bold") return dispatch(toggleMark(marks.strong));
-  if (kind === "italic") return dispatch(toggleMark(marks.em));
-  if (kind === "inline-code") return dispatch(toggleMark(marks.inlineCode));
-  if (kind === "heading") return dispatch(setBlockType(nodes.heading, { level: 2 }));
-  if (kind === "paragraph") return dispatch(setBlockType(nodes.paragraph));
-  if (kind === "bullet") return dispatch(wrapInList(nodes.bullet_list));
-  if (kind === "ordered") return dispatch(wrapInList(nodes.ordered_list));
-  if (kind === "quote") return dispatch(wrapIn(nodes.blockquote));
-  if (kind === "undo") return dispatch(undo);
-  if (kind === "redo") return dispatch(redo);
-  if (kind === "image") return fileInput.click();
-  if (kind === "link") {
-    const url = prompt("输入链接地址（https:// 或 mailto:）");
-    if (!url) return;
-    if (!/^(https:\/\/|http:\/\/|mailto:)/i.test(url)) {
-      notify("不支持的链接地址");
-      return;
-    }
-    const { from, to } = state.selection;
-    const tr = state.tr;
-    const mark = marks.link.create({ href: url });
-    if (from === to) {
-      const label = prompt("链接文字") || url;
-      tr.insertText(label, from, to);
-      tr.addMark(from, from + label.length, mark);
-    } else {
-      tr.addMark(from, to, mark);
-    }
-    view.dispatch(tr.scrollIntoView());
-    view.focus();
-  }
-}
-
-// Keep the text selection intact when touch-pressing a toolbar button.
+// Preserve a rich text selection when the touch toolbar is pressed.
 toolbar.addEventListener("pointerdown", (event) => {
   if (event.target.closest("button")) event.preventDefault();
-});
-toolbar.addEventListener("click", (event) => {
-  const kind = event.target.closest("button")?.dataset.command;
-  if (kind) format(kind);
 });
 
 function dataURL(file) {
@@ -385,7 +338,7 @@ function navigateFind(delta = 1) {
   findIndex = (findIndex + delta + hits.length) % hits.length;
   const hit = hits[findIndex];
   view.dispatch(view.state.tr.setSelection(
-    view.state.selection.constructor.create(view.state.doc, hit.from, hit.to)
+    TextSelection.create(view.state.doc, hit.from, hit.to)
   ).scrollIntoView());
   el("find-count").textContent = `${findIndex + 1} / ${hits.length}`;
 }
