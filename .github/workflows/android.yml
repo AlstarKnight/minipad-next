@@ -1,0 +1,54 @@
+name: Android prototype
+
+on:
+  pull_request:
+    paths:
+      - 'src-tauri/**'
+      - 'src/mobile*'
+      - 'src/js/mobile.js'
+      - 'package*.json'
+      - '.github/workflows/android.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - name: Install Android SDK and NDK
+        run: |
+          sdkmanager --install 'platforms;android-36' 'build-tools;36.0.0' 'ndk;28.2.13676358'
+          echo "NDK_HOME=$ANDROID_HOME/ndk/28.2.13676358" >> "$GITHUB_ENV"
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: '1.99.0'
+          targets: aarch64-linux-android
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - name: Install JavaScript dependencies
+        run: npm ci
+      - name: Check Android shell JavaScript
+        run: node --check src/js/mobile.js
+      - name: Generate Android project
+        run: npm run tauri -- android init --ci
+      - name: Build unsigned test APK
+        run: npm run tauri -- android build --apk --debug --target aarch64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: minipad-next-android-prototype
+          path: src-tauri/gen/android/app/build/outputs/apk/**/*.apk
+          if-no-files-found: error
