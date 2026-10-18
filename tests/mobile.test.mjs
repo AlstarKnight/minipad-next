@@ -148,7 +148,7 @@ test("picker image is stored under assets and Markdown keeps a relative path", a
 test("desktop code titles and fold blocks use the shared rich editor without metadata loss", async () => {
   const { context, page, errors } = await open();
   try {
-    const content = "> [!fold]- 标题\n> 内容\n\n```python 描述\nprint(1)\n```";
+    const content = "> [!fold]- 标题\n>\n> 内容\n\n```python 描述\nprint(1)\n```";
     await page.evaluate((content) => window.__mobileTest.disk[0].notes.push({
       name: "扩展语法", content, unreadable: false,
     }), content);
