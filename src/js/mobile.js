@@ -107,7 +107,7 @@ function options(select, pairs, value) {
   if (value != null) select.value = value;
 }
 
-const drawer = el("drawer");
+const drawer = el("mobile-drawer");
 const backdrop = el("drawer-backdrop");
 function toggleDrawer(open) {
   drawer.hidden = !open;
