@@ -780,6 +780,12 @@ export function bindSettings() {
   for (const id of ["#set-mini", "#set-mini-opacity"]) $(id).addEventListener("input", updateMiniOptions);
   for (const r of document.querySelectorAll('input[name="set-ball-icon"]')) r.addEventListener("change", updateBall);
   $("#set-ball-pick").addEventListener("click", pickBallIcon);
+  $("#set-ball-refresh").addEventListener("click", async () => {
+    try {
+      ballImage = await api.invoke("refresh_ball_icon");
+      updateBall();
+    } catch (e) { toast(String(e)); }
+  });
   $("#set-pick-dir").addEventListener("click", () => pickFolder("#set-dir", "选择笔记文件夹"));
   $("#set-open-dir").addEventListener("click", () => api.invoke("open_notes_dir").catch((e) => toast(String(e))));
   $("#set-date-format").placeholder = DEFAULT_DATE_FORMAT;
