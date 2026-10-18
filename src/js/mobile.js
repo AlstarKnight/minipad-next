@@ -533,7 +533,8 @@ function fitViewport() {
   const keyboard = fullHeight - height > 120;
   root.style.setProperty("--app-height", height + "px");
   // How much of the layout viewport the keyboard covers (0 when the layout already shrank).
-  root.style.setProperty("--keyboard-inset", Math.max(0, window.innerHeight - height - Math.round((vv?.offsetTop ?? 0) * scale)) + "px");
+  // offsetTop is already in layout-viewport pixels, so it is not scaled.
+  root.style.setProperty("--keyboard-inset", Math.max(0, window.innerHeight - height - Math.round(vv?.offsetTop ?? 0)) + "px");
   const was = root.hasAttribute("data-keyboard");
   root.toggleAttribute("data-keyboard", keyboard);
   if (keyboard && !was && view?.hasFocus()) requestAnimationFrame(() => view.dispatch(view.state.tr.scrollIntoView()));

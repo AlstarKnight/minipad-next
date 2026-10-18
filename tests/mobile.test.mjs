@@ -587,6 +587,13 @@ test("pinch-zooming is not mistaken for the soft keyboard", async () => {
     }));
     assert.equal(zoomed.keyboard, false);
     assert.equal(zoomed.body, 740);
+    // Zoomed 2x with a 300px keyboard and the view panned 50px: offsetTop is not scaled.
+    const inset = await page.evaluate(() => {
+      Object.assign(window.visualViewport, { height: (innerHeight - 300) / 2, offsetTop: 50 });
+      window.visualViewport.dispatchEvent(new Event("resize"));
+      return document.documentElement.style.getPropertyValue("--keyboard-inset");
+    });
+    assert.equal(inset, "250px");
     assert.deepEqual(errors, []);
   } finally {
     await context.close();
