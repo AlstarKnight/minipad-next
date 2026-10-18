@@ -232,8 +232,9 @@ async function refresh(bookName = selected?.book, noteName = selected?.name) {
     const note = book?.notes.find((n) => n.name === noteName) || book?.notes[0];
     books = loaded;
     selected = note ? {
-      book: book.name, name: note.name, disk: note.content, unreadable: note.unreadable,
-      sourceOnly: needsSource(note.content),
+      book: book.name, name: note.name, content: note.content, disk: note.content,
+      unreadable: note.unreadable, sourceOnly: needsSource(note.content),
+      state: null, mdStale: false, scroll: 0,
     } : null;
     source.value = note?.content ?? "";
     loading = true;
