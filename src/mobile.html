@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="zh-CN" data-mobile="true">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+  <meta name="theme-color" content="#f8f7f4">
+  <title>Minipad Next</title>
+  <link rel="stylesheet" href="desktop-editor.css">
+  <link rel="stylesheet" href="mobile.css">
+  <script src="vendor/highlight.js"></script>
+  <script type="module" src="js/mobile.js"></script>
+</head>
+<body>
+  <header class="app-header">
+    <button id="open-drawer" type="button" class="icon-button" aria-label="打开笔记列表" aria-expanded="false" aria-controls="mobile-drawer">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h12"/></svg>
+    </button>
+    <div class="document-heading">
+      <button id="book-title" type="button" aria-label="切换笔记本">默认笔记本 <span aria-hidden="true">⌄</span></button>
+      <strong id="page-title">我的笔记</strong>
+    </div>
+    <button id="mode" type="button" class="mode-button" aria-pressed="false" disabled>阅读</button>
+  </header>
+
+  <div class="context-strip">
+    <span id="status" role="status" aria-live="polite">初始化中…</span>
+    <span class="strip-spacer"></span>
+    <span id="mode-caption">Markdown · 本地保存</span>
+  </div>
+
+  <main id="page" role="main" aria-label="笔记内容">
+    <div id="main"><div id="editor" class="code-lines" aria-label="Markdown 富文本编辑器"></div></div>
+    <textarea id="source" aria-label="保真 Markdown 源码编辑" spellcheck="false" hidden></textarea>
+  </main>
+
+  <div id="mobile-dock" class="edit-dock" role="region" aria-label="桌面同款完整格式工具栏">
+    <div class="dock-heading">
+      <span>完整编辑工具</span>
+      <div class="dock-actions">
+        <button id="insert-image" type="button" aria-label="插入图片">＋ 图片</button>
+        <button id="find-open" type="button" aria-label="查找或替换">查找</button>
+        <button id="block-actions" type="button" aria-label="管理当前块">块操作 ···</button>
+      </div>
+    </div>
+    <nav id="format-bar" aria-label="完整编辑格式"></nav>
+  </div>
+
+  <footer class="bottom-status">
+    <span id="hint">所有更改自动保存到本机</span>
+    <button id="refresh" type="button" aria-label="重新读取页面" title="重新读取">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M6.4 9A7 7 0 0 1 18 7l2 5M4 12l2 5A7 7 0 0 0 17.6 15"/></svg>
+    </button>
+  </footer>
+
+  <section id="find-panel" class="find-panel" aria-label="查找和替换" hidden>
+    <div class="find-panel-title">
+      <strong>查找与替换</strong>
+      <button id="find-close" type="button" aria-label="关闭查找">✕</button>
+    </div>
+    <div class="find-fields">
+      <input id="find-input" aria-label="查找内容" placeholder="查找文字" autocomplete="off">
+      <input id="replace-input" aria-label="替换为" placeholder="替换为…">
+    </div>
+    <div class="find-controls">
+      <button id="find-prev" type="button">上一个</button>
+      <button id="find-next" type="button">下一个</button>
+      <button id="replace-one" type="button">替换</button>
+      <button id="replace-all" type="button">全部替换</button>
+    </div>
+    <span id="find-count" aria-live="polite"></span>
+  </section>
+  <div id="drawer-backdrop" class="drawer-backdrop" hidden></div>
+  <aside id="mobile-drawer" class="drawer" role="dialog" aria-modal="true" aria-label="笔记本与页面" hidden>
+    <div class="drawer-top">
+      <div><small>MINIPAD NEXT</small><h2>我的笔记</h2></div>
+      <button id="close-drawer" class="icon-button" aria-label="关闭笔记列表" type="button">✕</button>
+    </div>
+    <section class="drawer-section">
+      <div class="section-heading"><h3>笔记本</h3><button id="add-book" aria-label="新建笔记本" type="button">＋ 新建</button></div>
+      <div id="books-list" class="book-list"></div>
+      <select id="book" aria-label="选择笔记本" class="test-select"></select>
+    </section>
+    <section class="drawer-section page-section">
+      <div class="section-heading"><h3>页面</h3><button id="add-note" type="button" aria-label="新建页面">＋ 新建</button></div>
+      <label class="search-wrap">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10" cy="10" r="6"/><path d="m15 15 5 5"/></svg>
+        <input id="note-filter" placeholder="搜索当前笔记本的页面" aria-label="筛选页面" autocomplete="off">
+      </label>
+      <div id="notes-list" class="note-list"></div>
+      <select id="note" aria-label="选择页面" class="test-select"></select>
+    </section>
+    <p class="drawer-footnote">本地优先 · WebDAV 同步功能正在开发</p>
+  </aside>
+  <div id="ctx" class="menu" role="menu" hidden></div>
+  <div id="toast" class="mobile-toast" role="status" hidden></div>
+  <input id="image-file" type="file" accept="image/jpeg,image/png,image/gif,image/webp,image/bmp" hidden>
+</body>
+</html>

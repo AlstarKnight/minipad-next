@@ -414,6 +414,7 @@ export async function createEditor(opts) {
   onChange = opts.onChange;
   openLink = opts.openLink;
   emptyBold = opts.emptyBold;
+  const mobile = opts.mobile === true;
   editor = await Editor.make()
     .config((c) => {
       c.set(rootCtx, $("#editor"));
@@ -430,7 +431,11 @@ export async function createEditor(opts) {
     .use(history)
     .use(clipboard)
     .use([colorSpans, textColor, textBg].flat())
-    .use([lineBreak, codeBlockWithTitle, codeBlockView, codeHighlight, readOnly, changes, placeholder, afterRule, findPlugin, outlinePlugin, selectionBar, formatBar, foldBlocks, blockManager, imagePlugin])
+    // Mobile shares the exact desktop Markdown schema and document commands.
+    // Only mouse/window-specific plugins are replaced or left off on Android.
+    .use(mobile
+      ? [lineBreak, codeBlockWithTitle, codeBlockView, codeHighlight, readOnly, changes, placeholder, afterRule, selectionBar, formatBar, foldBlocks, blockManager, opts.mobileImagePlugin]
+      : [lineBreak, codeBlockWithTitle, codeBlockView, codeHighlight, readOnly, changes, placeholder, afterRule, findPlugin, outlinePlugin, selectionBar, formatBar, foldBlocks, blockManager, imagePlugin])
     .create();
   editor.action((c) => {
     ctx = c;

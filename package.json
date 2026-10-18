@@ -10,7 +10,11 @@
     "icons": "tauri icon app-icon.svg -o src-tauri/icons",
     "tauri": "tauri",
     "dev": "tauri dev",
-    "build": "tauri build"
+    "build": "tauri build",
+    "android:init": "tauri android init",
+    "android:build": "tauri android build --apk --target aarch64",
+    "prepare-mobile": "node scripts/prepare-mobile.mjs",
+    "test:mobile": "npm run prepare-mobile && node --test tests/mobile.test.mjs"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.12.1",

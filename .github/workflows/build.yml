@@ -51,6 +51,9 @@ jobs:
       - name: UI tests
         run: npm run test:ui
 
+      - name: Android frontend integration tests
+        run: npm run test:mobile
+
   rust:
     name: Rust lint and unit tests
     runs-on: windows-latest

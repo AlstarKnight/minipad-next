@@ -1,0 +1,238 @@
+/* Mobile navigation and touch affordances; desktop Markdown block styles are shared verbatim. */
+:root {
+  color-scheme: light dark;
+  --paper: #fcfbf8;
+  --surface: #fff;
+  --canvas: #f5f3ee;
+  --ink: #262924;
+  --subtle: #777971;
+  --border: #e5e5dc;
+  --accent: #5b725e;
+  --soft-accent: #edf2ea;
+  --mobile-shadow: 0 14px 35px rgba(24, 31, 23, .10);
+}
+* { box-sizing: border-box; }
+html[data-mobile], html[data-mobile] body { margin: 0; width: 100%; height: 100%; overscroll-behavior: none; }
+html[data-mobile] body {
+  display: flex; flex-direction: column; min-height: 0; height: var(--app-height, 100dvh);
+  font-family: system-ui, "Noto Sans CJK SC", sans-serif;
+  font-size: 15px; background: var(--paper); color: var(--ink);
+}
+html[data-mobile] [hidden] { display: none !important; }
+html[data-mobile] button { font: inherit; cursor: pointer; touch-action: manipulation; }
+html[data-mobile] button:disabled { opacity: .42; cursor: default; }
+html[data-mobile] button:focus-visible, html[data-mobile] input:focus-visible,
+html[data-mobile] textarea:focus-visible, html[data-mobile] .ProseMirror:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 2px;
+}
+html[data-mobile] .app-header {
+  display: flex; flex: none; align-items: center; gap: 12px; height: auto;
+  min-height: 69px; padding: calc(env(safe-area-inset-top) + 9px) 17px 10px;
+  border: 0; border-bottom: 1px solid var(--border); background: var(--paper);
+}
+html[data-mobile] .icon-button {
+  min-width: 42px; width: 42px; height: 44px; display: grid; place-items: center;
+  flex: none; border: 0; border-radius: 12px; background: transparent; color: var(--ink); padding: 8px;
+}
+html[data-mobile] .icon-button:active { background: var(--canvas); }
+html[data-mobile] .icon-button svg,
+html[data-mobile] .bottom-status svg,
+html[data-mobile] .search-wrap svg {
+  width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.8;
+  stroke-linecap: round; stroke-linejoin: round;
+}
+html[data-mobile] .document-heading { flex: 1; min-width: 0; display: grid; gap: 2px; }
+html[data-mobile] #book-title {
+  justify-self: start; min-height: 20px; border: 0; padding: 0;
+  background: transparent; color: var(--accent); font-size: 12px; font-weight: 600;
+}
+html[data-mobile] #book-title span { margin-left: 3px; }
+html[data-mobile] #page-title {
+  display: block; min-width: 0; font-size: 18px; font-weight: 690; line-height: 1.3;
+  text-overflow: ellipsis; white-space: nowrap; overflow: hidden; letter-spacing: -.3px;
+}
+html[data-mobile] .mode-button {
+  flex: none; min-width: 68px; min-height: 38px; border-radius: 11px;
+  padding: 6px 12px; border: 1px solid var(--border);
+  background: var(--soft-accent); color: var(--accent); font-weight: 650; font-size: 13px;
+}
+html[data-mobile] .context-strip {
+  display: flex; flex: none; align-items: center; min-height: 32px;
+  gap: 8px; padding: 7px 20px 6px;
+  font-size: 11px; color: var(--subtle); background: var(--paper);
+}
+html[data-mobile] #status {
+  max-width: 56%; text-align: left; color: var(--accent);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+html[data-mobile] .strip-spacer { flex: 1; }
+html[data-mobile] #mode-caption { white-space: nowrap; }
+html[data-mobile] #page {
+  display: block; flex: 1; width: 100%; min-height: 0; margin: 0; border: 0; padding: 8px 20px 30px;
+  overflow-y: auto; overflow-x: hidden; overscroll-behavior-y: contain;
+  background: var(--surface); -webkit-overflow-scrolling: touch;
+}
+html[data-mobile] #main { position: relative; min-height: 100%; width: 100%; }
+html[data-mobile] #main .block-handle { display: none; }
+html[data-mobile] #editor { width: 100%; height: auto; min-height: 100%; overflow: visible;
+  padding: 0; margin: 0; border: 0; color: var(--ink); background: transparent; }
+html[data-mobile] #editor .ProseMirror {
+  width: 100%; min-height: 60vh; max-width: none; padding: 12px 0 70px;
+  outline: none; border: 0; margin: 0; font: 16px/1.75 system-ui, sans-serif;
+  color: var(--ink); background: transparent; word-break: break-word;
+  -webkit-user-select: text; user-select: text; caret-color: var(--accent);
+}
+html[data-mobile] #editor .ProseMirror > p { margin: 0 0 .9em; }
+html[data-mobile] #editor .ProseMirror h1 { font-size: 1.72em; line-height: 1.34; letter-spacing: -.45px; margin: .65em 0 .4em; }
+html[data-mobile] #editor .ProseMirror h2 { font-size: 1.38em; line-height: 1.4; margin: .85em 0 .4em; }
+html[data-mobile] #editor .ProseMirror h3 { font-size: 1.17em; line-height: 1.45; }
+html[data-mobile] #editor .ProseMirror blockquote {
+  margin: 12px 0; padding: 10px 14px; background: var(--canvas);
+  border-left: 3px solid var(--accent); border-radius: 0 10px 10px 0;
+}
+html[data-mobile] #editor .ProseMirror table { display: block; max-width: 100%; overflow-x: auto; }
+html[data-mobile] #editor .ProseMirror pre { overflow-x: auto; max-width: 100%; }
+html[data-mobile] #editor .ProseMirror img { display: inline-block; max-width: 100%; height: auto; border-radius: 10px; }
+html[data-mobile] #editor .codeblock { max-width: 100%; border-radius: 12px; margin: 14px 0; overflow: hidden; }
+html[data-mobile] #editor .cb-head { max-width: 100%; }
+html[data-mobile] #editor .cb-title, html[data-mobile] #editor .cb-lang { min-width: 45px; min-height: 34px; font-size: 12px; }
+html[data-mobile] #editor .cb-head button { min-width: 34px; min-height: 34px; }
+html[data-mobile] #editor .fold-heading button { min-height: 38px; }
+html[data-mobile] #source {
+  display: block; width: 100%; min-height: 100%; padding: 12px 0 60px; margin: 0;
+  border: 0; outline: none; border-radius: 0; resize: none;
+  background: transparent; color: var(--ink);
+  font: 15px/1.7 ui-monospace, "Noto Sans Mono CJK SC", monospace;
+  overflow-wrap: anywhere; tab-size: 2; -webkit-user-select: text;
+}
+html[data-mobile] .edit-dock {
+  flex: none; position: relative; bottom: auto; margin: 0; z-index: 5;
+  width: 100%; padding: 7px 8px 5px; border: 0; border-top: 1px solid var(--border);
+  box-shadow: 0 -6px 18px rgba(35,45,38,.035); background: var(--paper);
+}
+html[data-mobile] #block-actions { border: 0; background: var(--soft-accent); color: var(--accent);
+  border-radius: 8px; font-size: 12px; font-weight: 650; padding: 5px 10px; min-height: 30px; }
+html[data-mobile] .dock-heading { display: flex; justify-content: space-between; align-items: center; gap: 8px;
+  margin: 0 8px 5px; font-size: 11px; font-weight: 650; color: var(--subtle); }
+html[data-mobile] #dock-hint { font-weight: 400; font-size: 10px; opacity: .8; }
+html[data-mobile] #format-bar {
+  width: 100%; height: 52px; min-height: 0; display: flex; align-items: center;
+  padding: 0; margin: 0; border: 0; overflow: visible;
+  background: transparent; position: static; z-index: auto;
+}
+html[data-mobile] #format-bar .fb-items {
+  display: flex; width: 100%; min-width: 0; flex: 1; flex-wrap: nowrap; gap: 5px;
+  align-items: center; overflow-x: auto; padding: 2px 3px 6px;
+  scroll-snap-type: x proximity; scrollbar-width: none; overscroll-behavior-x: contain;
+}
+html[data-mobile] #format-bar .fb-items::-webkit-scrollbar { display: none; }
+html[data-mobile] #format-bar button { min-width: 44px; height: 42px; flex: none;
+  border: 1px solid transparent; border-radius: 10px; padding: 7px 9px; background: var(--canvas);
+  color: var(--ink); font-size: 13px; scroll-snap-align: start; }
+html[data-mobile] #format-bar button.on { background: var(--soft-accent); color: var(--accent); border-color: #d9e4d6; }
+html[data-mobile] #format-bar button svg { width: 19px; height: 19px; }
+html[data-mobile] #format-bar button.fb-more { min-width: 43px; margin: 0 3px; background: var(--soft-accent); }
+html[data-mobile] #format-bar .fb-hide { display: none; }
+html[data-mobile] .bottom-status {
+  display: flex; align-items: center; flex: none; gap: 8px;
+  min-height: 47px; padding: 4px 17px calc(env(safe-area-inset-bottom) + 6px);
+  background: var(--paper); border: 0; color: var(--subtle); font-size: 11px;
+}
+html[data-mobile] #hint { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+html[data-mobile] #refresh { border: 0; padding: 6px; background: none; color: var(--subtle); width: 38px; min-height: 36px; }
+html[data-mobile] .drawer-backdrop { position: fixed; inset: 0; z-index: 29; background: rgba(14,24,17,.38); backdrop-filter: blur(2px); }
+html[data-mobile] .drawer {
+  display: flex; flex-direction: column; position: fixed; z-index: 30; top: 0; left: 0;
+  width: min(88vw, 390px); height: 100dvh; max-height: 100dvh;
+  padding: calc(env(safe-area-inset-top) + 16px) 0 calc(env(safe-area-inset-bottom) + 16px);
+  border: 0; margin: 0; background: var(--paper); color: var(--ink); box-shadow: var(--mobile-shadow);
+  overflow-y: auto; overscroll-behavior: contain;
+}
+html[data-mobile] .drawer-top { display: flex; justify-content: space-between; gap: 6px; align-items: center; padding: 4px 20px 19px; }
+html[data-mobile] .drawer-top small { font-size: 10px; letter-spacing: 1.3px; font-weight: 750; color: var(--accent); }
+html[data-mobile] .drawer-top h2 { margin: 6px 0 0; font-size: 24px; font-weight: 760; letter-spacing: -.6px; }
+html[data-mobile] .drawer-section { border-top: 1px solid var(--border); padding: 17px 12px 13px; }
+html[data-mobile] .page-section { flex: 1; }
+html[data-mobile] .section-heading { padding: 0 9px 11px; display: flex; justify-content: space-between; align-items: center; }
+html[data-mobile] .section-heading h3 { margin: 0; font-size: 12px; letter-spacing: .6px; color: var(--subtle); font-weight: 720; }
+html[data-mobile] .section-heading button { color: var(--accent); padding: 5px 8px; border: 0; border-radius: 8px; background: var(--soft-accent); min-height: 34px; font-size: 12px; font-weight: 700; }
+html[data-mobile] .book-list, html[data-mobile] .note-list { display: grid; gap: 2px; }
+html[data-mobile] .book-list button, html[data-mobile] .note-list button {
+  width: 100%; min-height: 49px; border: 0; border-radius: 11px; background: transparent;
+  padding: 10px 13px; text-align: left; color: var(--ink); display: flex; align-items: center; gap: 10px;
+}
+html[data-mobile] .book-list button::before { content: ""; width: 10px; height: 10px; flex: none; border: 2px solid var(--accent); border-radius: 3px; }
+html[data-mobile] .note-list button::before { content: "▤"; width: 15px; color: var(--subtle); font-size: 15px; flex: none; }
+html[data-mobile] .book-list button.active, html[data-mobile] .note-list button.active {
+  background: var(--soft-accent); color: var(--accent); font-weight: 720;
+}
+html[data-mobile] .book-list button span, html[data-mobile] .note-list button span {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+html[data-mobile] .search-wrap {
+  display: flex; gap: 9px; align-items: center; margin: 2px 7px 12px; padding: 0 12px;
+  background: var(--canvas); border-radius: 12px; color: var(--subtle);
+}
+html[data-mobile] .search-wrap svg { width: 18px; height: 18px; flex: none; }
+html[data-mobile] #note-filter { height: 44px; min-width: 0; flex: 1; border: 0; outline: none;
+  background: transparent; color: var(--ink); font: inherit; font-size: 13px; }
+html[data-mobile] .drawer-footnote { margin: 18px 22px 0; font-size: 11px; color: var(--subtle); }
+html[data-mobile] .test-select { position: absolute; width: 1px; height: 1px; opacity: 0;
+  pointer-events: none; clip-path: inset(50%); }
+html[data-mobile] .mobile-toast { position: fixed; z-index: 50; left: 50%; bottom: calc(120px + var(--keyboard-inset, 0px));
+  transform: translateX(-50%); max-width: 90vw; white-space: normal;
+  color: white; background: #303a32; border-radius: 14px; padding: 12px 18px;
+  font-size: 13px; box-shadow: var(--mobile-shadow); text-align: center; }
+html[data-mobile] #ctx.menu, html[data-mobile] .fb-pop.menu,
+html[data-mobile] .cb-lang-menu.menu { z-index: 52; max-width: calc(100vw - 12px); max-height: 60dvh; overflow-y: auto; }
+/* The same palette twice: the media query paints dark before the script runs; the data-theme rule
+   (set from the system setting) is more specific than the shared editor's :root[data-theme="dark"],
+   so these greens win over its orange accent. */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #181c19; --surface: #1e231e; --canvas: #2a312a;
+    --ink: #edf0eb; --subtle: #a8b2a7; --border: #3b463c;
+    --accent: #b6d1b8; --soft-accent: #354638;
+    --mobile-shadow: 0 12px 32px rgba(0,0,0,.38);
+  }
+}
+html[data-mobile][data-theme="dark"] {
+  --paper: #181c19; --surface: #1e231e; --canvas: #2a312a;
+  --ink: #edf0eb; --subtle: #a8b2a7; --border: #3b463c;
+  --accent: #b6d1b8; --soft-accent: #354638;
+  --mobile-shadow: 0 12px 32px rgba(0,0,0,.38);
+}
+/* The status line gives its space to the toolbar while the soft keyboard is up. */
+html[data-mobile][data-keyboard] .bottom-status { display: none; }
+/* Floating selection bar: finger-sized buttons, scrolls sideways when it is wider than the screen. */
+html[data-mobile] #toolbar { max-width: calc(100vw - 12px); overflow-x: auto; padding: 4px; z-index: 40;
+  scrollbar-width: none; }
+html[data-mobile] #toolbar::-webkit-scrollbar { display: none; }
+html[data-mobile] #toolbar button { min-width: 40px; height: 40px; flex: none; font-size: 14px; }
+html[data-mobile] #toolbar svg { width: 19px; height: 19px; }
+@media (max-width: 360px) {
+  html[data-mobile] .app-header { padding-left: 10px; padding-right: 10px; gap: 7px; }
+  html[data-mobile] #page { padding-left: 15px; padding-right: 15px; }
+  html[data-mobile] .mode-button { min-width: 60px; padding-left: 8px; padding-right: 8px; }
+  html[data-mobile] .dock-heading { margin-bottom: 2px; }
+}
+
+html[data-mobile] .dock-actions { display: flex; align-items: center; gap: 4px; }
+html[data-mobile] .dock-actions button { color: var(--accent); border: 0; background: var(--soft-accent); border-radius: 8px;
+  font-size: 11px; font-weight: 650; padding: 5px 8px; min-height: 31px; white-space: nowrap; }
+html[data-mobile] .drawer-empty { margin: 12px 14px; color: var(--subtle); font-size: 13px; }
+html[data-mobile] .find-panel { position: fixed; z-index: 20;
+  bottom: calc(env(safe-area-inset-bottom) + 115px + var(--keyboard-inset, 0px)); left: 10px; right: 10px;
+  padding: 15px; background: var(--paper); border: 1px solid var(--border);
+  border-radius: 16px; box-shadow: var(--mobile-shadow); }
+html[data-mobile] .find-panel-title { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+html[data-mobile] .find-panel-title strong { font-size: 14px; }
+html[data-mobile] #find-close { background: transparent; color: var(--ink); border: 0; min-height: 33px; padding: 4px 9px; }
+html[data-mobile] .find-fields { display: grid; gap: 8px; }
+html[data-mobile] .find-fields input { min-height: 43px; font: inherit; color: var(--ink); background: var(--canvas);
+  border: 1px solid var(--border); border-radius: 10px; padding: 9px 12px; }
+html[data-mobile] .find-controls { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+html[data-mobile] .find-controls button { flex: 1 1 20%; white-space: nowrap; min-height: 38px;
+  background: var(--soft-accent); color: var(--accent); border: 0; border-radius: 9px; font: inherit; font-size: 12px; }
+html[data-mobile] #find-count { display: block; font-size: 11px; color: var(--subtle); margin-top: 7px; }
+@media (max-width: 360px) { html[data-mobile] .dock-actions button { padding: 4px 6px; font-size: 10px; } }

@@ -1,0 +1,125 @@
+name: Android prototype
+
+on:
+  pull_request:
+    paths:
+      - 'src-tauri/**'
+      - 'src/mobile*'
+      - 'src/js/**'
+      - 'src/style.css'
+      - 'scripts/**'
+      - 'tests/mobile.test.mjs'
+      - 'scripts/prepare-mobile.mjs'
+      - 'package*.json'
+      - '.github/workflows/android.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A newer push to the same PR replaces the running build instead of queueing a second one.
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v4
+      - name: Install Android SDK and NDK
+        run: |
+          sdkmanager --install 'platforms;android-36' 'build-tools;36.0.0' 'ndk;28.2.13676358'
+          echo "NDK_HOME=$ANDROID_HOME/ndk/28.2.13676358" >> "$GITHUB_ENV"
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: '1.99.0'
+          targets: aarch64-linux-android
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - name: Install JavaScript dependencies
+        run: npm ci
+      - name: Check mobile frontend contents
+        run: |
+          npm run prepare-mobile
+          node --check mobile-dist/js/mobile.js
+          test "$(find mobile-dist -type f | wc -l)" -eq 5
+          test -s mobile-dist/vendor/highlight.js
+          test -s mobile-dist/desktop-editor.css
+          du -ah mobile-dist
+      - name: Generate Android project
+        run: npm run tauri -- android init --ci
+      - name: Build release APK
+        run: npm run android:build
+      # Release APKs are unsigned by default. With the four ANDROID_* repository secrets set, sign
+      # with the stable key so a newer test APK installs over an older one. Without them, fall
+      # back to a throw-away key so CI still produces an installable (but not upgradable) APK.
+      # Passwords are only passed through environment variables, never printed.
+      - name: Sign and verify installable APK
+        shell: bash
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          apk_dir=src-tauri/gen/android/app/build/outputs/apk
+          unsigned="$(find "$apk_dir" -type f -iname '*release*unsigned*.apk' -print -quit)"
+          if [[ -z "$unsigned" ]]; then
+            echo "Expected an unsigned release APK under $apk_dir" >&2
+            find "$apk_dir" -type f -name '*.apk' -print
+            exit 1
+          fi
+          keystore="$RUNNER_TEMP/minipad-signing.jks"
+          trap 'rm -f "$keystore"' EXIT
+          set_count=0
+          for name in KEYSTORE_BASE64 KEYSTORE_PASSWORD KEY_ALIAS KEY_PASSWORD; do
+            if [[ -n "${!name}" ]]; then set_count=$((set_count + 1)); fi
+          done
+          if (( set_count == 4 )); then
+            mode="stable key (repository secrets)"
+            printf '%s' "$KEYSTORE_BASE64" | base64 -d > "$keystore"
+            keytool -list -keystore "$keystore" -alias "$KEY_ALIAS" \
+              -storepass:env KEYSTORE_PASSWORD > /dev/null
+          elif (( set_count == 0 )); then
+            mode="temporary key (ANDROID_* secrets not set: this APK cannot be installed over another build)"
+            KEYSTORE_PASSWORD=android KEY_PASSWORD=android KEY_ALIAS=minipad-test
+            keytool -genkeypair -noprompt -keystore "$keystore" \
+              -storepass:env KEYSTORE_PASSWORD -keypass:env KEY_PASSWORD -alias "$KEY_ALIAS" \
+              -keyalg RSA -keysize 2048 -validity 365 \
+              -dname "CN=Minipad Android CI Test, O=Minipad Next, C=US"
+          else
+            echo "Set all four secrets (ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD) or none." >&2
+            exit 1
+          fi
+          export KEYSTORE_PASSWORD KEY_PASSWORD
+          mkdir -p android-artifacts
+          out=android-artifacts/minipad-next-arm64-test.apk
+          "$ANDROID_HOME/build-tools/36.0.0/zipalign" -f -P 16 4 \
+            "$unsigned" "$RUNNER_TEMP/minipad-aligned.apk"
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" sign \
+            --ks "$keystore" --ks-key-alias "$KEY_ALIAS" \
+            --ks-pass env:KEYSTORE_PASSWORD --key-pass env:KEY_PASSWORD \
+            --out "$out" "$RUNNER_TEMP/minipad-aligned.apk"
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$out"
+          ls -lh "$unsigned" "$out"
+          stat -c 'APK bytes: %s' "$out"
+          echo "APK signed with: $mode" | tee -a "$GITHUB_STEP_SUMMARY"
+      # Uploaded as-is (not zipped), so the link downloads the .apk itself.
+      - uses: actions/upload-artifact@v7
+        with:
+          path: android-artifacts/minipad-next-arm64-test.apk
+          archive: false
+          if-no-files-found: error

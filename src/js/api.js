@@ -7,7 +7,7 @@ export const isMock = !TAURI;
 
 // 这个窗口是小窗(只放一页,见 mini.js);浏览器预览里用 ?mini=1&book=&page= 模拟
 export const isMiniWindow = TAURI
-  ? TAURI.webviewWindow.getCurrentWebviewWindow().label.startsWith("mini-")
+  ? !!TAURI.webviewWindow?.getCurrentWebviewWindow?.().label?.startsWith("mini-")
   : new URLSearchParams(location.search).has("mini");
 
 // 模拟后端第一次用到时才建
