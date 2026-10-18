@@ -104,9 +104,7 @@ fn mobile_save_image(
     if !dir.is_dir() {
         return Err("笔记本不存在".into());
     }
-    let stamp = chrono::Local::now()
-        .format("%Y%m%d-%H%M%S-%3f")
-        .to_string();
+    let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S-%3f").to_string();
     crate::images::save(&dir, &bytes, ext, &stamp)
 }
 
@@ -116,8 +114,7 @@ fn mobile_save_image(
 fn mobile_read_image(app: AppHandle, book: String, path: String) -> Result<String, String> {
     use base64::Engine;
     let dir = notes::book_dir(&root(&app)?, &book)?;
-    let file = crate::images::resolve(&dir, &path)
-        .ok_or("只能读取笔记本 assets 目录中的图片")?;
+    let file = crate::images::resolve(&dir, &path).ok_or("只能读取笔记本 assets 目录中的图片")?;
     let mime = crate::images::mime_for(
         file.extension()
             .and_then(|v| v.to_str())
