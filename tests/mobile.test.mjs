@@ -130,3 +130,28 @@ test("picker image is stored under assets and Markdown keeps a relative path", a
     await context.close();
   }
 });
+
+test("desktop-only Markdown features use a lossless source fallback", async () => {
+  const { context, page, errors } = await open();
+  try {
+    const content = "> [!fold]- 标题\\n> 内容\\n\\n```python 描述\\nprint(1)\\n```";
+    await page.evaluate((content) => {
+      window.__mobileTest.disk[0].notes.push({
+        name: "扩展语法", content, unreadable: false,
+      });
+    }, content);
+    await page.click("#refresh");
+    await page.selectOption("#note", "扩展语法");
+    await page.locator("#source").waitFor({ state: "visible" });
+    assert.equal(await page.locator("#editor").isVisible(), false);
+    assert.equal(await page.locator("#source").inputValue(), content);
+    await page.locator("#source").fill(content + "\\n新的说明");
+    await page.waitForFunction(() =>
+      window.__mobileTest.disk[0].notes[2].content.endsWith("新的说明"));
+    assert.equal(await page.evaluate(() => window.__mobileTest.disk[0].notes[2].content),
+      content + "\\n新的说明");
+    assert.deepEqual(errors, []);
+  } finally {
+    await context.close();
+  }
+});
