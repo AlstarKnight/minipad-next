@@ -29,12 +29,12 @@
   </div>
 
   <main id="page" role="main" aria-label="笔记内容">
-    <div id="editor" aria-label="Markdown 富文本编辑器"></div>
+    <div id="main"><div id="editor" class="code-lines" aria-label="Markdown 富文本编辑器"></div></div>
     <textarea id="source" aria-label="保真 Markdown 源码编辑" spellcheck="false" hidden></textarea>
   </main>
 
   <div id="toolbar" class="edit-dock" role="region" aria-label="桌面同款完整格式工具栏">
-    <div class="dock-heading"><span>编辑工具</span><span id="dock-hint">横向滑动查看更多</span></div>
+    <div class="dock-heading"><span>完整编辑工具</span><button id="block-actions" type="button" aria-label="管理当前块">块操作 ···</button></div>
     <nav id="format-bar" aria-label="完整编辑格式"></nav>
   </div>
 
