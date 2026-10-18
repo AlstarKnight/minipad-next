@@ -46,8 +46,9 @@ jobs:
         run: |
           npm run prepare-mobile
           node --check mobile-dist/js/mobile.js
-          test "$(find mobile-dist -type f | wc -l)" -eq 3
-          test ! -e mobile-dist/vendor
+          test "$(find mobile-dist -type f | wc -l)" -eq 5
+          test -s mobile-dist/vendor/highlight.js
+          test -s mobile-dist/desktop-editor.css
           du -ah mobile-dist
       - name: Generate Android project
         run: npm run tauri -- android init --ci
