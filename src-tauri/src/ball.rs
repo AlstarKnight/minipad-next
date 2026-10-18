@@ -9,6 +9,36 @@ pub const MAX_IMAGE: u64 = 2 * 1024 * 1024;
 /// 自定义图片支持的格式
 pub const IMAGE_EXTS: [&str; 6] = ["png", "jpg", "jpeg", "gif", "webp", "ico"];
 
+/// 通过文件路径、大小和修改时间缓存图片，避免重复读取并编码。
+#[derive(Default)]
+pub struct ImageCache {
+    entry: Option<(std::path::PathBuf, u64, std::time::SystemTime, String)>,
+}
+
+impl ImageCache {
+    pub fn get_or_load(
+        &mut self,
+        path: &std::path::Path,
+        size: u64,
+        modified: std::time::SystemTime,
+        load: impl FnOnce() -> Option<String>,
+    ) -> Option<String> {
+        if let Some((old_path, old_size, old_modified, data)) = &self.entry {
+            if old_path == path && *old_size == size && *old_modified == modified {
+                return Some(data.clone());
+            }
+        }
+        self.entry = None;
+        let data = load()?;
+        self.entry = Some((path.to_path_buf(), size, modified, data.clone()));
+        Some(data)
+    }
+
+    pub fn clear(&mut self) {
+        self.entry = None;
+    }
+}
+
 /// 悬浮图标放在哪:记住的位置还在某块屏幕上就用它,不然放在主窗口右上角里面一点
 pub fn position(saved: Option<[i32; 2]>, size: i32, main: Rect, monitors: &[Rect]) -> (i32, i32) {
     if let Some([x, y]) = saved {
@@ -72,6 +102,22 @@ mod tests {
         assert_eq!(base64(b"foobar"), "Zm9vYmFy");
         assert_eq!(base64(&[0xff, 0xfe, 0x00]), "//4A");
         assert_eq!(data_url("image/png", b"hi"), "data:image/png;base64,aGk=");
+    }
+
+    #[test]
+    fn image_cache_reuses_and_invalidates_data() {
+        use std::path::Path;
+        use std::time::{Duration, SystemTime};
+        let mut cache = ImageCache::default();
+        let mtime = SystemTime::UNIX_EPOCH;
+        let a = Path::new("ball-icon.png");
+        assert_eq!(cache.get_or_load(a, 10, mtime, || Some("first".into())), Some("first".into()));
+        assert_eq!(cache.get_or_load(a, 10, mtime, || panic!("缓存命中不应读文件")), Some("first".into()));
+        assert_eq!(cache.get_or_load(a, 11, mtime, || Some("larger".into())), Some("larger".into()));
+        assert_eq!(cache.get_or_load(a, 11, mtime + Duration::from_secs(1), || Some("changed".into())), Some("changed".into()));
+        assert_eq!(cache.get_or_load(Path::new("new.png"), 11, mtime, || Some("new".into())), Some("new".into()));
+        cache.clear();
+        assert_eq!(cache.get_or_load(Path::new("new.png"), 11, mtime, || Some("refreshed".into())), Some("refreshed".into()));
     }
 
     #[test]
