@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Minipad Next</title>
+  <link rel="stylesheet" href="mobile.css">
+  <script type="module" src="js/mobile.js"></script>
+</head>
+<body>
+  <header>
+    <strong>Minipad Next</strong>
+    <span id="status" role="status" aria-live="polite">读取中…</span>
+  </header>
+  <nav aria-label="笔记与页面">
+    <div class="chooser">
+      <label for="book">笔记本</label>
+      <select id="book" aria-label="选择笔记本"></select>
+      <button id="add-book" type="button" aria-label="新建笔记本">＋</button>
+    </div>
+    <div class="chooser">
+      <label for="note">页面</label>
+      <select id="note" aria-label="选择页面"></select>
+      <button id="add-note" type="button" aria-label="新建页面">＋</button>
+    </div>
+  </nav>
+  <div class="actions">
+    <button id="mode" type="button" aria-pressed="false">查看</button>
+    <button id="refresh" type="button">重新读取</button>
+  </div>
+  <main>
+    <pre id="preview" aria-label="笔记内容" hidden></pre>
+    <textarea id="editor" aria-label="编辑 Markdown" spellcheck="false" placeholder="开始写笔记…"></textarea>
+  </main>
+  <footer>本地 Markdown · WebDAV 同步将在后续 PR 中加入</footer>
+</body>
+</html>
