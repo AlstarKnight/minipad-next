@@ -34,7 +34,14 @@
   </main>
 
   <div id="toolbar" class="edit-dock" role="region" aria-label="桌面同款完整格式工具栏">
-    <div class="dock-heading"><span>完整编辑工具</span><button id="block-actions" type="button" aria-label="管理当前块">块操作 ···</button></div>
+    <div class="dock-heading">
+      <span>完整编辑工具</span>
+      <div class="dock-actions">
+        <button id="insert-image" type="button" aria-label="插入图片">＋ 图片</button>
+        <button id="find-open" type="button" aria-label="查找或替换">查找</button>
+        <button id="block-actions" type="button" aria-label="管理当前块">块操作 ···</button>
+      </div>
+    </div>
     <nav id="format-bar" aria-label="完整编辑格式"></nav>
   </div>
 
@@ -45,6 +52,23 @@
     </button>
   </footer>
 
+  <section id="find-panel" class="find-panel" aria-label="查找和替换" hidden>
+    <div class="find-panel-title">
+      <strong>查找与替换</strong>
+      <button id="find-close" type="button" aria-label="关闭查找">✕</button>
+    </div>
+    <div class="find-fields">
+      <input id="find-input" aria-label="查找内容" placeholder="查找文字" autocomplete="off">
+      <input id="replace-input" aria-label="替换为" placeholder="替换为…">
+    </div>
+    <div class="find-controls">
+      <button id="find-prev" type="button">上一个</button>
+      <button id="find-next" type="button">下一个</button>
+      <button id="replace-one" type="button">替换</button>
+      <button id="replace-all" type="button">全部替换</button>
+    </div>
+    <span id="find-count" aria-live="polite"></span>
+  </section>
   <div id="drawer-backdrop" class="drawer-backdrop" hidden></div>
   <aside id="drawer" class="drawer" role="dialog" aria-modal="true" aria-label="笔记本与页面" hidden>
     <div class="drawer-top">
