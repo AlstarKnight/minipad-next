@@ -95,6 +95,9 @@ dispatch.
   clipboard. Files are restricted to PNG/JPG/GIF/WebP/BMP and 10 MiB, saved in
   the current notebook's `assets/` directory and referenced by relative paths
   in Markdown, consistent with Windows.
+- Light/dark follows the system setting (menus and bars included). The format toolbar
+  stays above the soft keyboard, and selecting text shows a floating format bar below
+  the selection (the system's own copy/paste popup uses the space above).
 - Add notebooks and pages without any desktop-only window commands.
 - Store notes in the Android app-private data directory under `notes/`. Switching
   pages lists names only and reads just the opened page; decoded images are cached

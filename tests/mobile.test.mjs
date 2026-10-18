@@ -30,8 +30,15 @@ async function chooseNote(page, name) {
   await page.locator("#notes-list button").filter({ hasText: name }).click();
 }
 
-async function open() {
-  const context = await browser.newContext({ viewport: { width: 390, height: 740 } });
+async function open({ colorScheme, keyboard } = {}) {
+  const context = await browser.newContext({ viewport: { width: 390, height: 740 }, colorScheme });
+  if (keyboard) {
+    // Android WebViews can shrink only the visual viewport when the soft keyboard opens.
+    await context.addInitScript(() => {
+      const fake = Object.assign(new EventTarget(), { width: innerWidth, height: innerHeight, offsetTop: 0 });
+      Object.defineProperty(window, "visualViewport", { value: fake, configurable: true });
+    });
+  }
   await context.addInitScript(() => {
     const disk = [
       { name: "", notes: [
@@ -468,6 +475,99 @@ test("a refresh requested during a page switch does not switch back to the old p
     await page.waitForTimeout(900);
     assert.equal(await page.locator("#page-title").textContent(), "二");
     await page.locator(".ProseMirror p").filter({ hasText: "第二页" }).waitFor();
+    assert.deepEqual(errors, []);
+  } finally {
+    await context.close();
+  }
+});
+
+test("dark mode themes the block menu and the shared bars", async () => {
+  const { context, page, errors } = await open({ colorScheme: "dark" });
+  try {
+    assert.equal(await page.evaluate(() => document.documentElement.dataset.theme), "dark");
+    await page.locator(".ProseMirror p").first().click();
+    await page.click("#block-actions");
+    await page.locator("#ctx").waitFor({ state: "visible" });
+    const [r, g, b] = (await page.evaluate(() => getComputedStyle(document.getElementById("ctx")).backgroundColor))
+      .match(/\d+/g).map(Number);
+    assert.ok((r + g + b) / 3 < 90, `block menu should be dark, got rgb(${r}, ${g}, ${b})`);
+    assert.deepEqual(errors, []);
+  } finally {
+    await context.close();
+  }
+});
+
+test("light mode keeps the light block menu", async () => {
+  const { context, page, errors } = await open({ colorScheme: "light" });
+  try {
+    assert.equal(await page.evaluate(() => document.documentElement.dataset.theme), "light");
+    await page.locator(".ProseMirror p").first().click();
+    await page.click("#block-actions");
+    await page.locator("#ctx").waitFor({ state: "visible" });
+    const [r, g, b] = (await page.evaluate(() => getComputedStyle(document.getElementById("ctx")).backgroundColor))
+      .match(/\d+/g).map(Number);
+    assert.ok((r + g + b) / 3 > 200, `block menu should be light, got rgb(${r}, ${g}, ${b})`);
+    assert.deepEqual(errors, []);
+  } finally {
+    await context.close();
+  }
+});
+
+test("the toolbar stays above the soft keyboard", async () => {
+  const { context, page, errors } = await open({ keyboard: true });
+  try {
+    const layout = () => page.evaluate(() => ({
+      body: document.body.getBoundingClientRect().height,
+      dockBottom: document.getElementById("mobile-dock").getBoundingClientRect().bottom,
+      footerShown: getComputedStyle(document.querySelector(".bottom-status")).display !== "none",
+      keyboard: document.documentElement.hasAttribute("data-keyboard"),
+    }));
+    const closed = await layout();
+    assert.equal(closed.keyboard, false);
+    assert.equal(closed.footerShown, true);
+    await page.evaluate(() => {
+      window.visualViewport.height = innerHeight - 300;
+      window.visualViewport.dispatchEvent(new Event("resize"));
+    });
+    const open = await layout();
+    assert.equal(open.keyboard, true);
+    assert.equal(open.footerShown, false);
+    assert.equal(open.body, 740 - 300);
+    assert.ok(open.dockBottom <= 740 - 300, `dock bottom ${open.dockBottom} is under the keyboard`);
+    await page.evaluate(() => {
+      window.visualViewport.height = innerHeight;
+      window.visualViewport.dispatchEvent(new Event("resize"));
+    });
+    const after = await layout();
+    assert.equal(after.keyboard, false);
+    assert.equal(after.body, 740);
+    assert.deepEqual(errors, []);
+  } finally {
+    await context.close();
+  }
+});
+
+test("selecting text shows a floating format bar below the selection and it formats", async () => {
+  const { context, page, errors } = await open();
+  try {
+    await page.locator(".ProseMirror p").first().click();
+    await page.keyboard.press("Home");
+    await page.keyboard.press("Shift+End");
+    await page.locator("#toolbar").waitFor({ state: "visible" });
+    const geometry = await page.evaluate(() => {
+      const bar = document.getElementById("toolbar").getBoundingClientRect();
+      const p = document.querySelector(".ProseMirror p").getBoundingClientRect();
+      return { barTop: bar.top, paragraphBottom: p.bottom, barWidth: bar.width };
+    });
+    assert.ok(geometry.barTop >= geometry.paragraphBottom - 4, "the bar sits below the selected line");
+    assert.ok(geometry.barWidth <= 390, "the bar fits the screen width");
+    const size = await page.locator('#toolbar [data-cmd="strong"]').boundingBox();
+    assert.ok(size.width >= 40 && size.height >= 40, "buttons are finger-sized");
+    await page.click('#toolbar [data-cmd="strong"]');
+    await page.waitForFunction(() => window.__mobileTest.disk[0].notes[0].content.includes("**第一段**"));
+    // Collapsing the selection hides the bar again.
+    await page.keyboard.press("ArrowRight");
+    await page.locator("#toolbar").waitFor({ state: "hidden" });
     assert.deepEqual(errors, []);
   } finally {
     await context.close();

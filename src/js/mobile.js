@@ -2,6 +2,7 @@
 import { $prose, Plugin, TextSelection } from "../vendor/milkdown.js";
 import { createEditor, editorDebug, showInEditor, syncContent } from "./editor.js";
 import { state as desktopState } from "./state.js";
+import { setSelectionBar } from "./formatbar.js";
 
 const invoke = window.__TAURI__?.core?.invoke;
 const el = (id) => document.getElementById(id);
@@ -508,10 +509,49 @@ document.addEventListener("visibilitychange", () => {
   if (document.hidden) void flush().catch(() => {});
 });
 
+// The shared menus and bars are themed by data-theme; follow the system light/dark setting.
+const systemDark = window.matchMedia("(prefers-color-scheme: dark)");
+function applyTheme() {
+  document.documentElement.dataset.theme = systemDark.matches ? "dark" : "light";
+}
+applyTheme();
+systemDark.addEventListener("change", applyTheme);
+
+// The soft keyboard must not cover the toolbar. Some WebViews shrink only the visual viewport,
+// so the page height follows it, and the status line steps aside while the keyboard is up.
+let fullHeight = 0;
+let fullWidth = 0;
+function fitViewport() {
+  const vv = window.visualViewport;
+  const width = Math.round(vv?.width ?? window.innerWidth);
+  const height = Math.round(vv?.height ?? window.innerHeight);
+  if (width !== fullWidth) { fullWidth = width; fullHeight = 0; } // rotated: measure again
+  fullHeight = Math.max(fullHeight, height);
+  const root = document.documentElement;
+  const keyboard = fullHeight - height > 120;
+  root.style.setProperty("--app-height", height + "px");
+  // How much of the layout viewport the keyboard covers (0 when the layout already shrank).
+  root.style.setProperty("--keyboard-inset", Math.max(0, window.innerHeight - height - Math.round(vv?.offsetTop ?? 0)) + "px");
+  const was = root.hasAttribute("data-keyboard");
+  root.toggleAttribute("data-keyboard", keyboard);
+  if (keyboard && !was && view?.hasFocus()) requestAnimationFrame(() => view.dispatch(view.state.tr.scrollIntoView()));
+}
+window.visualViewport?.addEventListener("resize", fitViewport);
+window.addEventListener("resize", fitViewport);
+fitViewport();
+
+// Touching a toolbar button must not take the focus (and the selection) away from the editor.
+document.addEventListener("pointerdown", (event) => {
+  if (event.target.closest("#toolbar button")) event.preventDefault();
+});
+
 async function start() {
   try {
     desktopState.settings = {};
     document.documentElement.dataset.mobile = "true";
+    // The floating selection bar sits below the selection: the system's own copy/paste popup
+    // and the selection handles use the space above it.
+    setSelectionBar({ sel_bar: "always", sel_bar_pos: "below" });
     const { applyBlockSettings } = await import("./blocks.js");
     applyBlockSettings({ block_enabled: true, block_context_menu: "block" });
     await createEditor({

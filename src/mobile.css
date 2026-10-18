@@ -14,7 +14,7 @@
 * { box-sizing: border-box; }
 html[data-mobile], html[data-mobile] body { margin: 0; width: 100%; height: 100%; overscroll-behavior: none; }
 html[data-mobile] body {
-  display: flex; flex-direction: column; min-height: 0; height: 100dvh;
+  display: flex; flex-direction: column; min-height: 0; height: var(--app-height, 100dvh);
   font-family: system-ui, "Noto Sans CJK SC", sans-serif;
   font-size: 15px; background: var(--paper); color: var(--ink);
 }
@@ -179,12 +179,15 @@ html[data-mobile] #note-filter { height: 44px; min-width: 0; flex: 1; border: 0;
 html[data-mobile] .drawer-footnote { margin: 18px 22px 0; font-size: 11px; color: var(--subtle); }
 html[data-mobile] .test-select { position: absolute; width: 1px; height: 1px; opacity: 0;
   pointer-events: none; clip-path: inset(50%); }
-html[data-mobile] .mobile-toast { position: fixed; z-index: 50; left: 50%; bottom: 120px;
+html[data-mobile] .mobile-toast { position: fixed; z-index: 50; left: 50%; bottom: calc(120px + var(--keyboard-inset, 0px));
   transform: translateX(-50%); max-width: 90vw; white-space: normal;
   color: white; background: #303a32; border-radius: 14px; padding: 12px 18px;
   font-size: 13px; box-shadow: var(--mobile-shadow); text-align: center; }
 html[data-mobile] #ctx.menu, html[data-mobile] .fb-pop.menu,
 html[data-mobile] .cb-lang-menu.menu { z-index: 52; max-width: calc(100vw - 12px); max-height: 60dvh; overflow-y: auto; }
+/* The same palette twice: the media query paints dark before the script runs; the data-theme rule
+   (set from the system setting) is more specific than the shared editor's :root[data-theme="dark"],
+   so these greens win over its orange accent. */
 @media (prefers-color-scheme: dark) {
   :root {
     --paper: #181c19; --surface: #1e231e; --canvas: #2a312a;
@@ -193,6 +196,20 @@ html[data-mobile] .cb-lang-menu.menu { z-index: 52; max-width: calc(100vw - 12px
     --mobile-shadow: 0 12px 32px rgba(0,0,0,.38);
   }
 }
+html[data-mobile][data-theme="dark"] {
+  --paper: #181c19; --surface: #1e231e; --canvas: #2a312a;
+  --ink: #edf0eb; --subtle: #a8b2a7; --border: #3b463c;
+  --accent: #b6d1b8; --soft-accent: #354638;
+  --mobile-shadow: 0 12px 32px rgba(0,0,0,.38);
+}
+/* The status line gives its space to the toolbar while the soft keyboard is up. */
+html[data-mobile][data-keyboard] .bottom-status { display: none; }
+/* Floating selection bar: finger-sized buttons, scrolls sideways when it is wider than the screen. */
+html[data-mobile] #toolbar { max-width: calc(100vw - 12px); overflow-x: auto; padding: 4px; z-index: 40;
+  scrollbar-width: none; }
+html[data-mobile] #toolbar::-webkit-scrollbar { display: none; }
+html[data-mobile] #toolbar button { min-width: 40px; height: 40px; flex: none; font-size: 14px; }
+html[data-mobile] #toolbar svg { width: 19px; height: 19px; }
 @media (max-width: 360px) {
   html[data-mobile] .app-header { padding-left: 10px; padding-right: 10px; gap: 7px; }
   html[data-mobile] #page { padding-left: 15px; padding-right: 15px; }
@@ -205,7 +222,7 @@ html[data-mobile] .dock-actions button { color: var(--accent); border: 0; backgr
   font-size: 11px; font-weight: 650; padding: 5px 8px; min-height: 31px; white-space: nowrap; }
 html[data-mobile] .drawer-empty { margin: 12px 14px; color: var(--subtle); font-size: 13px; }
 html[data-mobile] .find-panel { position: fixed; z-index: 20;
-  bottom: calc(env(safe-area-inset-bottom) + 115px); left: 10px; right: 10px;
+  bottom: calc(env(safe-area-inset-bottom) + 115px + var(--keyboard-inset, 0px)); left: 10px; right: 10px;
   padding: 15px; background: var(--paper); border: 1px solid var(--border);
   border-radius: 16px; box-shadow: var(--mobile-shadow); }
 html[data-mobile] .find-panel-title { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
