@@ -208,7 +208,8 @@ impl WebdavClient {
             .collect::<Result<Vec<_>, _>>()
             .map_err(|_| "WebDAV 内置根证书加载失败")?;
         let http = Client::builder()
-            .timeout(Duration::from_secs(30))
+            .connect_timeout(Duration::from_secs(15))
+            .timeout(Duration::from_secs(300))
             .redirect(reqwest::redirect::Policy::none())
             .tls_backend_rustls()
             .tls_certs_only(certs)
