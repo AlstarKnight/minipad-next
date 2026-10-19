@@ -769,25 +769,40 @@ pub fn sync_once(
             Action::Skip => {
                 if let Some(info) = remote_file {
                     if let Some(hash) = local_hash {
-                        let record = if let Some(mut old) = prior.clone() {
+                        let cached_stamp = prior.as_ref().and_then(|old| {
+                            Some((old.local_size?, old.local_modified_ns?))
+                        });
+                        let record = if let Some(expected_stamp) = cached_stamp {
+                            if local_stamp(&root.join(&path)) != Some(expected_stamp) {
+                                report.rescan_needed = true;
+                                continue;
+                            }
+                            let mut old = prior.clone().unwrap();
                             old.hash = hash.to_string();
                             old.etag = info.entry.etag.clone();
                             old.size = info.entry.size;
                             old.modified = info.entry.modified.clone();
                             old
                         } else {
+                            let before = local_stamp(&root.join(&path));
                             let local_data = checked_local!(&path, Some(hash));
-                            record_for(
+                            if local_stamp(&root.join(&path)) != before {
+                                report.rescan_needed = true;
+                                continue;
+                            }
+                            stamp_record(
+                                root,
                                 &path,
-                                &local_data,
-                                info.entry.etag.clone(),
-                                info.entry.size,
-                                info.entry.modified.clone(),
+                                record_for(
+                                    &path,
+                                    &local_data,
+                                    info.entry.etag.clone(),
+                                    info.entry.size,
+                                    info.entry.modified.clone(),
+                                ),
                             )
                         };
-                        journal
-                            .files
-                            .insert(path.clone(), stamp_record(root, &path, record));
+                        journal.files.insert(path.clone(), record);
                     }
                 } else {
                     journal.files.remove(&path);
