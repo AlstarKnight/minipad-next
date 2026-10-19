@@ -30,3 +30,9 @@ test("unquoted paths stop at spaces and punctuation; quoted paths may contain sp
     "C:\\文档\\a.pdf", "D:\\我的 文档\\b.pdf",
   ]);
 });
+
+test("Chinese prose directly surrounding a path is not included in the path", () => {
+  for (const source of ["打开D:\\资料\\a.pdf", "路径是D:\\资料\\a.pdf", "D:\\资料\\a.pdf里面"]) {
+    assert.deepEqual(findLocalPaths(source).map((x) => x.path), ["D:\\资料\\a.pdf"], source);
+  }
+});
