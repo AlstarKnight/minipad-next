@@ -642,8 +642,13 @@ mod tests {
         use std::fs;
 
         let client = WebdavClient::new(
-            &server, "tester", "test-password", "/MinipadDefaultAssets/", true,
-        ).unwrap();
+            &server,
+            "tester",
+            "test-password",
+            "/MinipadDefaultAssets/",
+            true,
+        )
+        .unwrap();
         let first = crate::notes::temp_dir("webdav-root-assets-one");
         let second = crate::notes::temp_dir("webdav-root-assets-two");
         let records = crate::notes::temp_dir("webdav-root-assets-records");
