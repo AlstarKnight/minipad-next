@@ -348,7 +348,6 @@ pub fn remote_hashes(files: &BTreeMap<String, RemoteFile>) -> BTreeMap<String, S
         .collect()
 }
 
-
 #[derive(Clone, Debug)]
 pub struct SyncOptions {
     pub images: bool,
@@ -374,17 +373,25 @@ pub fn preview_actions(
     mode: FirstSync,
     first: bool,
 ) -> (Vec<(String, Action)>, usize, usize) {
-    let before = journal.files.iter()
+    let before = journal
+        .files
+        .iter()
         .map(|(p, record)| (p.clone(), record.hash.clone()))
         .collect::<BTreeMap<_, _>>();
     let distant = remote_hashes(remote);
     let actions = plan(&before, local, &distant, mode, first);
-    let deletes = actions.iter().filter(|(path, action)| {
-        path.ends_with(".md") && matches!(action, Action::DeleteLocal | Action::DeleteRemote)
-    }).count();
-    let pages = local.keys().chain(remote.keys())
+    let deletes = actions
+        .iter()
+        .filter(|(path, action)| {
+            path.ends_with(".md") && matches!(action, Action::DeleteLocal | Action::DeleteRemote)
+        })
+        .count();
+    let pages = local
+        .keys()
+        .chain(remote.keys())
         .filter(|path| path.ends_with(".md"))
-        .collect::<BTreeSet<_>>().len();
+        .collect::<BTreeSet<_>>()
+        .len();
     (actions, deletes, pages)
 }
 
@@ -409,8 +416,12 @@ fn preserve_navigation(local: &[u8], remote: &[u8]) -> Result<Vec<u8>, String> {
     if let Some(object) = incoming.as_object_mut() {
         for key in ["active", "modes", "current_book"] {
             match current.as_ref().and_then(|v| v.get(key)) {
-                Some(value) => { object.insert(key.into(), value.clone()); }
-                None => { object.remove(key); }
+                Some(value) => {
+                    object.insert(key.into(), value.clone());
+                }
+                None => {
+                    object.remove(key);
+                }
             }
         }
     } else {
@@ -454,8 +465,18 @@ fn unique_conflict_path(root: &Path, path: &str) -> Result<String, String> {
     let (stem, ext) = name.rsplit_once('.').ok_or("文件名无扩展名")?;
     let stamp = chrono::Local::now().format("%Y-%m-%d %H.%M").to_string();
     for attempt in 0..100 {
-        let extra = if attempt == 0 { String::new() } else { format!(" ({attempt})") };
-        let candidate = format!("{}{}{}{}.{}", folder, crate::notes::conflict_name(stem, &stamp), extra, ext);
+        let extra = if attempt == 0 {
+            String::new()
+        } else {
+            format!(" ({attempt})")
+        };
+        let candidate = format!(
+            "{}{}{}{}.{}",
+            folder,
+            crate::notes::conflict_name(stem, &stamp),
+            extra,
+            ext
+        );
         if !root.join(&candidate).exists() {
             return Ok(candidate);
         }
@@ -476,15 +497,15 @@ fn local_trash(root: &Path, path: &str) -> Result<(), String> {
     }
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map_err(|e| e.to_string())?.as_nanos();
-    let dest = root.join(".trash").join("webdav").join(format!(
-        "{}-{nanos}", path.replace('/', "_")
-    ));
-    fs::create_dir_all(dest.parent().ok_or("回收站路径无效")?)
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| e.to_string())?
+        .as_nanos();
+    let dest = root
+        .join(".trash")
+        .join("webdav")
+        .join(format!("{}-{nanos}", path.replace('/', "_")));
+    fs::create_dir_all(dest.parent().ok_or("回收站路径无效")?).map_err(|e| e.to_string())?;
     fs::rename(target, dest).map_err(|e| format!("移动文件到回收站失败：{e}"))
 }
-
 
 fn record_for(
     path: &str,
@@ -535,7 +556,8 @@ pub fn sync_once(
                         journal.files.insert(
                             path.clone(),
                             record_for(
-                                &path, &local_data,
+                                &path,
+                                &local_data,
                                 info.entry.etag.clone(),
                                 info.entry.size,
                                 info.entry.modified.clone(),
@@ -561,15 +583,17 @@ pub fn sync_once(
                             .map_err(|_| "本地笔记本信息 JSON 损坏")?;
                         let theirs: serde_json::Value = serde_json::from_slice(&remote_data)
                             .map_err(|_| "远端笔记本信息 JSON 损坏")?;
-                        let base = journal.files.get(&path)
+                        let base = journal
+                            .files
+                            .get(&path)
                             .and_then(|entry| entry.base_metadata.as_ref());
-                        let merged = merge_metadata(base, &ours, &theirs)
-                            .map_err(|fields| format!(
+                        let merged = merge_metadata(base, &ours, &theirs).map_err(|fields| {
+                            format!(
                                 "「{path}」的元数据字段同时修改：{}；保留两端原文件",
                                 fields.join("、")
-                            ))?;
-                        upload = serde_json::to_vec_pretty(&merged)
-                            .map_err(|e| e.to_string())?;
+                            )
+                        })?;
+                        upload = serde_json::to_vec_pretty(&merged).map_err(|e| e.to_string())?;
                     } else if options.conflict_copy {
                         let conflict = unique_conflict_path(root, &path)?;
                         ensure_parent(client, &conflict)?;
@@ -585,7 +609,12 @@ pub fn sync_once(
                         report.conflicts += 1;
                     }
                 }
-                if created_dirs.insert(path.rsplit_once('/').map(|(p, _)| p).unwrap_or("").to_string()) {
+                if created_dirs.insert(
+                    path.rsplit_once('/')
+                        .map(|(p, _)| p)
+                        .unwrap_or("")
+                        .to_string(),
+                ) {
                     ensure_parent(client, &path)?;
                 }
                 // 只有真实存在的远端文件才允许 If-Match/If-Unmodified-Since。
@@ -619,7 +648,8 @@ pub fn sync_once(
                 journal.files.insert(
                     path.clone(),
                     record_for(
-                        &path, &bytes,
+                        &path,
+                        &bytes,
                         etag.or_else(|| info.entry.etag.clone()),
                         info.entry.size,
                         info.entry.modified.clone(),
@@ -646,7 +676,8 @@ pub fn sync_once(
                 client.mkcol(".trash/")?;
                 let id = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .map_err(|e| e.to_string())?.as_nanos();
+                    .map_err(|e| e.to_string())?
+                    .as_nanos();
                 let destination = format!(".trash/{}-{id}", path.replace('/', "_"));
                 client.move_file(&path, &destination, &info.entry)?;
                 journal.files.remove(&path);
