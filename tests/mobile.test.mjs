@@ -889,3 +889,35 @@ test("WebDAV queues a second Android sync instead of dropping it", async () => {
     assert.deepEqual(errors, []);
   } finally { await context.close(); }
 });
+
+test("refresh button uses WebDAV when enabled and keeps local refresh when disabled", async () => {
+  const { context, page, errors } = await open();
+  try {
+    await page.click("#refresh");
+    assert.equal(await page.evaluate(() => window.__mobileTest.syncCalls || 0), 0);
+    await page.click("#open-drawer");
+    await page.click("#open-sync-settings");
+    await page.locator("#ms-enable").check();
+    await page.fill("#ms-server", "https://dav.example.com/");
+    await page.fill("#ms-user", "tester");
+    await page.click("#ms-save-config");
+    await page.click("#close-sync-settings");
+    await page.click("#refresh");
+    await page.waitForFunction(() => window.__mobileTest.syncCalls === 1);
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test("WebDAV settings are visible in all four Android interface styles", async () => {
+  for (const style of ["classic", "starry", "material", "paper"]) {
+    const { context, page, errors } = await open({ look: { ui: style } });
+    try {
+      await page.click("#open-drawer");
+      await page.click("#open-sync-settings");
+      assert.equal(await page.locator("#mobile-webdav-settings").isVisible(), true, style);
+      assert.equal(await page.locator("#ms-server").isVisible(), true, style);
+      assert.equal(await page.locator("#ms-save-config").isVisible(), true, style);
+      assert.deepEqual(errors, [], style);
+    } finally { await context.close(); }
+  }
+});
