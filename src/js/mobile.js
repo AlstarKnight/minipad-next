@@ -644,6 +644,7 @@ async function performMobileSync(confirmed) {
   try {
     await flush();
     const result = await invoke("mobile_webdav_sync_now", { config: syncSettings, confirmDeletes: confirmed });
+    if (result?.rescan_needed) syncQueued = true;
     await showSyncStatus();
     // 有尚未保存的输入时保持原状态；下次保存会按 expected 留冲突副本。
     if (!dirty && !saving && !switching && (result.changed || []).length) await refresh();
