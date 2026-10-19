@@ -544,6 +544,18 @@ fn local_trash(root: &Path, path: &str) -> Result<(), String> {
     fs::rename(target, dest).map_err(|e| format!("移动文件到回收站失败：{e}"))
 }
 
+/// 同一字段被双端修改时先在本机留下远端元数据完整副本，再使用本机版本。
+fn backup_metadata_conflict(root: &Path, path: &str, bytes: &[u8]) -> Result<PathBuf, String> {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| e.to_string())?
+        .as_nanos();
+    let name = format!("{}-{stamp}.json", path.replace('/', "_"));
+    let saved = root.join(".trash").join("webdav-metadata").join(name);
+    crate::notes::write_atomic_bytes(&saved, bytes)?;
+    Ok(saved)
+}
+
 fn record_for(
     path: &str,
     bytes: &[u8],
@@ -626,13 +638,18 @@ pub fn sync_once(
                             .files
                             .get(&path)
                             .and_then(|entry| entry.base_metadata.as_ref());
-                        let merged = merge_metadata(base, &ours, &theirs).map_err(|fields| {
-                            format!(
-                                "「{path}」的元数据字段同时修改：{}；保留两端原文件",
-                                fields.join("、")
-                            )
-                        })?;
-                        upload = serde_json::to_vec_pretty(&merged).map_err(|e| e.to_string())?;
+                        match merge_metadata(base, &ours, &theirs) {
+                            Ok(merged) => {
+                                upload = serde_json::to_vec_pretty(&merged).map_err(|e| e.to_string())?;
+                            }
+                            Err(fields) if options.conflict_copy => {
+                                let copy = backup_metadata_conflict(root, &path, &remote_data)?;
+                                report.conflicts += 1;
+                                report.changed.push(path.clone());
+                                eprintln!("WebDAV 元数据字段冲突：{}；远端副本已保存到 {}", fields.join("、"), copy.display());
+                            }
+                            Err(_) => {} // 按用户“直接覆盖”设置保留本机字段。
+                        }
                     } else if options.conflict_copy {
                         let conflict = unique_conflict_path(root, &path)?;
                         ensure_parent(client, &conflict)?;
@@ -797,6 +814,19 @@ mod tests {
         assert_eq!(normal.len(), 2);
         assert!(!normal.contains_key("工作/assets/photo.png"));
         assert_eq!(local_files(&root, true).unwrap().len(), 3);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn simultaneous_metadata_edits_are_preserved_in_local_trash() {
+        let root = crate::notes::temp_dir("webdav-metadata-conflict");
+        let remote = br#"{"order":["远端"],"active":"a"}"#;
+        let stored = backup_metadata_conflict(&root, ".minipad.json", remote).unwrap();
+        assert_eq!(fs::read(stored).unwrap(), remote);
+        let base = serde_json::json!({"order": ["旧"]});
+        let local = serde_json::json!({"order": ["本机"]});
+        let theirs = serde_json::json!({"order": ["远端"]});
+        assert_eq!(merge_metadata(Some(&base), &local, &theirs), Err(vec!["order".to_string()]));
         fs::remove_dir_all(root).unwrap();
     }
 
