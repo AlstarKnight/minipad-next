@@ -52,3 +52,47 @@ test("WebDAV settings persist without storing password and manual test reports r
     assert.deepEqual(errors, []);
   } finally { await context.close(); }
 });
+
+
+test("a gradient chosen for local file paths renders as gradient text without changing Markdown", async () => {
+  const context = await browser.newContext({ viewport: { width: 650, height: 650 } });
+  await context.addInitScript(() => {
+    if (location.protocol !== "http:") return;
+    const markdown = "打开 C:\\docs\\note.pdf。";
+    const data = {
+      settings: {
+        local_path_enabled: true,
+        local_path_missing: false,
+        local_path_color: "linear-gradient(90deg, #112233, #aabbcc)",
+      },
+      books: {
+        "": {
+          files: { "路径": markdown },
+          meta: { order: ["路径"], active: "路径", modes: { "路径": "edit" } },
+        },
+      },
+      book: "",
+      backups: [],
+    };
+    localStorage.setItem("minipad-next-demo", JSON.stringify(data));
+  });
+  const page = await context.newPage();
+  const errors = [];
+  page.on("pageerror", error => errors.push(String(error)));
+  try {
+    await page.goto(url);
+    const path = page.locator("#editor .local-file-path");
+    await path.waitFor();
+    assert.equal(await page.locator("#editor").getAttribute("data-local-path-gradient"), "");
+    const style = await path.evaluate(el => {
+      const computed = getComputedStyle(el);
+      return { background: computed.backgroundImage, clip: computed.backgroundClip };
+    });
+    assert.match(style.background, /linear-gradient/);
+    assert.equal(style.clip, "text");
+    assert.equal(await page.evaluate(() => window.__mockFiles["路径"]), "打开 C:\\docs\\note.pdf。");
+    assert.deepEqual(errors, []);
+  } finally {
+    await context.close();
+  }
+});

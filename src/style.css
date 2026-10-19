@@ -2022,6 +2022,12 @@ html[data-side="rail"] .side-list { align-items: center; gap: 6px; padding: 10px
   text-decoration-style: dashed;
   cursor: pointer;
 }
+#editor[data-local-path-gradient] .local-file-path:not(.missing) {
+  background: var(--local-path-gradient);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
 #editor[data-local-path-underline="solid"] .local-file-path { text-decoration-style: solid; }
 #editor[data-local-path-underline="none"] .local-file-path { text-decoration: none; }
 #editor .local-file-path.missing { color: var(--muted); text-decoration: line-through; }
