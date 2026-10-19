@@ -2,7 +2,7 @@
 import { api, isMock, isMiniWindow } from "./api.js";
 import { $ } from "./dom.js";
 import { state, book, current } from "./state.js";
-import { toast, dialogOpen, closeDialog, closeMenu, closeOverlays, focusEditor, ask, askText } from "./ui.js";
+import { toast, dialogOpen, closeDialog, closeMenu, closeOverlays, focusEditor, ask, askText, openMenu } from "./ui.js";
 import { markDirty, flushAll, saveMeta, pendingNoteCount, resetActivity } from "./save.js";
 import { reload, syncFromDisk, addConflictCopy, showPendingNotice } from "./sync.js";
 import { rememberView } from "./page.js";
@@ -29,7 +29,15 @@ import { bindSidebar } from "./sidebar.js";
 async function init() {
   setLinkPrompt(() => askText("链接地址", "https://"));
   setTaskCommand(toggleTask);
-  await createEditor({ onChange: markDirty, openLink, emptyBold: () => isMiniWindow || toggleBooks() });
+  await createEditor({
+    onChange: markDirty, openLink, emptyBold: () => isMiniWindow || toggleBooks(),
+    openLocalPath: (path) => void openLocalPath(path),
+    localPathMenu: (path, x, y) => openMenu([
+      { id: "open", label: "打开", act: () => void openLocalPath(path) },
+      { id: "reveal", label: "在文件夹中显示", act: () => void showLocalPath(path) },
+      { id: "copy", label: "复制路径", act: () => navigator.clipboard.writeText(path).catch((e) => toast(String(e))) },
+    ], x, y),
+  });
   bindUi();
   // 小窗:只放一页,别的(托盘退出、贴边隐藏、备份提示……)都归主窗口
   if (isMiniWindow) return initMini();
@@ -129,6 +137,29 @@ async function handleQuit(id) {
 // 用系统浏览器打开链接(编辑区里 Ctrl+点击链接)
 function openLink(href) {
   if (/^(https?:|mailto:)/i.test(href || "")) api.invoke("open_link", { url: href }).catch((err) => toast(String(err)));
+}
+
+// 后端再次检查路径是否存在，并阻止未确认的可执行文件运行。
+async function openLocalPath(path) {
+  try {
+    const trusted = state.settings?.local_path_trusted || [];
+    const danger = /\.(exe|bat|cmd|ps1|vbs|js|msi|lnk|scr)$/i.test(path);
+    let confirmed = false;
+    if (danger && state.settings?.local_path_confirm !== false && !trusted.includes(path)) {
+      const allowed = await ask("将要运行以下文件，是否继续？\\n" + path, "运行", true);
+      if (!allowed) return;
+      confirmed = true;
+      if (await ask("这个文件以后不再询问？", "记住此文件")) {
+        await saveSettings({ ...state.settings, local_path_trusted: [...trusted, path] });
+      }
+    }
+    await api.invoke("open_path", { path, reveal: false, confirmed });
+  } catch (e) { toast(String(e)); }
+}
+async function showLocalPath(path) {
+  try {
+    await api.invoke("open_path", { path, reveal: true, confirmed: false });
+  } catch (e) { toast(String(e)); }
 }
 
 // 有没有开着的弹层、菜单或对话框
