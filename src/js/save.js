@@ -104,6 +104,7 @@ async function writeDirtyNotes() {
         // expected:上次读到(或写进去)的内容。文件在别处被改过时,后端先把那边的版本另存成冲突副本
         const r = await api.invoke("save_note", { book: b.name, name: n.name, content, expected: n.disk });
         n.disk = content;
+        document.dispatchEvent(new Event("webdav-saved"));
         if (r?.conflict) document.dispatchEvent(new CustomEvent("conflict-copy", { detail: { book: b, note: n, copy: r.conflict } }));
       } catch (e) {
         n.dirty = true;
