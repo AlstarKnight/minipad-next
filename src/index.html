@@ -587,6 +587,8 @@
             <p class="muted">删除保护：一次删除超过 20 页或总页数的三分之一时需要确认。</p>
             <label class="row"><span>状态栏</span><select id="set-webdav-display"><option value="icon">图标</option><option value="text">图标和文字</option><option value="none">不显示</option></select></label>
             <div class="row col"><span>同步图标颜色（留空跟随强调色）</span><div id="set-webdav-color" class="accent-swatches"></div></div>
+            <label class="row"><span>删除保护：单次页面数</span><input id="set-webdav-delete-limit" type="number" min="1" max="1000" value="20"></label>
+            <label class="row"><span>删除保护：超过全部页面的 1/N（N）</span><input id="set-webdav-delete-divisor" type="number" min="1" max="10" value="3"></label>
             <div class="row"><button type="button" id="set-webdav-test" class="small">测试连接</button><button type="button" id="set-webdav-sync" class="small">立即同步</button><button type="button" id="set-webdav-forget" class="small">断开并清除同步记录</button></div>
             <div class="row col"><span id="set-webdav-info" class="muted">同步尚未开启</span><details><summary>最近同步记录</summary><pre id="set-webdav-history"></pre></details></div>
             <h3>备份</h3>
