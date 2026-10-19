@@ -635,7 +635,6 @@ pub fn sync_once(
 ) -> Result<SyncReport, String> {
     let (mut journal, first) = read_journal(journal_file)?;
     let mode = journal.initial_mode.unwrap_or(options.first_mode);
-    client.mkcol("")?;
     let local = local_files_cached(root, options.images, Some(&journal))?;
     let remote = remote_files(client, options.images, &journal)?;
     let (actions, deletes, total) = preview_actions(&journal, &local, &remote, mode, first);
@@ -661,7 +660,9 @@ pub fn sync_once(
             }
         };
     }
-    let mut created_dirs = BTreeSet::new();
+    let mut created_dirs: BTreeSet<String> = remote.keys()
+        .filter_map(|path| path.rsplit_once('/').map(|(folder, _)| folder.to_string()))
+        .collect();
     for (path, action) in actions {
         let local_hash = local.get(&path).map(String::as_str);
         let remote_file = remote.get(&path);
