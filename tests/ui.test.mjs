@@ -6738,6 +6738,14 @@ describe("0.4.4: interface styles", () => {
 });
 
 suite("0.4.5: local file paths", { concurrency: 1 }, () => {
+  ui("local path missing state can be simulated", {
+    seed: seed({ "": { "路径": "打开 C:\\docs\\note.pdf" } }),
+  }, async ({ p }) => {
+    await p.locator("#editor .local-file-path.missing").waitFor();
+    assert.equal(await p.locator("#editor .local-file-path.missing").count(), 1);
+  });
+
+
   ui("local file links are decorated and settings survive reopening", {
     seed: seed({ "": { "路径": "打开 C:\\docs\\note.pdf 并查看。" } }),
   }, async (h) => {
