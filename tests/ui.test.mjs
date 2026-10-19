@@ -4625,8 +4625,11 @@ describe("0.3.0: import from minipad2", () => {
     for (const [plain, md] of MINIPAD2_ESCAPES) {
       if (process.env.CI) console.info("minipad2-escape start:", JSON.stringify(md));
       await open(md);
+      if (process.env.CI) console.info("minipad2-escape loading:", JSON.stringify(md));
       await syncUntil(h, text, plain, `${JSON.stringify(md)} shows as ${JSON.stringify(plain)}`);
+      if (process.env.CI) console.info("minipad2-escape loaded:", JSON.stringify(md));
       const saved = await h.editor();
+      if (process.env.CI) console.info("minipad2-escape saved:", JSON.stringify(saved));
       await open(saved);
       await syncUntil(h, text, plain, `and so does ${JSON.stringify(saved)}, as the editor saves it`);
       if (process.env.CI) console.info("minipad2-escape done:", JSON.stringify(md));
