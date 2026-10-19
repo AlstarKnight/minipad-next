@@ -546,9 +546,14 @@ mod tests {
         syncer::sync_once(&c, &first, &journal_a, &opts, || Ok(())).unwrap();
         assert_eq!(fs::read_to_string(first.join("笔记.md")).unwrap(), "设备乙版本二");
         fs::remove_file(second.join("笔记.md")).unwrap();
-        let delete = syncer::sync_once(&c, &second, &journal_b, &opts, || Ok(())).unwrap();
+        assert!(syncer::sync_once(&c, &second, &journal_b, &opts, || Ok(()))
+            .unwrap_err().starts_with("WEB_DAV_CONFIRM_DELETE:"));
+        assert_eq!(c.get("笔记.md").unwrap().0, "设备乙版本二".as_bytes());
+        let mut approved = opts.clone();
+        approved.confirm_deletes = true;
+        let delete = syncer::sync_once(&c, &second, &journal_b, &approved, || Ok(())).unwrap();
         assert_eq!(delete.deleted, 1);
-        syncer::sync_once(&c, &first, &journal_a, &opts, || Ok(())).unwrap();
+        syncer::sync_once(&c, &first, &journal_a, &approved, || Ok(())).unwrap();
         assert!(!first.join("笔记.md").exists());
         assert!(fs::read_dir(first.join(".trash")).unwrap().next().is_some());
         for path in [first, second, records] { fs::remove_dir_all(path).unwrap(); }
