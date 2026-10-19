@@ -589,7 +589,12 @@ export function mockApi() {
       message: db.settings?.webdav_enabled ? "已同步（预览模拟）" : "WebDAV 尚未开启",
       last_time: "", history: [],
     }),
-    webdav_sync_now: () => ({ uploaded: 0, downloaded: 0, deleted: 0, conflicts: 0, changed: [] }),
+    webdav_sync_now: () => {
+      const control = window.__mockControl;
+      if (control) control.webdavSyncCalls = (control.webdavSyncCalls || 0) + 1;
+      return { uploaded: 0, downloaded: 0, deleted: 0, conflicts: 0,
+        changed: [], rescan_needed: control?.webdavRescanNeeded || false };
+    },
     webdav_forget: () => { db.settings.webdav_enabled = false; persist(); },
     local_path_exists: async ({ path }) => {
       const control = window.__mockControl;
