@@ -84,6 +84,33 @@ pub fn run(notes: &Path, dest: &Path, day: &str, keep: usize) -> Result<Option<M
     }))
 }
 
+/// 首次 WebDAV 同步单独备份当前内容，即使当天已经有日常备份也重新快照。
+pub fn before_sync(notes: &Path, dest: &Path) -> Result<Made, String> {
+    fs::read_dir(notes).map_err(|e| format!("读不了笔记文件夹 {}:{e}", notes.display()))?;
+    fs::create_dir_all(dest).map_err(|e| format!("无法创建备份文件夹 {}:{e}", dest.display()))?;
+    let stamp = Local::now().format("%Y-%m-%d %H.%M.%S").to_string();
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| e.to_string())?
+        .as_nanos();
+    let target = dest.join(format!("笔记备份 同步前 {stamp}-{nonce}{EXT}"));
+    let temp = target.with_extension("zip.tmp~");
+    let result = write_zip(notes, &temp, dest).and_then(|skipped| {
+        if !skipped.is_empty() {
+            return Err(format!("同步前备份有 {} 个无法读取的项目，已取消同步", skipped.len()));
+        }
+        fs::rename(&temp, &target).map_err(|e| e.to_string())?;
+        Ok(skipped)
+    });
+    match result {
+        Ok(skipped) => Ok(Made { path: target, skipped }),
+        Err(error) => {
+            let _ = fs::remove_file(&temp);
+            Err(error)
+        }
+    }
+}
+
 /// 只留最近 `keep` 份(至少一份),多出来的从最旧的删起。
 /// 删不掉的(比如正被别的程序打开)先留着,下次备份时再删。
 pub fn prune(dest: &Path, keep: usize) {
@@ -271,6 +298,24 @@ mod tests {
         // 不会留下临时文件
         assert_eq!(fs::read_dir(&dest).unwrap().count(), 2);
         fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn first_sync_always_captures_current_notes_even_after_daily_backup() {
+        let root = temp_dir("backup-before-webdav");
+        let notes = root.join("notes");
+        let dest = root.join("backups");
+        fs::create_dir_all(&notes).unwrap();
+        fs::write(notes.join("a.md"), "old").unwrap();
+        run(&notes, &dest, "2026-10-19", 14).unwrap();
+        fs::write(notes.join("a.md"), "latest").unwrap();
+        let snapshot = before_sync(&notes, &dest).unwrap();
+        assert_eq!(
+            read_zip(&snapshot.path).iter().find(|(name, _)| name == "a.md").unwrap().1,
+            "latest"
+        );
+        assert_eq!(list(&dest).len(), 1, "existing daily backups remain unchanged");
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
