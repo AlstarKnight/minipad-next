@@ -251,6 +251,8 @@ export function openSettings() {
   $("#set-webdav-interval").value = String(s.webdav_interval_minutes ?? 5);
   $("#set-webdav-hide").checked = s.webdav_on_hide !== false;
   $("#set-webdav-display").value = s.webdav_status_style || "icon";
+  $("#set-webdav-delete-limit").value = s.webdav_delete_limit ?? 20;
+  $("#set-webdav-delete-divisor").value = s.webdav_delete_divisor ?? 3;
   webdavColor.show(s.webdav_status_color || "");
   void webdavStatus().catch(() => {});
   $("#set-backup").checked = s.backup_enabled;
@@ -690,6 +692,8 @@ async function submitSettings() {
     webdav_interval_minutes: Number($("#set-webdav-interval").value),
     webdav_on_hide: $("#set-webdav-hide").checked,
     webdav_status_style: $("#set-webdav-display").value,
+    webdav_delete_limit: Math.max(1, Math.min(1000, Math.round(Number($("#set-webdav-delete-limit").value) || 20))),
+    webdav_delete_divisor: Math.max(1, Math.min(10, Math.round(Number($("#set-webdav-delete-divisor").value) || 3))),
     webdav_status_color: webdavColor.value,
     settings_nav: $("#set-nav-pos").value,
     tab_overflow: $("#set-tab-overflow").value,
