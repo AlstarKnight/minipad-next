@@ -1112,6 +1112,35 @@ mod tests {
     }
 
     #[test]
+    fn a_thousand_unchanged_pages_reuse_hashes_without_reading_contents() {
+        let root = crate::notes::temp_dir("webdav-thousand-pages");
+        let mut records = BTreeMap::new();
+        for i in 0..1000 {
+            let name = format!("note-{i:04}.md");
+            let file = root.join(&name);
+            fs::write(&file, b"content").unwrap();
+            let (size, modified) = local_stamp(&file).unwrap();
+            records.insert(
+                name,
+                FileRecord {
+                    hash: "cached".into(),
+                    local_size: Some(size),
+                    local_modified_ns: Some(modified),
+                    ..FileRecord::default()
+                },
+            );
+        }
+        let journal = Journal {
+            files: records,
+            ..Journal::default()
+        };
+        let found = local_files_cached(&root, false, Some(&journal)).unwrap();
+        assert_eq!(found.len(), 1000);
+        assert!(found.values().all(|hash| hash == "cached"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn local_scanning_excludes_trash_temporary_and_optional_images() {
         let root = crate::notes::temp_dir("webdav-files");
         fs::write(root.join("主页.md"), "hello").unwrap();
