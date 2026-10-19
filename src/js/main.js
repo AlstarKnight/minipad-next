@@ -42,19 +42,28 @@ async function init() {
   bindUi();
   // 只检查当前可见的路径；节点重建时重新检查，失败时保留普通样式。
   const observedPaths = new WeakMap();
+  const pathChecks = new Map();
   const pathObserver = new MutationObserver(() => {
     if (state.settings?.local_path_missing === false) return;
     for (const el of document.querySelectorAll("#editor [data-local-path]")) {
       if (observedPaths.has(el)) continue;
       observedPaths.set(el, true);
-      api.invoke("local_path_exists", { path: el.dataset.localPath })
-        .then((exists) => { if (el.isConnected) markLocalPathMissing(el.dataset.localPath, !exists); })
-        .catch(() => {});
+      const path = el.dataset.localPath;
+      if (path.startsWith("\\\\")) continue; // 网络共享离线时不阻塞存在性检查。
+      const cached = pathChecks.get(path);
+      const check = cached && cached.until > Date.now() ? cached.check
+        : api.invoke("local_path_exists", { path });
+      if (!cached || cached.until <= Date.now()) {
+        pathChecks.set(path, { check, until: Date.now() + 60_000 });
+      }
+      Promise.resolve(check)
+        .then((exists) => { if (el.isConnected) markLocalPathMissing(path, !exists); })
+        .catch(() => { pathChecks.delete(path); });
     }
   });
   pathObserver.observe($("#editor"), { subtree: true, childList: true });
   // 小窗:只放一页,别的(托盘退出、贴边隐藏、备份提示……)都归主窗口
-  if (isMiniWindow) return initMini();
+  if (isMiniWindow) { bindWebdav(); return initMini(); }
   await reload();
   bindWebdav();
   void upgradeColorLibrary().catch(() => {});
