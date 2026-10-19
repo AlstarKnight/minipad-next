@@ -576,6 +576,7 @@ let syncSettings = (() => {
   catch { return { ...syncDefaults }; }
 })();
 let syncing = null;
+let syncQueued = false;
 let syncTimer = null;
 let syncDelay = null;
 function updateSyncForm() {
@@ -636,33 +637,45 @@ async function showSyncStatus() {
     el("mobile-sync-state").hidden = syncSettings.enabled && syncSettings.display === "none";
   } catch (e) { el("ms-result").textContent = String(e); }
 }
+async function performMobileSync(confirmed) {
+  try {
+    await flush();
+    const result = await invoke("mobile_webdav_sync_now", { config: syncSettings, confirmDeletes: confirmed });
+    await showSyncStatus();
+    // 有尚未保存的输入时保持原状态；下次保存会按 expected 留冲突副本。
+    if (!dirty && !saving && !switching && (result.changed || []).length) await refresh();
+    return result;
+  } catch (e) {
+    const text = String(e);
+    if (text.includes("WEB_DAV_CONFIRM_DELETE:")) {
+      const match = /WEB_DAV_CONFIRM_DELETE:(\d+):(\d+)/.exec(text);
+      if (window.confirm("同步准备删除 " + (match?.[1] || "多") + " 页，确定继续吗？取消后不会删除任何文件。")) {
+        return performMobileSync(true);
+      }
+    } else if (!text.includes("离线")) {
+      el("ms-result").textContent = text;
+    }
+    await showSyncStatus();
+  }
+}
+
 async function mobileSync(confirmed = false) {
   if (!syncSettings.enabled || !invoke) return;
-  if (syncing) return syncing;
+  if (syncing) {
+    syncQueued = true;
+    return syncing;
+  }
   syncing = (async () => {
-    try {
-      await flush();
-      const result = await invoke("mobile_webdav_sync_now", { config: syncSettings, confirmDeletes: confirmed });
-      await showSyncStatus();
-      // 有尚未保存的输入时保持原状态；下次保存会按 expected 留冲突副本。
-      if (!dirty && !saving && !switching && (result.changed || []).length) await refresh();
-      return result;
-    } catch (e) {
-      const text = String(e);
-      if (text.includes("WEB_DAV_CONFIRM_DELETE:")) {
-        const match = /WEB_DAV_CONFIRM_DELETE:(\d+):(\d+)/.exec(text);
-        if (window.confirm("同步准备删除 " + (match?.[1] || "多") + " 页，确定继续吗？取消后不会删除任何文件。")) {
-          syncing = null;
-          return mobileSync(true);
-        }
-      } else if (!text.includes("离线")) {
-        el("ms-result").textContent = text;
-      }
-      await showSyncStatus();
-    } finally { syncing = null; }
+    do {
+      syncQueued = false;
+      await performMobileSync(confirmed);
+      confirmed = false;
+    } while (syncQueued && syncSettings.enabled);
   })();
-  return syncing;
+  try { return await syncing; }
+  finally { syncing = null; }
 }
+
 function scheduleMobileSync() {
   if (!syncSettings.enabled || !syncSettings.after_save) return;
   clearTimeout(syncDelay);
