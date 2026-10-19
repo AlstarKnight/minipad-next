@@ -174,6 +174,7 @@
     <label class="sync-field">打开时定期同步<select id="ms-interval"><option value="0">关闭</option><option value="1">1 分钟</option><option value="5">5 分钟</option><option value="15">15 分钟</option><option value="30">30 分钟</option></select></label>
     <label class="switch-row"><span>切换到后台时同步</span><input id="ms-hide" type="checkbox" checked></label>
     <label class="sync-field">状态显示<select id="ms-display"><option value="icon">图标</option><option value="text">图标和文字</option><option value="none">隐藏</option></select></label>
+    <div class="sync-field"><span>同步状态颜色（留空跟随强调色）</span><div id="ms-color" class="accent-swatches" role="radiogroup" aria-label="同步状态颜色"></div></div>
     <p class="sheet-note">大量删除（超过 20 页或总数三分之一）会暂停并询问。</p>
     <div class="sync-actions"><button type="button" id="ms-save-config">保存同步设置</button><button type="button" id="ms-test">测试连接</button><button type="button" id="ms-run">立即同步</button><button type="button" id="ms-forget">断开同步</button></div>
     <p id="ms-result" class="sheet-note" role="status"></p>
