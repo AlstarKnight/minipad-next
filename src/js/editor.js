@@ -42,6 +42,7 @@ import { outlinePlugin } from "./outline.js";
 import { codeToText } from "./toolbar.js";
 import { imagePlugin, applyImageSettings } from "./images.js";
 import { findLocalPaths } from "./localpaths.js";
+import { parseAccent } from "./accent.js";
 
 let editor = null;
 let view = null;
@@ -675,7 +676,10 @@ export function applyEditorSettings(s) {
   };
   const root = $("#editor");
   root.dataset.localPathUnderline = pathSettings.local_path_underline;
-  root.style.setProperty("--local-path-color", pathSettings.local_path_color || "var(--accent)");
+  const pathColor = parseAccent(pathSettings.local_path_color);
+  root.style.setProperty("--local-path-color", pathColor?.from || "var(--accent)");
+  root.style.setProperty("--local-path-gradient", pathColor?.to ? pathSettings.local_path_color : "none");
+  root.toggleAttribute("data-local-path-gradient", !!pathColor?.to);
   if (view && oldPath !== JSON.stringify(pathSettings)) {
     view.dispatch(view.state.tr.setMeta(localPathKey, true).setMeta("addToHistory", false));
   }
