@@ -522,6 +522,19 @@ mod tests {
     use super::*;
 
     #[test]
+    fn encoded_root_and_href_compare_after_decoding() {
+        let client = WebdavClient::new(
+            "https://example.com/dav/%40staff/", "user", "password",
+            "/中文 文件夹/", false,
+        ).unwrap();
+        let root = client.root.path().to_string();
+        assert!(client.relative_href(&(root.clone() + "页面%23a.md")).is_ok());
+        let encoded = root.replace("%40", "%40").replace("%E4", "%e4");
+        assert_eq!(client.relative_href(&(encoded + "页面%23a.md")).unwrap(), "页面#a.md");
+        assert!(client.relative_href(&(root + "%2Fsecret.md")).is_err());
+    }
+
+    #[test]
     fn https_client_uses_embedded_roots_without_platform_initialization() {
         let client = WebdavClient::new(
             "https://dav.jianguoyun.com/dav/", "tester", "test-password",
