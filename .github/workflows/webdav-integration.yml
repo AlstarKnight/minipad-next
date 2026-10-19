@@ -19,3 +19,7 @@ jobs:
           base64 -w0 src-tauri/src/webdav.rs
           echo
           echo WEB_DAV_SOURCE_END
+          echo WEB_DAV_SYNCER_BEGIN
+          base64 -w0 src-tauri/src/syncer.rs
+          echo
+          echo WEB_DAV_SYNCER_END
