@@ -217,7 +217,6 @@ pub fn update_status(state: &str, message: &str) {
     }
 }
 
-
 /// 同步记录只含路径、哈希和远程版本信息，绝不储存密码或认证头。
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
