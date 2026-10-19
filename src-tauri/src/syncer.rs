@@ -348,6 +348,140 @@ pub fn remote_hashes(files: &BTreeMap<String, RemoteFile>) -> BTreeMap<String, S
         .collect()
 }
 
+
+#[derive(Clone, Debug)]
+pub struct SyncOptions {
+    pub images: bool,
+    pub first_mode: FirstSync,
+    pub conflict_copy: bool,
+    pub confirm_deletes: bool,
+}
+
+#[derive(Debug, Default, Serialize)]
+pub struct SyncReport {
+    pub uploaded: usize,
+    pub downloaded: usize,
+    pub deleted: usize,
+    pub conflicts: usize,
+    pub changed: Vec<String>,
+}
+
+/// 删除前先进行完整规划，超过保护阈值一律不碰本地或远端文件。
+pub fn preview_actions(
+    journal: &Journal,
+    local: &BTreeMap<String, String>,
+    remote: &BTreeMap<String, RemoteFile>,
+    mode: FirstSync,
+    first: bool,
+) -> (Vec<(String, Action)>, usize, usize) {
+    let before = journal.files.iter()
+        .map(|(p, record)| (p.clone(), record.hash.clone()))
+        .collect::<BTreeMap<_, _>>();
+    let distant = remote_hashes(remote);
+    let actions = plan(&before, local, &distant, mode, first);
+    let deletes = actions.iter().filter(|(path, action)| {
+        path.ends_with(".md") && matches!(action, Action::DeleteLocal | Action::DeleteRemote)
+    }).count();
+    let pages = local.keys().chain(remote.keys())
+        .filter(|path| path.ends_with(".md"))
+        .collect::<BTreeSet<_>>().len();
+    (actions, deletes, pages)
+}
+
+/// 只提取用于跨设备同步的 .minipad.json 字段，其余导航信息保留设备本地。
+fn shared_metadata(path: &str, data: &[u8]) -> Option<serde_json::Value> {
+    if !path.ends_with(".minipad.json") {
+        return None;
+    }
+    let mut meta = serde_json::from_slice::<serde_json::Value>(data).ok()?;
+    let object = meta.as_object_mut()?;
+    for key in ["active", "modes", "current_book"] {
+        object.remove(key);
+    }
+    Some(meta)
+}
+
+fn preserve_navigation(local: &[u8], remote: &[u8]) -> Result<Vec<u8>, String> {
+    let Ok(mut incoming) = serde_json::from_slice::<serde_json::Value>(remote) else {
+        return Err("远端笔记本信息不是合法 JSON，已停止下载".into());
+    };
+    let current = serde_json::from_slice::<serde_json::Value>(local).ok();
+    if let Some(object) = incoming.as_object_mut() {
+        for key in ["active", "modes", "current_book"] {
+            match current.as_ref().and_then(|v| v.get(key)) {
+                Some(value) => { object.insert(key.into(), value.clone()); }
+                None => { object.remove(key); }
+            }
+        }
+    } else {
+        return Err("远端笔记本信息格式错误，已停止下载".into());
+    }
+    serde_json::to_vec_pretty(&incoming).map_err(|e| e.to_string())
+}
+
+fn check_local(root: &Path, path: &str, expected: Option<&str>) -> Result<Vec<u8>, String> {
+    let file = root.join(path);
+    let bytes = match fs::read(file) {
+        Ok(bytes) => bytes,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound && expected.is_none() => Vec::new(),
+        Err(e) => return Err(format!("重新读取文件「{path}」失败：{e}")),
+    };
+    if expected.is_some() && Some(content_hash(path, &bytes).as_str()) != expected {
+        return Err(format!("「{path}」在扫描后被修改，留到下一轮同步"));
+    }
+    Ok(bytes)
+}
+
+fn ensure_parent(client: &WebdavClient, path: &str) -> Result<(), String> {
+    let parts: Vec<&str> = path.split('/').collect();
+    let mut dir = String::new();
+    for part in parts.iter().take(parts.len().saturating_sub(1)) {
+        dir.push_str(part);
+        dir.push('/');
+        client.mkcol(&dir)?;
+    }
+    Ok(())
+}
+
+fn unique_conflict_path(root: &Path, path: &str) -> Result<String, String> {
+    let (folder, name) = match path.rsplit_once('/') {
+        Some((folder, name)) => (format!("{folder}/"), name),
+        None => (String::new(), path),
+    };
+    let (stem, ext) = name.rsplit_once('.').ok_or("文件名无扩展名")?;
+    let stamp = chrono::Local::now().format("%Y-%m-%d %H.%M").to_string();
+    for attempt in 0..100 {
+        let extra = if attempt == 0 { String::new() } else { format!(" ({attempt})") };
+        let candidate = format!("{}{}{}{}.{}", folder, crate::notes::conflict_name(stem, &stamp), extra, ext);
+        if !root.join(&candidate).exists() {
+            return Ok(candidate);
+        }
+    }
+    Err("冲突副本名称已用尽，取消覆盖".into())
+}
+
+/// 回收站保留文件内容；Markdown 使用现有的页面回收站格式。
+fn local_trash(root: &Path, path: &str) -> Result<(), String> {
+    if path.ends_with(".md") {
+        let (book, filename) = path.rsplit_once('/').unwrap_or(("", path));
+        let name = filename.strip_suffix(".md").ok_or("页面格式错误")?;
+        return crate::notes::move_to_trash(root, book, name);
+    }
+    let target = root.join(path);
+    if !target.exists() {
+        return Ok(());
+    }
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| e.to_string())?.as_nanos();
+    let dest = root.join(".trash").join("webdav").join(format!(
+        "{}-{nanos}", path.replace('/', "_")
+    ));
+    fs::create_dir_all(dest.parent().ok_or("回收站路径无效")?)
+        .map_err(|e| e.to_string())?;
+    fs::rename(target, dest).map_err(|e| format!("移动文件到回收站失败：{e}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
