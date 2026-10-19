@@ -3,7 +3,10 @@
 This is a **local-first** Android prototype, separate from the Windows desktop
 interface. The mobile editor uses Milkdown to display and edit the same `.md`
 files with headings, lists, emphasis, links, tables, code and inline images.
-There is no WebDAV yet; **this APK does not sync notes between devices**.
+Since 0.4.5, an optional WebDAV client can synchronize Markdown and image assets
+with the Windows app. WebDAV remains **off by default** until an account is
+configured. This feature requires on-device validation before relying on it
+for important notes.
 
 ## Build and try
 
@@ -107,24 +110,48 @@ dispatch.
   expected file version differs.
 - The desktop entry point and Windows installer are unchanged.
 
-**No WebDAV, note import/export, background sync, image cropping, or desktop-only
-floating UI.** A browser-based Android-shell test covers editing, saving,
+**No background service or Play Store integration; background transitions can
+trigger one foreground WebDAV sync when the WebView is still running.
+There is no Android note import/export, image cropping, or desktop-only floating UI.** A browser-based Android-shell test covers editing, saving,
 read-only mode, and attachment insertion, but it cannot substitute for actual
 Android devices. In particular, file pickers and Chinese IMEs need on-device
 testing. Android-private app storage can be removed by uninstalling the APK,
 so treat this stage as a test build and avoid storing important notes.
+
+## WebDAV synchronization (0.4.5)
+
+1. Open the notebook drawer and select **同步设置**.
+2. Enter a WebDAV server URL, username, and app-specific password. For Jianguoyun
+   use its third-party application password. The remote folder defaults to
+   `/MinipadNext/`. Use HTTPS; HTTP requires explicit opt-in for a trusted LAN.
+3. Choose **合并** for the first sync unless you specifically need the server or
+   phone as the authoritative copy. **以网盘为准** and **以手机为准** may move
+   extra files to the corresponding trash; a high deletion count requires confirmation.
+4. Save settings, run **测试连接**, then enable synchronization. Use the drawer's
+   **立即同步** button when you need an immediate transfer.
+5. Automatic triggers are available for opening/returning to the app, successful
+   saves, a foreground timer, and switching to the background. Android does
+   not run a permanent background sync service.
+
+A WebDAV account's password stays in the Android app-private data folder,
+outside the synchronized `notes/` tree. The server URL and account options
+remain on the current device. The file format is unchanged: ordinary `.md`
+files and `assets/` images. Conflicts are kept as separate files by default.
+Offline editing and normal local autosave continue without a server connection.
+Check the in-app sync status and error history for problems.
+
+**Warning:** An uninstalled APK removes app-private data. Keep a second backup
+until the Windows and Android workflow passes real-device testing. A successful
+mock/browser test cannot verify phone storage and network behavior.
 
 ## Planned follow-ups
 
 The touch interface, Milkdown editor and image import were added **within PR #38**
 to keep the Android work together, as requested. Future milestones:
 
-1. **WebDAV foundation:** settings, credential storage, remote list/download/upload,
-   ETag checking and manual foreground sync shared with Windows.
-2. **Sync hardening:** tombstones/deletions, conflicts, retry/offline behavior,
-   compatibility testing with different WebDAV servers and stable Android update
-   signing.
-3. **Device validation:** Chinese input methods, keyboards, system back navigation,
+1. **Sync hardening:** validate deletion protection, conflicts, offline behavior,
+   certificate errors and compatibility with different WebDAV providers.
+2. **Device validation:** Chinese input methods, keyboards, system back navigation,
    external file-picker compatibility and image rendering on actual devices. Also
    confirm that links open (`window.open`; no opener plugin is bundled on Android)
    and that the `prompt()` dialogs for new notebooks and pages appear.
