@@ -120,6 +120,7 @@
   <footer id="status" data-tauri-drag-region title="拖动状态栏可移动窗口">
     <span id="st-count"></span>
     <span class="spacer" data-tauri-drag-region></span>
+    <button id="st-webdav" class="link" type="button" hidden title="WebDAV 同步状态"></button>
     <span id="st-save"></span>
     <button id="st-update" class="link" title="打开下载页" hidden></button>
   </footer>
@@ -567,6 +568,27 @@
                 <option value="overwrite">只留这里的:用这里的内容覆盖别处的修改</option>
               </select>
             </div>
+            <h3>同步</h3>
+            <label class="row check"><input id="set-webdav-enabled" type="checkbox"> <span>开启 WebDAV 同步</span></label>
+            <label class="row"><span>常用网盘</span><select id="set-webdav-preset"><option value="custom">自定义</option><option value="jianguoyun">坚果云</option><option value="nextcloud">Nextcloud</option><option value="infinicloud">InfiniCLOUD</option></select></label>
+            <div class="row col"><span>服务器地址</span><input id="set-webdav-server" type="url" spellcheck="false" placeholder="https://dav.example.com/"></div>
+            <label class="row"><span>用户名</span><input id="set-webdav-user" autocomplete="username" spellcheck="false"></label>
+            <label class="row"><span>应用密码</span><input id="set-webdav-password" type="password" autocomplete="new-password" placeholder="留空则保持已保存的密码"></label>
+            <p class="muted">坚果云请使用第三方应用密码。密码单独保存在 Windows 凭据管理器，不写入设置或笔记。</p>
+            <label class="row"><span>远程文件夹</span><input id="set-webdav-folder" spellcheck="false" value="/MinipadNext/"></label>
+            <label class="row check"><input id="set-webdav-http" type="checkbox"><span>允许不加密 HTTP 连接（仅可信局域网；密码可能被截获）</span></label>
+            <label class="row"><span>第一次同步</span><select id="set-webdav-first"><option value="merge">合并并保留冲突副本</option><option value="remote">以网盘为准（本地多余文件移入回收站）</option><option value="local">以本机为准（远端多余文件移入回收站）</option></select></label>
+            <label class="row check"><input id="set-webdav-images" type="checkbox"><span>同步图片</span></label>
+            <label class="row check"><input id="set-webdav-start" type="checkbox"><span>启动时同步</span></label>
+            <label class="row check"><input id="set-webdav-save" type="checkbox"><span>保存笔记后同步</span></label>
+            <label class="row"><span>保存后等待（秒）</span><input id="set-webdav-delay" type="number" min="10" max="300"></label>
+            <label class="row"><span>定时同步</span><select id="set-webdav-interval"><option value="0">关闭</option><option value="1">每 1 分钟</option><option value="5">每 5 分钟</option><option value="15">每 15 分钟</option><option value="30">每 30 分钟</option></select></label>
+            <label class="row check"><input id="set-webdav-hide" type="checkbox"><span>窗口隐藏时同步</span></label>
+            <p class="muted">删除保护：一次删除超过 20 页或总页数的三分之一时需要确认。</p>
+            <label class="row"><span>状态栏</span><select id="set-webdav-display"><option value="icon">图标</option><option value="text">图标和文字</option><option value="none">不显示</option></select></label>
+            <div class="row col"><span>同步图标颜色（留空跟随强调色）</span><div id="set-webdav-color" class="accent-swatches"></div></div>
+            <div class="row"><button type="button" id="set-webdav-test" class="small">测试连接</button><button type="button" id="set-webdav-sync" class="small">立即同步</button><button type="button" id="set-webdav-forget" class="small">断开并清除同步记录</button></div>
+            <div class="row col"><span id="set-webdav-info" class="muted">同步尚未开启</span><details><summary>最近同步记录</summary><pre id="set-webdav-history"></pre></details></div>
             <h3>备份</h3>
             <label class="row check"><input id="set-backup" type="checkbox" /> <span>每天第一次保存时,把笔记文件夹备份成 zip</span></label>
             <label class="row"><span>保留份数</span><input id="set-backup-keep" type="number" min="1" max="365" /></label>
