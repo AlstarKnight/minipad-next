@@ -675,6 +675,10 @@ pub fn sync_once(
     backup_first: impl FnOnce() -> Result<(), String>,
 ) -> Result<SyncReport, String> {
     let (mut journal, first) = read_journal(journal_file)?;
+    let previous_books: BTreeSet<String> = journal.files.keys()
+        .filter_map(|p| p.split_once('/').map(|(book, _)| book.to_string()))
+        .filter(|book| book != "assets")
+        .collect();
     let mode = journal.initial_mode.unwrap_or(options.first_mode);
     let local = local_files_cached(root, options.images, Some(&journal))?;
     let mut remote = remote_files(client, options.images, &journal)?;
@@ -896,6 +900,26 @@ pub fn sync_once(
         }
         if action != Action::Skip || prior.as_ref() != journal.files.get(&path) {
             save_journal(journal_file, &journal)?;
+        }
+    }
+    if !first && !report.rescan_needed {
+        for book in previous_books {
+            let prefix = format!("{book}/");
+            if remote.keys().any(|path| path.starts_with(&prefix))
+                || journal.files.keys().any(|path| path.starts_with(&prefix))
+            {
+                continue;
+            }
+            let dir = root.join(&book);
+            if !dir.is_dir() || fs::read_dir(&dir)
+                .map_err(|e| e.to_string())?
+                .any(|entry| entry.is_ok_and(|e| e.file_type()
+                    .is_ok_and(|t| t.is_file() && e.path().extension().is_some_and(|ext| ext == "md"))))
+            {
+                continue;
+            }
+            crate::notes::delete_book(root, &book)?;
+            report.changed.push(format!("{book}/"));
         }
     }
     if first && !report.rescan_needed {
