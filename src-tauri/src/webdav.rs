@@ -653,14 +653,8 @@ mod tests {
         let Ok(server) = std::env::var("MINIPAD_TEST_WEBDAV_TLS_URL") else {
             return;
         };
-        let client = WebdavClient::new(
-            &server,
-            "tester",
-            "test-password",
-            "/MinipadNext/",
-            false,
-        )
-        .unwrap();
+        let client =
+            WebdavClient::new(&server, "tester", "test-password", "/MinipadNext/", false).unwrap();
         let error = client.list("").unwrap_err();
         assert!(error.contains("证书不受信任"), "{error}");
     }
