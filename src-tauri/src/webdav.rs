@@ -127,7 +127,28 @@ pub fn parse_multistatus(xml: &str) -> Result<Vec<RemoteEntry>, String> {
 use reqwest::blocking::{Client, RequestBuilder, Response};
 use reqwest::header::{HeaderValue, CONTENT_TYPE, ETAG, IF_MATCH, IF_NONE_MATCH};
 use reqwest::{Method, StatusCode, Url};
-use std::time::Duration;
+use std::time::{Duration, Instant};
+use std::collections::BTreeMap;
+use std::sync::{Mutex, OnceLock};
+
+/// 429/503 的服务器等待时间对连续触发的同步共享，避免下一次立即重复请求。
+static RETRY_AFTER: OnceLock<Mutex<BTreeMap<String, Instant>>> = OnceLock::new();
+
+fn retry_after_seconds(value: Option<&str>) -> u64 {
+    let Some(value) = value else { return 60 };
+    if let Ok(seconds) = value.trim().parse::<u64>() {
+        return seconds.clamp(1, 3600);
+    }
+    if let Ok(date) = chrono::DateTime::parse_from_rfc2822(value) {
+        return date.signed_duration_since(chrono::Utc::now()).num_seconds().clamp(1, 3600) as u64;
+    }
+    60
+}
+
+fn retry_store() -> &'static Mutex<BTreeMap<String, Instant>> {
+    RETRY_AFTER.get_or_init(|| Mutex::new(BTreeMap::new()))
+}
+
 
 /// 仅接受 HTTPS（局域网 HTTP 必须显式允许）；禁止重定向泄漏 Basic Auth。
 pub struct WebdavClient {
@@ -243,6 +264,12 @@ impl WebdavClient {
     }
 
     fn send(&self, req: RequestBuilder, accepted: &[StatusCode]) -> Result<Response, String> {
+        let key = self.root.as_str().to_string();
+        if let Some(until) = retry_store().lock().unwrap().get(&key).copied() {
+            if let Some(remaining) = until.checked_duration_since(Instant::now()) {
+                return Err(format!("WebDAV 请求太频繁，请 {} 秒后重试", remaining.as_secs().max(1)));
+            }
+        }
         let response = req.send().map_err(|e| {
             if e.is_timeout() || e.is_connect() {
                 "WebDAV 离线或连接超时".to_string()
@@ -252,6 +279,12 @@ impl WebdavClient {
                 format!("WebDAV 网络错误：{e}")
             }
         })?;
+        if matches!(response.status(), StatusCode::TOO_MANY_REQUESTS | StatusCode::SERVICE_UNAVAILABLE) {
+            let seconds = retry_after_seconds(response.headers()
+                .get("Retry-After").and_then(|value| value.to_str().ok()));
+            retry_store().lock().unwrap().insert(key, Instant::now() + Duration::from_secs(seconds));
+            return Err(format!("WebDAV 请求太频繁（HTTP {}），请 {seconds} 秒后重试", response.status()));
+        }
         Self::result(response, accepted)
     }
 
@@ -377,22 +410,15 @@ impl WebdavClient {
         } else {
             format!("{path}/")
         };
-        let response = self
-            .request(mkcol, self.url_for(&directory)?)
-            .send()
-            .map_err(|e| {
-                if e.is_timeout() || e.is_connect() {
-                    "WebDAV 离线或连接超时".to_string()
-                } else {
-                    format!("创建远程文件夹失败：{e}")
-                }
-            })?;
+        let response = self.send(
+            self.request(mkcol, self.url_for(&directory)?),
+            &[StatusCode::CREATED, StatusCode::OK, StatusCode::METHOD_NOT_ALLOWED],
+        )?;
         if response.status() == StatusCode::METHOD_NOT_ALLOWED {
             // 405 可能表示目录已经存在，必须再核对。
             self.list(&directory)?;
             return Ok(());
         }
-        Self::result(response, &[StatusCode::CREATED, StatusCode::OK])?;
         Ok(())
     }
 
@@ -734,6 +760,15 @@ mod tests {
         for file in [journal, journal2, journal3] {
             fs::remove_file(file).unwrap();
         }
+    }
+
+    #[test]
+    fn respects_retry_after_seconds_and_falls_back_safely() {
+        assert_eq!(retry_after_seconds(Some("120")), 120);
+        assert_eq!(retry_after_seconds(Some("99999")), 3600);
+        assert_eq!(retry_after_seconds(Some("0")), 1);
+        assert_eq!(retry_after_seconds(None), 60);
+        assert_eq!(retry_after_seconds(Some("invalid")), 60);
     }
 
     #[test]
