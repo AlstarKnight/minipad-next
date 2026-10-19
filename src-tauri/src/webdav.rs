@@ -295,8 +295,6 @@ impl WebdavClient {
                     "unknownissuer",
                     "unknown issuer",
                     "invalid peer",
-                    "expired",
-                    "rustls",
                 ]
                 .iter()
                 .any(|marker| detail.contains(marker))
