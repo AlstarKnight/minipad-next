@@ -123,6 +123,257 @@ pub fn parse_multistatus(xml: &str) -> Result<Vec<RemoteEntry>, String> {
     Ok(entries)
 }
 
+use reqwest::blocking::{Client, RequestBuilder, Response};
+use reqwest::header::{HeaderValue, CONTENT_TYPE, ETAG, IF_MATCH, IF_NONE_MATCH};
+use reqwest::{Method, StatusCode, Url};
+use std::time::Duration;
+
+/// 仅接受 HTTPS（局域网 HTTP 必须显式允许）；禁止重定向泄漏 Basic Auth。
+pub struct WebdavClient {
+    http: Client,
+    root: Url,
+    username: String,
+    password: String,
+}
+
+fn valid_part(part: &str) -> bool {
+    !part.is_empty()
+        && part != "."
+        && part != ".."
+        && !part.contains(['\\', '/', '\0'])
+        && !part.chars().any(char::is_control)
+}
+
+impl WebdavClient {
+    pub fn new(
+        server: &str,
+        username: &str,
+        password: &str,
+        folder: &str,
+        allow_http: bool,
+    ) -> Result<Self, String> {
+        let mut root = Url::parse(server.trim()).map_err(|_| "WebDAV 服务器地址不正确")?;
+        if root.scheme() != "https" && !(allow_http && root.scheme() == "http") {
+            return Err("WebDAV 默认只允许 HTTPS；局域网 HTTP 需手动允许".into());
+        }
+        if root.host_str().is_none()
+            || !root.username().is_empty()
+            || root.password().is_some()
+            || root.query().is_some()
+            || root.fragment().is_some()
+        {
+            return Err("服务器地址不能包含账号密码、查询参数或片段".into());
+        }
+        let parts: Vec<&str> = folder.trim_matches('/').split('/').collect();
+        if parts.iter().any(|part| !valid_part(part)) {
+            return Err("远程文件夹路径不正确".into());
+        }
+        root.set_query(None);
+        {
+            let mut segments = root.path_segments_mut().map_err(|_| "无效的服务器路径")?;
+            segments.pop_if_empty();
+            for part in &parts {
+                segments.push(part);
+            }
+            segments.push("");
+        }
+        let http = Client::builder()
+            .timeout(Duration::from_secs(30))
+            .redirect(reqwest::redirect::Policy::none())
+            .tls_backend_rustls()
+            .build()
+            .map_err(|e| format!("创建 WebDAV 连接失败：{e}"))?;
+        Ok(Self {
+            http,
+            root,
+            username: username.into(),
+            password: password.into(),
+        })
+    }
+
+    /// 所有远程路径都作为单独的 URL 段编码，避免 #、%、中文和空格被解释成 URL 结构。
+    pub fn url_for(&self, path: &str) -> Result<Url, String> {
+        let mut url = self.root.clone();
+        if path.is_empty() {
+            return Ok(url);
+        }
+        let directory = path.ends_with('/');
+        let segments = path.trim_end_matches('/');
+        if segments.split('/').any(|part| !valid_part(part)) {
+            return Err("WebDAV 文件路径不安全".into());
+        }
+        {
+            let mut parts = url.path_segments_mut().map_err(|_| "WebDAV 根路径无效")?;
+            parts.pop_if_empty();
+            for part in segments.split('/') {
+                parts.push(part);
+            }
+            if directory {
+                parts.push("");
+            }
+        }
+        Ok(url)
+    }
+
+    fn request(&self, method: Method, url: Url) -> RequestBuilder {
+        self.http
+            .request(method, url)
+            .basic_auth(&self.username, Some(&self.password))
+    }
+
+    fn result(response: Response, accepted: &[StatusCode]) -> Result<Response, String> {
+        let status = response.status();
+        if accepted.contains(&status) {
+            return Ok(response);
+        }
+        let text = match status.as_u16() {
+            401 => "账号或应用密码错误",
+            403 => "服务器拒绝访问，请检查写入权限",
+            404 => "WebDAV 文件或文件夹不存在",
+            405 => "WebDAV 服务端不支持此操作",
+            409 => "远程目录不存在或写入发生冲突",
+            412 => "远程文件在同步期间已修改，稍后重试",
+            423 => "文件被服务端锁定",
+            429 | 503 => "请求太频繁，请稍后再同步",
+            507 => "网盘存储空间不足",
+            _ => "WebDAV 请求失败",
+        };
+        Err(format!("{text}（HTTP {status}）"))
+    }
+
+    fn send(&self, req: RequestBuilder, accepted: &[StatusCode]) -> Result<Response, String> {
+        let response = req.send().map_err(|e| {
+            if e.is_timeout() || e.is_connect() {
+                "WebDAV 离线或连接超时".to_string()
+            } else if e.to_string().to_ascii_lowercase().contains("certificate") {
+                "TLS 证书不受信任；此版本不支持自签名证书".to_string()
+            } else {
+                format!("WebDAV 网络错误：{e}")
+            }
+        })?;
+        Self::result(response, accepted)
+    }
+
+    /// 验证返回的 href 仍位于配置的远程文件夹下，拒绝越界和编码后的斜杠。
+    pub fn relative_href(&self, href: &str) -> Result<String, String> {
+        let url = self.root.join(href).map_err(|_| "WebDAV 返回了无效的文件地址")?;
+        if url.scheme() != self.root.scheme()
+            || url.host() != self.root.host()
+            || url.port_or_known_default() != self.root.port_or_known_default()
+            || !url.path().starts_with(self.root.path())
+        {
+            return Err("WebDAV 返回的文件地址不在同步目录内".into());
+        }
+        let suffix = &url.path()[self.root.path().len()..];
+        if suffix.is_empty() {
+            return Ok(String::new());
+        }
+        let mut parts = Vec::new();
+        for part in suffix.trim_end_matches('/').split('/') {
+            let decoded = percent_encoding::percent_decode_str(part)
+                .decode_utf8()
+                .map_err(|_| "WebDAV 路径不是 UTF-8")?;
+            if !valid_part(&decoded) {
+                return Err("WebDAV 返回了不安全的文件名".into());
+            }
+            parts.push(decoded.into_owned());
+        }
+        let mut path = parts.join("/");
+        if suffix.ends_with('/') {
+            path.push('/');
+        }
+        Ok(path)
+    }
+
+    /// 每级目录只请求 Depth:1，不使用多数网盘不兼容的 infinity。
+    pub fn list(&self, folder: &str) -> Result<Vec<(String, RemoteEntry)>, String> {
+        let url = self.url_for(folder)?;
+        let propfind = Method::from_bytes(b"PROPFIND").map_err(|e| e.to_string())?;
+        let body = r#"<?xml version="1.0" encoding="utf-8"?><d:propfind xmlns:d="DAV:"><d:prop><d:resourcetype/><d:getetag/><d:getcontentlength/><d:getlastmodified/></d:prop></d:propfind>"#;
+        let reply = self.send(
+            self.request(propfind, url)
+                .header("Depth", "1")
+                .header(CONTENT_TYPE, "application/xml; charset=utf-8")
+                .body(body),
+            &[StatusCode::MULTI_STATUS],
+        )?;
+        let xml = reply.text().map_err(|e| format!("WebDAV 列目录读取失败：{e}"))?;
+        let mut entries = Vec::new();
+        for entry in parse_multistatus(&xml)? {
+            let path = self.relative_href(&entry.href)?;
+            if !path.is_empty() && path.starts_with(folder) {
+                let rest = &path[folder.len()..];
+                // 服务端应当尊重 Depth:1；拒绝异常的跨层文件名。
+                if rest.trim_end_matches('/').contains('/') {
+                    return Err("WebDAV 服务端返回了超出 Depth:1 的文件".into());
+                }
+                entries.push((path, entry));
+            }
+        }
+        Ok(entries)
+    }
+
+    pub fn get(&self, path: &str) -> Result<(Vec<u8>, Option<String>), String> {
+        let reply = self.send(self.request(Method::GET, self.url_for(path)?), &[StatusCode::OK])?;
+        let etag = reply.headers().get(ETAG).and_then(|h| h.to_str().ok()).map(str::to_string);
+        let data = reply.bytes().map_err(|e| format!("读取 WebDAV 文件失败：{e}"))?;
+        Ok((data.to_vec(), etag))
+    }
+
+    pub fn put(&self, path: &str, bytes: Vec<u8>, etag: Option<&str>) -> Result<Option<String>, String> {
+        let mut request = self.request(Method::PUT, self.url_for(path)?).body(bytes);
+        if let Some(value) = etag {
+            request = request.header(IF_MATCH, HeaderValue::from_str(value).map_err(|_| "WebDAV ETag 无效")?);
+        } else {
+            request = request.header(IF_NONE_MATCH, "*");
+        }
+        let response = self.send(request, &[StatusCode::CREATED, StatusCode::NO_CONTENT, StatusCode::OK])?;
+        Ok(response.headers().get(ETAG).and_then(|h| h.to_str().ok()).map(str::to_string))
+    }
+
+    pub fn mkcol(&self, path: &str) -> Result<(), String> {
+        let mkcol = Method::from_bytes(b"MKCOL").map_err(|e| e.to_string())?;
+        let response = self.request(mkcol, self.url_for(path)?).send()
+            .map_err(|e| format!("创建远程文件夹失败：{e}"))?;
+        if response.status() == StatusCode::METHOD_NOT_ALLOWED {
+            // 405 可能表示目录已经存在，必须再核对。
+            self.list(path)?;
+            return Ok(());
+        }
+        Self::result(response, &[StatusCode::CREATED, StatusCode::OK])?;
+        Ok(())
+    }
+
+    pub fn move_file(&self, from: &str, to: &str) -> Result<(), String> {
+        let method = Method::from_bytes(b"MOVE").map_err(|e| e.to_string())?;
+        let dest = self.url_for(to)?;
+        self.send(
+            self.request(method, self.url_for(from)?)
+                .header("Destination", dest.as_str())
+                .header("Overwrite", "F"),
+            &[StatusCode::CREATED, StatusCode::NO_CONTENT],
+        )?;
+        Ok(())
+    }
+
+    pub fn delete_probe(&self, path: &str) -> Result<(), String> {
+        self.send(self.request(Method::DELETE, self.url_for(path)?), &[StatusCode::NO_CONTENT, StatusCode::OK])?;
+        Ok(())
+    }
+
+    /// 先确认账户能列目录，再试创建、写入、删除一个专用小文件。
+    pub fn test_connection(&self) -> Result<(), String> {
+        self.list("")?;
+        let id = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|e| e.to_string())?
+            .as_nanos();
+        let name = format!(".minipad-test-{id}.txt");
+        self.put(&name, b"MinipadNext test".to_vec(), None)?;
+        self.delete_probe(&name)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
