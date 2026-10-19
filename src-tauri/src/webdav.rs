@@ -579,6 +579,93 @@ mod tests {
         }
     }
 
+
+    #[test]
+    fn webdav_live_first_sync_modes_rename_and_offline_resume() {
+        let Ok(server) = std::env::var("MINIPAD_TEST_WEBDAV_URL") else {
+            return;
+        };
+        use crate::syncer::{self, FirstSync, SyncOptions};
+        use std::fs;
+
+        let remote = WebdavClient::new(
+            &server, "tester", "test-password", "/MinipadModeRemote/", true
+        ).unwrap();
+        remote.mkcol("").unwrap();
+        remote.put("shared.md", b"server version".to_vec(), None).unwrap();
+        remote.put("remote-only.md", b"from server".to_vec(), None).unwrap();
+        let local = crate::notes::temp_dir("webdav-first-remote");
+        fs::write(local.join("shared.md"), "local version").unwrap();
+        fs::write(local.join("local-only.md"), "local extra").unwrap();
+        let journal = local.parent().unwrap().join(format!(
+            "{}-state.json", local.file_name().unwrap().to_string_lossy()
+        ));
+        let settings = SyncOptions {
+            images: true,
+            first_mode: FirstSync::Remote,
+            conflict_copy: true,
+            confirm_deletes: true,
+        };
+        syncer::sync_once(&remote, &local, &journal, &settings, || Ok(())).unwrap();
+        assert_eq!(fs::read_to_string(local.join("shared.md")).unwrap(), "server version");
+        assert_eq!(fs::read_to_string(local.join("remote-only.md")).unwrap(), "from server");
+        assert!(!local.join("local-only.md").exists());
+        assert!(local.join(".trash").exists());
+
+        let online = WebdavClient::new(
+            &server, "tester", "test-password", "/MinipadModeLocal/", true
+        ).unwrap();
+        online.mkcol("").unwrap();
+        online.put("shared.md", b"server version".to_vec(), None).unwrap();
+        online.put("remote-only.md", b"from server".to_vec(), None).unwrap();
+        let local2 = crate::notes::temp_dir("webdav-first-local");
+        fs::write(local2.join("shared.md"), "local version").unwrap();
+        fs::write(local2.join("local-only.md"), "only local").unwrap();
+        let journal2 = local2.parent().unwrap().join(format!(
+            "{}-state.json", local2.file_name().unwrap().to_string_lossy()
+        ));
+        let offline = WebdavClient::new(
+            "http://127.0.0.1:1/", "tester", "test-password", "/MinipadModeLocal/", true,
+        ).unwrap();
+        let local_mode = SyncOptions {
+            first_mode: FirstSync::Local,
+            ..settings.clone()
+        };
+        assert!(syncer::sync_once(&offline, &local2, &journal2, &local_mode, || Ok(())).is_err());
+        assert_eq!(fs::read_to_string(local2.join("shared.md")).unwrap(), "local version");
+        assert!(!journal2.exists(), "offline attempts do not create a misleading baseline");
+        syncer::sync_once(&online, &local2, &journal2, &local_mode, || Ok(())).unwrap();
+        assert_eq!(online.get("shared.md").unwrap().0, b"local version");
+        assert_eq!(online.get("local-only.md").unwrap().0, b"only local");
+        assert!(online.get("remote-only.md").is_err(), "local-first moves extra remote files to trash");
+        assert!(!online.list(".trash/").unwrap().is_empty());
+
+        fs::rename(local2.join("local-only.md"), local2.join("renamed.md")).unwrap();
+        syncer::sync_once(&online, &local2, &journal2, &local_mode, || Ok(())).unwrap();
+        assert_eq!(online.get("renamed.md").unwrap().0, b"only local");
+        assert!(online.get("local-only.md").is_err(), "rename moves old remote path to trash");
+
+        let merged = WebdavClient::new(
+            &server, "tester", "test-password", "/MinipadModeMerge/", true
+        ).unwrap();
+        merged.mkcol("").unwrap();
+        merged.put("shared.md", b"remote draft".to_vec(), None).unwrap();
+        let local3 = crate::notes::temp_dir("webdav-first-merge");
+        fs::write(local3.join("shared.md"), "local draft").unwrap();
+        let journal3 = local3.parent().unwrap().join(format!(
+            "{}-state.json", local3.file_name().unwrap().to_string_lossy()
+        ));
+        let merge_mode = SyncOptions { first_mode: FirstSync::Merge, ..settings };
+        let result = syncer::sync_once(&merged, &local3, &journal3, &merge_mode, || Ok(())).unwrap();
+        assert_eq!(result.conflicts, 1);
+        assert_eq!(merged.get("shared.md").unwrap().0, b"local draft");
+        assert!(fs::read_dir(&local3).unwrap().flatten().any(
+            |e| e.file_name().to_string_lossy().contains("冲突")
+        ), "both versions must exist after first merge");
+        for folder in [local, local2, local3] { fs::remove_dir_all(folder).unwrap(); }
+        for file in [journal, journal2, journal3] { fs::remove_file(file).unwrap(); }
+    }
+
     #[test]
     fn rejects_malformed_xml() {
         assert!(parse_multistatus("<d:response>").is_err());
