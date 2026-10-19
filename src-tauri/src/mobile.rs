@@ -152,6 +152,8 @@ struct MobileWebdavConfig {
     allow_http: bool,
     images: bool,
     first_mode: String,
+    delete_limit: usize,
+    delete_divisor: usize,
 }
 impl Default for MobileWebdavConfig {
     fn default() -> Self {
@@ -163,6 +165,8 @@ impl Default for MobileWebdavConfig {
             allow_http: false,
             images: true,
             first_mode: "merge".into(),
+            delete_limit: 20,
+            delete_divisor: 3,
         }
     }
 }
@@ -284,6 +288,8 @@ async fn mobile_webdav_sync_now(
         first_mode: mode,
         conflict_copy: true,
         confirm_deletes,
+        delete_limit: config.delete_limit.clamp(1, 1000),
+        delete_divisor: config.delete_divisor.clamp(1, 10),
     };
     let result = tauri::async_runtime::spawn_blocking(move || {
         let _run = crate::syncer::RUN_LOCK.lock().map_err(|e| e.to_string())?;
