@@ -820,7 +820,7 @@ mod tests {
     #[test]
     fn simultaneous_metadata_edits_are_preserved_in_local_trash() {
         let root = crate::notes::temp_dir("webdav-metadata-conflict");
-        let remote = br#"{"order":["远端"],"active":"a"}"#;
+        let remote = r#"{"order":["远端"],"active":"a"}"#.as_bytes();
         let stored = backup_metadata_conflict(&root, ".minipad.json", remote).unwrap();
         assert_eq!(fs::read(stored).unwrap(), remote);
         let base = serde_json::json!({"order": ["旧"]});
