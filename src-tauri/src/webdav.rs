@@ -16,15 +16,15 @@ fn local(name: &str) -> &str {
     name.rsplit(':').next().unwrap_or(name)
 }
 
-/// 只读取 Depth:1 当前目录的 response。错误 XML 必须失败，而不能被当成空目录。
+/// 每个 propstat 单独判断状态；404 的属性不能覆盖 200 的属性。
 pub fn parse_multistatus(xml: &str) -> Result<Vec<RemoteEntry>, String> {
     let mut reader = Reader::from_str(xml);
     reader.config_mut().trim_text(true);
     let mut entries = Vec::new();
     let mut item: Option<RemoteEntry> = None;
+    let mut prop: Option<RemoteEntry> = None;
+    let mut prop_ok = false;
     let mut field = String::new();
-    let mut valid_property = false;
-    let mut status_ok = true;
     loop {
         let event = reader
             .read_event()
@@ -41,56 +41,69 @@ pub fn parse_multistatus(xml: &str) -> Result<Vec<RemoteEntry>, String> {
                             modified: None,
                             directory: false,
                         });
-                        status_ok = true;
                     }
-                    "propstat" => {
-                        valid_property = true;
+                    "propstat" if item.is_some() => {
+                        prop = Some(RemoteEntry {
+                            href: String::new(),
+                            etag: None,
+                            size: None,
+                            modified: None,
+                            directory: false,
+                        });
+                        prop_ok = false;
                     }
                     "href" | "getetag" | "getcontentlength" | "getlastmodified" | "status" => {
-                        field = name.clone();
+                        field = name;
                     }
-                    "collection" if valid_property => {
-                        if let Some(ref mut entry) = item {
-                            entry.directory = true;
+                    "collection" if prop.is_some() => {
+                        if let Some(ref mut p) = prop {
+                            p.directory = true;
                         }
                     }
                     _ => {}
                 }
             }
             Event::Empty(e) => {
-                if local(e.name().as_ref()) == "collection" && valid_property {
-                    if let Some(ref mut entry) = item {
-                        entry.directory = true;
+                if local(e.name().as_ref()) == "collection" {
+                    if let Some(ref mut p) = prop {
+                        p.directory = true;
                     }
                 }
             }
             Event::Text(t) => {
-                let value = t.xml_content(XmlVersion::Implicit1_0);
-                if let Some(ref mut entry) = item {
+                let value = t.xml_content(XmlVersion::Implicit1_0)
+                    .map_err(|e| format!("WebDAV XML 字段无法解码：{e}"))?;
+                if field == "href" && prop.is_none() {
+                    if let Some(ref mut entry) = item {
+                        entry.href.push_str(&value);
+                    }
+                } else if let Some(ref mut p) = prop {
                     match field.as_str() {
-                        "href" => entry.href.push_str(&value),
-                        "getetag" if valid_property => entry.etag = Some(value.into_owned()),
-                        "getcontentlength" if valid_property => entry.size = value.parse().ok(),
-                        "getlastmodified" if valid_property => {
-                            entry.modified = Some(value.into_owned())
-                        }
-                        "status" if valid_property => {
-                            status_ok = value.contains(" 200 ");
-                        }
+                        "getetag" => p.etag = Some(value.into_owned()),
+                        "getcontentlength" => p.size = value.parse().ok(),
+                        "getlastmodified" => p.modified = Some(value.into_owned()),
+                        "status" => prop_ok = value.contains(" 200 "),
                         _ => {}
                     }
                 }
             }
             Event::End(e) => {
-                let name = local(e.name().as_ref()).to_string();
-                match name.as_str() {
-                    "href" | "getetag" | "getcontentlength" | "getlastmodified" | "status" => {
-                        field.clear()
+                match local(e.name().as_ref()) {
+                    "href" | "getetag" | "getcontentlength" | "getlastmodified" | "status" => field.clear(),
+                    "propstat" => {
+                        if prop_ok {
+                            if let (Some(ref mut entry), Some(p)) = (&mut item, &prop) {
+                                entry.etag = p.etag.clone().or_else(|| entry.etag.clone());
+                                entry.size = p.size.or(entry.size);
+                                entry.modified = p.modified.clone().or_else(|| entry.modified.clone());
+                                entry.directory |= p.directory;
+                            }
+                        }
+                        prop = None;
                     }
-                    "propstat" => valid_property = false,
                     "response" => {
                         if let Some(entry) = item.take() {
-                            if !entry.href.is_empty() && status_ok {
+                            if !entry.href.is_empty() {
                                 entries.push(entry);
                             }
                         }
@@ -99,7 +112,7 @@ pub fn parse_multistatus(xml: &str) -> Result<Vec<RemoteEntry>, String> {
                 }
             }
             Event::Eof => {
-                if item.is_some() {
+                if item.is_some() || prop.is_some() {
                     return Err("WebDAV 列目录响应提前结束".into());
                 }
                 break;
