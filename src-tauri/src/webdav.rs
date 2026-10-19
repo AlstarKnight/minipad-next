@@ -413,7 +413,7 @@ mod tests {
           <d:propstat><d:prop><d:unknown/></d:prop><d:status>HTTP/1.1 404 Not Found</d:status></d:propstat>
         </d:response></d:multistatus>"#;
         let entry = parse_multistatus(xml).unwrap().pop().unwrap();
-        assert_eq!(entry.etag.as_deref(), Some("\\"ok\\""));
+        assert_eq!(entry.etag.as_deref(), Some(r#""ok""#));
         assert_eq!(entry.size, Some(12));
     }
 
