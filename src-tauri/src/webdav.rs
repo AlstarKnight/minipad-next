@@ -140,7 +140,7 @@ fn valid_part(part: &str) -> bool {
     !part.is_empty()
         && part != "."
         && part != ".."
-        && !part.contains(['\\', '/', '\0'])
+        && !part.chars().any(|c| c == '\\' || c == '/' || c == '\0')
         && !part.chars().any(char::is_control)
 }
 
@@ -333,11 +333,16 @@ impl WebdavClient {
 
     pub fn mkcol(&self, path: &str) -> Result<(), String> {
         let mkcol = Method::from_bytes(b"MKCOL").map_err(|e| e.to_string())?;
-        let response = self.request(mkcol, self.url_for(path)?).send()
+        let directory = if path.ends_with('/') || path.is_empty() {
+            path.to_string()
+        } else {
+            format!("{path}/")
+        };
+        let response = self.request(mkcol, self.url_for(&directory)?).send()
             .map_err(|e| format!("创建远程文件夹失败：{e}"))?;
         if response.status() == StatusCode::METHOD_NOT_ALLOWED {
             // 405 可能表示目录已经存在，必须再核对。
-            self.list(path)?;
+            self.list(&directory)?;
             return Ok(());
         }
         Self::result(response, &[StatusCode::CREATED, StatusCode::OK])?;
@@ -411,6 +416,33 @@ mod tests {
         let entry = parse_multistatus(xml).unwrap().pop().unwrap();
         assert_eq!(entry.etag.as_deref(), Some("\\"ok\\""));
         assert_eq!(entry.size, Some(12));
+    }
+
+    #[test]
+    fn encodes_chinese_spaces_hash_percent_without_escaping_folder() {
+        let client = WebdavClient::new(
+            "https://cloud.example.com/remote.php/dav/files/user/",
+            "user",
+            "secret",
+            "/MinipadNext/",
+            false,
+        )
+        .unwrap();
+        let url = client.url_for("工作/文 件#%笔记.md").unwrap();
+        assert!(url.path().contains("MinipadNext/%E5%B7%A5%E4%BD%9C/"));
+        assert!(url.path().contains("%20"));
+        assert!(url.path().contains("%23%25"));
+        assert_eq!(client.relative_href(url.as_str()).unwrap(), "工作/文 件#%笔记.md");
+        assert!(client.relative_href("https://evil.example.com/MinipadNext/secret.md").is_err());
+        assert!(client.relative_href("/remote.php/dav/files/user/MinipadNext/%2Fsecret.md").is_err());
+        assert!(client.url_for("../outside.md").is_err());
+    }
+
+    #[test]
+    fn http_requires_explicit_insecure_opt_in() {
+        assert!(WebdavClient::new("http://localhost:8080", "a", "b", "/MinipadNext/", false).is_err());
+        assert!(WebdavClient::new("http://localhost:8080", "a", "b", "/MinipadNext/", true).is_ok());
+        assert!(WebdavClient::new("https://example.com", "a", "b", "/../", false).is_err());
     }
 
     #[test]
