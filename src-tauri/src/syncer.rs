@@ -624,6 +624,22 @@ pub fn sync_once(
                 let hash = local_hash.ok_or("上传时文件已不存在")?;
                 let local_data = check_local(root, &path, Some(hash))?;
                 let mut upload = local_data.clone();
+                if first && mode == FirstSync::Local && action == Action::Upload {
+                    if let Some(previous) = remote_file {
+                        let (old_bytes, _) = client.get(&path)?;
+                        if content_hash(&path, &old_bytes) != previous.hash {
+                            return Err(format!("「{path}」在同步期间再次修改，请重试"));
+                        }
+                        client.mkcol(".trash/")?;
+                        let stamp = chrono::Utc::now().timestamp_millis();
+                        let filename = path.replace('/', "_");
+                        let destination = match filename.rsplit_once('.') {
+                            Some((stem, ext)) => format!(".trash/{stem}.{stamp}.{ext}"),
+                            None => format!(".trash/{filename}.{stamp}"),
+                        };
+                        client.move_file(&path, &destination, &previous.entry)?;
+                    }
+                }
                 if action == Action::Conflict {
                     let previous = remote_file.ok_or("冲突时远端文件不存在")?;
                     let (remote_data, _) = client.get(&path)?;
@@ -680,7 +696,7 @@ pub fn sync_once(
                     ensure_parent(client, &path)?;
                 }
                 // 只有真实存在的远端文件才允许 If-Match/If-Unmodified-Since。
-                let etag = client.put(&path, upload.clone(), remote_file.map(|f| &f.entry))?;
+                let etag = client.put(&path, upload.clone(), if first && mode == FirstSync::Local { None } else { remote_file.map(|f| &f.entry) })?;
                 if upload != local_data {
                     let _lock = WRITE_LOCK.lock().map_err(|e| e.to_string())?;
                     check_local(root, &path, Some(hash))?;
@@ -706,6 +722,9 @@ pub fn sync_once(
                 } else {
                     received.clone()
                 };
+                if first && mode == FirstSync::Remote && local_hash.is_some() {
+                    local_trash(root, &path)?;
+                }
                 crate::notes::write_atomic_bytes(&root.join(&path), &bytes)?;
                 journal.files.insert(
                     path.clone(),
@@ -746,7 +765,9 @@ pub fn sync_once(
                 report.deleted += 1;
             }
         }
-        save_journal(journal_file, &journal)?;
+        if action != Action::Skip {
+            save_journal(journal_file, &journal)?;
+        }
     }
     journal.initial_mode = None;
     save_journal(journal_file, &journal)?;
