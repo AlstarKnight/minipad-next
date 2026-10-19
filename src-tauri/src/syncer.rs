@@ -699,6 +699,34 @@ fn record_for(
     }
 }
 
+/// PUT 成功后记录远端版本；如果本机这时已变，下一轮必须重新读取本地。
+fn finish_upload(
+    root: &Path,
+    path: &str,
+    scanned_hash: &str,
+    original: &[u8],
+    uploaded: &[u8],
+    etag: Option<String>,
+) -> Result<(FileRecord, bool, bool), String> {
+    let _lock = WRITE_LOCK.lock().map_err(|e| e.to_string())?;
+    let mut record = record_for(path, uploaded, etag, Some(uploaded.len() as u64), None);
+    match check_local(root, path, Some(scanned_hash)) {
+        Ok(_) => {
+            let replaced = uploaded != original;
+            if replaced {
+                crate::notes::write_atomic_bytes(&root.join(path), uploaded)?;
+            }
+            Ok((stamp_record(root, path, record), false, replaced))
+        }
+        Err(message) if message.contains("在扫描后") => {
+            record.local_size = None;
+            record.local_modified_ns = None;
+            Ok((record, true, false))
+        }
+        Err(message) => Err(message),
+    }
+}
+
 /// WebDAV 在后台线程调用，所有远程冲突用条件请求保护，所有本地修改用写锁和扫描后复查保护。
 pub fn sync_once(
     client: &WebdavClient,
@@ -888,27 +916,14 @@ pub fn sync_once(
                         remote_file.as_deref().map(|f| &f.entry)
                     },
                 )?;
-                let record = {
-                    let _lock = WRITE_LOCK.lock().map_err(|e| e.to_string())?;
-                    let mut record =
-                        record_for(&path, &upload, etag, Some(upload.len() as u64), None);
-                    match check_local(root, &path, Some(hash)) {
-                        Ok(_) => {
-                            if upload != local_data {
-                                crate::notes::write_atomic_bytes(&root.join(&path), &upload)?;
-                                report.changed.push(path.clone());
-                            }
-                            record = stamp_record(root, &path, record);
-                        }
-                        Err(message) if message.contains("在扫描后") => {
-                            // PUT 已成功。记住新的远端版本，但留空本地时间戳，
-                            // 下次重新计算本机哈希，避免把自己的上传误判为冲突。
-                            report.rescan_needed = true;
-                        }
-                        Err(message) => return Err(message),
-                    }
-                    record
-                };
+                let (record, needs_rescan, replaced) =
+                    finish_upload(root, &path, hash, &local_data, &upload, etag)?;
+                if needs_rescan {
+                    report.rescan_needed = true;
+                }
+                if replaced {
+                    report.changed.push(path.clone());
+                }
                 journal.files.insert(path.clone(), record);
                 report.uploaded += 1;
             }
@@ -1087,6 +1102,35 @@ mod tests {
         save_journal(&a, &Journal::default()).unwrap();
         assert_ne!(a, b);
         assert!(read_journal(&b).unwrap().1);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn upload_completed_after_local_edit_is_next_planned_as_upload() {
+        let root = crate::notes::temp_dir("webdav-upload-rebase");
+        let original = b"before";
+        let uploaded = b"before";
+        let newer = b"edited while uploading";
+        fs::write(root.join("page.md"), original).unwrap();
+        let hash = content_hash("page.md", original);
+        fs::write(root.join("page.md"), newer).unwrap();
+        let (record, rescan, replaced) =
+            finish_upload(&root, "page.md", &hash, original, uploaded, Some("new-etag".into()))
+                .unwrap();
+        assert!(rescan);
+        assert!(!replaced);
+        assert_eq!(record.hash, hash);
+        assert_eq!(record.etag.as_deref(), Some("new-etag"));
+        assert_eq!(record.local_size, None);
+        assert_eq!(record.local_modified_ns, None);
+        assert_eq!(
+            decide(
+                Some(&record.hash),
+                Some(&content_hash("page.md", newer)),
+                Some(&record.hash),
+            ),
+            Action::Upload
+        );
         fs::remove_dir_all(root).unwrap();
     }
 
