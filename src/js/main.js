@@ -18,7 +18,7 @@ import { bindQuick } from "./quickswitch.js";
 import { openSettings, saveSettings, applySettings, applyEdgeAppearance, bindSettings, skippedText } from "./settings.js";
 import { bindOutline } from "./outline.js";
 import { upgradeColorLibrary } from "./sharedcolors.js";
-import { createEditor, editorDebug, insertText, toggleTask } from "./editor.js";
+import { createEditor, editorDebug, insertText, toggleTask, markLocalPathMissing } from "./editor.js";
 import { setLinkPrompt, setTaskCommand } from "./toolbar.js";
 import { formatDate } from "./datetime.js";
 import { initMini, bindMiniMain } from "./mini.js";
@@ -48,7 +48,7 @@ async function init() {
       if (observedPaths.has(el)) continue;
       observedPaths.set(el, true);
       api.invoke("local_path_exists", { path: el.dataset.localPath })
-        .then((exists) => { if (el.isConnected) el.classList.toggle("missing", !exists); })
+        .then((exists) => { if (el.isConnected) markLocalPathMissing(el.dataset.localPath, !exists); })
         .catch(() => {});
     }
   });
