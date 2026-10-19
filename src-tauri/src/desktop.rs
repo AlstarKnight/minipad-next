@@ -1681,7 +1681,7 @@ fn is_executable_path(path: &Path) -> bool {
             .unwrap_or("")
             .to_ascii_lowercase()
             .as_str(),
-        "exe" | "bat" | "cmd" | "ps1" | "vbs" | "js" | "msi" | "lnk" | "scr"
+        "exe" | "bat" | "cmd" | "ps1" | "vbs" | "js" | "msi" | "lnk" | "scr" | "com" | "pif" | "cpl" | "hta" | "wsf" | "wsh" | "jse" | "vbe" | "reg" | "msc" | "url" | "appref-ms"
     )
 }
 
