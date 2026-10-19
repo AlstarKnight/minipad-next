@@ -2,7 +2,7 @@
 import { api, isMock, isMiniWindow } from "./api.js";
 import { $ } from "./dom.js";
 import { state, book, current } from "./state.js";
-import { toast, dialogOpen, closeDialog, closeMenu, closeOverlays, focusEditor, ask, askText, openMenu } from "./ui.js";
+import { toast, dialogOpen, closeDialog, closeMenu, closeOverlays, focusEditor, ask, askText, askWithCheckbox, openMenu } from "./ui.js";
 import { markDirty, flushAll, saveMeta, pendingNoteCount, resetActivity } from "./save.js";
 import { reload, syncFromDisk, addConflictCopy, showPendingNotice } from "./sync.js";
 import { rememberView } from "./page.js";
@@ -170,15 +170,13 @@ function openLink(href) {
 async function openLocalPath(path) {
   try {
     const trusted = state.settings?.local_path_trusted || [];
-    const danger = /\.(exe|bat|cmd|ps1|vbs|js|msi|lnk|scr)$/i.test(path);
+    const danger = /\.(exe|bat|cmd|ps1|vbs|js|msi|lnk|scr|com|pif|cpl|hta|wsf|wsh|jse|vbe|reg|msc|url|appref-ms)$/i.test(path);
     let confirmed = false;
     if (danger && state.settings?.local_path_confirm !== false && !trusted.includes(path)) {
-      const allowed = await ask("将要运行以下文件，是否继续？\\n" + path, "运行", true);
-      if (!allowed) return;
+      const choice = await askWithCheckbox("将要运行以下文件，是否继续？\n" + path, "运行", "这个文件以后不再问");
+      if (!choice.ok) return;
       confirmed = true;
-      if (await ask("这个文件以后不再询问？", "记住此文件")) {
-        await saveSettings({ ...state.settings, local_path_trusted: [...trusted, path] });
-      }
+      if (choice.checked) await saveSettings({ ...state.settings, local_path_trusted: [...trusted, path] });
     }
     await api.invoke("open_path", { path, reveal: false, confirmed });
   } catch (e) { toast(String(e)); }
