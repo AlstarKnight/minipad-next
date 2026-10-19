@@ -1774,13 +1774,34 @@ fn webdav_set_password(app: AppHandle, password: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-async fn webdav_test(app: AppHandle) -> Result<String, String> {
-    let s = app.state::<AppState>().settings.lock().unwrap().clone();
-    let password = webdav_password(&s)
-        .map_err(|_| "请先填写并保存 WebDAV 应用密码".to_string())?;
+async fn webdav_test(
+    app: AppHandle,
+    server: Option<String>,
+    username: Option<String>,
+    folder: Option<String>,
+    allow_http: Option<bool>,
+    password: Option<String>,
+) -> Result<String, String> {
+    let mut s = app.state::<AppState>().settings.lock().unwrap().clone();
+    if let Some(value) = server {
+        s.webdav_server = value;
+    }
+    if let Some(value) = username {
+        s.webdav_user = value;
+    }
+    if let Some(value) = folder {
+        s.webdav_folder = value;
+    }
+    if let Some(value) = allow_http {
+        s.webdav_allow_http = value;
+    }
+    let secret = match password.filter(|value| !value.is_empty()) {
+        Some(value) => value,
+        None => webdav_password(&s)?,
+    };
     tauri::async_runtime::spawn_blocking(move || {
         let client = crate::webdav::WebdavClient::new(
-            &s.webdav_server, &s.webdav_user, &password, &s.webdav_folder, s.webdav_allow_http,
+            &s.webdav_server, &s.webdav_user, &secret, &s.webdav_folder, s.webdav_allow_http,
         )?;
         client.test_connection()?;
         Ok::<_, String>("连接成功，目录读取与写入测试通过".to_string())
