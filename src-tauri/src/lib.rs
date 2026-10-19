@@ -16,8 +16,6 @@ pub fn run() {
     mobile::run();
 }
 
-// 同步决策先用纯逻辑测试覆盖；网络执行层接入后改为常规模块。
-#[cfg(test)]
+// Windows 和 Android 共用 WebDAV 客户端、文件比较和同步执行。
 mod syncer;
-#[cfg(test)]
 mod webdav;
