@@ -810,6 +810,13 @@ mod tests {
         );
         assert!(!local.join("local-only.md").exists());
         assert!(local.join(".trash").exists());
+        let trash = crate::notes::list_trash(&local).unwrap();
+        assert!(trash.iter().any(|item| item.name == "shared"));
+        let saved = trash.iter().find(|item| item.name == "shared").unwrap();
+        assert_eq!(
+            fs::read_to_string(local.join(".trash").join(&saved.id)).unwrap(),
+            "local version"
+        );
 
         let online = WebdavClient::new(
             &server,
@@ -863,7 +870,10 @@ mod tests {
             online.get("remote-only.md").is_err(),
             "local-first moves extra remote files to trash"
         );
-        assert!(!online.list(".trash/").unwrap().is_empty());
+        let archived = online.list(".trash/").unwrap();
+        assert!(!archived.is_empty());
+        let old = archived.iter().find(|(path, _)| path.contains("shared")).unwrap();
+        assert_eq!(online.get(&old.0).unwrap().0, b"server version");
 
         fs::rename(local2.join("local-only.md"), local2.join("renamed.md")).unwrap();
         syncer::sync_once(&online, &local2, &journal2, &local_mode, || Ok(())).unwrap();
