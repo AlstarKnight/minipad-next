@@ -6737,6 +6737,21 @@ describe("0.4.4: interface styles", () => {
   });
 });
 
+suite("0.4.5: WebDAV settings", { concurrency: 1 }, () => {
+  ui("test connection uses form draft without persisting it", {
+    seed: seed({ "": { "笔记": "内容" } }),
+  }, async (h) => {
+    const { p } = h;
+    await p.click("#btn-settings");
+    await settingsPage(p, "data");
+    await p.fill("#set-webdav-server", "https://dav.example.com/");
+    await p.fill("#set-webdav-user", "example");
+    await p.click("#set-webdav-test");
+    await until(h.toast, "连接成功，目录读取和写入测试通过（预览模拟）", "test connection succeeds");
+    assert.equal((await h.stored()).settings.webdav_server || "", "", "testing did not save the draft");
+  });
+});
+
 suite("0.4.5: local file paths", { concurrency: 1 }, () => {
   ui("local path missing state can be simulated", {
     seed: seed({ "": { "路径": "打开 C:\\docs\\note.pdf" } }),
