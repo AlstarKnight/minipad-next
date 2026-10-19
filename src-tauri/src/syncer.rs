@@ -620,6 +620,8 @@ fn record_for(
         size,
         modified,
         base_metadata: shared_metadata(path, bytes),
+        local_size: None,
+        local_modified_ns: None,
     }
 }
 
@@ -865,6 +867,7 @@ mod tests {
             size: Some(12),
             modified: Some("Mon".into()),
             base_metadata: None,
+            ..FileRecord::default()
         };
         let mut entry = RemoteEntry {
             href: "/notes/a.md".into(),
