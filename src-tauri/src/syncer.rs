@@ -180,6 +180,10 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+
+/// 同步下载和页面保存共用此锁，避免同一文件并发改写。
+pub static WRITE_LOCK: Mutex<()> = Mutex::new(());
 
 /// 同步记录只含路径、哈希和远程版本信息，绝不储存密码或认证头。
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -189,6 +193,7 @@ pub struct FileRecord {
     pub etag: Option<String>,
     pub size: Option<u64>,
     pub modified: Option<String>,
+    pub base_metadata: Option<serde_json::Value>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
