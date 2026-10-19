@@ -276,12 +276,27 @@ impl WebdavClient {
             }
         }
         let response = req.send().map_err(|e| {
-            if e.is_timeout() || e.is_connect() {
-                "WebDAV 离线或连接超时".to_string()
-            } else if e.to_string().to_ascii_lowercase().contains("certificate") {
-                "TLS 证书不受信任；此版本不支持自签名证书".to_string()
+            use std::error::Error;
+            let mut cause: Option<&(dyn Error + 'static)> = Some(&e);
+            let mut certificate_error = false;
+            while let Some(current) = cause {
+                let detail = current.to_string().to_ascii_lowercase();
+                if ["certificate", "certverify", "unknownissuer", "unknown issuer", "invalid peer", "expired", "rustls"]
+                    .iter().any(|marker| detail.contains(marker))
+                {
+                    certificate_error = true;
+                    break;
+                }
+                cause = current.source();
+            }
+            if certificate_error {
+                "TLS 证书不受信任或已过期；此版本不支持自签名证书".to_string()
+            } else if e.is_timeout() {
+                "WebDAV 连接超时，请检查网络".to_string()
+            } else if e.is_connect() {
+                "WebDAV 离线或无法连接服务器".to_string()
             } else {
-                format!("WebDAV 网络错误：{e}")
+                "WebDAV 网络请求失败，请检查服务器地址与连接".to_string()
             }
         })?;
         if matches!(
