@@ -525,32 +525,47 @@ mod tests {
         let first = crate::notes::temp_dir("webdav-device-one");
         let second = crate::notes::temp_dir("webdav-device-two");
         let records = crate::notes::temp_dir("webdav-device-records");
-        let c = WebdavClient::new(
-            &server, "tester", "test-password", "/MinipadNext/", true,
-        ).unwrap();
+        let c =
+            WebdavClient::new(&server, "tester", "test-password", "/MinipadNext/", true).unwrap();
         let opts = SyncOptions {
-            images: true, first_mode: FirstSync::Merge, conflict_copy: true, confirm_deletes: false,
+            images: true,
+            first_mode: FirstSync::Merge,
+            conflict_copy: true,
+            confirm_deletes: false,
         };
         let journal_a = records.join("device-a.json");
         let journal_b = records.join("device-b.json");
         fs::write(first.join("笔记.md"), "设备甲初稿").unwrap();
         syncer::sync_once(&c, &first, &journal_a, &opts, || Ok(())).unwrap();
         syncer::sync_once(&c, &second, &journal_b, &opts, || Ok(())).unwrap();
-        assert_eq!(fs::read_to_string(second.join("笔记.md")).unwrap(), "设备甲初稿");
+        assert_eq!(
+            fs::read_to_string(second.join("笔记.md")).unwrap(),
+            "设备甲初稿"
+        );
 
         fs::write(first.join("笔记.md"), "设备甲版本二").unwrap();
         fs::write(second.join("笔记.md"), "设备乙版本二").unwrap();
         syncer::sync_once(&c, &first, &journal_a, &opts, || Ok(())).unwrap();
         let changed = syncer::sync_once(&c, &second, &journal_b, &opts, || Ok(())).unwrap();
         assert_eq!(changed.conflicts, 1);
-        assert_eq!(fs::read_to_string(second.join("笔记.md")).unwrap(), "设备乙版本二");
-        assert!(fs::read_dir(&second).unwrap().flatten().any(|f| f.file_name().to_string_lossy().contains("冲突")));
+        assert_eq!(
+            fs::read_to_string(second.join("笔记.md")).unwrap(),
+            "设备乙版本二"
+        );
+        assert!(fs::read_dir(&second)
+            .unwrap()
+            .flatten()
+            .any(|f| f.file_name().to_string_lossy().contains("冲突")));
 
         syncer::sync_once(&c, &first, &journal_a, &opts, || Ok(())).unwrap();
-        assert_eq!(fs::read_to_string(first.join("笔记.md")).unwrap(), "设备乙版本二");
+        assert_eq!(
+            fs::read_to_string(first.join("笔记.md")).unwrap(),
+            "设备乙版本二"
+        );
         fs::remove_file(second.join("笔记.md")).unwrap();
         assert!(syncer::sync_once(&c, &second, &journal_b, &opts, || Ok(()))
-            .unwrap_err().starts_with("WEB_DAV_CONFIRM_DELETE:"));
+            .unwrap_err()
+            .starts_with("WEB_DAV_CONFIRM_DELETE:"));
         assert_eq!(c.get("笔记.md").unwrap().0, "设备乙版本二".as_bytes());
         let mut approved = opts.clone();
         approved.confirm_deletes = true;
@@ -559,7 +574,9 @@ mod tests {
         syncer::sync_once(&c, &first, &journal_a, &approved, || Ok(())).unwrap();
         assert!(!first.join("笔记.md").exists());
         assert!(fs::read_dir(first.join(".trash")).unwrap().next().is_some());
-        for path in [first, second, records] { fs::remove_dir_all(path).unwrap(); }
+        for path in [first, second, records] {
+            fs::remove_dir_all(path).unwrap();
+        }
     }
 
     #[test]
