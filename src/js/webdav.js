@@ -5,6 +5,7 @@ import { $ } from "./dom.js";
 import { ask, toast } from "./ui.js";
 import { syncFromDisk } from "./sync.js";
 import { flushAll, saveMeta } from "./save.js";
+import { parseAccent } from "./accent.js";
 
 let deferred = null;
 let periodic = null;
@@ -26,7 +27,13 @@ export async function webdavStatus() {
     bar.textContent = (states[status.state] || "○") +
       (style === "text" ? " " + (status.message || "WebDAV") : "");
     bar.title = status.message || "WebDAV 同步";
-    bar.style.color = state.settings?.webdav_status_color || "var(--accent)";
+    const choice = state.settings?.webdav_status_color || "";
+    const color = parseAccent(choice);
+    bar.style.color = color?.from || "var(--accent)";
+    bar.style.backgroundImage = color?.to ? choice : "";
+    bar.style.backgroundClip = color?.to ? "text" : "";
+    bar.style.webkitBackgroundClip = color?.to ? "text" : "";
+    bar.style.webkitTextFillColor = color?.to ? "transparent" : "";
   }
   const info = $("#set-webdav-info");
   if (info) info.textContent = status.message || "WebDAV 尚未同步";
