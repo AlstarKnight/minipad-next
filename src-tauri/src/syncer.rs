@@ -638,14 +638,23 @@ fn local_trash(root: &Path, path: &str) -> Result<(), String> {
 
 /// 同一字段被双端修改时先在本机留下远端元数据完整副本，再使用本机版本。
 fn backup_metadata_conflict(root: &Path, path: &str, bytes: &[u8]) -> Result<PathBuf, String> {
-    let stamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_err(|e| e.to_string())?
-        .as_nanos();
-    let name = format!("{}-{stamp}.json", path.replace('/', "_"));
-    let saved = root.join(".trash").join("webdav-metadata").join(name);
-    crate::notes::write_atomic_bytes(&saved, bytes)?;
-    Ok(saved)
+    let stamp = chrono::Utc::now().timestamp();
+    let folder = path.rsplit_once('/').map(|(book, _)| book).unwrap_or("");
+    let archive = root.join(".trash").join(".webdav").join(folder);
+    fs::create_dir_all(&archive).map_err(|e| e.to_string())?;
+    for attempt in 0..100 {
+        let name = if attempt == 0 {
+            format!(".minipad.{stamp}.json")
+        } else {
+            format!(".minipad.{stamp} ({}).json", attempt + 1)
+        };
+        let saved = archive.join(name);
+        if !saved.exists() {
+            crate::notes::write_atomic_bytes(&saved, bytes)?;
+            return Ok(saved);
+        }
+    }
+    Err("同步元数据冲突副本过多，请先整理回收站".into())
 }
 
 fn record_for(
