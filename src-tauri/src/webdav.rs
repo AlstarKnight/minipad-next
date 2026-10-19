@@ -150,6 +150,19 @@ mod tests {
     }
 
     #[test]
+    fn failed_property_status_does_not_hide_successful_metadata() {
+        let xml = r#"<d:multistatus xmlns:d="DAV:">
+        <d:response><d:href>/MinipadNext/文件.md</d:href>
+          <d:propstat><d:prop><d:getetag>"ok"</d:getetag><d:getcontentlength>12</d:getcontentlength></d:prop>
+            <d:status>HTTP/1.1 200 OK</d:status></d:propstat>
+          <d:propstat><d:prop><d:unknown/></d:prop><d:status>HTTP/1.1 404 Not Found</d:status></d:propstat>
+        </d:response></d:multistatus>"#;
+        let entry = parse_multistatus(xml).unwrap().pop().unwrap();
+        assert_eq!(entry.etag.as_deref(), Some("\\"ok\\""));
+        assert_eq!(entry.size, Some(12));
+    }
+
+    #[test]
     fn rejects_malformed_xml() {
         assert!(parse_multistatus("<d:response>").is_err());
     }
