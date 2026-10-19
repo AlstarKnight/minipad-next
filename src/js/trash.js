@@ -85,7 +85,7 @@ function render() {
       restore.className = "small";
       restore.dataset.act = "restore";
       restore.textContent = "恢复";
-      restore.title = it.kind === "book" ? "恢复这个笔记本" : `恢复到「${bookLabel({ name: it.book })}」笔记本`;
+      restore.title = it.kind === "book" ? "恢复这个笔记本" : it.kind === "file" ? "恢复到原来的文件夹" : `恢复到「${bookLabel({ name: it.book })}」笔记本`;
       restore.addEventListener("click", () => restoreItem(it));
       const purge = document.createElement("button");
       purge.className = "small danger-text";
@@ -141,7 +141,7 @@ async function restoreItem(it) {
 }
 
 async function purgeItem(it) {
-  const what = it.kind === "book" ? `笔记本「${it.name}」和里面的 ${it.pages} 页` : `页面「${it.name}」`;
+  const what = it.kind === "book" ? `笔记本「${it.name}」和里面的 ${it.pages} 页` : it.kind === "file" ? `文件「${it.name}」` : `页面「${it.name}」`;
   if (!(await ask(`彻底删除${what}?\n删除以后只能从每日备份里找回。`, "彻底删除", true, true))) return;
   await change(() => api.invoke("trash_purge", { id: it.id }));
 }
