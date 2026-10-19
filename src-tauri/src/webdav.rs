@@ -872,7 +872,10 @@ mod tests {
         );
         let archived = online.list(".trash/").unwrap();
         assert!(!archived.is_empty());
-        let old = archived.iter().find(|(path, _)| path.contains("shared")).unwrap();
+        let old = archived
+            .iter()
+            .find(|(path, _)| path.contains("shared"))
+            .unwrap();
         assert_eq!(online.get(&old.0).unwrap().0, b"server version");
 
         fs::rename(local2.join("local-only.md"), local2.join("renamed.md")).unwrap();
