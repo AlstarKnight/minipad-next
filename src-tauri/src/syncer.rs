@@ -272,7 +272,7 @@ pub fn local_files(root: &Path, images: bool) -> Result<BTreeMap<String, String>
             let entry = entry.map_err(|e| e.to_string())?;
             let name = entry.file_name().to_string_lossy().into_owned();
             let path = if prefix.is_empty() {
-                name
+                name.clone()
             } else {
                 format!("{prefix}/{}", name)
             };
@@ -734,6 +734,7 @@ mod tests {
             etag: Some("v1".into()),
             size: Some(12),
             modified: Some("Mon".into()),
+            base_metadata: None,
         };
         let mut entry = RemoteEntry {
             href: "/notes/a.md".into(),
