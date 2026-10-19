@@ -131,6 +131,7 @@ async function change(fn) {
 async function restoreItem(it) {
   const r = await change(() => api.invoke("trash_restore", { id: it.id }));
   if (!r) return;
+  if (it.kind === "file") { toast(`已恢复文件「${it.name}」`); return; }
   const b = state.books.find((x) => x.name === r.book);
   const where = r.name ? `「${bookLabel({ name: r.book })}」里的「${r.name}」` : `笔记本「${r.book}」`;
   toast(`已恢复${where}`);
