@@ -175,9 +175,154 @@ pub fn merge_metadata(
     }
 }
 
+
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use std::fs;
+use std::path::{Path, PathBuf};
+
+/// 同步记录只含路径、哈希和远程版本信息，绝不储存密码或认证头。
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct FileRecord {
+    pub hash: String,
+    pub etag: Option<String>,
+    pub size: Option<u64>,
+    pub modified: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Journal {
+    pub files: BTreeMap<String, FileRecord>,
+}
+
+/// 每个 WebDAV 账号和远程文件夹拥有独立的本地同步状态。
+pub fn journal_path(data_dir: &Path, server: &str, user: &str, folder: &str) -> PathBuf {
+    let identity = format!("{server}\n{user}\n{folder}");
+    let digest = Sha256::digest(identity.as_bytes());
+    data_dir.join(format!("webdav-{:x}.json", digest))
+}
+
+pub fn read_journal(path: &Path) -> Result<(Journal, bool), String> {
+    match fs::read_to_string(path) {
+        Ok(raw) => {
+            let journal = serde_json::from_str(&raw)
+                .map_err(|e| format!("同步记录损坏，已停止同步以保护笔记：{e}"))?;
+            Ok((journal, false))
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            Ok((Journal::default(), true))
+        }
+        Err(e) => Err(format!("无法读取同步记录：{e}")),
+    }
+}
+
+pub fn save_journal(path: &Path, journal: &Journal) -> Result<(), String> {
+    let data = serde_json::to_string_pretty(journal).map_err(|e| e.to_string())?;
+    crate::notes::write_atomic(path, &data)
+}
+
+/// 本机按与 WebDAV 一致的白名单扫描，拒绝符号链接和超出笔记本层级的目录。
+pub fn local_files(root: &Path, images: bool) -> Result<BTreeMap<String, String>, String> {
+    fn scan(
+        folder: &Path,
+        prefix: &str,
+        images: bool,
+        depth: usize,
+        result: &mut BTreeMap<String, String>,
+    ) -> Result<(), String> {
+        for entry in fs::read_dir(folder).map_err(|e| format!("扫描笔记失败：{e}"))? {
+            let entry = entry.map_err(|e| e.to_string())?;
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let path = if prefix.is_empty() {
+                name
+            } else {
+                format!("{prefix}/{}", name)
+            };
+            let kind = entry.file_type().map_err(|e| e.to_string())?;
+            if kind.is_file() && should_sync(&path, images) {
+                let bytes = fs::read(entry.path())
+                    .map_err(|e| format!("读取待同步文件「{path}」失败：{e}"))?;
+                result.insert(path.clone(), content_hash(&path, &bytes));
+            } else if kind.is_dir()
+                && depth < 2
+                && !name.starts_with('.')
+                && (depth == 0 || name == "assets" && images)
+            {
+                scan(&entry.path(), &path, images, depth + 1, result)?;
+            }
+        }
+        Ok(())
+    }
+    let mut files = BTreeMap::new();
+    scan(root, "", images, 0, &mut files)?;
+    Ok(files)
+}
+
+/// 导航状态属于设备自身，不参加远端对比，也不引发无意义上传。
+pub fn content_hash(path: &str, bytes: &[u8]) -> String {
+    if path.ends_with(".minipad.json") {
+        if let Ok(mut value) = serde_json::from_slice::<serde_json::Value>(bytes) {
+            if let Some(meta) = value.as_object_mut() {
+                for local in ["active", "modes", "current_book"] {
+                    meta.remove(local);
+                }
+                if let Ok(shared) = serde_json::to_vec(&value) {
+                    return format!("{:x}", Sha256::digest(shared));
+                }
+            }
+        }
+    }
+    format!("{:x}", Sha256::digest(bytes))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn journals_are_isolated_and_corruption_never_resets_deletion_history() {
+        let root = crate::notes::temp_dir("webdav-journal");
+        let a = journal_path(&root, "https://one.example", "me", "/MinipadNext/");
+        let b = journal_path(&root, "https://one.example", "other", "/MinipadNext/");
+        assert_ne!(a, b);
+        assert!(read_journal(&a).unwrap().1);
+        let journal = Journal {
+            files: BTreeMap::from([("页面.md".into(), FileRecord {
+                hash: "abc".into(), ..FileRecord::default()
+            })]),
+        };
+        save_journal(&a, &journal).unwrap();
+        assert_eq!(read_journal(&a).unwrap().0.files, journal.files);
+        fs::write(&a, "not json").unwrap();
+        assert!(read_journal(&a).is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn local_scanning_excludes_trash_temporary_and_optional_images() {
+        let root = crate::notes::temp_dir("webdav-files");
+        fs::write(root.join("主页.md"), "hello").unwrap();
+        fs::create_dir_all(root.join("工作/assets")).unwrap();
+        fs::create_dir_all(root.join(".trash")).unwrap();
+        fs::write(root.join(".trash/已删除.md"), "deleted").unwrap();
+        fs::write(root.join("工作/页面.md"), "note").unwrap();
+        fs::write(root.join("工作/assets/photo.png"), b"image").unwrap();
+        let normal = local_files(&root, false).unwrap();
+        assert_eq!(normal.len(), 2);
+        assert!(!normal.contains_key("工作/assets/photo.png"));
+        assert_eq!(local_files(&root, true).unwrap().len(), 3);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn page_navigation_changes_do_not_change_metadata_hash() {
+        let a = br#"{"active":"页1","order":["页1"],"modes":{"页1":"edit"}}"#;
+        let b = br#"{"active":"页2","order":["页1"],"modes":{"页1":"view"}}"#;
+        assert_eq!(content_hash(".minipad.json", a), content_hash(".minipad.json", b));
+        assert_ne!(content_hash("页.md", a), content_hash("页.md", b));
+    }
 
     #[test]
     fn three_way_table() {
