@@ -6735,4 +6735,24 @@ describe("0.4.4: interface styles", () => {
     assert.equal(await root(p, "data-side"), null);
     assert.ok(await p.locator("#side").isHidden());
   });
+
+  ui("local file links are decorated and settings survive reopening", {
+    seed: seed({ "": { "路径": "打开 C:\\\\docs\\\\note.pdf 并查看。" } }),
+  }, async (h) => {
+    const { p } = h;
+    await p.locator("#editor .local-file-path").waitFor();
+    assert.equal(await p.locator("#editor .local-file-path").first().getAttribute("data-local-path"), "C:\\\\docs\\\\note.pdf");
+    await p.click("#btn-settings");
+    await settingsPage(p, "edit");
+    assert.equal(await p.locator("#set-local-path").isChecked(), true);
+    await p.uncheck("#set-local-path");
+    await p.selectOption("#set-local-path-click", "click");
+    await p.click("#set-save");
+    await until(() => p.locator("#editor .local-file-path").count(), 0, "path decoration is disabled");
+    await p.click("#btn-settings");
+    await settingsPage(p, "edit");
+    assert.equal(await p.locator("#set-local-path").isChecked(), false);
+    assert.equal(await p.locator("#set-local-path-click").inputValue(), "click");
+  });
+
 });
