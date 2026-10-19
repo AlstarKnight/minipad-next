@@ -71,8 +71,7 @@ pub fn parse_multistatus(xml: &str) -> Result<Vec<RemoteEntry>, String> {
                 }
             }
             Event::Text(t) => {
-                let value = t.xml_content(XmlVersion::Implicit1_0)
-                    .map_err(|e| format!("WebDAV XML 字段无法解码：{e}"))?;
+                let value = t.xml_content(XmlVersion::Implicit1_0);
                 if field == "href" && prop.is_none() {
                     if let Some(ref mut entry) = item {
                         entry.href.push_str(&value);
