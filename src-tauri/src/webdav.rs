@@ -518,6 +518,17 @@ mod tests {
     use super::*;
 
     #[test]
+    fn https_client_uses_embedded_roots_without_platform_initialization() {
+        let client = WebdavClient::new(
+            "https://dav.jianguoyun.com/dav/", "tester", "test-password",
+            "/MinipadNext/", false,
+        )
+        .expect("创建 HTTPS 客户端不应要求 Android 平台初始化");
+        assert_eq!(client.root.scheme(), "https");
+    }
+
+
+    #[test]
     fn parses_namespaced_webdav_multistatus() {
         let xml = r#"<?xml version="1.0"?><d:multistatus xmlns:d="DAV:">
           <d:response><d:href>/MinipadNext/</d:href><d:propstat><d:prop><d:resourcetype><d:collection/></d:resourcetype></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>
