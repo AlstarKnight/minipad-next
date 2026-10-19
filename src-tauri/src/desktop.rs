@@ -1709,6 +1709,131 @@ fn open_path(path: String, reveal: bool, confirmed: bool, state: tauri::State<'_
     }
 }
 
+
+fn webdav_credential(settings: &Settings) -> Result<keyring::Entry, String> {
+    let identity = crate::syncer::journal_path(
+        Path::new(""),
+        &settings.webdav_server,
+        &settings.webdav_user,
+        &settings.webdav_folder,
+    );
+    let name = identity.file_stem().and_then(|s| s.to_str()).ok_or("无效的 WebDAV 账号")?;
+    keyring::Entry::new("Minipad Next WebDAV", name)
+        .map_err(|e| format!("无法打开 Windows 凭据管理器：{e}"))
+}
+
+#[tauri::command]
+fn webdav_set_password(app: AppHandle, password: String) -> Result<(), String> {
+    let settings = app.state::<AppState>().settings.lock().unwrap().clone();
+    if settings.webdav_server.trim().is_empty() || settings.webdav_user.trim().is_empty() {
+        return Err("请先保存服务器地址和用户名".into());
+    }
+    webdav_credential(&settings)?.set_password(&password)
+        .map_err(|e| format!("保存 WebDAV 密码到 Windows 凭据管理器失败：{e}"))
+}
+
+#[tauri::command]
+async fn webdav_test(app: AppHandle) -> Result<String, String> {
+    let s = app.state::<AppState>().settings.lock().unwrap().clone();
+    let password = webdav_credential(&s)?.get_password()
+        .map_err(|_| "请先填写并保存 WebDAV 应用密码".to_string())?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let client = crate::webdav::WebdavClient::new(
+            &s.webdav_server, &s.webdav_user, &password, &s.webdav_folder, s.webdav_allow_http,
+        )?;
+        client.test_connection()?;
+        Ok::<_, String>("连接成功，目录读取与写入测试通过".to_string())
+    }).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+fn webdav_status() -> crate::syncer::WebdavStatus {
+    crate::syncer::status()
+}
+
+#[tauri::command]
+fn webdav_forget(app: AppHandle) -> Result<(), String> {
+    let s = app.state::<AppState>().settings.lock().unwrap().clone();
+    let folder = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let file = crate::syncer::journal_path(
+        &folder, &s.webdav_server, &s.webdav_user, &s.webdav_folder,
+    );
+    match fs::remove_file(file) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(format!("无法清除同步记录：{e}")),
+    }
+    let _ = webdav_credential(&s).and_then(|entry| {
+        entry.delete_credential().map_err(|e| e.to_string())
+    });
+    app.state::<AppState>().settings.lock().unwrap().webdav_enabled = false;
+    persist_settings(&app);
+    crate::syncer::update_status("off", "已断开，笔记没有被删除");
+    Ok(())
+}
+
+#[tauri::command]
+async fn webdav_sync_now(app: AppHandle, confirm_deletes: bool) -> Result<crate::syncer::SyncReport, String> {
+    let s = app.state::<AppState>().settings.lock().unwrap().clone();
+    if !s.webdav_enabled {
+        return Err("请先在设置中开启 WebDAV 同步".into());
+    }
+    let password = webdav_credential(&s)?.get_password()
+        .map_err(|_| "WebDAV 密码尚未保存在 Windows 凭据管理器".to_string())?;
+    let root = notes_dir(&app, &s);
+    let data = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let backup_dest = backup_dir(&app, &s);
+    let journal = crate::syncer::journal_path(&data, &s.webdav_server, &s.webdav_user, &s.webdav_folder);
+    let first_mode = match s.webdav_first_mode.as_str() {
+        "remote" => crate::syncer::FirstSync::Remote,
+        "local" => crate::syncer::FirstSync::Local,
+        _ => crate::syncer::FirstSync::Merge,
+    };
+    let options = crate::syncer::SyncOptions {
+        images: s.webdav_images,
+        first_mode,
+        conflict_copy: s.conflict_mode != "overwrite",
+        confirm_deletes,
+    };
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let _run = crate::syncer::RUN_LOCK.lock().map_err(|e| e.to_string())?;
+        crate::syncer::update_status("syncing", "正在同步笔记");
+        let client = crate::webdav::WebdavClient::new(
+            &s.webdav_server, &s.webdav_user, &password, &s.webdav_folder, s.webdav_allow_http,
+        )?;
+        crate::syncer::sync_once(&client, &root, &journal, &options, || {
+            let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+            if let Some(saved) = backup::run(&root, &backup_dest, &today, s.backup_keep as usize)? {
+                if !saved.skipped.is_empty() {
+                    return Err("首次同步备份有未能读取的文件，已取消同步".into());
+                }
+            }
+            Ok(())
+        })
+    }).await.map_err(|e| e.to_string())?;
+    match &result {
+        Ok(report) => {
+            let mode = if report.conflicts > 0 { "conflict" } else { "synced" };
+            let message = format!(
+                "同步完成：上传 {}，下载 {}，冲突 {}，回收站 {}",
+                report.uploaded, report.downloaded, report.conflicts, report.deleted,
+            );
+            crate::syncer::update_status(mode, &message);
+            if !report.changed.is_empty() {
+                let _ = app.emit("webdav-changed", &report.changed);
+            }
+        }
+        Err(e) if e.starts_with("WEB_DAV_CONFIRM_DELETE:") => {
+            crate::syncer::update_status("confirm", "删除量超过保护阈值，需要确认");
+        }
+        Err(e) => {
+            let state = if e.contains("离线") || e.contains("超时") { "offline" } else { "error" };
+            crate::syncer::update_status(state, e);
+        }
+    }
+    result
+}
+
 #[tauri::command]
 fn quit_app(app: AppHandle) {
     persist_settings(&app);
@@ -2657,6 +2782,11 @@ pub fn run() {
             expand_from_ball,
             open_notes_dir,
             open_link,
+            webdav_set_password,
+            webdav_test,
+            webdav_status,
+            webdav_sync_now,
+            webdav_forget,
             local_path_exists,
             open_path,
             save_image,
