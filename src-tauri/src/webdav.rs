@@ -666,6 +666,8 @@ mod tests {
             first_mode: FirstSync::Merge,
             conflict_copy: true,
             confirm_deletes: false,
+            delete_limit: 20,
+            delete_divisor: 3,
         };
         let journal_a = records.join("device-a.json");
         let journal_b = records.join("device-b.json");
@@ -741,6 +743,8 @@ mod tests {
             first_mode: FirstSync::Merge,
             conflict_copy: true,
             confirm_deletes: false,
+            delete_limit: 20,
+            delete_divisor: 3,
         };
         let journal_a = records.join("first.json");
         let journal_b = records.join("second.json");
@@ -792,6 +796,8 @@ mod tests {
             first_mode: FirstSync::Remote,
             conflict_copy: true,
             confirm_deletes: true,
+            delete_limit: 20,
+            delete_divisor: 3,
         };
         syncer::sync_once(&remote, &local, &journal, &settings, || Ok(())).unwrap();
         assert_eq!(
