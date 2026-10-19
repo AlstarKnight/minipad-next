@@ -1114,9 +1114,15 @@ mod tests {
         fs::write(root.join("page.md"), original).unwrap();
         let hash = content_hash("page.md", original);
         fs::write(root.join("page.md"), newer).unwrap();
-        let (record, rescan, replaced) =
-            finish_upload(&root, "page.md", &hash, original, uploaded, Some("new-etag".into()))
-                .unwrap();
+        let (record, rescan, replaced) = finish_upload(
+            &root,
+            "page.md",
+            &hash,
+            original,
+            uploaded,
+            Some("new-etag".into()),
+        )
+        .unwrap();
         assert!(rescan);
         assert!(!replaced);
         assert_eq!(record.hash, hash);
