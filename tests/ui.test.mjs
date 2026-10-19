@@ -6767,6 +6767,20 @@ describe("0.4.4: interface styles", () => {
 });
 
 suite("0.4.5: WebDAV settings", { concurrency: 1 }, () => {
+  ui("rescan request is debounced even if save-triggered syncing is disabled", {
+    seed: { ...seed({ "": { "笔记": "内容" } }), settings: {
+      ...SETTINGS, webdav_enabled: true, webdav_on_start: false,
+      webdav_after_save: false, webdav_interval_minutes: 0,
+    } },
+    mockControl: { webdavRescanNeeded: true, webdavSyncCalls: 0 },
+  }, async ({ p }) => {
+    await p.click("#st-webdav");
+    await p.waitForFunction(() => window.__mockControl.webdavSyncCalls === 1);
+    await p.waitForTimeout(500);
+    assert.equal(await p.evaluate(() => window.__mockControl.webdavSyncCalls), 1,
+      "rescan should not immediately start another network scan");
+  });
+
   ui("WebDAV status distinguishes syncing, conflicts and offline states", {
     seed: { ...seed({ "": { "笔记": "内容" } }), settings: {
       ...SETTINGS, webdav_enabled: true, webdav_on_start: false, webdav_interval_minutes: 0,
