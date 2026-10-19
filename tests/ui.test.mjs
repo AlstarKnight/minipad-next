@@ -6767,6 +6767,26 @@ describe("0.4.4: interface styles", () => {
 });
 
 suite("0.4.5: WebDAV settings", { concurrency: 1 }, () => {
+  ui("WebDAV status distinguishes syncing, conflicts and offline states", {
+    seed: { ...seed({ "": { "笔记": "内容" } }), settings: {
+      ...SETTINGS, webdav_enabled: true, webdav_on_start: false, webdav_interval_minutes: 0,
+      webdav_status_style: "text",
+    } },
+    mockControl: { webdavStatus: { state: "synced", message: "已同步", last_time: "", history: [] } },
+  }, async ({ p }) => {
+    for (const [state, message] of [
+      ["syncing", "同步中"], ["conflict", "有冲突"], ["offline", "离线"], ["error", "出错"],
+    ]) {
+      await p.evaluate(([kind, text]) => {
+        window.__mockControl.webdavStatus = { state: kind, message: text, last_time: "", history: [] };
+        window.__mockEmit("webdav-changed", []);
+      }, [state, message]);
+      await until(() => p.locator("#st-webdav").textContent(), state === "syncing"
+        ? "⟳ 同步中" : (state === "offline" ? "○ 离线" : "! " + message), "WebDAV state " + state);
+    }
+  });
+
+
   ui("test connection uses form draft without persisting it", {
     seed: seed({ "": { "笔记": "内容" } }),
   }, async (h) => {
