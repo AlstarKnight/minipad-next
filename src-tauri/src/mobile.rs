@@ -172,12 +172,28 @@ fn mobile_webdav_password_path(
     config: &MobileWebdavConfig,
 ) -> Result<PathBuf, String> {
     let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    let journal = crate::syncer::journal_path(&dir, &config.server, &config.user, &config.folder);
+    let journal = crate::syncer::journal_path(&dir, &config.server, &config.user, "");
     let name = journal
         .file_stem()
         .and_then(|v| v.to_str())
         .ok_or("账号标识无效")?;
     Ok(dir.join(format!("{name}.password")))
+}
+
+fn read_mobile_webdav_password(app: &AppHandle, config: &MobileWebdavConfig) -> Result<String, String> {
+    let stable = mobile_webdav_password_path(app, config)?;
+    if let Ok(password) = fs::read_to_string(&stable) {
+        return Ok(password);
+    }
+    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let old_id = crate::syncer::journal_path(&dir, &config.server, &config.user, &config.folder);
+    let name = old_id.file_stem().and_then(|v| v.to_str()).ok_or("账号标识无效")?;
+    let legacy = dir.join(format!("{name}.password"));
+    let password = fs::read_to_string(&legacy)
+        .map_err(|_| "请先保存 WebDAV 应用密码".to_string())?;
+    crate::notes::write_atomic(&stable, &password)?;
+    let _ = fs::remove_file(&legacy);
+    Ok(password)
 }
 
 #[tauri::command]
@@ -195,7 +211,7 @@ fn mobile_webdav_set_password(
 
 #[tauri::command]
 async fn mobile_webdav_test(app: AppHandle, config: MobileWebdavConfig) -> Result<String, String> {
-    let password = fs::read_to_string(mobile_webdav_password_path(&app, &config)?)
+    let password = read_mobile_webdav_password(&app, &config)
         .map_err(|_| "请先保存 WebDAV 应用密码".to_string())?;
     tauri::async_runtime::spawn_blocking(move || {
         let client = crate::webdav::WebdavClient::new(
@@ -247,7 +263,7 @@ async fn mobile_webdav_sync_now(
     if !config.enabled {
         return Err("请先开启 WebDAV 同步".into());
     }
-    let password = fs::read_to_string(mobile_webdav_password_path(&app, &config)?)
+    let password = read_mobile_webdav_password(&app, &config)
         .map_err(|_| "请先保存 WebDAV 应用密码".to_string())?;
     let dir = root(&app)?;
     let data = app.path().app_data_dir().map_err(|e| e.to_string())?;
