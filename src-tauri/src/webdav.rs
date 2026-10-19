@@ -201,10 +201,17 @@ impl WebdavClient {
             }
             segments.push("");
         }
+        // 使用内置 Mozilla 根证书，绕开 Android 需要 JNI 初始化的平台校验器。
+        let certs = webpki_root_certs::TLS_SERVER_ROOT_CERTS
+            .iter()
+            .map(|cert| reqwest::tls::Certificate::from_der(cert.as_ref()))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|_| "WebDAV 内置根证书加载失败")?;
         let http = Client::builder()
             .timeout(Duration::from_secs(30))
             .redirect(reqwest::redirect::Policy::none())
             .tls_backend_rustls()
+            .tls_certs_only(certs)
             .build()
             .map_err(|e| format!("创建 WebDAV 连接失败：{e}"))?;
         Ok(Self {
