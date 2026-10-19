@@ -27,6 +27,10 @@ test("WebDAV settings persist without storing password and manual test reports r
     await page.locator("#btn-settings").click();
     await page.locator('#set-nav [data-page="data"]').click();
     assert.equal(await page.locator("#set-webdav-enabled").isChecked(), false);
+    assert.equal(await page.locator("#set-webdav-color + .shared-colors").count(), 1,
+      "WebDAV status color uses the shared color library");
+    assert.equal(await page.locator("#set-local-path-color + .shared-colors").count(), 1,
+      "file path color uses the same shared color library");
     await page.locator("#set-webdav-server").fill("https://dav.example.com/dav/");
     await page.locator("#set-webdav-user").fill("tester");
     await page.locator("#set-webdav-password").fill("never-serialize-this");
