@@ -661,7 +661,7 @@ async function performMobileSync(confirmed) {
   try {
     await flush();
     const result = await invoke("mobile_webdav_sync_now", { config: syncSettings, confirmDeletes: confirmed });
-    if (result?.rescan_needed) syncQueued = true;
+    if (result?.rescan_needed) scheduleMobileSync(true);
     await showSyncStatus();
     // 有尚未保存的输入时保持原状态；下次保存会按 expected 留冲突副本。
     // webdav-changed 监听器统一刷新，避免同一次下载重复加载页面。
@@ -698,8 +698,8 @@ async function mobileSync(confirmed = false) {
   finally { syncing = null; }
 }
 
-function scheduleMobileSync() {
-  if (!syncSettings.enabled || !syncSettings.after_save) return;
+function scheduleMobileSync(force = false) {
+  if (!syncSettings.enabled || (!force && !syncSettings.after_save)) return;
   clearTimeout(syncDelay);
   syncDelay = setTimeout(() => { void mobileSync(); }, (syncSettings.delay || 30) * 1000);
 }
