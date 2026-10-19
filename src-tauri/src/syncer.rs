@@ -11,7 +11,8 @@ pub enum Action {
     DeleteRemote,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum FirstSync {
     Merge,
     Remote,
@@ -232,6 +233,8 @@ pub struct FileRecord {
 #[serde(default)]
 pub struct Journal {
     pub files: BTreeMap<String, FileRecord>,
+    /// 首次同步失败后沿用最初的选择，防止后续文件改成普通三方比较。
+    pub initial_mode: Option<FirstSync>,
 }
 
 /// 每个 WebDAV 账号和远程文件夹拥有独立的本地同步状态。
@@ -246,7 +249,7 @@ pub fn read_journal(path: &Path) -> Result<(Journal, bool), String> {
         Ok(raw) => {
             let journal = serde_json::from_str(&raw)
                 .map_err(|e| format!("同步记录损坏，已停止同步以保护笔记：{e}"))?;
-            Ok((journal, false))
+            Ok((journal.clone(), journal.initial_mode.is_some()))
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok((Journal::default(), true)),
         Err(e) => Err(format!("无法读取同步记录：{e}")),
@@ -565,16 +568,19 @@ pub fn sync_once(
     backup_first: impl FnOnce() -> Result<(), String>,
 ) -> Result<SyncReport, String> {
     let (mut journal, first) = read_journal(journal_file)?;
+    let mode = journal.initial_mode.unwrap_or(options.first_mode);
     client.mkcol("")?;
     let local = local_files(root, options.images)?;
     let remote = remote_files(client, options.images, &journal)?;
     let (actions, deletes, total) =
-        preview_actions(&journal, &local, &remote, options.first_mode, first);
+        preview_actions(&journal, &local, &remote, mode, first);
     if !options.confirm_deletes && deletion_needs_confirmation(deletes, total) {
         return Err(format!("WEB_DAV_CONFIRM_DELETE:{deletes}:{total}"));
     }
     if first {
         backup_first()?;
+        journal.initial_mode = Some(mode);
+        save_journal(journal_file, &journal)?;
     }
     let mut report = SyncReport::default();
     let mut created_dirs = BTreeSet::new();
@@ -719,6 +725,8 @@ pub fn sync_once(
         }
         save_journal(journal_file, &journal)?;
     }
+    journal.initial_mode = None;
+    save_journal(journal_file, &journal)?;
     Ok(report)
 }
 
