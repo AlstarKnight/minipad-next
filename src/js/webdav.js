@@ -11,6 +11,7 @@ let deferred = null;
 let periodic = null;
 let running = null;
 let rerun = false;
+let recentConflicts = [];
 
 const enabled = () => state.settings?.webdav_enabled === true;
 const states = {
@@ -24,8 +25,14 @@ export async function webdavStatus() {
   if (bar) {
     const style = state.settings?.webdav_status_style || "icon";
     bar.hidden = isMiniWindow || !enabled() || style === "none";
-    bar.textContent = (states[status.state] || "○") +
-      (style === "text" ? " " + (status.message || "WebDAV") : "");
+    const symbol = document.createElement("span");
+    symbol.className = "webdav-state-icon";
+    symbol.classList.toggle("spinning", status.state === "syncing");
+    symbol.textContent = states[status.state] || "○";
+    bar.replaceChildren(symbol);
+    if (style === "text") bar.append(document.createTextNode(" " + (status.message || "WebDAV")));
+    bar.style.whiteSpace = "normal";
+    bar.style.overflowWrap = "anywhere";
     bar.title = status.message || "WebDAV 同步";
     const choice = state.settings?.webdav_status_color || "";
     const color = parseAccent(choice);
@@ -46,8 +53,15 @@ async function performWebdavSync(confirmed) {
   try {
     await flushAll();
     await saveMeta();
+    const indicator = $("#st-webdav");
+    if (indicator) {
+      indicator.textContent = "⟳";
+      indicator.classList.add("webdav-running");
+    }
     const result = await api.invoke("webdav_sync_now", { confirmDeletes: confirmed });
+    recentConflicts = (result?.changed || []).filter((path) => path.includes("冲突"));
     if (result?.rescan_needed) rerun = true;
+    if (indicator) indicator.classList.remove("webdav-running");
     await webdavStatus();
     return result;
   } catch (error) {
@@ -61,6 +75,7 @@ async function performWebdavSync(confirmed) {
     } else if (!msg.includes("离线")) {
       toast(msg, 6500);
     }
+    $("#st-webdav")?.classList.remove("webdav-running");
     await webdavStatus().catch(() => {});
   }
 }
@@ -81,6 +96,20 @@ export async function webdavRun(confirmed = false) {
   })();
   try { return await running; }
   finally { running = null; }
+}
+
+async function openWebdavStatus() {
+  const status = await webdavStatus();
+  if (["conflict", "error", "offline", "confirm"].includes(status.state)) {
+    const details = recentConflicts.length
+      ? "\n冲突副本：" + recentConflicts.slice(0, 10).join("、")
+      : "";
+    const history = (status.history || []).slice(0, 5).join("\n");
+    const summary = (status.message || "WebDAV 同步状态") + details + (history ? "\n\n最近记录：\n" + history : "");
+    if (await ask(summary, "立即同步", false, true)) void webdavRun();
+  } else {
+    void webdavRun();
+  }
 }
 
 export async function webdavSavePassword(password) {
@@ -121,7 +150,7 @@ export function bindWebdav() {
   });
   document.addEventListener("webdav-saved", scheduleWebdavSave);
   if (isMiniWindow) return;
-  $("#st-webdav")?.addEventListener("click", () => void webdavRun());
+  $("#st-webdav")?.addEventListener("click", () => void openWebdavStatus());
   document.addEventListener("visibilitychange", () => {
     if (document.hidden && enabled() && state.settings.webdav_on_hide !== false) {
       void webdavRun();
