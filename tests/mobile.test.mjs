@@ -94,6 +94,23 @@ async function open({ colorScheme, keyboard, look = { ui: "classic" } } = {}) {
           calls.readImage++;
           return images[args.path] ?? Promise.reject("missing file");
         }
+        if (command === "mobile_webdav_status") return { state: "synced", message: "已同步（测试）", history: [] };
+        if (command === "mobile_webdav_set_password") {
+          window.__mobileTest.savedWebdavPassword = args.password;
+          return null;
+        }
+        if (command === "mobile_webdav_test") {
+          if (!args.config.server) throw new Error("地址不能为空");
+          return "连接测试成功";
+        }
+        if (command === "mobile_webdav_sync_now") {
+          window.__mobileTest.lastSync = args;
+          return { uploaded: 0, downloaded: 0, deleted: 0, conflicts: 0, changed: [] };
+        }
+        if (command === "mobile_webdav_forget") {
+          window.__mobileTest.savedWebdavPassword = null;
+          return null;
+        }
         throw new Error("Unknown command " + command);
       },
     } };
@@ -824,4 +841,31 @@ test("when the WebView pans the visual viewport down for the keyboard, the page 
   } finally {
     await context.close();
   }
+});
+
+test("WebDAV settings stay on this phone and never put the password in localStorage", async () => {
+  const { context, page, errors } = await open();
+  try {
+    await page.click("#open-drawer");
+    await page.click("#open-sync-settings");
+    await page.locator("#mobile-webdav-settings").waitFor();
+    assert.equal(await page.locator("#ms-enable").isChecked(), false);
+    await page.locator("#ms-enable").check();
+    await page.fill("#ms-server", "https://dav.example.com/dav/");
+    await page.fill("#ms-user", "tester");
+    await page.fill("#ms-password", "private-test-password");
+    await page.selectOption("#ms-first", "merge");
+    await page.click("#ms-save-config");
+    await page.waitForFunction(() => !!localStorage.getItem("minipad-mobile-webdav"));
+    const stored = await page.evaluate(() => localStorage.getItem("minipad-mobile-webdav"));
+    assert.equal(stored.includes("private-test-password"), false);
+    assert.equal(JSON.parse(stored).enabled, true);
+    assert.equal(await page.locator("#ms-password").inputValue(), "");
+    assert.equal(await page.evaluate(() => window.__mobileTest.savedWebdavPassword), "private-test-password");
+    await page.click("#ms-test");
+    await page.waitForFunction(() => document.getElementById("ms-result").textContent.includes("连接测试成功"));
+    await page.click("#ms-run");
+    await page.waitForFunction(() => window.__mobileTest.lastSync?.config?.server === "https://dav.example.com/dav/");
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
 });
