@@ -583,7 +583,7 @@ export function mockApi() {
       return "连接成功，目录读取和写入测试通过（预览模拟）";
     },
     webdav_set_password: () => {},
-    webdav_status: () => ({
+    webdav_status: () => window.__mockControl?.webdavStatus || ({
       state: db.settings?.webdav_enabled ? "synced" : "off",
       message: db.settings?.webdav_enabled ? "已同步（预览模拟）" : "WebDAV 尚未开启",
       last_time: "", history: [],
