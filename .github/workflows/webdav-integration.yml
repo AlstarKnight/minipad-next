@@ -59,4 +59,4 @@ jobs:
       - name: Exercise two-device sync and deletion safety
         env:
           MINIPAD_TEST_WEBDAV_URL: http://127.0.0.1:18080/
-        run: cargo test --locked --manifest-path src-tauri/Cargo.toml two_devices_sync_via_local_webdav -- --nocapture
+        run: cargo test --locked --manifest-path src-tauri/Cargo.toml webdav::tests:: -- --nocapture
