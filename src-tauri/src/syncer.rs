@@ -772,11 +772,8 @@ pub fn sync_once(
                         let cached_stamp = prior
                             .as_ref()
                             .and_then(|old| old.local_size.zip(old.local_modified_ns));
-                        let record = if let Some(expected_stamp) = cached_stamp {
-                            if local_stamp(&root.join(&path)) != Some(expected_stamp) {
-                                report.rescan_needed = true;
-                                continue;
-                            }
+                        let stamp_at_action = local_stamp(&root.join(&path));
+                        let record = if cached_stamp.is_some() && cached_stamp == stamp_at_action {
                             let mut old = prior.clone().unwrap();
                             old.hash = hash.to_string();
                             old.etag = info.entry.etag.clone();
@@ -784,9 +781,8 @@ pub fn sync_once(
                             old.modified = info.entry.modified.clone();
                             old
                         } else {
-                            let before = local_stamp(&root.join(&path));
                             let local_data = checked_local!(&path, Some(hash));
-                            if local_stamp(&root.join(&path)) != before {
+                            if local_stamp(&root.join(&path)) != stamp_at_action {
                                 report.rescan_needed = true;
                                 continue;
                             }
