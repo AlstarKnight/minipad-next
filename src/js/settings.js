@@ -745,7 +745,7 @@ function updateMigration() {
 }
 
 export function bindSettings() {
-  for (const picker of [accentColor, edgeColor, findColor, outlineColor, ballColor]) picker.install();
+  for (const picker of [accentColor, edgeColor, localPathColor, webdavColor, findColor, outlineColor, ballColor]) picker.install();
   // 录热键时先停用全局热键,不然按下现在的热键会把窗口藏起来
   const hk = $("#set-hotkey");
   hk.addEventListener("focus", () => {
