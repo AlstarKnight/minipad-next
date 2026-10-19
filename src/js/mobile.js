@@ -573,6 +573,7 @@ const syncDefaults = {
   allow_http: false, images: true, first_mode: "merge",
   on_start: true, after_save: true, delay: 30, interval: 5,
   on_hide: true, display: "icon", status_color: "",
+  delete_limit: 20, delete_divisor: 3,
 };
 let syncSettings = (() => {
   try { return { ...syncDefaults, ...JSON.parse(localStorage.getItem(SYNC_KEY) || "{}") }; }
@@ -591,6 +592,8 @@ function updateSyncForm() {
     "ms-save": syncSettings.after_save, "ms-delay": syncSettings.delay,
     "ms-interval": syncSettings.interval, "ms-hide": syncSettings.on_hide,
     "ms-display": syncSettings.display,
+    "ms-delete-limit": syncSettings.delete_limit,
+    "ms-delete-divisor": syncSettings.delete_divisor,
   })) {
     if (el(id).type === "checkbox") el(id).checked = value;
     else el(id).value = String(value);
@@ -614,6 +617,8 @@ function readSyncForm() {
     on_hide: el("ms-hide").checked,
     display: el("ms-display").value,
     status_color: el("ms-color").dataset.selected || "",
+    delete_limit: Math.max(1, Math.min(1000, Math.round(Number(el("ms-delete-limit").value) || 20))),
+    delete_divisor: Math.max(1, Math.min(10, Math.round(Number(el("ms-delete-divisor").value) || 3))),
   };
 }
 async function saveSyncForm() {
