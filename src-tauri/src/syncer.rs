@@ -616,16 +616,24 @@ fn local_trash(root: &Path, path: &str) -> Result<(), String> {
     if !target.exists() {
         return Ok(());
     }
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_err(|e| e.to_string())?
-        .as_nanos();
-    let dest = root
-        .join(".trash")
-        .join("webdav")
-        .join(format!("{}-{nanos}", path.replace('/', "_")));
-    fs::create_dir_all(dest.parent().ok_or("回收站路径无效")?).map_err(|e| e.to_string())?;
-    fs::rename(target, dest).map_err(|e| format!("移动文件到回收站失败：{e}"))
+    let stamp = chrono::Utc::now().timestamp();
+    let (folder, filename) = path.rsplit_once('/').unwrap_or(("", path));
+    let (stem, ext) = filename.rsplit_once('.').unwrap_or((filename, ""));
+    let base = root.join(".trash").join(".webdav").join(folder);
+    fs::create_dir_all(&base).map_err(|e| format!("创建同步回收站失败：{e}"))?;
+    for attempt in 0..100 {
+        let suffix = if attempt == 0 { String::new() } else { format!(" ({})", attempt + 1) };
+        let saved = if ext.is_empty() {
+            format!("{stem}.{stamp}{suffix}")
+        } else {
+            format!("{stem}.{stamp}{suffix}.{ext}")
+        };
+        let dest = base.join(saved);
+        if !dest.exists() {
+            return fs::rename(target, dest).map_err(|e| format!("移动文件到回收站失败：{e}"));
+        }
+    }
+    Err("同步回收站存在大量重名文件，请先整理".into())
 }
 
 /// 同一字段被双端修改时先在本机留下远端元数据完整副本，再使用本机版本。
