@@ -247,9 +247,10 @@ pub fn journal_path(data_dir: &Path, server: &str, user: &str, folder: &str) -> 
 pub fn read_journal(path: &Path) -> Result<(Journal, bool), String> {
     match fs::read_to_string(path) {
         Ok(raw) => {
-            let journal = serde_json::from_str(&raw)
+            let journal: Journal = serde_json::from_str(&raw)
                 .map_err(|e| format!("同步记录损坏，已停止同步以保护笔记：{e}"))?;
-            Ok((journal.clone(), journal.initial_mode.is_some()))
+            let first_run = journal.initial_mode.is_some();
+            Ok((journal, first_run))
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok((Journal::default(), true)),
         Err(e) => Err(format!("无法读取同步记录：{e}")),
@@ -774,6 +775,7 @@ mod tests {
                     ..FileRecord::default()
                 },
             )]),
+            initial_mode: None,
         };
         save_journal(&a, &journal).unwrap();
         assert_eq!(read_journal(&a).unwrap().0.files, journal.files);
