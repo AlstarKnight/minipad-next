@@ -584,11 +584,10 @@
             <label class="row"><span>保存后等待（秒）</span><input id="set-webdav-delay" type="number" min="10" max="300"></label>
             <label class="row"><span>定时同步</span><select id="set-webdav-interval"><option value="0">关闭</option><option value="1">每 1 分钟</option><option value="5">每 5 分钟</option><option value="15">每 15 分钟</option><option value="30">每 30 分钟</option></select></label>
             <label class="row check"><input id="set-webdav-hide" type="checkbox"><span>窗口隐藏时同步</span></label>
-            <p class="muted">删除保护：一次删除超过 20 页或总页数的三分之一时需要确认。</p>
             <label class="row"><span>状态栏</span><select id="set-webdav-display"><option value="icon">图标</option><option value="text">图标和文字</option><option value="none">不显示</option></select></label>
             <div class="row col"><span>同步图标颜色（留空跟随强调色）</span><div id="set-webdav-color" class="accent-swatches"></div></div>
             <label class="row"><span>删除保护：单次页面数</span><input id="set-webdav-delete-limit" type="number" min="1" max="1000" value="20"></label>
-            <label class="row"><span>删除保护：超过全部页面的 1/N（N）</span><input id="set-webdav-delete-divisor" type="number" min="1" max="10" value="3"></label>
+            <label class="row"><span>删除保护：超过全部页面的几分之一（填 3 表示三分之一）</span><input id="set-webdav-delete-divisor" type="number" min="1" max="10" value="3"></label>
             <div class="row"><button type="button" id="set-webdav-test" class="small">测试连接</button><button type="button" id="set-webdav-sync" class="small">立即同步</button><button type="button" id="set-webdav-forget" class="small">断开并清除同步记录</button></div>
             <div class="row col"><span id="set-webdav-last" class="muted">上次成功同步：尚无</span><span id="set-webdav-info" class="muted">同步尚未开启</span><details><summary>最近同步记录</summary><pre id="set-webdav-history"></pre></details></div>
             <h3>备份</h3>
