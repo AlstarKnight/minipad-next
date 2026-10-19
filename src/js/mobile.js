@@ -558,7 +558,10 @@ for (const b of el("dock-cats").children) {
   });
 }
 toolbar.dataset.cat = "text";
-el("refresh").addEventListener("click", () => { void refresh(); });
+el("refresh").addEventListener("click", () => {
+  if (syncSettings.enabled) void mobileSync();
+  else void refresh();
+});
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) void flush().catch(() => {});
 });
