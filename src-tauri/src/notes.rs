@@ -1059,7 +1059,11 @@ fn collect_webdav_trash(
                         format!("{parent}/{display}")
                     },
                     deleted,
-                    preview: "WebDAV 同步回收的文件".into(),
+                    preview: if original == ".minipad" && extension == "json" {
+                        "笔记本设置冲突时网盘那边的版本，仅供备份查看".into()
+                    } else {
+                        "WebDAV 同步回收的文件".into()
+                    },
                     pages: 0,
                 });
             }
@@ -1144,6 +1148,9 @@ pub fn restore_trash(root: &Path, id: &str) -> Result<(String, String), String> 
             return Err("同步回收站中的原件已不存在".into());
         }
         let filename = parts.last().unwrap();
+        if filename.starts_with(".minipad.") && filename.ends_with(".json") {
+            return Err("这是笔记本设置冲突的备份，请手动查看，不支持直接恢复".into());
+        }
         let (stem, extension) = filename.rsplit_once('.').unwrap_or((filename.as_str(), ""));
         let (name, _) = split_stamp(stem).ok_or("同步回收文件名称无效")?;
         let dir = parts[1..parts.len() - 1]
@@ -2362,6 +2369,20 @@ mod tests {
         assert_eq!(rename_book(&root, "Work", "WORK").unwrap(), "WORK");
         assert!(rename_book(&root, "", "随便").is_err());
         fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn metadata_conflict_backup_cannot_be_restored_as_unused_settings_file() {
+        let root = temp_dir("webdav-settings-backup");
+        let folder = root.join(".trash/.webdav/工作");
+        fs::create_dir_all(&folder).unwrap();
+        let id = ".webdav/工作/.minipad.1760000000.json";
+        fs::write(folder.join(".minipad.1760000000.json"), "{}").unwrap();
+        let item = list_trash(&root).unwrap().into_iter().find(|item| item.id == id).unwrap();
+        assert!(item.preview.contains("设置冲突"));
+        assert!(restore_trash(&root, id).unwrap_err().contains("不支持直接恢复"));
+        assert!(folder.join(".minipad.1760000000.json").exists());
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
