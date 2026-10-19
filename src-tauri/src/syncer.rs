@@ -241,6 +241,19 @@ pub fn journal_path(data_dir: &Path, server: &str, user: &str, folder: &str) -> 
     data_dir.join(format!("webdav-{:x}.json", digest))
 }
 
+/// 记录同时绑定本地笔记根目录，换目录时不会误认为大量文件被删除。
+pub fn journal_path_for_root(
+    data_dir: &Path,
+    root: &Path,
+    server: &str,
+    user: &str,
+    folder: &str,
+) -> PathBuf {
+    let identity = format!("{}\n{}\n{}\n{}", server, user, folder, root.to_string_lossy());
+    let digest = Sha256::digest(identity.as_bytes());
+    data_dir.join(format!("webdav-{:x}.json", digest))
+}
+
 pub fn read_journal(path: &Path) -> Result<(Journal, bool), String> {
     match fs::read_to_string(path) {
         Ok(raw) => {
@@ -820,6 +833,17 @@ mod tests {
         assert_eq!(read_journal(&a).unwrap().0.files, journal.files);
         fs::write(&a, "not json").unwrap();
         assert!(read_journal(&a).is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn changing_notes_root_starts_a_new_sync_history() {
+        let root = crate::notes::temp_dir("webdav-roots");
+        let a = journal_path_for_root(&root, &root.join("notes-a"), "https://one.example", "me", "/");
+        let b = journal_path_for_root(&root, &root.join("notes-b"), "https://one.example", "me", "/");
+        save_journal(&a, &Journal::default()).unwrap();
+        assert_ne!(a, b);
+        assert!(read_journal(&b).unwrap().1);
         fs::remove_dir_all(root).unwrap();
     }
 
