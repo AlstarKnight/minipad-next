@@ -485,6 +485,179 @@ fn local_trash(root: &Path, path: &str) -> Result<(), String> {
     fs::rename(target, dest).map_err(|e| format!("移动文件到回收站失败：{e}"))
 }
 
+
+fn record_for(
+    path: &str,
+    bytes: &[u8],
+    etag: Option<String>,
+    size: Option<u64>,
+    modified: Option<String>,
+) -> FileRecord {
+    FileRecord {
+        hash: content_hash(path, bytes),
+        etag,
+        size,
+        modified,
+        base_metadata: shared_metadata(path, bytes),
+    }
+}
+
+/// WebDAV 在后台线程调用，所有远程冲突用条件请求保护，所有本地修改用写锁和扫描后复查保护。
+pub fn sync_once(
+    client: &WebdavClient,
+    root: &Path,
+    journal_file: &Path,
+    options: &SyncOptions,
+    backup_first: impl FnOnce() -> Result<(), String>,
+) -> Result<SyncReport, String> {
+    let (mut journal, first) = read_journal(journal_file)?;
+    client.mkcol("")?;
+    let local = local_files(root, options.images)?;
+    let remote = remote_files(client, options.images, &journal)?;
+    let (actions, deletes, total) =
+        preview_actions(&journal, &local, &remote, options.first_mode, first);
+    if !options.confirm_deletes && deletion_needs_confirmation(deletes, total) {
+        return Err(format!("WEB_DAV_CONFIRM_DELETE:{deletes}:{total}"));
+    }
+    if first {
+        backup_first()?;
+    }
+    let mut report = SyncReport::default();
+    let mut created_dirs = BTreeSet::new();
+    for (path, action) in actions {
+        let local_hash = local.get(&path).map(String::as_str);
+        let remote_file = remote.get(&path);
+        match action {
+            Action::Skip => {
+                if let Some(info) = remote_file {
+                    if let Some(hash) = local_hash {
+                        let local_data = check_local(root, &path, Some(hash))?;
+                        journal.files.insert(
+                            path.clone(),
+                            record_for(
+                                &path, &local_data,
+                                info.entry.etag.clone(),
+                                info.entry.size,
+                                info.entry.modified.clone(),
+                            ),
+                        );
+                    }
+                } else {
+                    journal.files.remove(&path);
+                }
+            }
+            Action::Upload | Action::Conflict => {
+                let hash = local_hash.ok_or("上传时文件已不存在")?;
+                let local_data = check_local(root, &path, Some(hash))?;
+                let mut upload = local_data.clone();
+                if action == Action::Conflict {
+                    let previous = remote_file.ok_or("冲突时远端文件不存在")?;
+                    let (remote_data, _) = client.get(&path)?;
+                    if content_hash(&path, &remote_data) != previous.hash {
+                        return Err(format!("「{path}」在同步期间再次修改，请重试"));
+                    }
+                    if path.ends_with(".minipad.json") {
+                        let ours: serde_json::Value = serde_json::from_slice(&local_data)
+                            .map_err(|_| "本地笔记本信息 JSON 损坏")?;
+                        let theirs: serde_json::Value = serde_json::from_slice(&remote_data)
+                            .map_err(|_| "远端笔记本信息 JSON 损坏")?;
+                        let base = journal.files.get(&path)
+                            .and_then(|entry| entry.base_metadata.as_ref());
+                        let merged = merge_metadata(base, &ours, &theirs)
+                            .map_err(|fields| format!(
+                                "「{path}」的元数据字段同时修改：{}；保留两端原文件",
+                                fields.join("、")
+                            ))?;
+                        upload = serde_json::to_vec_pretty(&merged)
+                            .map_err(|e| e.to_string())?;
+                    } else if options.conflict_copy {
+                        let conflict = unique_conflict_path(root, &path)?;
+                        ensure_parent(client, &conflict)?;
+                        client.put(&conflict, remote_data.clone(), None)?;
+                        {
+                            let _lock = WRITE_LOCK.lock().map_err(|e| e.to_string())?;
+                            if root.join(&conflict).exists() {
+                                return Err("冲突副本重名，停止覆盖".into());
+                            }
+                            crate::notes::write_atomic_bytes(&root.join(&conflict), &remote_data)?;
+                        }
+                        report.changed.push(conflict);
+                        report.conflicts += 1;
+                    }
+                }
+                if created_dirs.insert(path.rsplit_once('/').map(|(p, _)| p).unwrap_or("").to_string()) {
+                    ensure_parent(client, &path)?;
+                }
+                // 只有真实存在的远端文件才允许 If-Match/If-Unmodified-Since。
+                let etag = client.put(&path, upload.clone(), remote_file.map(|f| &f.entry))?;
+                if upload != local_data {
+                    let _lock = WRITE_LOCK.lock().map_err(|e| e.to_string())?;
+                    check_local(root, &path, Some(hash))?;
+                    crate::notes::write_atomic_bytes(&root.join(&path), &upload)?;
+                    report.changed.push(path.clone());
+                }
+                journal.files.insert(
+                    path.clone(),
+                    record_for(&path, &upload, etag, Some(upload.len() as u64), None),
+                );
+                report.uploaded += 1;
+            }
+            Action::Download => {
+                let info = remote_file.ok_or("下载时远端文件不存在")?;
+                let (received, etag) = client.get(&path)?;
+                if content_hash(&path, &received) != info.hash {
+                    return Err(format!("「{path}」在下载期间变化，稍后重试"));
+                }
+                let _lock = WRITE_LOCK.lock().map_err(|e| e.to_string())?;
+                let current = check_local(root, &path, local_hash)?;
+                let bytes = if path.ends_with(".minipad.json") && local_hash.is_some() {
+                    preserve_navigation(&current, &received)?
+                } else {
+                    received.clone()
+                };
+                crate::notes::write_atomic_bytes(&root.join(&path), &bytes)?;
+                journal.files.insert(
+                    path.clone(),
+                    record_for(
+                        &path, &bytes,
+                        etag.or_else(|| info.entry.etag.clone()),
+                        info.entry.size,
+                        info.entry.modified.clone(),
+                    ),
+                );
+                report.changed.push(path.clone());
+                report.downloaded += 1;
+            }
+            Action::DeleteLocal => {
+                let _lock = WRITE_LOCK.lock().map_err(|e| e.to_string())?;
+                check_local(root, &path, local_hash)?;
+                local_trash(root, &path)?;
+                journal.files.remove(&path);
+                report.changed.push(path.clone());
+                report.deleted += 1;
+            }
+            Action::DeleteRemote => {
+                let info = remote_file.ok_or("远端文件已不存在")?;
+                check_local(root, &path, None)?;
+                let (contents, _) = client.get(&path)?;
+                if content_hash(&path, &contents) != info.hash {
+                    return Err(format!("「{path}」在删除前已被别处修改，停止删除"));
+                }
+                client.mkcol(".trash/")?;
+                let id = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_err(|e| e.to_string())?.as_nanos();
+                let destination = format!(".trash/{}-{id}", path.replace('/', "_"));
+                client.move_file(&path, &destination, &info.entry)?;
+                journal.files.remove(&path);
+                report.deleted += 1;
+            }
+        }
+        save_journal(journal_file, &journal)?;
+    }
+    Ok(report)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
