@@ -70,10 +70,10 @@ export function markLocalPathMissing(path, missing) {
   missingLocalPaths.set(path, missing);
   if (view) view.dispatch(view.state.tr.setMeta(localPathKey, true).setMeta("addToHistory", false));
 }
-const localPathDecorations = (doc) => {
+const localPathDecorations = (doc, from = 0, to = doc.content.size) => {
   if (!pathSettings.local_path_enabled) return DecorationSet.empty;
   const decorations = [];
-  doc.descendants((node, pos) => {
+  doc.nodesBetween(from, to, (node, pos) => {
     if (node.type.spec.code) return false;
     if (!node.isTextblock || node.type.name === "code_block") return true;
     node.forEach((child, offset) => {
@@ -93,8 +93,31 @@ const localPathPlugin = $prose(() => new Plugin({
   key: localPathKey,
   state: {
     init: (_, state) => localPathDecorations(state.doc),
-    apply: (tr, old) => tr.docChanged || tr.getMeta(localPathKey)
-      ? localPathDecorations(tr.doc) : old,
+    apply(tr, old) {
+      if (tr.getMeta(localPathKey)) return localPathDecorations(tr.doc);
+      if (!tr.docChanged) return old;
+      let mapped = old.map(tr.mapping, tr.doc);
+      const blocks = new Map();
+      tr.mapping.maps.forEach((stepMap, index) => {
+        stepMap.forEach((_, __, newStart, newEnd) => {
+          const remaining = tr.mapping.slice(index + 1);
+          const from = Math.max(0, remaining.map(newStart) - 1);
+          const to = Math.min(tr.doc.content.size, remaining.map(newEnd) + 1);
+          tr.doc.nodesBetween(from, to, (node, pos) => {
+            if (node.isTextblock && node.type.name !== "code_block") {
+              blocks.set(pos, { from: pos, to: pos + node.nodeSize });
+              return false;
+            }
+            return !node.type.spec.code;
+          });
+        });
+      });
+      for (const block of blocks.values()) {
+        mapped = mapped.remove(mapped.find(block.from, block.to));
+        mapped = mapped.add(tr.doc, localPathDecorations(tr.doc, block.from, block.to).find());
+      }
+      return mapped;
+    },
   },
   props: {
     decorations: (state) => localPathKey.getState(state),
