@@ -184,6 +184,40 @@ use std::sync::Mutex;
 /// 同步下载和页面保存共用此锁，避免同一文件并发改写。
 pub static WRITE_LOCK: Mutex<()> = Mutex::new(());
 
+/// 后台网络同步排队执行，防止多个触发器同时改写笔记和同步状态。
+pub static RUN_LOCK: Mutex<()> = Mutex::new(());
+
+#[derive(Clone, Serialize, Default)]
+pub struct WebdavStatus {
+    pub state: String,
+    pub last_time: String,
+    pub message: String,
+    pub history: Vec<String>,
+}
+
+static STATUS: std::sync::OnceLock<Mutex<WebdavStatus>> = std::sync::OnceLock::new();
+
+fn status_store() -> &'static Mutex<WebdavStatus> {
+    STATUS.get_or_init(|| Mutex::new(WebdavStatus::default()))
+}
+
+pub fn status() -> WebdavStatus {
+    status_store().lock().unwrap().clone()
+}
+
+pub fn update_status(state: &str, message: &str) {
+    let mut current = status_store().lock().unwrap();
+    current.state = state.into();
+    current.message = message.into();
+    if state != "syncing" {
+        let time = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+        current.last_time = time.clone();
+        current.history.insert(0, format!("{time} {message}"));
+        current.history.truncate(50);
+    }
+}
+
+
 /// 同步记录只含路径、哈希和远程版本信息，绝不储存密码或认证头。
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
