@@ -288,8 +288,17 @@ impl WebdavClient {
             let mut certificate_error = false;
             while let Some(current) = cause {
                 let detail = current.to_string().to_ascii_lowercase();
-                if ["certificate", "certverify", "unknownissuer", "unknown issuer", "invalid peer", "expired", "rustls"]
-                    .iter().any(|marker| detail.contains(marker))
+                if [
+                    "certificate",
+                    "certverify",
+                    "unknownissuer",
+                    "unknown issuer",
+                    "invalid peer",
+                    "expired",
+                    "rustls",
+                ]
+                .iter()
+                .any(|marker| detail.contains(marker))
                 {
                     certificate_error = true;
                     break;
@@ -346,7 +355,10 @@ impl WebdavClient {
             }
             Ok(result)
         }
-        let url = self.root.join(href).map_err(|_| "WebDAV 返回了无效的文件地址")?;
+        let url = self
+            .root
+            .join(href)
+            .map_err(|_| "WebDAV 返回了无效的文件地址")?;
         if url.scheme() != self.root.scheme()
             || url.host() != self.root.host()
             || url.port_or_known_default() != self.root.port_or_known_default()
@@ -524,26 +536,37 @@ mod tests {
     #[test]
     fn encoded_root_and_href_compare_after_decoding() {
         let client = WebdavClient::new(
-            "https://example.com/dav/%40staff/", "user", "password",
-            "/中文 文件夹/", false,
-        ).unwrap();
+            "https://example.com/dav/%40staff/",
+            "user",
+            "password",
+            "/中文 文件夹/",
+            false,
+        )
+        .unwrap();
         let root = client.root.path().to_string();
-        assert!(client.relative_href(&(root.clone() + "页面%23a.md")).is_ok());
-        let encoded = root.replace("%40", "%40").replace("%E4", "%e4");
-        assert_eq!(client.relative_href(&(encoded + "页面%23a.md")).unwrap(), "页面#a.md");
+        assert!(client
+            .relative_href(&(root.clone() + "页面%23a.md"))
+            .is_ok());
+        let encoded = root.replace("%E4", "%e4");
+        assert_eq!(
+            client.relative_href(&(encoded + "页面%23a.md")).unwrap(),
+            "页面#a.md"
+        );
         assert!(client.relative_href(&(root + "%2Fsecret.md")).is_err());
     }
 
     #[test]
     fn https_client_uses_embedded_roots_without_platform_initialization() {
         let client = WebdavClient::new(
-            "https://dav.jianguoyun.com/dav/", "tester", "test-password",
-            "/MinipadNext/", false,
+            "https://dav.jianguoyun.com/dav/",
+            "tester",
+            "test-password",
+            "/MinipadNext/",
+            false,
         )
         .expect("创建 HTTPS 客户端不应要求 Android 平台初始化");
         assert_eq!(client.root.scheme(), "https");
     }
-
 
     #[test]
     fn parses_namespaced_webdav_multistatus() {
