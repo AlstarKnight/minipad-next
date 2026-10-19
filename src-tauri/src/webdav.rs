@@ -730,6 +730,76 @@ mod tests {
     }
 
     #[test]
+    fn upload_changed_while_put_finishes_retries_without_false_conflict() {
+        let Ok(server) = std::env::var("MINIPAD_TEST_WEBDAV_URL") else {
+            return;
+        };
+        use crate::syncer::{self, FirstSync, SyncOptions};
+        use std::fs;
+        use std::time::{Duration, Instant};
+
+        let client = WebdavClient::new(
+            &server, "tester", "test-password", "/MinipadUploadRace/", true,
+        ).unwrap();
+        let root = crate::notes::temp_dir("webdav-upload-race-live");
+        let journal = root.parent().unwrap().join(format!(
+            "{}-state.json",
+            root.file_name().unwrap().to_string_lossy()
+        ));
+        fs::write(root.join("page.md"), "older").unwrap();
+        let opts = SyncOptions {
+            images: false,
+            first_mode: FirstSync::Merge,
+            conflict_copy: true,
+            confirm_deletes: true,
+            delete_limit: 20,
+            delete_divisor: 3,
+        };
+
+        // PUT runs while the save lock is held; release only after the server has the old version.
+        let save_lock = syncer::WRITE_LOCK.lock().unwrap();
+        let server_for_thread = server.clone();
+        let root_for_thread = root.clone();
+        let journal_for_thread = journal.clone();
+        let opts_for_thread = opts.clone();
+        let handle = std::thread::spawn(move || {
+            let worker = WebdavClient::new(
+                &server_for_thread, "tester", "test-password", "/MinipadUploadRace/", true,
+            ).unwrap();
+            syncer::sync_once(&worker, &root_for_thread, &journal_for_thread, &opts_for_thread, || Ok(()))
+        });
+        let until = Instant::now() + Duration::from_secs(15);
+        let mut uploaded = false;
+        while Instant::now() < until {
+            if client.get("page.md").is_ok_and(|(bytes, _)| bytes == b"older") {
+                uploaded = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        if uploaded {
+            fs::write(root.join("page.md"), "newer").unwrap();
+        }
+        drop(save_lock);
+        let first = handle.join().unwrap().unwrap();
+        assert!(uploaded, "first upload did not reach WebDAV before timeout");
+        assert!(first.rescan_needed);
+        let (record, is_first) = syncer::read_journal(&journal).unwrap();
+        assert!(!is_first);
+        assert_eq!(record.files["page.md"].local_size, None);
+
+        let second = syncer::sync_once(&client, &root, &journal, &opts, || Ok(())).unwrap();
+        assert_eq!(second.uploaded, 1);
+        assert_eq!(second.conflicts, 0);
+        assert_eq!(client.get("page.md").unwrap().0, b"newer");
+        assert!(!fs::read_dir(&root).unwrap().flatten().any(|file|
+            file.file_name().to_string_lossy().contains("冲突")
+        ));
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_file(journal).unwrap();
+    }
+
+    #[test]
     fn rescan_skips_changed_file_but_syncs_others_and_ends_first_mode() {
         let Ok(server) = std::env::var("MINIPAD_TEST_WEBDAV_URL") else {
             return;
