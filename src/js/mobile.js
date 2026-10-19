@@ -3,7 +3,7 @@ import { $prose, Plugin, TextSelection } from "../vendor/milkdown.js";
 import { createEditor, editorDebug, showInEditor, syncContent } from "./editor.js";
 import { state as desktopState } from "./state.js";
 import { setSelectionBar } from "./formatbar.js";
-import { ACCENTS, applyAccent, tidyAccent } from "./accent.js";
+import { ACCENTS, applyAccent, tidyAccent, parseAccent } from "./accent.js";
 
 const invoke = window.__TAURI__?.core?.invoke;
 const el = (id) => document.getElementById(id);
@@ -632,8 +632,20 @@ async function showSyncStatus() {
   if (!invoke) return;
   try {
     const result = await invoke("mobile_webdav_status");
-    el("mobile-sync-state").textContent = syncSettings.enabled ? "WebDAV：" + (result.state || "未同步") : "同步未开启";
-    el("mobile-sync-state").style.color = syncSettings.status_color || "var(--accent)";
+    const labels = { synced: "已同步", syncing: "同步中", conflict: "有冲突", offline: "离线", error: "出错", confirm: "需要确认", off: "未同步" };
+    const symbols = { synced: "✓", syncing: "⟳", conflict: "!", offline: "○", error: "!", confirm: "?", off: "○" };
+    const kind = result.state || "off";
+    const icon = symbols[kind] || "○";
+    el("mobile-sync-state").textContent = syncSettings.enabled
+      ? icon + (syncSettings.display === "text" ? " " + (labels[kind] || "未同步") : "")
+      : "同步未开启";
+    const color = parseAccent(syncSettings.status_color);
+    const syncState = el("mobile-sync-state");
+    syncState.style.color = color?.from || "var(--accent)";
+    syncState.style.backgroundImage = color?.to ? syncSettings.status_color : "";
+    syncState.style.backgroundClip = color?.to ? "text" : "";
+    syncState.style.webkitBackgroundClip = color?.to ? "text" : "";
+    syncState.style.webkitTextFillColor = color?.to ? "transparent" : "";
     el("mobile-sync-message").textContent = result.message || "尚无同步记录";
     el("ms-history").textContent = (result.history || []).join("\n");
     el("ms-result").textContent = result.message || "";
@@ -647,7 +659,7 @@ async function performMobileSync(confirmed) {
     if (result?.rescan_needed) syncQueued = true;
     await showSyncStatus();
     // 有尚未保存的输入时保持原状态；下次保存会按 expected 留冲突副本。
-    if (!dirty && !saving && !switching && (result.changed || []).length) await refresh();
+    // webdav-changed 监听器统一刷新，避免同一次下载重复加载页面。
     return result;
   } catch (e) {
     const text = String(e);
