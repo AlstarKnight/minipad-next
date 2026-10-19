@@ -277,6 +277,73 @@ pub fn content_hash(path: &str, bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
 
+
+use crate::webdav::{RemoteEntry, WebdavClient};
+
+#[derive(Clone, Debug)]
+pub struct RemoteFile {
+    pub entry: RemoteEntry,
+    pub hash: String,
+}
+
+fn unchanged_remote(entry: &RemoteEntry, old: &FileRecord) -> bool {
+    if let (Some(current), Some(previous)) = (&entry.etag, &old.etag) {
+        return current == previous;
+    }
+    entry.etag.is_none()
+        && old.etag.is_none()
+        && (entry.size.is_some() || entry.modified.is_some())
+        && entry.size == old.size
+        && entry.modified == old.modified
+}
+
+/// 远端仅逐层请求 Depth:1；ETag 未变时沿用上次的内容哈希。
+pub fn remote_files(
+    client: &WebdavClient,
+    images: bool,
+    journal: &Journal,
+) -> Result<BTreeMap<String, RemoteFile>, String> {
+    let mut entries = Vec::new();
+    for (path, entry) in client.list("")? {
+        if entry.directory {
+            let book = path.trim_end_matches('/');
+            if book.is_empty() || book.starts_with('.') || book.contains('/') {
+                continue;
+            }
+            for (child, item) in client.list(&path)? {
+                if item.directory {
+                    if child == format!("{path}assets/") && images {
+                        entries.extend(client.list(&child)?);
+                    }
+                } else {
+                    entries.push((child, item));
+                }
+            }
+        } else {
+            entries.push((path, entry));
+        }
+    }
+    let mut files = BTreeMap::new();
+    for (path, entry) in entries {
+        if !should_sync(&path, images) || entry.directory {
+            continue;
+        }
+        let hash = match journal.files.get(&path) {
+            Some(old) if unchanged_remote(&entry, old) => old.hash.clone(),
+            _ => {
+                let (bytes, _) = client.get(&path)?;
+                content_hash(&path, &bytes)
+            }
+        };
+        files.insert(path, RemoteFile { entry, hash });
+    }
+    Ok(files)
+}
+
+pub fn remote_hashes(files: &BTreeMap<String, RemoteFile>) -> BTreeMap<String, String> {
+    files.iter().map(|(path, info)| (path.clone(), info.hash.clone())).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
