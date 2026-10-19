@@ -76,7 +76,16 @@ pub fn first_sync(local: Option<&str>, remote: Option<&str>, mode: FirstSync) ->
 }
 
 pub fn deletion_needs_confirmation(delete_count: usize, all_pages: usize) -> bool {
-    delete_count > 20 || (all_pages > 0 && delete_count * 3 > all_pages)
+    deletion_needs_confirmation_with(delete_count, all_pages, 20, 3)
+}
+
+pub fn deletion_needs_confirmation_with(
+    delete_count: usize,
+    all_pages: usize,
+    limit: usize,
+    divisor: usize,
+) -> bool {
+    delete_count > limit || (all_pages > 0 && delete_count.saturating_mul(divisor) > all_pages)
 }
 
 /// 保留 .md、笔记本元数据和选中的图片；只允许一层笔记本子目录。
@@ -461,6 +470,8 @@ pub struct SyncOptions {
     pub first_mode: FirstSync,
     pub conflict_copy: bool,
     pub confirm_deletes: bool,
+    pub delete_limit: usize,
+    pub delete_divisor: usize,
 }
 
 #[derive(Debug, Default, Serialize)]
@@ -658,8 +669,12 @@ pub fn sync_once(
     let local = local_files_cached(root, options.images, Some(&journal))?;
     let mut remote = remote_files(client, options.images, &journal)?;
     let (actions, deletes, total) = preview_actions(&journal, &local, &remote, mode, first);
-    if !options.confirm_deletes && deletion_needs_confirmation(deletes, total) {
-        return Err(format!("WEB_DAV_CONFIRM_DELETE:{deletes}:{total}"));
+    if !options.confirm_deletes
+        && deletion_needs_confirmation_with(deletes, total, options.delete_limit, options.delete_divisor)
+    {
+        let local_count = actions.iter().filter(|(p, a)| p.ends_with(".md") && *a == Action::DeleteLocal).count();
+        let remote_count = actions.iter().filter(|(p, a)| p.ends_with(".md") && *a == Action::DeleteRemote).count();
+        return Err(format!("WEB_DAV_CONFIRM_DELETE:{deletes}:{total}:{local_count}:{remote_count}"));
     }
     if first {
         backup_first()?;
@@ -1096,6 +1111,14 @@ mod tests {
         assert!(deletion_needs_confirmation(21, 100));
         assert!(deletion_needs_confirmation(11, 30));
         assert!(!deletion_needs_confirmation(10, 30));
+    }
+
+    #[test]
+    fn configurable_delete_safety() {
+        assert!(deletion_needs_confirmation_with(11, 100, 10, 3));
+        assert!(!deletion_needs_confirmation_with(11, 100, 30, 3));
+        assert!(deletion_needs_confirmation_with(11, 30, 30, 3));
+        assert!(!deletion_needs_confirmation_with(11, 30, 30, 2));
     }
 
     #[test]
