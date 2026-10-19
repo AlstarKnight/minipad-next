@@ -1736,6 +1736,27 @@ fn webdav_credential(settings: &Settings) -> Result<keyring::Entry, String> {
         .map_err(|e| format!("无法打开 Windows 凭据管理器：{e}"))
 }
 
+// 从旧版按远程文件夹区分的凭据迁移，避免升级后要求重复输入应用密码。
+fn webdav_password(settings: &Settings) -> Result<String, String> {
+    if let Ok(password) = webdav_credential(settings)?.get_password() {
+        return Ok(password);
+    }
+    let old_id = crate::syncer::journal_path(
+        Path::new(""),
+        &settings.webdav_server,
+        &settings.webdav_user,
+        &settings.webdav_folder,
+    );
+    let name = old_id.file_stem().and_then(|s| s.to_str()).ok_or("账号标识无效")?;
+    let legacy = keyring::Entry::new("Minipad Next WebDAV", name)
+        .map_err(|e| e.to_string())?;
+    let password = legacy.get_password().map_err(|_| "请先填写并保存 WebDAV 应用密码")?;
+    webdav_credential(settings)?.set_password(&password)
+        .map_err(|_| "迁移 WebDAV 密码失败")?;
+    let _ = legacy.delete_credential();
+    Ok(password)
+}
+
 #[tauri::command]
 fn webdav_set_password(app: AppHandle, password: String) -> Result<(), String> {
     let settings = app.state::<AppState>().settings.lock().unwrap().clone();
@@ -1749,7 +1770,7 @@ fn webdav_set_password(app: AppHandle, password: String) -> Result<(), String> {
 #[tauri::command]
 async fn webdav_test(app: AppHandle) -> Result<String, String> {
     let s = app.state::<AppState>().settings.lock().unwrap().clone();
-    let password = webdav_credential(&s)?.get_password()
+    let password = webdav_password(&s)
         .map_err(|_| "请先填写并保存 WebDAV 应用密码".to_string())?;
     tauri::async_runtime::spawn_blocking(move || {
         let client = crate::webdav::WebdavClient::new(
@@ -1793,7 +1814,7 @@ async fn webdav_sync_now(app: AppHandle, confirm_deletes: bool) -> Result<crate:
     if !s.webdav_enabled {
         return Err("请先在设置中开启 WebDAV 同步".into());
     }
-    let password = webdav_credential(&s)?.get_password()
+    let password = webdav_password(&s)
         .map_err(|_| "WebDAV 密码尚未保存在 Windows 凭据管理器".to_string())?;
     let root = notes_dir(&app, &s);
     let data = app.path().app_data_dir().map_err(|e| e.to_string())?;
