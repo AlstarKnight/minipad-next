@@ -220,7 +220,13 @@ fn mobile_webdav_status() -> crate::syncer::WebdavStatus {
 #[tauri::command]
 fn mobile_webdav_forget(app: AppHandle, config: MobileWebdavConfig) -> Result<(), String> {
     let data = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    let journal = crate::syncer::journal_path_for_root(&data, &root(&app)?, &config.server, &config.user, &config.folder);
+    let journal = crate::syncer::journal_path_for_root(
+        &data,
+        &root(&app)?,
+        &config.server,
+        &config.user,
+        &config.folder,
+    );
     for path in [journal, mobile_webdav_password_path(&app, &config)?] {
         match fs::remove_file(path) {
             Ok(()) => {}
@@ -245,7 +251,13 @@ async fn mobile_webdav_sync_now(
         .map_err(|_| "请先保存 WebDAV 应用密码".to_string())?;
     let dir = root(&app)?;
     let data = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    let journal = crate::syncer::journal_path_for_root(&data, &root(&app)?, &config.server, &config.user, &config.folder);
+    let journal = crate::syncer::journal_path_for_root(
+        &data,
+        &root(&app)?,
+        &config.server,
+        &config.user,
+        &config.folder,
+    );
     let mode = match config.first_mode.as_str() {
         "remote" => crate::syncer::FirstSync::Remote,
         "local" => crate::syncer::FirstSync::Local,
