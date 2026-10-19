@@ -35,3 +35,28 @@ jobs:
           base64 -w0 src-tauri/src/notes.rs
           echo
           echo WEB_DAV_NOTES_END
+  webdav-server-test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Tauri dependencies and WebDAV test server
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf rclone
+      - name: Start local WebDAV
+        run: |
+          mkdir -p /tmp/minipad-webdav
+          rclone serve webdav /tmp/minipad-webdav --addr 127.0.0.1:18080 --user tester --pass test-password >/tmp/minipad-webdav.log 2>&1 &
+          for i in $(seq 1 30); do
+            if curl -fsS -u tester:test-password -X PROPFIND http://127.0.0.1:18080/ >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat /tmp/minipad-webdav.log
+          exit 1
+      - name: Exercise two-device sync and deletion safety
+        env:
+          MINIPAD_TEST_WEBDAV_URL: http://127.0.0.1:18080/
+        run: cargo test --locked --manifest-path src-tauri/Cargo.toml two_devices_sync_via_local_webdav -- --nocapture
