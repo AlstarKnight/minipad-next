@@ -859,7 +859,11 @@ pub fn sync_once(
                     .duration_since(std::time::UNIX_EPOCH)
                     .map_err(|e| e.to_string())?
                     .as_nanos();
-                let destination = format!(".trash/{}-{id}", path.replace('/', "_"));
+                let filename = path.replace('/', "_");
+                let destination = match filename.rsplit_once('.') {
+                    Some((stem, ext)) => format!(".trash/{stem}.{id}.{ext}"),
+                    None => format!(".trash/{filename}.{id}"),
+                };
                 client.move_file(&path, &destination, &info.entry)?;
                 journal.files.remove(&path);
                 report.deleted += 1;
