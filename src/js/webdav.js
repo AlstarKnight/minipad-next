@@ -58,12 +58,10 @@ async function performWebdavSync(confirmed) {
     const indicator = $("#st-webdav");
     if (indicator) {
       indicator.innerHTML = `<span class="webdav-state-icon spinning">⟳</span>${state.settings?.webdav_status_style === "text" ? " 同步中" : ""}`;
-      
     }
     const result = await api.invoke("webdav_sync_now", { confirmDeletes: confirmed });
     recentConflicts = (result?.changed || []).filter((path) => path.includes("冲突"));
-    if (result?.rescan_needed) rerun = true;
-    if (indicator) 
+    if (result?.rescan_needed) scheduleWebdavSave(true);
     await webdavStatus();
     return result;
   } catch (error) {
@@ -77,7 +75,6 @@ async function performWebdavSync(confirmed) {
     } else if (!msg.includes("离线")) {
       toast(msg, 6500);
     }
-    
     await webdavStatus().catch(() => {});
   }
 }
@@ -129,8 +126,8 @@ export async function webdavForget() {
   await webdavStatus();
   return true;
 }
-export function scheduleWebdavSave() {
-  if (!enabled() || state.settings.webdav_after_save === false) return;
+export function scheduleWebdavSave(force = false) {
+  if (!enabled() || (!force && state.settings.webdav_after_save === false)) return;
   clearTimeout(deferred);
   const seconds = Math.max(10, Math.min(300, Number(state.settings.webdav_delay_seconds) || 30));
   deferred = setTimeout(() => void webdavRun(), seconds * 1000);
