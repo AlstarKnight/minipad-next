@@ -679,6 +679,11 @@ mod tests {
             "设备甲初稿"
         );
 
+        fs::write(first.join("笔记.md"), "设备甲初稿").unwrap();
+        let same_content = syncer::sync_once(&c, &first, &journal_a, &opts, || Ok(())).unwrap();
+        assert!(!same_content.rescan_needed);
+        assert_eq!(same_content.uploaded, 0);
+
         fs::write(first.join("笔记.md"), "设备甲版本二").unwrap();
         fs::write(second.join("笔记.md"), "设备乙版本二").unwrap();
         syncer::sync_once(&c, &first, &journal_a, &opts, || Ok(())).unwrap();
