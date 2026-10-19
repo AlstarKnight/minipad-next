@@ -2378,9 +2378,15 @@ mod tests {
         fs::create_dir_all(&folder).unwrap();
         let id = ".webdav/工作/.minipad.1760000000.json";
         fs::write(folder.join(".minipad.1760000000.json"), "{}").unwrap();
-        let item = list_trash(&root).unwrap().into_iter().find(|item| item.id == id).unwrap();
+        let item = list_trash(&root)
+            .unwrap()
+            .into_iter()
+            .find(|item| item.id == id)
+            .unwrap();
         assert!(item.preview.contains("设置冲突"));
-        assert!(restore_trash(&root, id).unwrap_err().contains("不支持直接恢复"));
+        assert!(restore_trash(&root, id)
+            .unwrap_err()
+            .contains("不支持直接恢复"));
         assert!(folder.join(".minipad.1760000000.json").exists());
         fs::remove_dir_all(root).unwrap();
     }
