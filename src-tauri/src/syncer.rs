@@ -769,9 +769,9 @@ pub fn sync_once(
             Action::Skip => {
                 if let Some(info) = remote_file {
                     if let Some(hash) = local_hash {
-                        let cached_stamp = prior.as_ref().and_then(|old| {
-                            Some((old.local_size?, old.local_modified_ns?))
-                        });
+                        let cached_stamp = prior
+                            .as_ref()
+                            .and_then(|old| old.local_size.zip(old.local_modified_ns));
                         let record = if let Some(expected_stamp) = cached_stamp {
                             if local_stamp(&root.join(&path)) != Some(expected_stamp) {
                                 report.rescan_needed = true;
