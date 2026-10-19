@@ -739,8 +739,13 @@ mod tests {
         use std::time::{Duration, Instant};
 
         let client = WebdavClient::new(
-            &server, "tester", "test-password", "/MinipadUploadRace/", true,
-        ).unwrap();
+            &server,
+            "tester",
+            "test-password",
+            "/MinipadUploadRace/",
+            true,
+        )
+        .unwrap();
         let root = crate::notes::temp_dir("webdav-upload-race-live");
         let journal = root.parent().unwrap().join(format!(
             "{}-state.json",
@@ -764,14 +769,28 @@ mod tests {
         let opts_for_thread = opts.clone();
         let handle = std::thread::spawn(move || {
             let worker = WebdavClient::new(
-                &server_for_thread, "tester", "test-password", "/MinipadUploadRace/", true,
-            ).unwrap();
-            syncer::sync_once(&worker, &root_for_thread, &journal_for_thread, &opts_for_thread, || Ok(()))
+                &server_for_thread,
+                "tester",
+                "test-password",
+                "/MinipadUploadRace/",
+                true,
+            )
+            .unwrap();
+            syncer::sync_once(
+                &worker,
+                &root_for_thread,
+                &journal_for_thread,
+                &opts_for_thread,
+                || Ok(()),
+            )
         });
         let until = Instant::now() + Duration::from_secs(15);
         let mut uploaded = false;
         while Instant::now() < until {
-            if client.get("page.md").is_ok_and(|(bytes, _)| bytes == b"older") {
+            if client
+                .get("page.md")
+                .is_ok_and(|(bytes, _)| bytes == b"older")
+            {
                 uploaded = true;
                 break;
             }
@@ -792,9 +811,10 @@ mod tests {
         assert_eq!(second.uploaded, 1);
         assert_eq!(second.conflicts, 0);
         assert_eq!(client.get("page.md").unwrap().0, b"newer");
-        assert!(!fs::read_dir(&root).unwrap().flatten().any(|file|
-            file.file_name().to_string_lossy().contains("冲突")
-        ));
+        assert!(!fs::read_dir(&root)
+            .unwrap()
+            .flatten()
+            .any(|file| file.file_name().to_string_lossy().contains("冲突")));
         fs::remove_dir_all(root).unwrap();
         fs::remove_file(journal).unwrap();
     }
