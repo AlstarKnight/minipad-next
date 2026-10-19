@@ -21,6 +21,7 @@ pub fn parse_multistatus(xml: &str) -> Result<Vec<RemoteEntry>, String> {
     let mut reader = Reader::from_str(xml);
     reader.config_mut().trim_text(true);
     let mut entries = Vec::new();
+    let mut saw_multistatus = false;
     let mut item: Option<RemoteEntry> = None;
     let mut prop: Option<RemoteEntry> = None;
     let mut prop_ok = false;
@@ -33,6 +34,7 @@ pub fn parse_multistatus(xml: &str) -> Result<Vec<RemoteEntry>, String> {
             Event::Start(e) => {
                 let name = local(e.name().as_ref()).to_string();
                 match name.as_str() {
+                    "multistatus" => saw_multistatus = true,
                     "response" => {
                         item = Some(RemoteEntry {
                             href: String::new(),
@@ -111,8 +113,8 @@ pub fn parse_multistatus(xml: &str) -> Result<Vec<RemoteEntry>, String> {
                 _ => {}
             },
             Event::Eof => {
-                if item.is_some() || prop.is_some() {
-                    return Err("WebDAV 列目录响应提前结束".into());
+                if item.is_some() || prop.is_some() || !saw_multistatus {
+                    return Err("WebDAV 列目录响应无效或提前结束".into());
                 }
                 break;
             }
@@ -563,5 +565,7 @@ mod tests {
     #[test]
     fn rejects_malformed_xml() {
         assert!(parse_multistatus("<d:response>").is_err());
+        assert!(parse_multistatus("<html><body>error</body></html>").is_err());
+        assert!(parse_multistatus("").is_err());
     }
 }
