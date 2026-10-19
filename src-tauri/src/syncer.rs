@@ -422,6 +422,9 @@ fn preserve_navigation(local: &[u8], remote: &[u8]) -> Result<Vec<u8>, String> {
 fn check_local(root: &Path, path: &str, expected: Option<&str>) -> Result<Vec<u8>, String> {
     let file = root.join(path);
     let bytes = match fs::read(file) {
+        Ok(_) if expected.is_none() => {
+            return Err(format!("「{path}」在扫描后新建，拒绝覆盖"));
+        }
         Ok(bytes) => bytes,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound && expected.is_none() => Vec::new(),
         Err(e) => return Err(format!("重新读取文件「{path}」失败：{e}")),
