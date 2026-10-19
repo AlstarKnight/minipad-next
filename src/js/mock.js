@@ -579,6 +579,7 @@ export function mockApi() {
     open_notes_dir: () => toast("(预览)会在资源管理器里打开笔记文件夹"),
     open_link: ({ url }) => void window.open(url, "_blank", "noopener"),
     webdav_test: (draft = {}) => {
+      if (window.__mockControl?.webdavTestError) throw window.__mockControl.webdavTestError;
       if (!draft.server && !db.settings?.webdav_server) throw "请先填写服务器地址";
       return "连接成功，目录读取和写入测试通过（预览模拟）";
     },
