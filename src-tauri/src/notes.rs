@@ -1109,9 +1109,13 @@ fn trash_path(root: &Path, id: &str) -> Result<(PathBuf, Vec<String>), String> {
     {
         return Err(format!("回收站里没有「{id}」"));
     }
-    let path = parts
-        .iter()
-        .fold(root.join(TRASH_DIR), |acc, p| acc.join(p));
+    let mut path = root.join(TRASH_DIR);
+    for part in &parts {
+        path.push(part);
+        if special && fs::symlink_metadata(&path).is_ok_and(|meta| meta.file_type().is_symlink()) {
+            return Err("同步回收站路径中包含不允许的符号链接".into());
+        }
+    }
     if fs::symlink_metadata(&path).is_err() {
         return Err("回收站里已经没有这一项了".into());
     }
