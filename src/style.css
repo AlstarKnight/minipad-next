@@ -2033,6 +2033,6 @@ html[data-side="rail"] .side-list { align-items: center; gap: 6px; padding: 10px
 #editor .local-file-path.missing { color: var(--muted); text-decoration: line-through; }
 
 /* WebDAV 正在同步的轻量状态提示，避免旋转整条状态文字。 */
-.webdav-state-icon.spinning, #st-webdav.webdav-running { animation: webdav-rotate 1.3s linear infinite; }
+.webdav-state-icon.spinning { display: inline-block; animation: webdav-rotate 1.3s linear infinite; }
 @keyframes webdav-rotate { to { transform: rotate(360deg); } }
 #st-webdav { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
