@@ -737,12 +737,12 @@ mod tests {
         use crate::syncer::{self, FirstSync, SyncOptions};
         use std::fs;
 
-        let client = WebdavClient::new(
-            &server, "tester", "test-password", "/MinipadRescan/", true,
-        ).unwrap();
+        let client =
+            WebdavClient::new(&server, "tester", "test-password", "/MinipadRescan/", true).unwrap();
         let local = crate::notes::temp_dir("webdav-rescan-local");
         let journal = local.parent().unwrap().join(format!(
-            "{}-state.json", local.file_name().unwrap().to_string_lossy()
+            "{}-state.json",
+            local.file_name().unwrap().to_string_lossy()
         ));
         fs::write(local.join("a.md"), "before scan").unwrap();
         fs::write(local.join("z.md"), "untouched").unwrap();
@@ -756,11 +756,15 @@ mod tests {
         };
         let first = syncer::sync_once(&client, &local, &journal, &opts, || {
             fs::write(local.join("a.md"), "edited after scan").map_err(|e| e.to_string())
-        }).unwrap();
+        })
+        .unwrap();
         assert!(first.rescan_needed);
         assert_eq!(first.uploaded, 1);
         assert_eq!(client.get("z.md").unwrap().0, b"untouched");
-        assert_eq!(fs::read_to_string(local.join("a.md")).unwrap(), "edited after scan");
+        assert_eq!(
+            fs::read_to_string(local.join("a.md")).unwrap(),
+            "edited after scan"
+        );
         assert!(!syncer::read_journal(&journal).unwrap().1);
         let next = syncer::sync_once(&client, &local, &journal, &opts, || Ok(())).unwrap();
         assert_eq!(next.uploaded, 1);
@@ -779,13 +783,19 @@ mod tests {
         use std::fs;
 
         let client = WebdavClient::new(
-            &server, "tester", "test-password", "/MinipadRemoteRescan/", true,
-        ).unwrap();
+            &server,
+            "tester",
+            "test-password",
+            "/MinipadRemoteRescan/",
+            true,
+        )
+        .unwrap();
         client.mkcol("").unwrap();
         client.put("z.md", b"from remote".to_vec(), None).unwrap();
         let local = crate::notes::temp_dir("webdav-remote-rescan");
         let journal = local.parent().unwrap().join(format!(
-            "{}-state.json", local.file_name().unwrap().to_string_lossy()
+            "{}-state.json",
+            local.file_name().unwrap().to_string_lossy()
         ));
         fs::write(local.join("a.md"), "initial").unwrap();
         let opts = SyncOptions {
@@ -798,7 +808,8 @@ mod tests {
         };
         let first = syncer::sync_once(&client, &local, &journal, &opts, || {
             fs::write(local.join("a.md"), "created during sync").map_err(|e| e.to_string())
-        }).unwrap();
+        })
+        .unwrap();
         assert!(first.rescan_needed);
         assert_eq!(first.downloaded, 1);
         assert!(local.join("a.md").exists());
