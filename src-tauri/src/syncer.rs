@@ -574,6 +574,9 @@ fn check_local(root: &Path, path: &str, expected: Option<&str>) -> Result<Vec<u8
         }
         Ok(bytes) => bytes,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound && expected.is_none() => Vec::new(),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Err(format!("「{path}」在扫描后被删除，留到下一轮同步"));
+        }
         Err(e) => return Err(format!("重新读取文件「{path}」失败：{e}")),
     };
     if expected.is_some() && Some(content_hash(path, &bytes).as_str()) != expected {
