@@ -59,6 +59,22 @@ export function ask(message, okLabel = "确定", danger = false, keepOverlays = 
   return openDialog(message, okLabel, danger, null, keepOverlays);
 }
 
+// 单个确认框同时提供“不再询问”选项，取消时不会保存勾选结果。
+export async function askWithCheckbox(message, okLabel, checkboxLabel) {
+  const pending = openDialog(message, okLabel, true, null);
+  const label = document.createElement("label");
+  const checkbox = document.createElement("input");
+  checkbox.type = "checkbox";
+  label.append(checkbox, document.createTextNode(checkboxLabel));
+  $("#dialog-msg").after(label);
+  try {
+    const ok = await pending;
+    return { ok, checked: ok && checkbox.checked };
+  } finally {
+    label.remove();
+  }
+}
+
 // 得到去掉首尾空白的文字,取消时得到 null
 export function askText(message, value = "", okLabel = "确定") {
   if (document.documentElement.dataset.mobile === "true") return Promise.resolve(window.prompt(message, value));
