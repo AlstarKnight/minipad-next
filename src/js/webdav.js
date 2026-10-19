@@ -115,8 +115,8 @@ async function openWebdavStatus() {
 export async function webdavSavePassword(password) {
   if (password) await api.invoke("webdav_set_password", { password });
 }
-export async function webdavTest() {
-  const result = await api.invoke("webdav_test");
+export async function webdavTest(draft = {}) {
+  const result = await api.invoke("webdav_test", draft);
   toast(result, 4000);
   return result;
 }
