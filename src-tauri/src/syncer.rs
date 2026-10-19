@@ -175,7 +175,6 @@ pub fn merge_metadata(
     }
 }
 
-
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fs;
@@ -216,9 +215,7 @@ pub fn read_journal(path: &Path) -> Result<(Journal, bool), String> {
                 .map_err(|e| format!("同步记录损坏，已停止同步以保护笔记：{e}"))?;
             Ok((journal, false))
         }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            Ok((Journal::default(), true))
-        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok((Journal::default(), true)),
         Err(e) => Err(format!("无法读取同步记录：{e}")),
     }
 }
@@ -281,7 +278,6 @@ pub fn content_hash(path: &str, bytes: &[u8]) -> String {
     }
     format!("{:x}", Sha256::digest(bytes))
 }
-
 
 use crate::webdav::{RemoteEntry, WebdavClient};
 
@@ -346,7 +342,10 @@ pub fn remote_files(
 }
 
 pub fn remote_hashes(files: &BTreeMap<String, RemoteFile>) -> BTreeMap<String, String> {
-    files.iter().map(|(path, info)| (path.clone(), info.hash.clone())).collect()
+    files
+        .iter()
+        .map(|(path, info)| (path.clone(), info.hash.clone()))
+        .collect()
 }
 
 #[cfg(test)]
@@ -373,10 +372,7 @@ mod tests {
         assert!(!unchanged_remote(&entry, &old));
         entry.etag = None;
         assert!(!unchanged_remote(&entry, &old));
-        let old_no_etag = FileRecord {
-            etag: None,
-            ..old
-        };
+        let old_no_etag = FileRecord { etag: None, ..old };
         entry.modified = Some("Mon".into());
         assert!(unchanged_remote(&entry, &old_no_etag));
     }
@@ -389,9 +385,13 @@ mod tests {
         assert_ne!(a, b);
         assert!(read_journal(&a).unwrap().1);
         let journal = Journal {
-            files: BTreeMap::from([("页面.md".into(), FileRecord {
-                hash: "abc".into(), ..FileRecord::default()
-            })]),
+            files: BTreeMap::from([(
+                "页面.md".into(),
+                FileRecord {
+                    hash: "abc".into(),
+                    ..FileRecord::default()
+                },
+            )]),
         };
         save_journal(&a, &journal).unwrap();
         assert_eq!(read_journal(&a).unwrap().0.files, journal.files);
@@ -420,7 +420,10 @@ mod tests {
     fn page_navigation_changes_do_not_change_metadata_hash() {
         let a = r#"{"active":"页1","order":["页1"],"modes":{"页1":"edit"}}"#.as_bytes();
         let b = r#"{"active":"页2","order":["页1"],"modes":{"页1":"view"}}"#.as_bytes();
-        assert_eq!(content_hash(".minipad.json", a), content_hash(".minipad.json", b));
+        assert_eq!(
+            content_hash(".minipad.json", a),
+            content_hash(".minipad.json", b)
+        );
         assert_ne!(content_hash("页.md", a), content_hash("页.md", b));
     }
 
