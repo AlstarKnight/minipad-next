@@ -174,6 +174,20 @@ pub struct Settings {
     find_color: String,
     /// 同一页在这里和别处(网盘同步)都改过:copy 把那边的版本另存为冲突副本 / overwrite 用这边的覆盖
     conflict_mode: String,
+    /// 正文中识别 Windows 本地文件路径。
+    local_path_enabled: bool,
+    /// ctrl 按 Ctrl 点击 / click 单击。
+    local_path_click: String,
+    /// 路径文字颜色；空着跟随链接颜色。
+    local_path_color: String,
+    /// solid / dashed / none。
+    local_path_underline: String,
+    /// 对不存在的路径显示灰色删除线。
+    local_path_missing: bool,
+    /// 运行可执行文件或脚本之前进行确认。
+    local_path_confirm: bool,
+    /// 用户逐个允许跳过确认的本地路径。
+    local_path_trusted: Vec<String>,
     /// 设置页面的分类放在哪:left 左边一列 / top 上面一排
     settings_nav: String,
     /// 悬浮目录:列出这一页的标题,点了跳过去
@@ -312,6 +326,13 @@ impl Default for Settings {
             find_bar_pos: "top".into(),
             find_color: String::new(),
             conflict_mode: "copy".into(),
+            local_path_enabled: true,
+            local_path_click: "ctrl".into(),
+            local_path_color: String::new(),
+            local_path_underline: "dashed".into(),
+            local_path_missing: true,
+            local_path_confirm: true,
+            local_path_trusted: Vec::new(),
             settings_nav: "left".into(),
             outline_enabled: false,
             outline_mode: "hover".into(),
@@ -831,6 +852,7 @@ fn tidy_settings(s: &mut Settings) {
     tidy_color(&mut s.ball_color);
     tidy_color(&mut s.find_color);
     tidy_color(&mut s.outline_color);
+    tidy_color(&mut s.local_path_color);
     pick_one(&mut s.ctrl_f, &["page", "all"]);
     pick_one(&mut s.color_layout, &["tabs", "rows"]);
     pick_one(
@@ -842,6 +864,11 @@ fn tidy_settings(s: &mut Settings) {
     pick_one(&mut s.block_context_menu, &["system", "block"]);
     pick_one(&mut s.code_exit_mode, &["blank3", "blank2", "ctrl"]);
     pick_one(&mut s.conflict_mode, &["copy", "overwrite"]);
+    pick_one(&mut s.local_path_click, &["ctrl", "click"]);
+    pick_one(&mut s.local_path_underline, &["solid", "dashed", "none"]);
+    s.local_path_trusted.retain(|p| !p.trim().is_empty());
+    s.local_path_trusted.sort();
+    s.local_path_trusted.dedup();
     pick_one(&mut s.settings_nav, &["left", "top"]);
     pick_one(&mut s.outline_mode, &["hover", "pinned"]);
     pick_one(&mut s.outline_side, &["right", "left"]);
@@ -1592,6 +1619,57 @@ fn open_link(url: String) -> Result<(), String> {
         return Err("只能打开网页链接".into());
     }
     tauri_plugin_opener::open_url(url, None::<&str>).map_err(|e| e.to_string())
+}
+
+/// 只接受绝对路径；file URI 由 URL 解析器统一还原百分号编码。
+fn parse_local_path(raw: &str) -> Result<PathBuf, String> {
+    let path = if raw.to_ascii_lowercase().starts_with("file:") {
+        tauri::Url::parse(raw)
+            .map_err(|_| "本地文件链接格式不正确".to_string())?
+            .to_file_path()
+            .map_err(|_| "无法解析本地文件链接".to_string())?
+    } else {
+        PathBuf::from(raw)
+    };
+    if !path.is_absolute() {
+        return Err("只能打开绝对路径".into());
+    }
+    Ok(path)
+}
+
+fn is_executable_path(path: &Path) -> bool {
+    matches!(
+        path.extension()
+            .and_then(|ext| ext.to_str())
+            .unwrap_or("")
+            .to_ascii_lowercase()
+            .as_str(),
+        "exe" | "bat" | "cmd" | "ps1" | "vbs" | "js" | "msi" | "lnk" | "scr"
+    )
+}
+
+#[tauri::command]
+fn local_path_exists(path: String) -> bool {
+    parse_local_path(&path).is_ok_and(|p| p.exists())
+}
+
+#[tauri::command]
+fn open_path(path: String, reveal: bool, confirmed: bool, state: tauri::State<'_, AppState>) -> Result<(), String> {
+    let target = parse_local_path(&path)?;
+    if !target.exists() {
+        return Err("找不到这个文件".into());
+    }
+    if !reveal && is_executable_path(&target) {
+        let settings = state.settings.lock().unwrap();
+        if settings.local_path_confirm && !confirmed && !settings.local_path_trusted.contains(&path) {
+            return Err("打开此文件前需要确认".into());
+        }
+    }
+    if reveal && target.is_file() {
+        tauri_plugin_opener::reveal_item_in_dir(&target).map_err(|e| e.to_string())
+    } else {
+        tauri_plugin_opener::open_path(target, None::<&str>).map_err(|e| e.to_string())
+    }
 }
 
 #[tauri::command]
@@ -2542,6 +2620,8 @@ pub fn run() {
             expand_from_ball,
             open_notes_dir,
             open_link,
+            local_path_exists,
+            open_path,
             save_image,
             mini_open,
             mini_self,
