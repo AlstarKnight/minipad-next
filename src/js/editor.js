@@ -41,6 +41,7 @@ import { findPlugin, reapplyFind } from "./find.js";
 import { outlinePlugin } from "./outline.js";
 import { codeToText } from "./toolbar.js";
 import { imagePlugin, applyImageSettings } from "./images.js";
+import { findLocalPaths } from "./localpaths.js";
 
 let editor = null;
 let view = null;
@@ -54,6 +55,57 @@ const EXTERNAL = "minipad-external";
 
 // 邮箱默认按普通文字显示，保留手动指定的 mailto 链接与网址自动识别。
 let autoEmailLinks = false;
+let pathSettings = { local_path_enabled: false };
+let onLocalPath = () => {};
+let onLocalPathMenu = () => {};
+
+const localPathKey = new PluginKey("minipad-local-paths");
+const localPathDecorations = (doc) => {
+  if (!pathSettings.local_path_enabled) return DecorationSet.empty;
+  const decorations = [];
+  doc.descendants((node, pos) => {
+    if (node.type.spec.code) return false;
+    if (!node.isTextblock || node.type.name === "code_block") return true;
+    node.forEach((child, offset) => {
+      if (!child.isText) return;
+      for (const match of findLocalPaths(child.text)) {
+        decorations.push(Decoration.inline(pos + 1 + offset + match.from, pos + 1 + offset + match.to, {
+          class: "local-file-path", "data-local-path": match.path,
+        }));
+      }
+    });
+    return false;
+  });
+  return DecorationSet.create(doc, decorations);
+};
+const localPathPlugin = $prose(() => new Plugin({
+  key: localPathKey,
+  state: {
+    init: (_, state) => localPathDecorations(state.doc),
+    apply: (tr, old) => tr.docChanged || tr.getMeta(localPathKey)
+      ? localPathDecorations(tr.doc) : old,
+  },
+  props: {
+    decorations: (state) => localPathKey.getState(state),
+    handleDOMEvents: {
+      click: (v, e) => {
+        const el = e.target.closest?.("[data-local-path]");
+        if (!el || !v.dom.contains(el) || !pathSettings.local_path_enabled) return false;
+        if (pathSettings.local_path_click !== "click" && !(e.ctrlKey || e.metaKey)) return false;
+        e.preventDefault();
+        onLocalPath(el.dataset.localPath);
+        return true;
+      },
+      contextmenu: (v, e) => {
+        const el = e.target.closest?.("[data-local-path]");
+        if (!el || !v.dom.contains(el) || !pathSettings.local_path_enabled) return false;
+        e.preventDefault();
+        onLocalPathMenu(el.dataset.localPath, e.clientX, e.clientY);
+        return true;
+      },
+    },
+  },
+}));
 let emailLinkVersion = 0;
 // GFM 会把裸邮箱解析成 mailto 链接。对照原始 Markdown 的源码区间，仅还原
 // 裸邮箱生成的链接，避免误伤 [标题](mailto:...) 或 <name@example.com>。
@@ -413,6 +465,8 @@ function writeText(node, parent, state, info) {
 export async function createEditor(opts) {
   onChange = opts.onChange;
   openLink = opts.openLink;
+  onLocalPath = opts.openLocalPath || (() => {});
+  onLocalPathMenu = opts.localPathMenu || (() => {});
   emptyBold = opts.emptyBold;
   const mobile = opts.mobile === true;
   editor = await Editor.make()
@@ -428,6 +482,7 @@ export async function createEditor(opts) {
     .use(commonmark)
     .use(gfm)
     .use(plainEmails)
+    .use(localPathPlugin)
     .use(history)
     .use(clipboard)
     .use([colorSpans, textColor, textBg].flat())
@@ -599,6 +654,20 @@ export function insertText(text) {
 }
 
 export function applyEditorSettings(s) {
+  const oldPath = JSON.stringify(pathSettings);
+  pathSettings = {
+    local_path_enabled: s.local_path_enabled !== false,
+    local_path_click: s.local_path_click,
+    local_path_underline: s.local_path_underline || "dashed",
+    local_path_color: s.local_path_color || "",
+    local_path_missing: s.local_path_missing !== false,
+  };
+  const root = $("#editor");
+  root.dataset.localPathUnderline = pathSettings.local_path_underline;
+  root.style.setProperty("--local-path-color", pathSettings.local_path_color || "var(--accent)");
+  if (view && oldPath !== JSON.stringify(pathSettings)) {
+    view.dispatch(view.state.tr.setMeta(localPathKey, true).setMeta("addToHistory", false));
+  }
   const wasEnabled = autoEmailLinks;
   autoEmailLinks = s.email_auto_link === true;
   // 切换选项时重新读取当前 Markdown，仅更新编辑器状态，不当作一次编辑保存。
