@@ -6,7 +6,7 @@
   "scripts": {
     "prepare-assets": "node scripts/prepare.mjs",
     "preview": "node scripts/prepare.mjs && node scripts/serve.mjs",
-    "test:ui": "node scripts/prepare.mjs && node --test tests/localpaths.test.mjs && node --test tests/ui.test.mjs",
+    "test:ui": "node scripts/prepare.mjs && node --test tests/localpaths.test.mjs && node --test tests/webdav-ui.test.mjs && node --test tests/ui.test.mjs",
     "icons": "tauri icon app-icon.svg -o src-tauri/icons",
     "tauri": "tauri",
     "dev": "tauri dev",
