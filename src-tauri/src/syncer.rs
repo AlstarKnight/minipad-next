@@ -372,6 +372,7 @@ use crate::webdav::{RemoteEntry, WebdavClient};
 pub struct RemoteFile {
     pub entry: RemoteEntry,
     pub hash: String,
+    pub downloaded: Option<Vec<u8>>,
 }
 
 fn unchanged_remote(entry: &RemoteEntry, old: &FileRecord) -> bool {
@@ -424,16 +425,27 @@ pub fn remote_files(
         if !should_sync(&path, images) || entry.directory {
             continue;
         }
-        let hash = match journal.files.get(&path) {
-            Some(old) if unchanged_remote(&entry, old) => old.hash.clone(),
+        let (hash, downloaded) = match journal.files.get(&path) {
+            Some(old) if unchanged_remote(&entry, old) => (old.hash.clone(), None),
             _ => {
                 let (bytes, _) = client.get(&path)?;
-                content_hash(&path, &bytes)
+                (content_hash(&path, &bytes), Some(bytes))
             }
         };
-        files.insert(path, RemoteFile { entry, hash });
+        files.insert(path, RemoteFile { entry, hash, downloaded });
     }
     Ok(files)
+}
+
+fn remote_content(
+    client: &WebdavClient,
+    path: &str,
+    remote: &mut RemoteFile,
+) -> Result<(Vec<u8>, Option<String>), String> {
+    match remote.downloaded.take() {
+        Some(bytes) => Ok((bytes, remote.entry.etag.clone())),
+        None => client.get(path),
+    }
 }
 
 pub fn remote_hashes(files: &BTreeMap<String, RemoteFile>) -> BTreeMap<String, String> {
@@ -644,7 +656,7 @@ pub fn sync_once(
     let (mut journal, first) = read_journal(journal_file)?;
     let mode = journal.initial_mode.unwrap_or(options.first_mode);
     let local = local_files_cached(root, options.images, Some(&journal))?;
-    let remote = remote_files(client, options.images, &journal)?;
+    let mut remote = remote_files(client, options.images, &journal)?;
     let (actions, deletes, total) = preview_actions(&journal, &local, &remote, mode, first);
     if !options.confirm_deletes && deletion_needs_confirmation(deletes, total) {
         return Err(format!("WEB_DAV_CONFIRM_DELETE:{deletes}:{total}"));
@@ -673,7 +685,7 @@ pub fn sync_once(
         .collect();
     for (path, action) in actions {
         let local_hash = local.get(&path).map(String::as_str);
-        let remote_file = remote.get(&path);
+        let remote_file = remote.get_mut(&path);
         let prior = journal.files.get(&path).cloned();
         match action {
             Action::Skip => {
@@ -707,7 +719,7 @@ pub fn sync_once(
                 let mut upload = local_data.clone();
                 if first && mode == FirstSync::Local && action == Action::Upload {
                     if let Some(previous) = remote_file {
-                        let (old_bytes, _) = client.get(&path)?;
+                        let (old_bytes, _) = remote_content(client, &path, previous)?;
                         if content_hash(&path, &old_bytes) != previous.hash {
                             return Err(format!("「{path}」在同步期间再次修改，请重试"));
                         }
@@ -723,7 +735,7 @@ pub fn sync_once(
                 }
                 if action == Action::Conflict {
                     let previous = remote_file.ok_or("冲突时远端文件不存在")?;
-                    let (remote_data, _) = client.get(&path)?;
+                    let (remote_data, _) = remote_content(client, &path, previous)?;
                     if content_hash(&path, &remote_data) != previous.hash {
                         return Err(format!("「{path}」在同步期间再次修改，请重试"));
                     }
@@ -799,7 +811,7 @@ pub fn sync_once(
             }
             Action::Download => {
                 let info = remote_file.ok_or("下载时远端文件不存在")?;
-                let (received, etag) = client.get(&path)?;
+                let (received, etag) = remote_content(client, &path, info)?;
                 if content_hash(&path, &received) != info.hash {
                     return Err(format!("「{path}」在下载期间变化，稍后重试"));
                 }
@@ -838,7 +850,7 @@ pub fn sync_once(
             Action::DeleteRemote => {
                 let info = remote_file.ok_or("远端文件已不存在")?;
                 checked_local!(&path, None);
-                let (contents, _) = client.get(&path)?;
+                let (contents, _) = remote_content(client, &path, info)?;
                 if content_hash(&path, &contents) != info.hash {
                     return Err(format!("「{path}」在删除前已被别处修改，停止删除"));
                 }
