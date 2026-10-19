@@ -1085,6 +1085,7 @@ fn save_note(
         .conflict_mode
         == "copy";
     let stamp = chrono::Local::now().format("%Y-%m-%d %H.%M").to_string();
+    let _write = crate::syncer::WRITE_LOCK.lock().map_err(|e| e.to_string())?;
     let conflict = notes::save_page(
         &current_notes_dir(&app),
         &book,
