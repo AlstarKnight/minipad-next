@@ -572,8 +572,7 @@ pub fn sync_once(
     client.mkcol("")?;
     let local = local_files(root, options.images)?;
     let remote = remote_files(client, options.images, &journal)?;
-    let (actions, deletes, total) =
-        preview_actions(&journal, &local, &remote, mode, first);
+    let (actions, deletes, total) = preview_actions(&journal, &local, &remote, mode, first);
     if !options.confirm_deletes && deletion_needs_confirmation(deletes, total) {
         return Err(format!("WEB_DAV_CONFIRM_DELETE:{deletes}:{total}"));
     }
