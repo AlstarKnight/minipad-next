@@ -413,8 +413,8 @@ mod tests {
 
     #[test]
     fn page_navigation_changes_do_not_change_metadata_hash() {
-        let a = br#"{"active":"页1","order":["页1"],"modes":{"页1":"edit"}}"#;
-        let b = br#"{"active":"页2","order":["页1"],"modes":{"页1":"view"}}"#;
+        let a = r#"{"active":"页1","order":["页1"],"modes":{"页1":"edit"}}"#.as_bytes();
+        let b = r#"{"active":"页2","order":["页1"],"modes":{"页1":"view"}}"#.as_bytes();
         assert_eq!(content_hash(".minipad.json", a), content_hash(".minipad.json", b));
         assert_ne!(content_hash("页.md", a), content_hash("页.md", b));
     }
