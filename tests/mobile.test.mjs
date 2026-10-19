@@ -921,3 +921,20 @@ test("WebDAV settings are visible in all four Android interface styles", async (
     } finally { await context.close(); }
   }
 });
+
+test("Android local path option stays optional and changing appearance keeps editor usable", async () => {
+  const { context, page, errors } = await open();
+  try {
+    await page.click("#open-drawer");
+    await page.click("#open-settings");
+    assert.equal(await page.locator("#look-local-path").isChecked(), false);
+    await page.locator("#look-local-path").check();
+    await page.click("#close-settings");
+    assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem("minipad-mobile-look")).local_path_enabled), true);
+    await page.locator("#editor .ProseMirror p").first().click();
+    await page.keyboard.press("End");
+    await page.keyboard.type("继续编辑");
+    await page.waitForFunction(() => window.__mobileTest.disk[0].notes[0].content.includes("继续编辑"));
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
