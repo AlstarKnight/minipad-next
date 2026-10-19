@@ -1729,7 +1729,7 @@ fn webdav_credential(settings: &Settings) -> Result<keyring::Entry, String> {
         Path::new(""),
         &settings.webdav_server,
         &settings.webdav_user,
-        &settings.webdav_folder,
+        "",
     );
     let name = identity.file_stem().and_then(|s| s.to_str()).ok_or("无效的 WebDAV 账号")?;
     keyring::Entry::new("Minipad Next WebDAV", name)
