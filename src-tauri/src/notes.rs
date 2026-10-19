@@ -1015,6 +1015,46 @@ fn trash_page(path: &Path, id: String, book: &str) -> TrashItem {
     }
 }
 
+/// WebDAV 回收的图片和元数据也列入普通回收站，保留原来的相对目录。
+fn collect_webdav_trash(
+    directory: &Path,
+    relative: &str,
+    depth: usize,
+    items: &mut Vec<TrashItem>,
+) -> Result<(), String> {
+    if depth > 3 {
+        return Ok(());
+    }
+    for entry in fs::read_dir(directory).map_err(|e| format!("读取同步回收站失败：{e}"))? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let kind = entry.file_type().map_err(|e| e.to_string())?;
+        if kind.is_symlink() {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let next = if relative.is_empty() { name.clone() } else { format!("{relative}/{name}") };
+        if kind.is_dir() {
+            collect_webdav_trash(&entry.path(), &next, depth + 1, items)?;
+        } else if kind.is_file() {
+            let (stem, extension) = name.rsplit_once('.').unwrap_or((&name, ""));
+            if let Some((original, deleted)) = split_stamp(stem) {
+                let parent = relative;
+                let display = if extension.is_empty() { original.to_string() } else { format!("{original}.{extension}") };
+                items.push(TrashItem {
+                    id: format!(".webdav/{next}"),
+                    kind: "file".into(),
+                    book: String::new(),
+                    name: if parent.is_empty() { display } else { format!("{parent}/{display}") },
+                    deleted,
+                    preview: "WebDAV 同步回收的文件".into(),
+                    pages: 0,
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
 /// 回收站里的全部东西,最近删的在前
 pub fn list_trash(root: &Path) -> Result<Vec<TrashItem>, String> {
     let trash = root.join(TRASH_DIR);
@@ -1027,7 +1067,9 @@ pub fn list_trash(root: &Path) -> Result<Vec<TrashItem>, String> {
     for entry in entries.flatten() {
         let path = entry.path();
         let file = entry.file_name().to_string_lossy().to_string();
-        if is_note_file(&path) {
+        if file == ".webdav" && path.is_dir() {
+            collect_webdav_trash(&path, "", 0, &mut items)?;
+        } else if is_note_file(&path) {
             items.push(trash_page(&path, file, ""));
         } else if !path.is_dir() {
             continue;
