@@ -6817,6 +6817,20 @@ suite("0.4.5: local file paths", { concurrency: 1 }, () => {
     assert.equal((await p.evaluate(() => window.__mockControl.openedPaths[0])).confirmed, true);
   });
 
+  ui("slow local file existence checks do not block editing", {
+    seed: seed({ "": { "路径": "C:\\\\docs\\\\slow.pdf" } }),
+    mockControl: { slowLocalPathMs: 8000 },
+  }, async (h) => {
+    const { p } = h;
+    await p.locator("#editor .local-file-path").waitFor();
+    const start = Date.now();
+    await p.click("#editor");
+    await p.keyboard.press("Control+End");
+    await p.keyboard.type("仍然可以编辑");
+    await until(() => h.mockFile("", "路径"), "C:\\\\docs\\\\slow.pdf仍然可以编辑", "typing during a slow file check");
+    assert.ok(Date.now() - start < 3500, "editing should not wait for the 8-second existence check");
+  });
+
   ui("local path missing state can be simulated", {
     seed: seed({ "": { "路径": "打开 C:\\docs\\note.pdf" } }),
   }, async ({ p }) => {
