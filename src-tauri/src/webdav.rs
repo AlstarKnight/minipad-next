@@ -423,6 +423,7 @@ impl WebdavClient {
 
     /// 先确认账户能列目录，再试创建、写入、删除一个专用小文件。
     pub fn test_connection(&self) -> Result<(), String> {
+        self.mkcol("")?;
         self.list("")?;
         let id = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
