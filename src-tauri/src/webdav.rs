@@ -649,6 +649,16 @@ mod tests {
     }
 
     #[test]
+    fn tls_test_server_does_not_get_implicit_trust() {
+        let Ok(server) = std::env::var("MINIPAD_TEST_WEBDAV_TLS_URL") else {
+            return;
+        };
+        let client = WebdavClient::new(&server, "tester", "test-password", "/", false).unwrap();
+        let error = client.list("").unwrap_err();
+        assert!(error.contains("证书不受信任"), "{error}");
+    }
+
+    #[test]
     fn two_devices_sync_via_local_webdav() {
         // Only the dedicated CI job provides a real WebDAV URL.
         let Ok(server) = std::env::var("MINIPAD_TEST_WEBDAV_URL") else {
