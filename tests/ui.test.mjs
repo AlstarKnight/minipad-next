@@ -6753,6 +6753,21 @@ suite("0.4.5: WebDAV settings", { concurrency: 1 }, () => {
 });
 
 suite("0.4.5: local file paths", { concurrency: 1 }, () => {
+  ui("executable path requires confirmation and offers a trust checkbox", {
+    seed: seed({ "": { "程序": "C:\\files\\setup.exe" } }),
+    mockControl: { openedPaths: [] },
+  }, async ({ p }) => {
+    const link = p.locator("#editor .local-file-path").first();
+    await link.waitFor();
+    assert.equal(await link.getAttribute("data-local-path"), "C:\\files\\setup.exe");
+    await link.click({ modifiers: ["Control"] });
+    await p.locator("#dialog").waitFor();
+    assert.equal(await p.locator("#dialog-msg + label input[type=checkbox]").count(), 1);
+    await p.click("#dialog-ok");
+    await until(() => p.evaluate(() => window.__mockControl.openedPaths.length), 1, "confirmed opening");
+    assert.equal((await p.evaluate(() => window.__mockControl.openedPaths[0])).confirmed, true);
+  });
+
   ui("local path missing state can be simulated", {
     seed: seed({ "": { "路径": "打开 C:\\docs\\note.pdf" } }),
   }, async ({ p }) => {
