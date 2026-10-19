@@ -4623,12 +4623,13 @@ describe("0.3.0: import from minipad2", () => {
     const text = () => p.evaluate(() => window.__minipad.editor().text());
     const open = (md) => p.evaluate((m) => (window.__mockFiles["页"] = m), md);
     for (const [plain, md] of MINIPAD2_ESCAPES) {
+      if (process.env.CI) console.info("minipad2-escape start:", JSON.stringify(md));
       await open(md);
       await syncUntil(h, text, plain, `${JSON.stringify(md)} shows as ${JSON.stringify(plain)}`);
-      // 编辑器保存时有自己的写法(比如多转义一个括号、网址写成链接),重新打开还是原来的文字
       const saved = await h.editor();
       await open(saved);
       await syncUntil(h, text, plain, `and so does ${JSON.stringify(saved)}, as the editor saves it`);
+      if (process.env.CI) console.info("minipad2-escape done:", JSON.stringify(md));
     }
   });
 });
