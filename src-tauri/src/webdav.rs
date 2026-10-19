@@ -512,6 +512,49 @@ mod tests {
     }
 
     #[test]
+    fn two_devices_sync_via_local_webdav() {
+        // Only the dedicated CI job provides a real WebDAV URL.
+        let Ok(server) = std::env::var("MINIPAD_TEST_WEBDAV_URL") else {
+            return;
+        };
+        use crate::syncer::{self, FirstSync, SyncOptions};
+        use std::fs;
+        let first = crate::notes::temp_dir("webdav-device-one");
+        let second = crate::notes::temp_dir("webdav-device-two");
+        let records = crate::notes::temp_dir("webdav-device-records");
+        let c = WebdavClient::new(
+            &server, "tester", "test-password", "/MinipadNext/", true,
+        ).unwrap();
+        let opts = SyncOptions {
+            images: true, first_mode: FirstSync::Merge, conflict_copy: true, confirm_deletes: false,
+        };
+        let journal_a = records.join("device-a.json");
+        let journal_b = records.join("device-b.json");
+        fs::write(first.join("笔记.md"), "设备甲初稿").unwrap();
+        syncer::sync_once(&c, &first, &journal_a, &opts, || Ok(())).unwrap();
+        syncer::sync_once(&c, &second, &journal_b, &opts, || Ok(())).unwrap();
+        assert_eq!(fs::read_to_string(second.join("笔记.md")).unwrap(), "设备甲初稿");
+
+        fs::write(first.join("笔记.md"), "设备甲版本二").unwrap();
+        fs::write(second.join("笔记.md"), "设备乙版本二").unwrap();
+        syncer::sync_once(&c, &first, &journal_a, &opts, || Ok(())).unwrap();
+        let changed = syncer::sync_once(&c, &second, &journal_b, &opts, || Ok(())).unwrap();
+        assert_eq!(changed.conflicts, 1);
+        assert_eq!(fs::read_to_string(second.join("笔记.md")).unwrap(), "设备乙版本二");
+        assert!(fs::read_dir(&second).unwrap().flatten().any(|f| f.file_name().to_string_lossy().contains("冲突")));
+
+        syncer::sync_once(&c, &first, &journal_a, &opts, || Ok(())).unwrap();
+        assert_eq!(fs::read_to_string(first.join("笔记.md")).unwrap(), "设备乙版本二");
+        fs::remove_file(second.join("笔记.md")).unwrap();
+        let delete = syncer::sync_once(&c, &second, &journal_b, &opts, || Ok(())).unwrap();
+        assert_eq!(delete.deleted, 1);
+        syncer::sync_once(&c, &first, &journal_a, &opts, || Ok(())).unwrap();
+        assert!(!first.join("笔记.md").exists());
+        assert!(fs::read_dir(first.join(".trash")).unwrap().next().is_some());
+        for path in [first, second, records] { fs::remove_dir_all(path).unwrap(); }
+    }
+
+    #[test]
     fn rejects_malformed_xml() {
         assert!(parse_multistatus("<d:response>").is_err());
     }
