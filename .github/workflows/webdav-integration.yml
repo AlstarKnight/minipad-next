@@ -4,37 +4,6 @@ on:
     branches: [feature/0.4.5-webdav]
   workflow_dispatch:
 jobs:
-  webdav-lock:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt
-      - name: Format WebDAV Rust module and verify dependencies
-        run: |
-          cargo fmt --manifest-path src-tauri/Cargo.toml
-          cargo metadata --locked --manifest-path src-tauri/Cargo.toml --format-version=1 --no-deps >/dev/null
-          echo WEB_DAV_SOURCE_BEGIN
-          base64 -w0 src-tauri/src/webdav.rs
-          echo
-          echo WEB_DAV_SOURCE_END
-          echo WEB_DAV_SYNCER_BEGIN
-          base64 -w0 src-tauri/src/syncer.rs
-          echo
-          echo WEB_DAV_SYNCER_END
-          echo WEB_DAV_DESKTOP_BEGIN
-          base64 -w0 src-tauri/src/desktop.rs
-          echo
-          echo WEB_DAV_DESKTOP_END
-          echo WEB_DAV_MOBILE_BEGIN
-          base64 -w0 src-tauri/src/mobile.rs
-          echo
-          echo WEB_DAV_MOBILE_END
-          echo WEB_DAV_NOTES_BEGIN
-          base64 -w0 src-tauri/src/notes.rs
-          echo
-          echo WEB_DAV_NOTES_END
   webdav-server-test:
     runs-on: ubuntu-24.04
     steps:
