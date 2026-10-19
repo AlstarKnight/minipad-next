@@ -218,7 +218,9 @@ pub fn update_status(state: &str, message: &str) {
     current.message = message.into();
     if state != "syncing" {
         let time = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
-        current.last_time = time.clone();
+        if matches!(state, "synced" | "conflict") {
+            current.last_time = time.clone();
+        }
         current.history.insert(0, format!("{time} {message}"));
         current.history.truncate(50);
     }
