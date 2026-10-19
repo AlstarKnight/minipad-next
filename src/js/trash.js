@@ -72,7 +72,7 @@ function render() {
       name.textContent = it.name;
       const meta = document.createElement("div");
       meta.className = "ti-meta";
-      const from = it.kind === "book" ? `笔记本 · ${it.pages} 页` : `来自「${bookLabel({ name: it.book })}」`;
+      const from = it.kind === "book" ? `笔记本 · ${it.pages} 页` : it.kind === "file" ? "WebDAV 同步文件" : `来自「${bookLabel({ name: it.book })}」`;
       meta.textContent = `${from} · ${when(it.deleted)} 删除`;
       body.append(name, meta);
       if (it.preview) {
