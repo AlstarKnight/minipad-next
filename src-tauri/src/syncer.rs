@@ -75,6 +75,7 @@ pub fn first_sync(local: Option<&str>, remote: Option<&str>, mode: FirstSync) ->
     }
 }
 
+#[cfg(test)]
 pub fn deletion_needs_confirmation(delete_count: usize, all_pages: usize) -> bool {
     deletion_needs_confirmation_with(delete_count, all_pages, 20, 3)
 }
@@ -312,6 +313,7 @@ fn stamp_record(root: &Path, path: &str, mut record: FileRecord) -> FileRecord {
 }
 
 /// 本机按与 WebDAV 一致的白名单扫描，拒绝符号链接和超出笔记本层级的目录。
+#[cfg(test)]
 pub fn local_files(root: &Path, images: bool) -> Result<BTreeMap<String, String>, String> {
     local_files_cached(root, images, None)
 }
