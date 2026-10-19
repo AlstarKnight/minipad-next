@@ -1758,14 +1758,15 @@ fn webdav_forget(app: AppHandle) -> Result<(), String> {
     let file = crate::syncer::journal_path(
         &folder, &s.webdav_server, &s.webdav_user, &s.webdav_folder,
     );
+    match webdav_credential(&s)?.delete_credential() {
+        Ok(()) | Err(keyring::Error::NoEntry) => {}
+        Err(e) => return Err(format!("无法清除系统凭据中的 WebDAV 密码：{e}")),
+    }
     match fs::remove_file(file) {
         Ok(()) => {}
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
         Err(e) => return Err(format!("无法清除同步记录：{e}")),
     }
-    let _ = webdav_credential(&s).and_then(|entry| {
-        entry.delete_credential().map_err(|e| e.to_string())
-    });
     app.state::<AppState>().settings.lock().unwrap().webdav_enabled = false;
     persist_settings(&app);
     crate::syncer::update_status("off", "已断开，笔记没有被删除");
