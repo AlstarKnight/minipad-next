@@ -789,7 +789,7 @@ mod tests {
         while Instant::now() < until {
             if client
                 .get("page.md")
-                .is_ok_and(|(bytes, _)| bytes == b"older")
+                .is_ok_and(|(bytes, _)| bytes.as_slice() == b"older")
             {
                 uploaded = true;
                 break;
