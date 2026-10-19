@@ -177,6 +177,8 @@
     <label class="sync-field">状态显示<select id="ms-display"><option value="icon">图标</option><option value="text">图标和文字</option><option value="none">隐藏</option></select></label>
     <div class="sync-field"><span>同步状态颜色（留空跟随强调色）</span><div id="ms-color" class="accent-swatches" role="radiogroup" aria-label="同步状态颜色"></div></div>
     <p class="sheet-note">大量删除（超过 20 页或总数三分之一）会暂停并询问。</p>
+    <label class="sync-field">单次页面数量上限<input id="ms-delete-limit" type="number" min="1" max="1000" value="20"></label>
+    <label class="sync-field">页面数量比例：超过 1/N 时确认（N）<input id="ms-delete-divisor" type="number" min="1" max="10" value="3"></label>
     <div class="sync-actions"><button type="button" id="ms-save-config">保存同步设置</button><button type="button" id="ms-test">测试连接</button><button type="button" id="ms-run">立即同步</button><button type="button" id="ms-forget">断开同步</button></div>
     <p id="ms-result" class="sheet-note" role="status"></p>
     <details><summary>最近同步记录</summary><pre id="ms-history"></pre></details>
