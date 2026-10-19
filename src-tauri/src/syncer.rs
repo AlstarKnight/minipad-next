@@ -761,7 +761,7 @@ pub fn sync_once(
         .collect();
     for (path, action) in actions {
         let local_hash = local.get(&path).map(String::as_str);
-        let remote_file = remote.get_mut(&path);
+        let mut remote_file = remote.get_mut(&path);
         let prior = journal.files.get(&path).cloned();
         match action {
             Action::Skip => {
@@ -796,7 +796,7 @@ pub fn sync_once(
                 let local_data = checked_local!(&path, Some(hash));
                 let mut upload = local_data.clone();
                 if first && mode == FirstSync::Local && action == Action::Upload {
-                    if let Some(previous) = remote_file {
+                    if let Some(previous) = remote_file.as_deref_mut() {
                         let (old_bytes, _) = remote_content(client, &path, previous)?;
                         if content_hash(&path, &old_bytes) != previous.hash {
                             return Err(format!("「{path}」在同步期间再次修改，请重试"));
@@ -812,7 +812,7 @@ pub fn sync_once(
                     }
                 }
                 if action == Action::Conflict {
-                    let previous = remote_file.ok_or("冲突时远端文件不存在")?;
+                    let previous = remote_file.as_deref_mut().ok_or("冲突时远端文件不存在")?;
                     let (remote_data, _) = remote_content(client, &path, previous)?;
                     if content_hash(&path, &remote_data) != previous.hash {
                         return Err(format!("「{path}」在同步期间再次修改，请重试"));
@@ -872,7 +872,7 @@ pub fn sync_once(
                     if first && mode == FirstSync::Local {
                         None
                     } else {
-                        remote_file.map(|f| &f.entry)
+                        remote_file.as_deref().map(|f| &f.entry)
                     },
                 )?;
                 if upload != local_data {
