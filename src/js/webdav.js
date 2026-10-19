@@ -67,9 +67,9 @@ async function performWebdavSync(confirmed) {
   } catch (error) {
     const msg = String(error);
     if (msg.includes("WEB_DAV_CONFIRM_DELETE:")) {
-      const match = /WEB_DAV_CONFIRM_DELETE:(\d+):(\d+)/.exec(msg);
-      const count = match?.[1] || "多";
-      if (await ask(`本次同步要删除 ${count} 页，确定继续吗？取消后不会删除任何文件。`, "继续同步", true, true)) {
+      const match = /WEB_DAV_CONFIRM_DELETE:(\d+):(\d+):(\d+):(\d+)/.exec(msg);
+      const where = `本机 ${match?.[3] || 0} 页移进回收站，网盘上 ${match?.[4] || 0} 页移进远端 .trash`;
+      if (await ask(`本次同步涉及大量删除：${where}。确定继续吗？取消后不会删除任何文件。`, "继续同步", true, true)) {
         return performWebdavSync(true);
       }
     } else if (!msg.includes("离线")) {
