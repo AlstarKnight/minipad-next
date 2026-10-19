@@ -569,7 +569,7 @@ const syncDefaults = {
   enabled: false, server: "", user: "", folder: "/MinipadNext/",
   allow_http: false, images: true, first_mode: "merge",
   on_start: true, after_save: true, delay: 30, interval: 5,
-  on_hide: true, display: "icon",
+  on_hide: true, display: "icon", status_color: "",
 };
 let syncSettings = (() => {
   try { return { ...syncDefaults, ...JSON.parse(localStorage.getItem(SYNC_KEY) || "{}") }; }
@@ -592,6 +592,7 @@ function updateSyncForm() {
     else el(id).value = String(value);
   }
   el("ms-password").value = "";
+  for (const b of el("ms-color").children) b.setAttribute("aria-checked", String(b.dataset.color === syncSettings.status_color));
 }
 function readSyncForm() {
   return {
@@ -608,6 +609,7 @@ function readSyncForm() {
     interval: Number(el("ms-interval").value),
     on_hide: el("ms-hide").checked,
     display: el("ms-display").value,
+    status_color: el("ms-color").dataset.selected || "",
   };
 }
 async function saveSyncForm() {
@@ -627,6 +629,7 @@ async function showSyncStatus() {
   try {
     const result = await invoke("mobile_webdav_status");
     el("mobile-sync-state").textContent = syncSettings.enabled ? "WebDAV：" + (result.state || "未同步") : "同步未开启";
+    el("mobile-sync-state").style.color = syncSettings.status_color || "var(--accent)";
     el("mobile-sync-message").textContent = result.message || "尚无同步记录";
     el("ms-history").textContent = (result.history || []).join("\n");
     el("ms-result").textContent = result.message || "";
@@ -673,7 +676,21 @@ function updateSyncTimers() {
     syncTimer = setInterval(() => { if (!document.hidden) void mobileSync(); }, min * 60_000);
   }
 }
+for (const option of [{ value: "", name: "跟随强调色" }, ...ACCENTS.filter(x => x.value)]) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.dataset.color = option.value;
+  button.setAttribute("aria-label", option.name);
+  button.title = option.name;
+  button.style.setProperty("--sw", option.value || "var(--accent)");
+  button.addEventListener("click", () => {
+    el("ms-color").dataset.selected = option.value;
+    for (const item of el("ms-color").children) item.setAttribute("aria-checked", String(item === button));
+  });
+  el("ms-color").append(button);
+}
 el("open-sync-settings").addEventListener("click", () => {
+  el("ms-color").dataset.selected = syncSettings.status_color || "";
   if (!drawer.hidden) toggleDrawer(false);
   updateSyncForm();
   el("mobile-webdav-settings").hidden = false;
