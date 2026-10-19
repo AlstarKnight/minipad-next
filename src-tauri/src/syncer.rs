@@ -888,20 +888,23 @@ pub fn sync_once(
                         remote_file.as_deref().map(|f| &f.entry)
                     },
                 )?;
-                if upload != local_data {
+                let record = {
                     let _lock = WRITE_LOCK.lock().map_err(|e| e.to_string())?;
+                    // 上传期间页面仍可编辑；完成前复查，避免旧哈希绑定新的修改时间。
                     checked_local!(&path, Some(hash));
-                    crate::notes::write_atomic_bytes(&root.join(&path), &upload)?;
-                    report.changed.push(path.clone());
-                }
-                journal.files.insert(
-                    path.clone(),
+                    if upload != local_data {
+                        crate::notes::write_atomic_bytes(&root.join(&path), &upload)?;
+                    }
                     stamp_record(
                         root,
                         &path,
                         record_for(&path, &upload, etag, Some(upload.len() as u64), None),
-                    ),
-                );
+                    )
+                };
+                if upload != local_data {
+                    report.changed.push(path.clone());
+                }
+                journal.files.insert(path.clone(), record);
                 report.uploaded += 1;
             }
             Action::Download => {
