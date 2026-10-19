@@ -16,7 +16,13 @@ export function findLocalPaths(text) {
     if (!wrapped) {
       // 网址、单词和其它路径片段中间出现的盘符，不视作一个新路径。
       const before = text[begin - 1];
-      if (begin > 0 && !/[\s([{（，；]/.test(before)) continue;
+      if (begin > 0 && /[A-Za-z0-9_:\/\\]/.test(before)) continue;
+      // 汉字可紧挨路径；扩展名后的说明文字不属于文件名。
+      const chineseTail = /(?<=\.[A-Za-z0-9]{1,12})[\u3400-\u9fff]+$/.exec(path);
+      if (chineseTail) {
+        path = path.slice(0, -chineseTail[0].length);
+        end -= chineseTail[0].length;
+      }
       const suffix = trailing.exec(path);
       if (suffix) {
         path = path.slice(0, -suffix[0].length);
