@@ -4660,7 +4660,7 @@ describe("0.3.2: settings in five categories", () => {
     assert.ok(await p.isHidden("#set-hotkey"));
     assert.deepEqual(
       await p.$$eval('.set-page[data-page="edit"] h3', (els) => els.map((e) => e.textContent)),
-      ["编辑器", "块管理", "悬浮工具栏", "悬浮目录", "查找替换"],
+      ["编辑器", "链接", "块管理", "悬浮工具栏", "悬浮目录", "查找替换"],
       "with a small heading for each part",
     );
     await p.keyboard.press("ArrowDown");
@@ -6735,7 +6735,9 @@ describe("0.4.4: interface styles", () => {
     assert.equal(await root(p, "data-side"), null);
     assert.ok(await p.locator("#side").isHidden());
   });
+});
 
+suite("0.4.5: local file paths", { concurrency: 1 }, () => {
   ui("local file links are decorated and settings survive reopening", {
     seed: seed({ "": { "路径": "打开 C:\\docs\\note.pdf 并查看。" } }),
   }, async (h) => {
