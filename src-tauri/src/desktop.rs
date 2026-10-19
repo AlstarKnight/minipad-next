@@ -174,6 +174,21 @@ pub struct Settings {
     find_color: String,
     /// 同一页在这里和别处(网盘同步)都改过:copy 把那边的版本另存为冲突副本 / overwrite 用这边的覆盖
     conflict_mode: String,
+    /// WebDAV 同步默认关闭，只有用户完成账号设置后才可运行。
+    webdav_enabled: bool,
+    webdav_server: String,
+    webdav_user: String,
+    webdav_folder: String,
+    webdav_allow_http: bool,
+    webdav_first_mode: String,
+    webdav_images: bool,
+    webdav_on_start: bool,
+    webdav_after_save: bool,
+    webdav_delay_seconds: u32,
+    webdav_interval_minutes: u32,
+    webdav_on_hide: bool,
+    webdav_status_style: String,
+    webdav_status_color: String,
     /// 正文中识别 Windows 本地文件路径。
     local_path_enabled: bool,
     /// ctrl 按 Ctrl 点击 / click 单击。
@@ -326,6 +341,20 @@ impl Default for Settings {
             find_bar_pos: "top".into(),
             find_color: String::new(),
             conflict_mode: "copy".into(),
+            webdav_enabled: false,
+            webdav_server: String::new(),
+            webdav_user: String::new(),
+            webdav_folder: "/MinipadNext/".into(),
+            webdav_allow_http: false,
+            webdav_first_mode: "merge".into(),
+            webdav_images: true,
+            webdav_on_start: true,
+            webdav_after_save: true,
+            webdav_delay_seconds: 30,
+            webdav_interval_minutes: 5,
+            webdav_on_hide: true,
+            webdav_status_style: "icon".into(),
+            webdav_status_color: String::new(),
             local_path_enabled: true,
             local_path_click: "ctrl".into(),
             local_path_color: String::new(),
@@ -853,6 +882,13 @@ fn tidy_settings(s: &mut Settings) {
     tidy_color(&mut s.find_color);
     tidy_color(&mut s.outline_color);
     tidy_color(&mut s.local_path_color);
+    tidy_color(&mut s.webdav_status_color);
+    s.webdav_delay_seconds = s.webdav_delay_seconds.clamp(10, 300);
+    if ![0, 1, 5, 15, 30].contains(&s.webdav_interval_minutes) {
+        s.webdav_interval_minutes = 5;
+    }
+    pick_one(&mut s.webdav_first_mode, &["merge", "remote", "local"]);
+    pick_one(&mut s.webdav_status_style, &["icon", "text", "none"]);
     pick_one(&mut s.ctrl_f, &["page", "all"]);
     pick_one(&mut s.color_layout, &["tabs", "rows"]);
     pick_one(
