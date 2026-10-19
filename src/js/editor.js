@@ -65,6 +65,12 @@ const localPathKey = new PluginKey("minipad-local-paths");
 const missingLocalPaths = new Map();
 
 // 通过 ProseMirror 的装饰事务更新，不直接改编辑器 DOM，避免触发重复解析。
+// Android 只切换本地路径文字装饰，不运行桌面专用的设置面板逻辑。
+export function setMobileLocalPathEnabled(enabled) {
+  pathSettings.local_path_enabled = enabled === true;
+  if (view) view.dispatch(view.state.tr.setMeta(localPathKey, true).setMeta("addToHistory", false));
+}
+
 export function markLocalPathMissing(path, missing) {
   if (missingLocalPaths.get(path) === missing) return;
   missingLocalPaths.set(path, missing);
