@@ -1101,7 +1101,12 @@ pub fn list_trash(root: &Path) -> Result<Vec<TrashItem>, String> {
 /// 回收站里 `id` 对应的文件或文件夹,和它在 .trash 里的位置(一层或两层)
 fn trash_path(root: &Path, id: &str) -> Result<(PathBuf, Vec<String>), String> {
     let parts: Vec<String> = id.split('/').map(String::from).collect();
-    if parts.is_empty() || parts.len() > 2 || parts.iter().any(|p| check_name(p).is_err()) {
+    let special = parts.first().is_some_and(|part| part == ".webdav");
+    if parts.is_empty()
+        || (special && (parts.len() < 2 || parts.len() > 5))
+        || (!special && parts.len() > 2)
+        || parts.iter().any(|p| check_name(p).is_err())
+    {
         return Err(format!("回收站里没有「{id}」"));
     }
     let path = parts
@@ -1117,6 +1122,23 @@ fn trash_path(root: &Path, id: &str) -> Result<(PathBuf, Vec<String>), String> {
 /// 重名时加编号。返回恢复后的 (笔记本, 页面名),恢复的是笔记本时页面名是空的
 pub fn restore_trash(root: &Path, id: &str) -> Result<(String, String), String> {
     let (path, parts) = trash_path(root, id)?;
+    if parts.first().is_some_and(|part| part == ".webdav") {
+        if !path.is_file() {
+            return Err("同步回收站中的原件已不存在".into());
+        }
+        let filename = parts.last().unwrap();
+        let (stem, extension) = filename.rsplit_once('.').unwrap_or((filename.as_str(), ""));
+        let (name, _) = split_stamp(stem).ok_or("同步回收文件名称无效")?;
+        let dir = parts[1..parts.len() - 1]
+            .iter()
+            .fold(root.to_path_buf(), |folder, part| folder.join(part));
+        fs::create_dir_all(&dir).map_err(|e| format!("恢复同步文件失败：{e}"))?;
+        let suffix = if extension.is_empty() { String::new() } else { format!(".{extension}") };
+        let destination = free_path(&dir, name, &suffix);
+        fs::rename(&path, destination).map_err(|e| format!("恢复同步文件失败：{e}"))?;
+        remove_if_empty(&path);
+        return Ok((String::new(), String::new()));
+    }
     if parts.len() == 1 && path.is_dir() {
         let Some((name, _)) = split_stamp(&parts[0]) else {
             return Err(format!("回收站里没有「{id}」"));
