@@ -1,7 +1,8 @@
 name: WebDAV integration
 on:
   push:
-    branches: [feature/0.4.5-webdav]
+    branches: [main, feature/0.4.5-webdav]
+  pull_request:
   workflow_dispatch:
 jobs:
   webdav-server-test:
