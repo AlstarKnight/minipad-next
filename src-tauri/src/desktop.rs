@@ -1803,12 +1803,7 @@ async fn webdav_sync_now(app: AppHandle, confirm_deletes: bool) -> Result<crate:
             &s.webdav_server, &s.webdav_user, &password, &s.webdav_folder, s.webdav_allow_http,
         )?;
         crate::syncer::sync_once(&client, &root, &journal, &options, || {
-            let today = chrono::Local::now().format("%Y-%m-%d").to_string();
-            if let Some(saved) = backup::run(&root, &backup_dest, &today, s.backup_keep as usize)? {
-                if !saved.skipped.is_empty() {
-                    return Err("首次同步备份有未能读取的文件，已取消同步".into());
-                }
-            }
+            backup::before_sync(&root, &backup_dest)?;
             Ok(())
         })
     }).await.map_err(|e| e.to_string())?;
