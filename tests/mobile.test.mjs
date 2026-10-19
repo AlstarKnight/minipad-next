@@ -104,6 +104,8 @@ async function open({ colorScheme, keyboard, look = { ui: "classic" } } = {}) {
           return "连接测试成功";
         }
         if (command === "mobile_webdav_sync_now") {
+          window.__mobileTest.syncCalls = (window.__mobileTest.syncCalls || 0) + 1;
+          if (window.__mobileTest.syncDelay) await new Promise(r => setTimeout(r, window.__mobileTest.syncDelay));
           window.__mobileTest.lastSync = args;
           return { uploaded: 0, downloaded: 0, deleted: 0, conflicts: 0, changed: [] };
         }
@@ -866,6 +868,24 @@ test("WebDAV settings stay on this phone and never put the password in localStor
     await page.waitForFunction(() => document.getElementById("ms-result").textContent.includes("连接测试成功"));
     await page.click("#ms-run");
     await page.waitForFunction(() => window.__mobileTest.lastSync?.config?.server === "https://dav.example.com/dav/");
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test("WebDAV queues a second Android sync instead of dropping it", async () => {
+  const { context, page, errors } = await open();
+  try {
+    await page.click("#open-drawer");
+    await page.click("#open-sync-settings");
+    await page.locator("#ms-enable").check();
+    await page.fill("#ms-server", "https://dav.example.com/");
+    await page.fill("#ms-user", "tester");
+    await page.click("#ms-save-config");
+    await page.waitForFunction(() => JSON.parse(localStorage.getItem("minipad-mobile-webdav") || "{}").enabled);
+    await page.evaluate(() => { window.__mobileTest.syncDelay = 350; });
+    await page.click("#ms-run");
+    await page.click("#ms-run");
+    await page.waitForFunction(() => window.__mobileTest.syncCalls === 2, { timeout: 6000 });
     assert.deepEqual(errors, []);
   } finally { await context.close(); }
 });
