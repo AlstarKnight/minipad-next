@@ -94,6 +94,11 @@ pub struct Book {
 }
 
 pub fn write_atomic(path: &Path, data: &str) -> Result<(), String> {
+    write_atomic_bytes(path, data.as_bytes())
+}
+
+/// 下载的图片也用与 Markdown 完全一致的原子写入路径。
+pub fn write_atomic_bytes(path: &Path, data: &[u8]) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
@@ -108,7 +113,7 @@ pub fn write_atomic(path: &Path, data: &str) -> Result<(), String> {
         .open(&tmp)
         .map_err(|e| e.to_string())?;
     let result = (|| {
-        file.write_all(data.as_bytes()).map_err(|e| e.to_string())?;
+        file.write_all(data).map_err(|e| e.to_string())?;
         file.sync_all().map_err(|e| e.to_string())?;
         drop(file);
         rename_with_retry(|| fs::rename(&tmp, path)).map_err(|e| e.to_string())
