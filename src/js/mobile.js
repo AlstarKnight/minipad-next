@@ -1,6 +1,6 @@
 // Android-only Milkdown editor. Persist Markdown; binary images go to the book's assets folder.
 import { $prose, Plugin, TextSelection } from "../vendor/milkdown.js";
-import { createEditor, editorDebug, showInEditor, syncContent, applyEditorSettings } from "./editor.js";
+import { createEditor, editorDebug, showInEditor, syncContent, setMobileLocalPathEnabled } from "./editor.js";
 import { state as desktopState } from "./state.js";
 import { setSelectionBar } from "./formatbar.js";
 import { ACCENTS, applyAccent, tidyAccent, parseAccent } from "./accent.js";
@@ -801,7 +801,7 @@ function setLook(change) {
   look = { ...look, ...change };
   try { localStorage.setItem(LOOK_KEY, JSON.stringify(look)); } catch { /* 这次照样生效,只是下次打开不记得 */ }
   applyLook();
-  applyEditorSettings({ ...desktopState.settings, local_path_enabled: look.local_path_enabled });
+  setMobileLocalPathEnabled(look.local_path_enabled);
 }
 
 function applyLook() {
@@ -951,7 +951,7 @@ async function start() {
       emptyBold: () => {},
     });
     view = editorDebug().view;
-    applyEditorSettings({ ...desktopState.settings, local_path_enabled: look.local_path_enabled });
+    setMobileLocalPathEnabled(look.local_path_enabled);
     view.dom.addEventListener("open-find", () => showFind(true));
     if (!invoke) throw new Error("请使用 Android 应用打开");
     await refresh(null, null);
