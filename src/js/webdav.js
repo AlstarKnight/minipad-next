@@ -115,13 +115,13 @@ export function resetWebdavTimers() {
   void webdavStatus().catch(() => {});
 }
 export function bindWebdav() {
-  if (isMiniWindow) return;
-  $("#st-webdav")?.addEventListener("click", () => void webdavRun());
   api.listen("webdav-changed", () => {
     void syncFromDisk(true);
     void webdavStatus();
   });
   document.addEventListener("webdav-saved", scheduleWebdavSave);
+  if (isMiniWindow) return;
+  $("#st-webdav")?.addEventListener("click", () => void webdavRun());
   document.addEventListener("visibilitychange", () => {
     if (document.hidden && enabled() && state.settings.webdav_on_hide !== false) {
       void webdavRun();
