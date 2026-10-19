@@ -349,6 +349,34 @@ mod tests {
     use super::*;
 
     #[test]
+    fn remote_version_is_reused_only_when_etag_or_fallback_matches() {
+        let old = FileRecord {
+            hash: "hash".into(),
+            etag: Some("v1".into()),
+            size: Some(12),
+            modified: Some("Mon".into()),
+        };
+        let mut entry = RemoteEntry {
+            href: "/notes/a.md".into(),
+            etag: Some("v1".into()),
+            size: Some(12),
+            modified: Some("Tue".into()),
+            directory: false,
+        };
+        assert!(unchanged_remote(&entry, &old));
+        entry.etag = Some("v2".into());
+        assert!(!unchanged_remote(&entry, &old));
+        entry.etag = None;
+        assert!(!unchanged_remote(&entry, &old));
+        let old_no_etag = FileRecord {
+            etag: None,
+            ..old
+        };
+        entry.modified = Some("Mon".into());
+        assert!(unchanged_remote(&entry, &old_no_etag));
+    }
+
+    #[test]
     fn journals_are_isolated_and_corruption_never_resets_deletion_history() {
         let root = crate::notes::temp_dir("webdav-journal");
         let a = journal_path(&root, "https://one.example", "me", "/MinipadNext/");
