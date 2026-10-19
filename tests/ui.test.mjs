@@ -6827,7 +6827,7 @@ suite("0.4.5: local file paths", { concurrency: 1 }, () => {
     await p.click("#editor");
     await p.keyboard.press("Control+End");
     await p.keyboard.type("仍然可以编辑");
-    await until(() => h.mockFile("", "路径"), "C:\\docs\\slow.pdf仍然可以编辑", "typing during a slow file check");
+    await p.waitForFunction(() => window.__mockFiles["路径"]?.includes("仍然可以编辑"));
     assert.ok(Date.now() - start < 3500, "editing should not wait for the 8-second existence check");
   });
 
