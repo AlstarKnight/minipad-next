@@ -1,6 +1,6 @@
 // Android-only Milkdown editor. Persist Markdown; binary images go to the book's assets folder.
 import { $prose, Plugin, TextSelection } from "../vendor/milkdown.js";
-import { createEditor, editorDebug, showInEditor, syncContent } from "./editor.js";
+import { createEditor, editorDebug, showInEditor, syncContent, applyEditorSettings } from "./editor.js";
 import { state as desktopState } from "./state.js";
 import { setSelectionBar } from "./formatbar.js";
 import { ACCENTS, applyAccent, tidyAccent, parseAccent } from "./accent.js";
@@ -787,6 +787,7 @@ function loadLook() {
     cats: saved.cats !== false,
     fab: saved.fab !== false,
     debug: saved.debug === true,
+    local_path_enabled: saved.local_path_enabled === true,
   };
 }
 
@@ -794,6 +795,7 @@ function setLook(change) {
   look = { ...look, ...change };
   try { localStorage.setItem(LOOK_KEY, JSON.stringify(look)); } catch { /* 这次照样生效,只是下次打开不记得 */ }
   applyLook();
+  applyEditorSettings({ ...desktopState.settings, local_path_enabled: look.local_path_enabled });
 }
 
 function applyLook() {
@@ -817,6 +819,7 @@ function applyLook() {
   el("look-cats").checked = look.cats;
   el("look-fab").checked = look.fab;
   el("look-debug").checked = look.debug;
+  el("look-local-path").checked = look.local_path_enabled;
   el("viewport-debug").hidden = !look.debug;
   if (look.debug) requestAnimationFrame(fitViewport);
   renderDrawer();
@@ -839,6 +842,7 @@ el("look-stars").addEventListener("change", (e) => setLook({ stars: e.target.che
 el("look-cats").addEventListener("change", (e) => setLook({ cats: e.target.checked }));
 el("look-fab").addEventListener("change", (e) => setLook({ fab: e.target.checked }));
 el("look-debug").addEventListener("change", (e) => setLook({ debug: e.target.checked }));
+el("look-local-path").addEventListener("change", (e) => setLook({ local_path_enabled: e.target.checked }));
 systemDark.addEventListener("change", applyLook);
 
 function showSettings(open) {
@@ -941,6 +945,7 @@ async function start() {
       emptyBold: () => {},
     });
     view = editorDebug().view;
+    applyEditorSettings({ ...desktopState.settings, local_path_enabled: look.local_path_enabled });
     view.dom.addEventListener("open-find", () => showFind(true));
     if (!invoke) throw new Error("请使用 Android 应用打开");
     await refresh(null, null);
