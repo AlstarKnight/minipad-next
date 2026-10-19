@@ -389,15 +389,11 @@ impl WebdavClient {
     }
 
     /// MOVE 也附带远程版本条件，避免扫描后别人刚改过文件就被移入回收站。
-    pub fn move_file(
-        &self,
-        from: &str,
-        to: &str,
-        previous: &RemoteEntry,
-    ) -> Result<(), String> {
+    pub fn move_file(&self, from: &str, to: &str, previous: &RemoteEntry) -> Result<(), String> {
         let method = Method::from_bytes(b"MOVE").map_err(|e| e.to_string())?;
         let dest = self.url_for(to)?;
-        let mut request = self.request(method, self.url_for(from)?)
+        let mut request = self
+            .request(method, self.url_for(from)?)
             .header("Destination", dest.as_str())
             .header("Overwrite", "F");
         if let Some(etag) = previous.etag.as_deref() {
