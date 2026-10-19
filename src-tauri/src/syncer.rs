@@ -249,7 +249,13 @@ pub fn journal_path_for_root(
     user: &str,
     folder: &str,
 ) -> PathBuf {
-    let identity = format!("{}\n{}\n{}\n{}", server, user, folder, root.to_string_lossy());
+    let identity = format!(
+        "{}\n{}\n{}\n{}",
+        server,
+        user,
+        folder,
+        root.to_string_lossy()
+    );
     let digest = Sha256::digest(identity.as_bytes());
     data_dir.join(format!("webdav-{:x}.json", digest))
 }
@@ -718,7 +724,15 @@ pub fn sync_once(
                     ensure_parent(client, &path)?;
                 }
                 // 只有真实存在的远端文件才允许 If-Match/If-Unmodified-Since。
-                let etag = client.put(&path, upload.clone(), if first && mode == FirstSync::Local { None } else { remote_file.map(|f| &f.entry) })?;
+                let etag = client.put(
+                    &path,
+                    upload.clone(),
+                    if first && mode == FirstSync::Local {
+                        None
+                    } else {
+                        remote_file.map(|f| &f.entry)
+                    },
+                )?;
                 if upload != local_data {
                     let _lock = WRITE_LOCK.lock().map_err(|e| e.to_string())?;
                     checked_local!(&path, Some(hash));
@@ -853,8 +867,20 @@ mod tests {
     #[test]
     fn changing_notes_root_starts_a_new_sync_history() {
         let root = crate::notes::temp_dir("webdav-roots");
-        let a = journal_path_for_root(&root, &root.join("notes-a"), "https://one.example", "me", "/");
-        let b = journal_path_for_root(&root, &root.join("notes-b"), "https://one.example", "me", "/");
+        let a = journal_path_for_root(
+            &root,
+            &root.join("notes-a"),
+            "https://one.example",
+            "me",
+            "/",
+        );
+        let b = journal_path_for_root(
+            &root,
+            &root.join("notes-b"),
+            "https://one.example",
+            "me",
+            "/",
+        );
         save_journal(&a, &Journal::default()).unwrap();
         assert_ne!(a, b);
         assert!(read_journal(&b).unwrap().1);
