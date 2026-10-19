@@ -578,8 +578,8 @@ export function mockApi() {
     expand_from_ball: () => {},
     open_notes_dir: () => toast("(预览)会在资源管理器里打开笔记文件夹"),
     open_link: ({ url }) => void window.open(url, "_blank", "noopener"),
-    webdav_test: () => {
-      if (!db.settings?.webdav_server) throw "请先填写服务器地址";
+    webdav_test: (draft = {}) => {
+      if (!draft.server && !db.settings?.webdav_server) throw "请先填写服务器地址";
       return "连接成功，目录读取和写入测试通过（预览模拟）";
     },
     webdav_set_password: () => {},
@@ -590,8 +590,15 @@ export function mockApi() {
     }),
     webdav_sync_now: () => ({ uploaded: 0, downloaded: 0, deleted: 0, conflicts: 0, changed: [] }),
     webdav_forget: () => { db.settings.webdav_enabled = false; persist(); },
-    local_path_exists: () => false,
-    open_path: ({ path }) => toast("(预览)本地路径：" + path),
+    local_path_exists: async ({ path }) => {
+      const control = window.__mockControl;
+      if (control?.slowLocalPathMs) await new Promise(resolve => setTimeout(resolve, control.slowLocalPathMs));
+      return !!control?.existingLocalPaths?.includes(path);
+    },
+    open_path: ({ path, reveal, confirmed }) => {
+      if (window.__mockControl) (window.__mockControl.openedPaths ||= []).push({ path, reveal, confirmed });
+      toast("(预览)本地路径：" + path);
+    },
     quit_ack: () => true,
     quit_cancel: () => {},
     show_window: () => {},
