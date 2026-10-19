@@ -47,6 +47,7 @@ async function performWebdavSync(confirmed) {
     await flushAll();
     await saveMeta();
     const result = await api.invoke("webdav_sync_now", { confirmDeletes: confirmed });
+    if (result?.rescan_needed) rerun = true;
     await webdavStatus();
     return result;
   } catch (error) {
