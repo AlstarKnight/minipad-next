@@ -42,6 +42,8 @@ export async function webdavStatus() {
     bar.style.webkitBackgroundClip = color?.to ? "text" : "";
     bar.style.webkitTextFillColor = color?.to ? "transparent" : "";
   }
+  const last = document.getElementById("set-webdav-last");
+  if (last) last.textContent = `上次成功同步：${status.last_time || "尚无"}`;
   const info = $("#set-webdav-info");
   if (info) info.textContent = status.message || "WebDAV 尚未同步";
   const history = $("#set-webdav-history");
