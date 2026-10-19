@@ -861,6 +861,19 @@ mod tests {
     }
 
     #[test]
+    fn conflicting_order_keeps_unrelated_remote_changes() {
+        use serde_json::json;
+        let base = json!({"order":["旧"], "icon":"book", "pinned":[]});
+        let ours = json!({"order":["本地"], "icon":"book", "pinned":["重要"]});
+        let theirs = json!({"order":["远端"], "icon":"star", "pinned":[]});
+        let (merged, conflicts) = merge_metadata(Some(&base), &ours, &theirs).unwrap();
+        assert_eq!(conflicts, vec!["order".to_string()]);
+        assert_eq!(merged["order"], json!(["本地"]));
+        assert_eq!(merged["icon"], "star");
+        assert_eq!(merged["pinned"], json!(["重要"]));
+    }
+
+    #[test]
     fn page_navigation_changes_do_not_change_metadata_hash() {
         let a = r#"{"active":"页1","order":["页1"],"modes":{"页1":"edit"}}"#.as_bytes();
         let b = r#"{"active":"页2","order":["页1"],"modes":{"页1":"view"}}"#.as_bytes();
