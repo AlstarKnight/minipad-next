@@ -392,7 +392,15 @@ pub fn remote_files(
     journal: &Journal,
 ) -> Result<BTreeMap<String, RemoteFile>, String> {
     let mut entries = Vec::new();
-    for (path, entry) in client.list("")? {
+    let roots = match client.list("") {
+        Ok(entries) => entries,
+        Err(message) if message.contains("HTTP 404") => {
+            client.mkcol("")?;
+            client.list("")?
+        }
+        Err(message) => return Err(message),
+    };
+    for (path, entry) in roots {
         if entry.directory {
             let book = path.trim_end_matches('/');
             if book.is_empty() || book.starts_with('.') || book.contains('/') {
