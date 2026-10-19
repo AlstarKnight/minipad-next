@@ -890,20 +890,25 @@ pub fn sync_once(
                 )?;
                 let record = {
                     let _lock = WRITE_LOCK.lock().map_err(|e| e.to_string())?;
-                    // 上传期间页面仍可编辑；完成前复查，避免旧哈希绑定新的修改时间。
-                    checked_local!(&path, Some(hash));
-                    if upload != local_data {
-                        crate::notes::write_atomic_bytes(&root.join(&path), &upload)?;
+                    let mut record =
+                        record_for(&path, &upload, etag, Some(upload.len() as u64), None);
+                    match check_local(root, &path, Some(hash)) {
+                        Ok(_) => {
+                            if upload != local_data {
+                                crate::notes::write_atomic_bytes(&root.join(&path), &upload)?;
+                                report.changed.push(path.clone());
+                            }
+                            record = stamp_record(root, &path, record);
+                        }
+                        Err(message) if message.contains("在扫描后") => {
+                            // PUT 已成功。记住新的远端版本，但留空本地时间戳，
+                            // 下次重新计算本机哈希，避免把自己的上传误判为冲突。
+                            report.rescan_needed = true;
+                        }
+                        Err(message) => return Err(message),
                     }
-                    stamp_record(
-                        root,
-                        &path,
-                        record_for(&path, &upload, etag, Some(upload.len() as u64), None),
-                    )
+                    record
                 };
-                if upload != local_data {
-                    report.changed.push(path.clone());
-                }
                 journal.files.insert(path.clone(), record);
                 report.uploaded += 1;
             }
@@ -999,7 +1004,8 @@ pub fn sync_once(
             report.changed.push(format!("{book}/"));
         }
     }
-    if first && !report.rescan_needed {
+    if first {
+        // 首次优先模式只应用一轮；补扫时按普通三方比较保留新页面。
         journal.initial_mode = None;
         save_journal(journal_file, &journal)?;
     }
