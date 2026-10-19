@@ -328,35 +328,39 @@ impl WebdavClient {
         Self::result(response, accepted)
     }
 
-    /// 验证返回的 href 仍位于配置的远程文件夹下，拒绝越界和编码后的斜杠。
+    /// 按解码后的 URL 路径段比较，兼容服务端大小写不同的百分号编码。
     pub fn relative_href(&self, href: &str) -> Result<String, String> {
-        let url = self
-            .root
-            .join(href)
-            .map_err(|_| "WebDAV 返回了无效的文件地址")?;
+        fn decode(url: &Url) -> Result<Vec<String>, String> {
+            let mut result = Vec::new();
+            for part in url.path_segments().ok_or("WebDAV 文件地址格式错误")? {
+                if part.is_empty() {
+                    continue;
+                }
+                let name = percent_encoding::percent_decode_str(part)
+                    .decode_utf8()
+                    .map_err(|_| "WebDAV 路径不是 UTF-8")?;
+                if !valid_part(&name) {
+                    return Err("WebDAV 返回了不安全的文件名".into());
+                }
+                result.push(name.into_owned());
+            }
+            Ok(result)
+        }
+        let url = self.root.join(href).map_err(|_| "WebDAV 返回了无效的文件地址")?;
         if url.scheme() != self.root.scheme()
             || url.host() != self.root.host()
             || url.port_or_known_default() != self.root.port_or_known_default()
-            || !url.path().starts_with(self.root.path())
         {
             return Err("WebDAV 返回的文件地址不在同步目录内".into());
         }
-        let suffix = &url.path()[self.root.path().len()..];
-        if suffix.is_empty() {
-            return Ok(String::new());
+        let root_parts = decode(&self.root)?;
+        let parts = decode(&url)?;
+        if !parts.starts_with(&root_parts) {
+            return Err("WebDAV 返回的文件地址不在同步目录内".into());
         }
-        let mut parts = Vec::new();
-        for part in suffix.trim_end_matches('/').split('/') {
-            let decoded = percent_encoding::percent_decode_str(part)
-                .decode_utf8()
-                .map_err(|_| "WebDAV 路径不是 UTF-8")?;
-            if !valid_part(&decoded) {
-                return Err("WebDAV 返回了不安全的文件名".into());
-            }
-            parts.push(decoded.into_owned());
-        }
-        let mut path = parts.join("/");
-        if suffix.ends_with('/') {
+        let suffix = &parts[root_parts.len()..];
+        let mut path = suffix.join("/");
+        if !path.is_empty() && url.path().ends_with('/') {
             path.push('/');
         }
         Ok(path)
