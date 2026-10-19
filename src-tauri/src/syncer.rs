@@ -1082,6 +1082,21 @@ mod tests {
     }
 
     #[test]
+    fn upload_must_recheck_local_contents_before_recording_completion() {
+        let root = crate::notes::temp_dir("webdav-upload-race");
+        let path = root.join("test.md");
+        fs::write(&path, "同步前内容").unwrap();
+        let original = content_hash("test.md", &fs::read(&path).unwrap());
+        assert!(check_local(&root, "test.md", Some(&original)).is_ok());
+        // 远端上传期间，编辑器可能把页面更新为另一个版本。
+        fs::write(&path, "上传途中修改").unwrap();
+        assert!(check_local(&root, "test.md", Some(&original))
+            .unwrap_err()
+            .contains("在扫描后被修改"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn unchanged_local_snapshot_uses_journal_hash() {
         let root = crate::notes::temp_dir("webdav-cache");
         let path = root.join("note.md");
