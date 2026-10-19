@@ -4,10 +4,12 @@ import { state } from "./state.js";
 import { $ } from "./dom.js";
 import { ask, toast } from "./ui.js";
 import { syncFromDisk } from "./sync.js";
+import { flushAll, saveMeta } from "./save.js";
 
 let deferred = null;
 let periodic = null;
 let running = null;
+let rerun = false;
 
 const enabled = () => state.settings?.webdav_enabled === true;
 const states = {
@@ -33,30 +35,44 @@ export async function webdavStatus() {
   return status;
 }
 
+async function performWebdavSync(confirmed) {
+  try {
+    await flushAll();
+    await saveMeta();
+    const result = await api.invoke("webdav_sync_now", { confirmDeletes: confirmed });
+    await webdavStatus();
+    return result;
+  } catch (error) {
+    const msg = String(error);
+    if (msg.includes("WEB_DAV_CONFIRM_DELETE:")) {
+      const match = /WEB_DAV_CONFIRM_DELETE:(\d+):(\d+)/.exec(msg);
+      const count = match?.[1] || "多";
+      if (await ask(`本次同步要删除 ${count} 页，确定继续吗？取消后不会删除任何文件。`, "继续同步", true, true)) {
+        return performWebdavSync(true);
+      }
+    } else if (!msg.includes("离线")) {
+      toast(msg, 6500);
+    }
+    await webdavStatus().catch(() => {});
+  }
+}
+
 export async function webdavRun(confirmed = false) {
   if (!enabled()) return;
-  if (running) return running;
+  if (running) {
+    rerun = true;
+    return running;
+  }
   running = (async () => {
-    try {
-      const result = await api.invoke("webdav_sync_now", { confirmDeletes: confirmed });
-      await webdavStatus();
-      return result;
-    } catch (error) {
-      const msg = String(error);
-      if (msg.includes("WEB_DAV_CONFIRM_DELETE:")) {
-        const match = /WEB_DAV_CONFIRM_DELETE:(\d+):(\d+)/.exec(msg);
-        const count = match?.[1] || "多";
-        if (await ask(`本次同步要删除 ${count} 页，确定继续吗？取消后不会删除任何文件。`, "继续同步", true)) {
-          running = null;
-          return webdavRun(true);
-        }
-      } else if (!msg.includes("离线")) {
-        toast(msg, 6500);
-      }
-      await webdavStatus().catch(() => {});
-    } finally { running = null; }
+    let initial = confirmed;
+    do {
+      rerun = false;
+      await performWebdavSync(initial);
+      initial = false;
+    } while (rerun && enabled());
   })();
-  return running;
+  try { return await running; }
+  finally { running = null; }
 }
 
 export async function webdavSavePassword(password) {
