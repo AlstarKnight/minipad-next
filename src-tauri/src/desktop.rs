@@ -3817,6 +3817,22 @@ mod tests {
     }
 
     #[test]
+    fn executable_extensions_are_checked_case_insensitively() {
+        for path in ["C:/tools/start.EXE", "C:/tools/run.Ps1", "C:/tools/link.LNK"] {
+            assert!(is_executable_path(Path::new(path)), "{path}");
+        }
+        for path in ["C:/notes/report.md", "C:/notes/fake.exe.txt"] {
+            assert!(!is_executable_path(Path::new(path)), "{path}");
+        }
+    }
+
+    #[test]
+    fn path_command_rejects_relative_paths() {
+        assert!(parse_local_path("readme.md").is_err());
+        assert!(parse_local_path("https://example.com/file").is_err());
+    }
+
+    #[test]
     fn configured_storage_paths_are_never_overwritten() {
         let mut settings = Settings {
             notes_dir: "D:\\\\notes".into(),
