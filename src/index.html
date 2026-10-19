@@ -422,7 +422,14 @@
             <label class="row check"><input id="set-code-lines" type="checkbox" /> <span>代码块显示行号</span></label>
             <label class="row check"><input id="set-code-lang-menu" type="checkbox" /> <span>点代码块的语言时列出常用语言(也可以直接输入)</span></label>
             <label class="row check"><input id="set-code-title-color" type="checkbox" /> <span>代码块标题旁显示色块,可以给标题选颜色</span></label>
+            <h3>链接</h3>
             <label class="row check"><input id="set-email-links" type="checkbox" /> <span>自动将邮箱地址识别为链接（默认关闭；手动链接不受影响）</span></label>
+            <label class="row check"><input id="set-local-path" type="checkbox" /> <span>识别本地文件路径</span></label>
+            <label class="row"><span>打开本地路径</span><select id="set-local-path-click"><option value="ctrl">Ctrl+点击</option><option value="click">单击</option></select></label>
+            <div class="row col"><span>本地路径颜色（留空跟随链接颜色）</span><div id="set-local-path-color" class="swatches"></div></div>
+            <label class="row"><span>下划线</span><select id="set-local-path-underline"><option value="dashed">虚线</option><option value="solid">实线</option><option value="none">无</option></select></label>
+            <label class="row check"><input id="set-local-path-missing" type="checkbox" /> <span>不存在的路径显示灰色</span></label>
+            <label class="row check"><input id="set-local-path-confirm" type="checkbox" /> <span>运行可执行文件和脚本前确认</span></label>
             <label class="row"><span>代码块退出方式</span><select id="set-code-exit">
               <option value="blank3">第三次 Enter 退出（默认）</option>
               <option value="blank2">第二次 Enter 退出</option>
