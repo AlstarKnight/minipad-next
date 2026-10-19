@@ -23,3 +23,15 @@ jobs:
           base64 -w0 src-tauri/src/syncer.rs
           echo
           echo WEB_DAV_SYNCER_END
+          echo WEB_DAV_DESKTOP_BEGIN
+          base64 -w0 src-tauri/src/desktop.rs
+          echo
+          echo WEB_DAV_DESKTOP_END
+          echo WEB_DAV_MOBILE_BEGIN
+          base64 -w0 src-tauri/src/mobile.rs
+          echo
+          echo WEB_DAV_MOBILE_END
+          echo WEB_DAV_NOTES_BEGIN
+          base64 -w0 src-tauri/src/notes.rs
+          echo
+          echo WEB_DAV_NOTES_END
