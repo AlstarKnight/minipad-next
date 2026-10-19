@@ -6737,11 +6737,11 @@ describe("0.4.4: interface styles", () => {
   });
 
   ui("local file links are decorated and settings survive reopening", {
-    seed: seed({ "": { "路径": "打开 C:\\\\docs\\\\note.pdf 并查看。" } }),
+    seed: seed({ "": { "路径": "打开 C:\\docs\\note.pdf 并查看。" } }),
   }, async (h) => {
     const { p } = h;
     await p.locator("#editor .local-file-path").waitFor();
-    assert.equal(await p.locator("#editor .local-file-path").first().getAttribute("data-local-path"), "C:\\\\docs\\\\note.pdf");
+    assert.equal(await p.locator("#editor .local-file-path").first().getAttribute("data-local-path"), "C:\\docs\\note.pdf");
     await p.click("#btn-settings");
     await settingsPage(p, "edit");
     assert.equal(await p.locator("#set-local-path").isChecked(), true);
