@@ -86,30 +86,30 @@ pub fn parse_multistatus(xml: &str) -> Result<Vec<RemoteEntry>, String> {
                     }
                 }
             }
-            Event::End(e) => {
-                match local(e.name().as_ref()) {
-                    "href" | "getetag" | "getcontentlength" | "getlastmodified" | "status" => field.clear(),
-                    "propstat" => {
-                        if prop_ok {
-                            if let (Some(ref mut entry), Some(p)) = (&mut item, &prop) {
-                                entry.etag = p.etag.clone().or_else(|| entry.etag.clone());
-                                entry.size = p.size.or(entry.size);
-                                entry.modified = p.modified.clone().or_else(|| entry.modified.clone());
-                                entry.directory |= p.directory;
-                            }
-                        }
-                        prop = None;
-                    }
-                    "response" => {
-                        if let Some(entry) = item.take() {
-                            if !entry.href.is_empty() {
-                                entries.push(entry);
-                            }
-                        }
-                    }
-                    _ => {}
+            Event::End(e) => match local(e.name().as_ref()) {
+                "href" | "getetag" | "getcontentlength" | "getlastmodified" | "status" => {
+                    field.clear()
                 }
-            }
+                "propstat" => {
+                    if prop_ok {
+                        if let (Some(ref mut entry), Some(p)) = (&mut item, &prop) {
+                            entry.etag = p.etag.clone().or_else(|| entry.etag.clone());
+                            entry.size = p.size.or(entry.size);
+                            entry.modified = p.modified.clone().or_else(|| entry.modified.clone());
+                            entry.directory |= p.directory;
+                        }
+                    }
+                    prop = None;
+                }
+                "response" => {
+                    if let Some(entry) = item.take() {
+                        if !entry.href.is_empty() {
+                            entries.push(entry);
+                        }
+                    }
+                }
+                _ => {}
+            },
             Event::Eof => {
                 if item.is_some() || prop.is_some() {
                     return Err("WebDAV 列目录响应提前结束".into());
@@ -255,7 +255,10 @@ impl WebdavClient {
 
     /// 验证返回的 href 仍位于配置的远程文件夹下，拒绝越界和编码后的斜杠。
     pub fn relative_href(&self, href: &str) -> Result<String, String> {
-        let url = self.root.join(href).map_err(|_| "WebDAV 返回了无效的文件地址")?;
+        let url = self
+            .root
+            .join(href)
+            .map_err(|_| "WebDAV 返回了无效的文件地址")?;
         if url.scheme() != self.root.scheme()
             || url.host() != self.root.host()
             || url.port_or_known_default() != self.root.port_or_known_default()
@@ -296,7 +299,9 @@ impl WebdavClient {
                 .body(body),
             &[StatusCode::MULTI_STATUS],
         )?;
-        let xml = reply.text().map_err(|e| format!("WebDAV 列目录读取失败：{e}"))?;
+        let xml = reply
+            .text()
+            .map_err(|e| format!("WebDAV 列目录读取失败：{e}"))?;
         let mut entries = Vec::new();
         for entry in parse_multistatus(&xml)? {
             let path = self.relative_href(&entry.href)?;
@@ -313,21 +318,45 @@ impl WebdavClient {
     }
 
     pub fn get(&self, path: &str) -> Result<(Vec<u8>, Option<String>), String> {
-        let reply = self.send(self.request(Method::GET, self.url_for(path)?), &[StatusCode::OK])?;
-        let etag = reply.headers().get(ETAG).and_then(|h| h.to_str().ok()).map(str::to_string);
-        let data = reply.bytes().map_err(|e| format!("读取 WebDAV 文件失败：{e}"))?;
+        let reply = self.send(
+            self.request(Method::GET, self.url_for(path)?),
+            &[StatusCode::OK],
+        )?;
+        let etag = reply
+            .headers()
+            .get(ETAG)
+            .and_then(|h| h.to_str().ok())
+            .map(str::to_string);
+        let data = reply
+            .bytes()
+            .map_err(|e| format!("读取 WebDAV 文件失败：{e}"))?;
         Ok((data.to_vec(), etag))
     }
 
-    pub fn put(&self, path: &str, bytes: Vec<u8>, etag: Option<&str>) -> Result<Option<String>, String> {
+    pub fn put(
+        &self,
+        path: &str,
+        bytes: Vec<u8>,
+        etag: Option<&str>,
+    ) -> Result<Option<String>, String> {
         let mut request = self.request(Method::PUT, self.url_for(path)?).body(bytes);
         if let Some(value) = etag {
-            request = request.header(IF_MATCH, HeaderValue::from_str(value).map_err(|_| "WebDAV ETag 无效")?);
+            request = request.header(
+                IF_MATCH,
+                HeaderValue::from_str(value).map_err(|_| "WebDAV ETag 无效")?,
+            );
         } else {
             request = request.header(IF_NONE_MATCH, "*");
         }
-        let response = self.send(request, &[StatusCode::CREATED, StatusCode::NO_CONTENT, StatusCode::OK])?;
-        Ok(response.headers().get(ETAG).and_then(|h| h.to_str().ok()).map(str::to_string))
+        let response = self.send(
+            request,
+            &[StatusCode::CREATED, StatusCode::NO_CONTENT, StatusCode::OK],
+        )?;
+        Ok(response
+            .headers()
+            .get(ETAG)
+            .and_then(|h| h.to_str().ok())
+            .map(str::to_string))
     }
 
     pub fn mkcol(&self, path: &str) -> Result<(), String> {
@@ -337,7 +366,9 @@ impl WebdavClient {
         } else {
             format!("{path}/")
         };
-        let response = self.request(mkcol, self.url_for(&directory)?).send()
+        let response = self
+            .request(mkcol, self.url_for(&directory)?)
+            .send()
             .map_err(|e| format!("创建远程文件夹失败：{e}"))?;
         if response.status() == StatusCode::METHOD_NOT_ALLOWED {
             // 405 可能表示目录已经存在，必须再核对。
@@ -361,7 +392,10 @@ impl WebdavClient {
     }
 
     pub fn delete_probe(&self, path: &str) -> Result<(), String> {
-        self.send(self.request(Method::DELETE, self.url_for(path)?), &[StatusCode::NO_CONTENT, StatusCode::OK])?;
+        self.send(
+            self.request(Method::DELETE, self.url_for(path)?),
+            &[StatusCode::NO_CONTENT, StatusCode::OK],
+        )?;
         Ok(())
     }
 
@@ -431,16 +465,27 @@ mod tests {
         assert!(url.path().contains("MinipadNext/%E5%B7%A5%E4%BD%9C/"));
         assert!(url.path().contains("%20"));
         assert!(url.path().contains("%23%25"));
-        assert_eq!(client.relative_href(url.as_str()).unwrap(), "工作/文 件#%笔记.md");
-        assert!(client.relative_href("https://evil.example.com/MinipadNext/secret.md").is_err());
-        assert!(client.relative_href("/remote.php/dav/files/user/MinipadNext/%2Fsecret.md").is_err());
+        assert_eq!(
+            client.relative_href(url.as_str()).unwrap(),
+            "工作/文 件#%笔记.md"
+        );
+        assert!(client
+            .relative_href("https://evil.example.com/MinipadNext/secret.md")
+            .is_err());
+        assert!(client
+            .relative_href("/remote.php/dav/files/user/MinipadNext/%2Fsecret.md")
+            .is_err());
         assert!(client.url_for("../outside.md").is_err());
     }
 
     #[test]
     fn http_requires_explicit_insecure_opt_in() {
-        assert!(WebdavClient::new("http://localhost:8080", "a", "b", "/MinipadNext/", false).is_err());
-        assert!(WebdavClient::new("http://localhost:8080", "a", "b", "/MinipadNext/", true).is_ok());
+        assert!(
+            WebdavClient::new("http://localhost:8080", "a", "b", "/MinipadNext/", false).is_err()
+        );
+        assert!(
+            WebdavClient::new("http://localhost:8080", "a", "b", "/MinipadNext/", true).is_ok()
+        );
         assert!(WebdavClient::new("https://example.com", "a", "b", "/../", false).is_err());
     }
 
