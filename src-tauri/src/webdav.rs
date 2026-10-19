@@ -634,6 +634,45 @@ mod tests {
     }
 
     #[test]
+    fn webdav_live_default_notebook_assets_transfer_between_devices() {
+        let Ok(server) = std::env::var("MINIPAD_TEST_WEBDAV_URL") else {
+            return;
+        };
+        use crate::syncer::{self, FirstSync, SyncOptions};
+        use std::fs;
+
+        let client = WebdavClient::new(
+            &server, "tester", "test-password", "/MinipadDefaultAssets/", true,
+        ).unwrap();
+        let first = crate::notes::temp_dir("webdav-root-assets-one");
+        let second = crate::notes::temp_dir("webdav-root-assets-two");
+        let records = crate::notes::temp_dir("webdav-root-assets-records");
+        fs::create_dir(first.join("assets")).unwrap();
+        let image = "assets/图片 #1%.png";
+        fs::write(first.join(image), b"image bytes").unwrap();
+        fs::write(first.join("首页.md"), "![图](assets/图片%20%231%25.png)").unwrap();
+        let opts = SyncOptions {
+            images: true,
+            first_mode: FirstSync::Merge,
+            conflict_copy: true,
+            confirm_deletes: false,
+        };
+        let journal_a = records.join("first.json");
+        let journal_b = records.join("second.json");
+        syncer::sync_once(&client, &first, &journal_a, &opts, || Ok(())).unwrap();
+        assert_eq!(client.get(image).unwrap().0, b"image bytes");
+        syncer::sync_once(&client, &second, &journal_b, &opts, || Ok(())).unwrap();
+        assert_eq!(fs::read(second.join(image)).unwrap(), b"image bytes");
+        fs::write(first.join(image), b"image updated").unwrap();
+        syncer::sync_once(&client, &first, &journal_a, &opts, || Ok(())).unwrap();
+        syncer::sync_once(&client, &second, &journal_b, &opts, || Ok(())).unwrap();
+        assert_eq!(fs::read(second.join(image)).unwrap(), b"image updated");
+        for path in [first, second, records] {
+            fs::remove_dir_all(path).unwrap();
+        }
+    }
+
+    #[test]
     fn webdav_live_first_sync_modes_rename_and_offline_resume() {
         let Ok(server) = std::env::var("MINIPAD_TEST_WEBDAV_URL") else {
             return;

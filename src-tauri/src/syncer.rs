@@ -93,6 +93,7 @@ pub fn should_sync(path: &str, images: bool) -> bool {
     }
     match parts.as_slice() {
         [name] => name.ends_with(".md") || *name == ".minipad.json",
+        [folder, name] if *folder == "assets" => images && !name.starts_with('.'),
         [book, name] => !book.is_empty() && (name.ends_with(".md") || *name == ".minipad.json"),
         [book, dir, name] => images && !book.is_empty() && *dir == "assets" && !name.is_empty(),
         _ => false,
@@ -811,6 +812,8 @@ mod tests {
         let root = crate::notes::temp_dir("webdav-files");
         fs::write(root.join("主页.md"), "hello").unwrap();
         fs::create_dir_all(root.join("工作/assets")).unwrap();
+        fs::create_dir_all(root.join("assets")).unwrap();
+        fs::write(root.join("assets/默认笔记本 图片.png"), b"default-image").unwrap();
         fs::create_dir_all(root.join(".trash")).unwrap();
         fs::write(root.join(".trash/已删除.md"), "deleted").unwrap();
         fs::write(root.join("工作/页面.md"), "note").unwrap();
@@ -818,7 +821,10 @@ mod tests {
         let normal = local_files(&root, false).unwrap();
         assert_eq!(normal.len(), 2);
         assert!(!normal.contains_key("工作/assets/photo.png"));
-        assert_eq!(local_files(&root, true).unwrap().len(), 3);
+        assert!(!normal.contains_key("assets/默认笔记本 图片.png"));
+        let with_images = local_files(&root, true).unwrap();
+        assert_eq!(with_images.len(), 4);
+        assert!(with_images.contains_key("assets/默认笔记本 图片.png"));
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -909,12 +915,17 @@ mod tests {
             assert!(should_sync(p, false), "{p}");
         }
         assert!(should_sync("工作/assets/图 片.png", true));
+        assert!(should_sync("assets/图 片#1.png", true));
+        assert!(!should_sync("assets/图 片#1.png", false));
         assert!(!should_sync("工作/assets/图 片.png", false));
         for p in [
             ".trash/x.md",
             ".import-old/x.md",
             ".tmp.md",
             "工作/深层/子/页.md",
+            "assets/深层/图片.png",
+            "assets/.minipad.json",
+            "assets/.hidden.png",
             "../secret.md",
             "工作/../页.md",
             "设置.json",
