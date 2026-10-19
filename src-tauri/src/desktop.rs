@@ -1755,8 +1755,8 @@ fn webdav_status() -> crate::syncer::WebdavStatus {
 fn webdav_forget(app: AppHandle) -> Result<(), String> {
     let s = app.state::<AppState>().settings.lock().unwrap().clone();
     let folder = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    let file = crate::syncer::journal_path(
-        &folder, &s.webdav_server, &s.webdav_user, &s.webdav_folder,
+    let file = crate::syncer::journal_path_for_root(
+        &folder, &notes_dir(&app, &s), &s.webdav_server, &s.webdav_user, &s.webdav_folder,
     );
     match webdav_credential(&s)?.delete_credential() {
         Ok(()) | Err(keyring::Error::NoEntry) => {}
@@ -1784,7 +1784,7 @@ async fn webdav_sync_now(app: AppHandle, confirm_deletes: bool) -> Result<crate:
     let root = notes_dir(&app, &s);
     let data = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let backup_dest = backup_dir(&app, &s);
-    let journal = crate::syncer::journal_path(&data, &s.webdav_server, &s.webdav_user, &s.webdav_folder);
+    let journal = crate::syncer::journal_path_for_root(&data, &root, &s.webdav_server, &s.webdav_user, &s.webdav_folder);
     let first_mode = match s.webdav_first_mode.as_str() {
         "remote" => crate::syncer::FirstSync::Remote,
         "local" => crate::syncer::FirstSync::Local,
