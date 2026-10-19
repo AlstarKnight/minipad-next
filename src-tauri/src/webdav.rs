@@ -380,7 +380,11 @@ impl WebdavClient {
         let response = self
             .request(mkcol, self.url_for(&directory)?)
             .send()
-            .map_err(|e| format!("创建远程文件夹失败：{e}"))?;
+            .map_err(|e| if e.is_timeout() || e.is_connect() {
+                "WebDAV 离线或连接超时".to_string()
+            } else {
+                format!("创建远程文件夹失败：{e}")
+            })?;
         if response.status() == StatusCode::METHOD_NOT_ALLOWED {
             // 405 可能表示目录已经存在，必须再核对。
             self.list(&directory)?;
@@ -631,7 +635,8 @@ mod tests {
             first_mode: FirstSync::Local,
             ..settings.clone()
         };
-        assert!(syncer::sync_once(&offline, &local2, &journal2, &local_mode, || Ok(())).is_err());
+        let offline_error = syncer::sync_once(&offline, &local2, &journal2, &local_mode, || Ok(())).unwrap_err();
+        assert!(offline_error.contains("离线"), "{offline_error}");
         assert_eq!(fs::read_to_string(local2.join("shared.md")).unwrap(), "local version");
         assert!(!journal2.exists(), "offline attempts do not create a misleading baseline");
         syncer::sync_once(&online, &local2, &journal2, &local_mode, || Ok(())).unwrap();
