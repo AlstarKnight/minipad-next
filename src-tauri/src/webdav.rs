@@ -333,20 +333,29 @@ impl WebdavClient {
         Ok((data.to_vec(), etag))
     }
 
+    /// 上传已存在的文件要求 ETag 或 Last-Modified 条件保护。
     pub fn put(
         &self,
         path: &str,
         bytes: Vec<u8>,
-        etag: Option<&str>,
+        existing: Option<&RemoteEntry>,
     ) -> Result<Option<String>, String> {
         let mut request = self.request(Method::PUT, self.url_for(path)?).body(bytes);
-        if let Some(value) = etag {
-            request = request.header(
-                IF_MATCH,
-                HeaderValue::from_str(value).map_err(|_| "WebDAV ETag 无效")?,
-            );
-        } else {
-            request = request.header(IF_NONE_MATCH, "*");
+        match existing {
+            Some(old) if old.etag.is_some() => {
+                let value = HeaderValue::from_str(old.etag.as_deref().unwrap())
+                    .map_err(|_| "WebDAV ETag 无效")?;
+                request = request.header(IF_MATCH, value);
+            }
+            Some(old) if old.modified.is_some() => {
+                request = request.header(
+                    "If-Unmodified-Since",
+                    HeaderValue::from_str(old.modified.as_deref().unwrap())
+                        .map_err(|_| "WebDAV 修改时间无效")?,
+                );
+            }
+            Some(_) => return Err("服务端未提供 ETag 或修改时间，拒绝无条件覆盖".into()),
+            None => request = request.header(IF_NONE_MATCH, "*"),
         }
         let response = self.send(
             request,
