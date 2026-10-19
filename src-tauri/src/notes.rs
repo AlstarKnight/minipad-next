@@ -1025,26 +1025,39 @@ fn collect_webdav_trash(
     if depth > 3 {
         return Ok(());
     }
-    for entry in fs::read_dir(directory).map_err(|e| format!("读取同步回收站失败：{e}"))? {
+    for entry in fs::read_dir(directory).map_err(|e| format!("读取同步回收站失败：{e}"))?
+    {
         let entry = entry.map_err(|e| e.to_string())?;
         let kind = entry.file_type().map_err(|e| e.to_string())?;
         if kind.is_symlink() {
             continue;
         }
         let name = entry.file_name().to_string_lossy().into_owned();
-        let next = if relative.is_empty() { name.clone() } else { format!("{relative}/{name}") };
+        let next = if relative.is_empty() {
+            name.clone()
+        } else {
+            format!("{relative}/{name}")
+        };
         if kind.is_dir() {
             collect_webdav_trash(&entry.path(), &next, depth + 1, items)?;
         } else if kind.is_file() {
             let (stem, extension) = name.rsplit_once('.').unwrap_or((&name, ""));
             if let Some((original, deleted)) = split_stamp(stem) {
                 let parent = relative;
-                let display = if extension.is_empty() { original.to_string() } else { format!("{original}.{extension}") };
+                let display = if extension.is_empty() {
+                    original.to_string()
+                } else {
+                    format!("{original}.{extension}")
+                };
                 items.push(TrashItem {
                     id: format!(".webdav/{next}"),
                     kind: "file".into(),
                     book: String::new(),
-                    name: if parent.is_empty() { display } else { format!("{parent}/{display}") },
+                    name: if parent.is_empty() {
+                        display
+                    } else {
+                        format!("{parent}/{display}")
+                    },
                     deleted,
                     preview: "WebDAV 同步回收的文件".into(),
                     pages: 0,
@@ -1137,7 +1150,11 @@ pub fn restore_trash(root: &Path, id: &str) -> Result<(String, String), String> 
             .iter()
             .fold(root.to_path_buf(), |folder, part| folder.join(part));
         fs::create_dir_all(&dir).map_err(|e| format!("恢复同步文件失败：{e}"))?;
-        let suffix = if extension.is_empty() { String::new() } else { format!(".{extension}") };
+        let suffix = if extension.is_empty() {
+            String::new()
+        } else {
+            format!(".{extension}")
+        };
         let destination = free_path(&dir, name, &suffix);
         fs::rename(&path, destination).map_err(|e| format!("恢复同步文件失败：{e}"))?;
         remove_if_empty(&path);
