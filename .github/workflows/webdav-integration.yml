@@ -9,10 +9,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - name: Resolve WebDAV dependencies for locked builds
+        with:
+          components: rustfmt
+      - name: Format WebDAV Rust module and verify dependencies
         run: |
-          cargo generate-lockfile --manifest-path src-tauri/Cargo.toml
-          echo WEB_DAV_LOCK_BEGIN
-          base64 -w0 src-tauri/Cargo.lock
+          cargo fmt --manifest-path src-tauri/Cargo.toml
+          cargo metadata --locked --manifest-path src-tauri/Cargo.toml --format-version=1 --no-deps >/dev/null
+          echo WEB_DAV_SOURCE_BEGIN
+          base64 -w0 src-tauri/src/webdav.rs
           echo
-          echo WEB_DAV_LOCK_END
+          echo WEB_DAV_SOURCE_END
