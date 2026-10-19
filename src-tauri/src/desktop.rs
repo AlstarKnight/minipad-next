@@ -189,6 +189,8 @@ pub struct Settings {
     webdav_on_hide: bool,
     webdav_status_style: String,
     webdav_status_color: String,
+    webdav_delete_limit: usize,
+    webdav_delete_divisor: usize,
     /// 正文中识别 Windows 本地文件路径。
     local_path_enabled: bool,
     /// ctrl 按 Ctrl 点击 / click 单击。
@@ -355,6 +357,8 @@ impl Default for Settings {
             webdav_on_hide: true,
             webdav_status_style: "icon".into(),
             webdav_status_color: String::new(),
+            webdav_delete_limit: 20,
+            webdav_delete_divisor: 3,
             local_path_enabled: true,
             local_path_click: "ctrl".into(),
             local_path_color: String::new(),
@@ -884,6 +888,8 @@ fn tidy_settings(s: &mut Settings) {
     tidy_color(&mut s.local_path_color);
     tidy_color(&mut s.webdav_status_color);
     s.webdav_delay_seconds = s.webdav_delay_seconds.clamp(10, 300);
+    s.webdav_delete_limit = s.webdav_delete_limit.clamp(1, 1000);
+    s.webdav_delete_divisor = s.webdav_delete_divisor.clamp(1, 10);
     if ![0, 1, 5, 15, 30].contains(&s.webdav_interval_minutes) {
         s.webdav_interval_minutes = 5;
     }
@@ -1830,6 +1836,8 @@ async fn webdav_sync_now(app: AppHandle, confirm_deletes: bool) -> Result<crate:
         first_mode,
         conflict_copy: s.conflict_mode != "overwrite",
         confirm_deletes,
+        delete_limit: s.webdav_delete_limit,
+        delete_divisor: s.webdav_delete_divisor,
     };
     let result = tauri::async_runtime::spawn_blocking(move || {
         let _run = crate::syncer::RUN_LOCK.lock().map_err(|e| e.to_string())?;
