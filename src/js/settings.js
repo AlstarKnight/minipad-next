@@ -211,6 +211,12 @@ export function openSettings() {
   $("#set-code-lang-menu").checked = s.code_lang_menu !== false;
   $("#set-code-title-color").checked = s.code_title_color !== false;
   $("#set-email-links").checked = s.email_auto_link === true;
+  $("#set-local-path").checked = s.local_path_enabled !== false;
+  $("#set-local-path-click").value = s.local_path_click === "click" ? "click" : "ctrl";
+  $("#set-local-path-underline").value = ["solid", "none"].includes(s.local_path_underline) ? s.local_path_underline : "dashed";
+  $("#set-local-path-missing").checked = s.local_path_missing !== false;
+  $("#set-local-path-confirm").checked = s.local_path_confirm !== false;
+  localPathColor.show(s.local_path_color || "");
   $("#set-block-enabled").checked = s.block_enabled !== false;
   $("#set-block-context").value = s.block_context_menu === "block" ? "block" : "system";
   $("#set-code-exit").value = ["blank2", "blank3", "ctrl"].includes(s.code_exit_mode) ? s.code_exit_mode : "blank3";
@@ -257,7 +263,7 @@ export function openSettings() {
   backupInfo = null;
   updateBackup();
   $("#settings").hidden = false;
-  for (const picker of [accentColor, edgeColor, findColor, outlineColor, ballColor]) picker.reopen();
+  for (const picker of [accentColor, edgeColor, localPathColor, findColor, outlineColor, ballColor]) picker.reopen();
   showSettingsPage(page, { focus: true });
   api
     .invoke("backup_info")
@@ -330,6 +336,13 @@ const edgeColor = colorPicker(
 );
 
 // 查找高亮的颜色,上面那句话是预览
+const localPathColor = colorPicker(
+  "local-path",
+  "#set-local-path-color",
+  [{ name: "跟随链接", value: "" }, ...ACCENTS.filter((a) => a.value)],
+  "var(--accent-grad)",
+);
+
 const findColor = colorPicker(
   "find",
   "#set-find-color",
@@ -616,6 +629,12 @@ async function submitSettings() {
     code_lang_menu: $("#set-code-lang-menu").checked,
     code_title_color: $("#set-code-title-color").checked,
     email_auto_link: $("#set-email-links").checked,
+    local_path_enabled: $("#set-local-path").checked,
+    local_path_click: $("#set-local-path-click").value,
+    local_path_color: localPathColor.value,
+    local_path_underline: $("#set-local-path-underline").value,
+    local_path_missing: $("#set-local-path-missing").checked,
+    local_path_confirm: $("#set-local-path-confirm").checked,
     block_enabled: $("#set-block-enabled").checked,
     block_context_menu: $("#set-block-context").value,
     code_exit_mode: $("#set-code-exit").value,
