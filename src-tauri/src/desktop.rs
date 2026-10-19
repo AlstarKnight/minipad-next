@@ -1686,27 +1686,41 @@ fn is_executable_path(path: &Path) -> bool {
 }
 
 #[tauri::command]
-fn local_path_exists(path: String) -> bool {
-    parse_local_path(&path).is_ok_and(|p| p.exists())
+async fn local_path_exists(path: String) -> bool {
+    tauri::async_runtime::spawn_blocking(move || {
+        parse_local_path(&path).is_ok_and(|p| p.exists())
+    })
+    .await
+    .unwrap_or(false)
 }
 
 #[tauri::command]
-fn open_path(path: String, reveal: bool, confirmed: bool, state: tauri::State<'_, AppState>) -> Result<(), String> {
-    let target = parse_local_path(&path)?;
-    if !target.exists() {
-        return Err("找不到这个文件".into());
-    }
-    if !reveal && is_executable_path(&target) {
+async fn open_path(
+    path: String,
+    reveal: bool,
+    confirmed: bool,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    let (needs_confirmation, trusted) = {
         let settings = state.settings.lock().unwrap();
-        if settings.local_path_confirm && !confirmed && !settings.local_path_trusted.contains(&path) {
+        (settings.local_path_confirm, settings.local_path_trusted.contains(&path))
+    };
+    tauri::async_runtime::spawn_blocking(move || {
+        let target = parse_local_path(&path)?;
+        if !target.exists() {
+            return Err("找不到这个文件".into());
+        }
+        if !reveal && is_executable_path(&target) && needs_confirmation && !confirmed && !trusted {
             return Err("打开此文件前需要确认".into());
         }
-    }
-    if reveal && target.is_file() {
-        tauri_plugin_opener::reveal_item_in_dir(&target).map_err(|e| e.to_string())
-    } else {
-        tauri_plugin_opener::open_path(target, None::<&str>).map_err(|e| e.to_string())
-    }
+        if reveal && target.is_file() {
+            tauri_plugin_opener::reveal_item_in_dir(&target).map_err(|e| e.to_string())
+        } else {
+            tauri_plugin_opener::open_path(target, None::<&str>).map_err(|e| e.to_string())
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 
