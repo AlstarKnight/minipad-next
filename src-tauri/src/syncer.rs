@@ -134,7 +134,7 @@ pub fn merge_metadata(
     base: Option<&serde_json::Value>,
     local: &serde_json::Value,
     remote: &serde_json::Value,
-) -> Result<serde_json::Value, Vec<String>> {
+) -> Result<(serde_json::Value, Vec<String>), Vec<String>> {
     use serde_json::{Map, Value};
     let (Some(l), Some(r)) = (local.as_object(), remote.as_object()) else {
         return Err(vec![".minipad.json 不是对象".into()]);
@@ -170,11 +170,7 @@ pub fn merge_metadata(
             }
         }
     }
-    if conflicts.is_empty() {
-        Ok(Value::Object(output))
-    } else {
-        Err(conflicts)
-    }
+    Ok((Value::Object(output), conflicts))
 }
 
 use serde::{Deserialize, Serialize};
@@ -656,21 +652,20 @@ pub fn sync_once(
                             .get(&path)
                             .and_then(|entry| entry.base_metadata.as_ref());
                         match merge_metadata(base, &ours, &theirs) {
-                            Ok(merged) => {
+                            Ok((merged, conflicts)) => {
                                 upload = serde_json::to_vec_pretty(&merged)
                                     .map_err(|e| e.to_string())?;
+                                if !conflicts.is_empty() && options.conflict_copy {
+                                    backup_metadata_conflict(root, &path, &remote_data)?;
+                                    report.conflicts += 1;
+                                    report.changed.push(path.clone());
+                                }
                             }
-                            Err(fields) if options.conflict_copy => {
-                                let copy = backup_metadata_conflict(root, &path, &remote_data)?;
+                            Err(_) if options.conflict_copy => {
+                                backup_metadata_conflict(root, &path, &remote_data)?;
                                 report.conflicts += 1;
-                                report.changed.push(path.clone());
-                                eprintln!(
-                                    "WebDAV 元数据字段冲突：{}；远端副本已保存到 {}",
-                                    fields.join("、"),
-                                    copy.display()
-                                );
                             }
-                            Err(_) => {} // 按用户“直接覆盖”设置保留本机字段。
+                            Err(_) => {}
                         }
                     } else if options.conflict_copy {
                         let conflict = unique_conflict_path(root, &path)?;
@@ -859,8 +854,8 @@ mod tests {
         let local = serde_json::json!({"order": ["本机"]});
         let theirs = serde_json::json!({"order": ["远端"]});
         assert_eq!(
-            merge_metadata(Some(&base), &local, &theirs),
-            Err(vec!["order".to_string()])
+            merge_metadata(Some(&base), &local, &theirs).unwrap().1,
+            vec!["order".to_string()]
         );
         fs::remove_dir_all(root).unwrap();
     }
@@ -963,7 +958,7 @@ mod tests {
         let base = json!({"active": "甲", "modes": {"甲":"edit"}, "order":["甲"], "icon":"book", "pinned":[]});
         let local = json!({"active": "乙", "modes": {"甲":"read"}, "order":["甲","乙"], "icon":"book", "pinned":[]});
         let remote = json!({"active": "甲", "modes": {"甲":"edit"}, "order":["甲"], "icon":"star", "pinned":[]});
-        let combined = merge_metadata(Some(&base), &local, &remote).unwrap();
+        let combined = merge_metadata(Some(&base), &local, &remote).unwrap().0;
         assert_eq!(combined["active"], "乙");
         assert_eq!(combined["modes"]["甲"], "read");
         assert_eq!(combined["order"], json!(["甲", "乙"]));
@@ -977,8 +972,8 @@ mod tests {
         let local = json!({"icon":"star", "active":"b"});
         let remote = json!({"icon":"heart", "active":"c"});
         assert_eq!(
-            merge_metadata(Some(&base), &local, &remote),
-            Err(vec!["icon".to_string()])
+            merge_metadata(Some(&base), &local, &remote).unwrap().1,
+            vec!["icon".to_string()]
         );
         assert!(merge_metadata(None, &json!([]), &remote).is_err());
     }
