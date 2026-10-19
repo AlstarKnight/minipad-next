@@ -6787,6 +6787,21 @@ suite("0.4.5: WebDAV settings", { concurrency: 1 }, () => {
   });
 
 
+  ui("WebDAV connection failure stays in Chinese and does not save draft", {
+    seed: seed({ "": { "笔记": "内容" } }),
+    mockControl: { webdavTestError: "账号或应用密码错误" },
+  }, async (h) => {
+    const { p } = h;
+    await p.click("#btn-settings");
+    await settingsPage(p, "data");
+    await p.fill("#set-webdav-server", "https://dav.example.com/");
+    await p.fill("#set-webdav-user", "someone");
+    await p.click("#set-webdav-test");
+    await until(h.toast, "账号或应用密码错误", "connection failure is translated");
+    assert.equal((await h.stored()).settings.webdav_server || "", "");
+    assert.equal((await h.stored()).settings.webdav_user || "", "");
+  });
+
   ui("test connection uses form draft without persisting it", {
     seed: seed({ "": { "笔记": "内容" } }),
   }, async (h) => {
