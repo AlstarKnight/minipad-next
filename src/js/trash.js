@@ -94,7 +94,14 @@ function render() {
       purge.addEventListener("click", () => purgeItem(it));
       const acts = document.createElement("div");
       acts.className = "ti-acts";
-      acts.append(restore, purge);
+      const metadataBackup = it.kind === "file" &&
+        (it.name === ".minipad.json" || it.name.endsWith("/.minipad.json"));
+      if (metadataBackup) {
+        meta.textContent = "笔记本设置冲突时网盘那边的版本 · 仅保留备份";
+      } else {
+        acts.append(restore);
+      }
+      acts.append(purge);
       row.append(icon, body, acts);
       return row;
     }),
