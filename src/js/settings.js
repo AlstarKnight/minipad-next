@@ -865,16 +865,13 @@ export function bindSettings() {
   });
   $("#set-webdav-test").addEventListener("click", async () => {
     try {
-      await saveSettings({
-        ...state.settings,
-        webdav_server: $("#set-webdav-server").value.trim(),
-        webdav_user: $("#set-webdav-user").value.trim(),
-        webdav_folder: $("#set-webdav-folder").value.trim(),
-        webdav_allow_http: $("#set-webdav-http").checked,
+      await webdavTest({
+        server: $("#set-webdav-server").value.trim(),
+        username: $("#set-webdav-user").value.trim(),
+        folder: $("#set-webdav-folder").value.trim(),
+        allowHttp: $("#set-webdav-http").checked,
+        password: $("#set-webdav-password").value,
       });
-      await webdavSavePassword($("#set-webdav-password").value);
-      $("#set-webdav-password").value = "";
-      await webdavTest();
     } catch (e) { toast(String(e), 6000); }
   });
   $("#set-webdav-sync").addEventListener("click", () => void webdavRun());
