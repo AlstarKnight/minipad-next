@@ -863,6 +863,13 @@ export function bindSettings() {
     else if (preset === "infinicloud") $("#set-webdav-server").value = "https://webdav.teracloud.jp/";
     else if (preset === "nextcloud") $("#set-webdav-server").placeholder = "https://域名/remote.php/dav/files/用户名/";
   });
+  $("#set-webdav-enabled").addEventListener("change", () => {
+    const dir = $("#set-dir").value || state.settings?.notes_dir || "";
+    if ($("#set-webdav-enabled").checked &&
+        /(?:onedrive|百度网盘|baidunetdisk|dropbox|坚果云)/i.test(dir)) {
+      toast("当前笔记文件夹位于同步盘，同时开启 WebDAV 可能产生冲突。", 6000);
+    }
+  });
   $("#set-webdav-test").addEventListener("click", async () => {
     try {
       await webdavTest({
