@@ -732,6 +732,87 @@ mod tests {
     }
 
     #[test]
+    fn rescan_skips_changed_file_but_syncs_others_and_ends_first_mode() {
+        let Ok(server) = std::env::var("MINIPAD_TEST_WEBDAV_URL") else {
+            return;
+        };
+        use crate::syncer::{self, FirstSync, SyncOptions};
+        use std::fs;
+
+        let client = WebdavClient::new(
+            &server, "tester", "test-password", "/MinipadRescan/", true,
+        ).unwrap();
+        let local = crate::notes::temp_dir("webdav-rescan-local");
+        let journal = local.parent().unwrap().join(format!(
+            "{}-state.json", local.file_name().unwrap().to_string_lossy()
+        ));
+        fs::write(local.join("a.md"), "before scan").unwrap();
+        fs::write(local.join("z.md"), "untouched").unwrap();
+        let opts = SyncOptions {
+            images: false,
+            first_mode: FirstSync::Merge,
+            conflict_copy: true,
+            confirm_deletes: true,
+            delete_limit: 20,
+            delete_divisor: 3,
+        };
+        let first = syncer::sync_once(&client, &local, &journal, &opts, || {
+            fs::write(local.join("a.md"), "edited after scan").map_err(|e| e.to_string())
+        }).unwrap();
+        assert!(first.rescan_needed);
+        assert_eq!(first.uploaded, 1);
+        assert_eq!(client.get("z.md").unwrap().0, b"untouched");
+        assert_eq!(fs::read_to_string(local.join("a.md")).unwrap(), "edited after scan");
+        assert!(!syncer::read_journal(&journal).unwrap().1);
+        let next = syncer::sync_once(&client, &local, &journal, &opts, || Ok(())).unwrap();
+        assert_eq!(next.uploaded, 1);
+        assert_eq!(next.conflicts, 0);
+        assert_eq!(client.get("a.md").unwrap().0, b"edited after scan");
+        fs::remove_dir_all(local).unwrap();
+        fs::remove_file(journal).unwrap();
+    }
+
+    #[test]
+    fn first_remote_mode_does_not_delete_new_page_on_followup_rescan() {
+        let Ok(server) = std::env::var("MINIPAD_TEST_WEBDAV_URL") else {
+            return;
+        };
+        use crate::syncer::{self, FirstSync, SyncOptions};
+        use std::fs;
+
+        let client = WebdavClient::new(
+            &server, "tester", "test-password", "/MinipadRemoteRescan/", true,
+        ).unwrap();
+        client.mkcol("").unwrap();
+        client.put("z.md", b"from remote".to_vec(), None).unwrap();
+        let local = crate::notes::temp_dir("webdav-remote-rescan");
+        let journal = local.parent().unwrap().join(format!(
+            "{}-state.json", local.file_name().unwrap().to_string_lossy()
+        ));
+        fs::write(local.join("a.md"), "initial").unwrap();
+        let opts = SyncOptions {
+            images: false,
+            first_mode: FirstSync::Remote,
+            conflict_copy: true,
+            confirm_deletes: true,
+            delete_limit: 20,
+            delete_divisor: 3,
+        };
+        let first = syncer::sync_once(&client, &local, &journal, &opts, || {
+            fs::write(local.join("a.md"), "created during sync").map_err(|e| e.to_string())
+        }).unwrap();
+        assert!(first.rescan_needed);
+        assert_eq!(first.downloaded, 1);
+        assert!(local.join("a.md").exists());
+        assert!(!syncer::read_journal(&journal).unwrap().1);
+        let next = syncer::sync_once(&client, &local, &journal, &opts, || Ok(())).unwrap();
+        assert_eq!(next.uploaded, 1);
+        assert_eq!(client.get("a.md").unwrap().0, b"created during sync");
+        fs::remove_dir_all(local).unwrap();
+        fs::remove_file(journal).unwrap();
+    }
+
+    #[test]
     fn webdav_live_default_notebook_assets_transfer_between_devices() {
         let Ok(server) = std::env::var("MINIPAD_TEST_WEBDAV_URL") else {
             return;
