@@ -61,6 +61,14 @@ let onLocalPath = () => {};
 let onLocalPathMenu = () => {};
 
 const localPathKey = new PluginKey("minipad-local-paths");
+const missingLocalPaths = new Map();
+
+// 通过 ProseMirror 的装饰事务更新，不直接改编辑器 DOM，避免触发重复解析。
+export function markLocalPathMissing(path, missing) {
+  if (missingLocalPaths.get(path) === missing) return;
+  missingLocalPaths.set(path, missing);
+  if (view) view.dispatch(view.state.tr.setMeta(localPathKey, true).setMeta("addToHistory", false));
+}
 const localPathDecorations = (doc) => {
   if (!pathSettings.local_path_enabled) return DecorationSet.empty;
   const decorations = [];
@@ -71,7 +79,8 @@ const localPathDecorations = (doc) => {
       if (!child.isText) return;
       for (const match of findLocalPaths(child.text)) {
         decorations.push(Decoration.inline(pos + 1 + offset + match.from, pos + 1 + offset + match.to, {
-          class: "local-file-path", "data-local-path": match.path,
+          class: missingLocalPaths.get(match.path) ? "local-file-path missing" : "local-file-path",
+          "data-local-path": match.path,
         }));
       }
     });
