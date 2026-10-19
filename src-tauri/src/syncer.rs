@@ -934,6 +934,36 @@ mod tests {
     }
 
     #[test]
+    fn unchanged_local_snapshot_uses_journal_hash() {
+        let root = crate::notes::temp_dir("webdav-cache");
+        let path = root.join("note.md");
+        fs::write(&path, b"initial").unwrap();
+        let (size, mtime) = local_stamp(&path).unwrap();
+        let journal = Journal {
+            files: BTreeMap::from([(
+                "note.md".into(),
+                FileRecord {
+                    hash: "cached-content-hash".into(),
+                    local_size: Some(size),
+                    local_modified_ns: Some(mtime),
+                    ..FileRecord::default()
+                },
+            )]),
+            ..Journal::default()
+        };
+        assert_eq!(
+            local_files_cached(&root, false, Some(&journal)).unwrap()["note.md"],
+            "cached-content-hash"
+        );
+        fs::write(&path, b"changed content has a different length").unwrap();
+        assert_ne!(
+            local_files_cached(&root, false, Some(&journal)).unwrap()["note.md"],
+            "cached-content-hash"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn local_scanning_excludes_trash_temporary_and_optional_images() {
         let root = crate::notes::temp_dir("webdav-files");
         fs::write(root.join("主页.md"), "hello").unwrap();
