@@ -1,0 +1,18 @@
+name: WebDAV integration
+on:
+  push:
+    branches: [feature/0.4.5-webdav]
+  workflow_dispatch:
+jobs:
+  webdav-lock:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Resolve WebDAV dependencies for locked builds
+        run: |
+          cargo generate-lockfile --manifest-path src-tauri/Cargo.toml
+          echo WEB_DAV_LOCK_BEGIN
+          base64 -w0 src-tauri/Cargo.lock
+          echo
+          echo WEB_DAV_LOCK_END
