@@ -504,7 +504,7 @@ fn unique_conflict_path(root: &Path, path: &str) -> Result<String, String> {
             format!(" ({attempt})")
         };
         let candidate = format!(
-            "{}{}{}{}.{}",
+            "{}{}{}.{}",
             folder,
             crate::notes::conflict_name(stem, &stamp),
             extra,
