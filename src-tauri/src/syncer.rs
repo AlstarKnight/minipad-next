@@ -224,6 +224,8 @@ pub struct FileRecord {
     pub size: Option<u64>,
     pub modified: Option<String>,
     pub base_metadata: Option<serde_json::Value>,
+    pub local_size: Option<u64>,
+    pub local_modified_ns: Option<u128>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -278,14 +280,35 @@ pub fn save_journal(path: &Path, journal: &Journal) -> Result<(), String> {
     crate::notes::write_atomic(path, &data)
 }
 
+/// 大小和修改时间均未改变时可以沿用上次的哈希；无法取得时间时重新读取。
+fn local_stamp(path: &Path) -> Option<(u64, u128)> {
+    let meta = fs::metadata(path).ok()?;
+    let nanos = meta.modified().ok()?
+        .duration_since(std::time::UNIX_EPOCH).ok()?.as_nanos();
+    Some((meta.len(), nanos))
+}
+
+fn stamp_record(root: &Path, path: &str, mut record: FileRecord) -> FileRecord {
+    if let Some((size, modified)) = local_stamp(&root.join(path)) {
+        record.local_size = Some(size);
+        record.local_modified_ns = Some(modified);
+    }
+    record
+}
+
 /// 本机按与 WebDAV 一致的白名单扫描，拒绝符号链接和超出笔记本层级的目录。
 pub fn local_files(root: &Path, images: bool) -> Result<BTreeMap<String, String>, String> {
+    local_files_cached(root, images, None)
+}
+
+fn local_files_cached(root: &Path, images: bool, journal: Option<&Journal>) -> Result<BTreeMap<String, String>, String> {
     fn scan(
         folder: &Path,
         prefix: &str,
         images: bool,
         depth: usize,
         result: &mut BTreeMap<String, String>,
+        journal: Option<&Journal>,
     ) -> Result<(), String> {
         for entry in fs::read_dir(folder).map_err(|e| format!("扫描笔记失败：{e}"))? {
             let entry = entry.map_err(|e| e.to_string())?;
@@ -297,21 +320,32 @@ pub fn local_files(root: &Path, images: bool) -> Result<BTreeMap<String, String>
             };
             let kind = entry.file_type().map_err(|e| e.to_string())?;
             if kind.is_file() && should_sync(&path, images) {
-                let bytes = fs::read(entry.path())
-                    .map_err(|e| format!("读取待同步文件「{path}」失败：{e}"))?;
-                result.insert(path.clone(), content_hash(&path, &bytes));
+                let old = journal.and_then(|j| j.files.get(&path));
+                let hash = match (old, local_stamp(&entry.path())) {
+                    (Some(old), Some((size, mtime)))
+                        if old.local_size == Some(size) && old.local_modified_ns == Some(mtime) =>
+                    {
+                        old.hash.clone()
+                    }
+                    _ => {
+                        let bytes = fs::read(entry.path())
+                            .map_err(|e| format!("读取待同步文件「{path}」失败：{e}"))?;
+                        content_hash(&path, &bytes)
+                    }
+                };
+                result.insert(path.clone(), hash);
             } else if kind.is_dir()
                 && depth < 2
                 && !name.starts_with('.')
                 && (depth == 0 || name == "assets" && images)
             {
-                scan(&entry.path(), &path, images, depth + 1, result)?;
+                scan(&entry.path(), &path, images, depth + 1, result, journal)?;
             }
         }
         Ok(())
     }
     let mut files = BTreeMap::new();
-    scan(root, "", images, 0, &mut files)?;
+    scan(root, "", images, 0, &mut files, journal)?;
     Ok(files)
 }
 
@@ -600,7 +634,7 @@ pub fn sync_once(
     let (mut journal, first) = read_journal(journal_file)?;
     let mode = journal.initial_mode.unwrap_or(options.first_mode);
     client.mkcol("")?;
-    let local = local_files(root, options.images)?;
+    let local = local_files_cached(root, options.images, Some(&journal))?;
     let remote = remote_files(client, options.images, &journal)?;
     let (actions, deletes, total) = preview_actions(&journal, &local, &remote, mode, first);
     if !options.confirm_deletes && deletion_needs_confirmation(deletes, total) {
@@ -629,21 +663,28 @@ pub fn sync_once(
     for (path, action) in actions {
         let local_hash = local.get(&path).map(String::as_str);
         let remote_file = remote.get(&path);
+        let prior = journal.files.get(&path).cloned();
         match action {
             Action::Skip => {
                 if let Some(info) = remote_file {
                     if let Some(hash) = local_hash {
-                        let local_data = checked_local!(&path, Some(hash));
-                        journal.files.insert(
-                            path.clone(),
+                        let record = if let Some(mut old) = prior.clone() {
+                            old.hash = hash.to_string();
+                            old.etag = info.entry.etag.clone();
+                            old.size = info.entry.size;
+                            old.modified = info.entry.modified.clone();
+                            old
+                        } else {
+                            let local_data = checked_local!(&path, Some(hash));
                             record_for(
                                 &path,
                                 &local_data,
                                 info.entry.etag.clone(),
                                 info.entry.size,
                                 info.entry.modified.clone(),
-                            ),
-                        );
+                            )
+                        };
+                        journal.files.insert(path.clone(), stamp_record(root, &path, record));
                     }
                 } else {
                     journal.files.remove(&path);
@@ -651,7 +692,7 @@ pub fn sync_once(
             }
             Action::Upload | Action::Conflict => {
                 let hash = local_hash.ok_or("上传时文件已不存在")?;
-                let local_data = check_local(root, &path, Some(hash))?;
+                let local_data = checked_local!(&path, Some(hash));
                 let mut upload = local_data.clone();
                 if first && mode == FirstSync::Local && action == Action::Upload {
                     if let Some(previous) = remote_file {
@@ -741,7 +782,7 @@ pub fn sync_once(
                 }
                 journal.files.insert(
                     path.clone(),
-                    record_for(&path, &upload, etag, Some(upload.len() as u64), None),
+                    stamp_record(root, &path, record_for(&path, &upload, etag, Some(upload.len() as u64), None)),
                 );
                 report.uploaded += 1;
             }
@@ -764,13 +805,13 @@ pub fn sync_once(
                 crate::notes::write_atomic_bytes(&root.join(&path), &bytes)?;
                 journal.files.insert(
                     path.clone(),
-                    record_for(
+                    stamp_record(root, &path, record_for(
                         &path,
                         &bytes,
                         etag.or_else(|| info.entry.etag.clone()),
                         info.entry.size,
                         info.entry.modified.clone(),
-                    ),
+                    )),
                 );
                 report.changed.push(path.clone());
                 report.downloaded += 1;
@@ -801,12 +842,14 @@ pub fn sync_once(
                 report.deleted += 1;
             }
         }
-        if action != Action::Skip {
+        if action != Action::Skip || prior.as_ref() != journal.files.get(&path) {
             save_journal(journal_file, &journal)?;
         }
     }
-    journal.initial_mode = None;
-    save_journal(journal_file, &journal)?;
+    if first && !report.rescan_needed {
+        journal.initial_mode = None;
+        save_journal(journal_file, &journal)?;
+    }
     Ok(report)
 }
 
