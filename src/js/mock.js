@@ -564,6 +564,8 @@ export function mockApi() {
     expand_from_ball: () => {},
     open_notes_dir: () => toast("(预览)会在资源管理器里打开笔记文件夹"),
     open_link: ({ url }) => void window.open(url, "_blank", "noopener"),
+    local_path_exists: () => false,
+    open_path: ({ path }) => toast("(预览)本地路径：" + path),
     quit_ack: () => true,
     quit_cancel: () => {},
     show_window: () => {},
