@@ -39,6 +39,19 @@ async function init() {
     ], x, y),
   });
   bindUi();
+  // 只检查当前可见的路径；节点重建时重新检查，失败时保留普通样式。
+  const observedPaths = new WeakMap();
+  const pathObserver = new MutationObserver(() => {
+    if (state.settings?.local_path_missing === false) return;
+    for (const el of document.querySelectorAll("#editor [data-local-path]")) {
+      if (observedPaths.has(el)) continue;
+      observedPaths.set(el, true);
+      api.invoke("local_path_exists", { path: el.dataset.localPath })
+        .then((exists) => { if (el.isConnected) el.classList.toggle("missing", !exists); })
+        .catch(() => {});
+    }
+  });
+  pathObserver.observe($("#editor"), { subtree: true, childList: true });
   // 小窗:只放一页,别的(托盘退出、贴边隐藏、备份提示……)都归主窗口
   if (isMiniWindow) return initMini();
   await reload();
