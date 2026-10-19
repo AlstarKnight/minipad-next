@@ -320,6 +320,35 @@ describe("0.2.0 checks", () => {
     },
   );
 
+  ui("WebDAV change event refreshes an unchanged open page", {
+    seed: seed({ "": { 待办: "旧内容" } }),
+  }, async (h) => {
+    const { p } = h;
+    await p.evaluate(() => {
+      window.__mockFiles["待办"] = "网盘下载的新内容";
+      window.__mockEmit("webdav-changed", ["待办"]);
+    });
+    await until(h.editor, "网盘下载的新内容", "download event refreshes the open page");
+  });
+
+  ui("WebDAV change event preserves unsaved edits and backs up the downloaded version", {
+    seed: seed({ "": { 待办: "初稿" } }),
+  }, async (h) => {
+    const { p } = h;
+    await p.click("#editor");
+    await p.keyboard.press("Control+End");
+    await p.keyboard.type("本机改动");
+    await p.evaluate(() => {
+      window.__mockFiles["待办"] = "网盘也改了";
+      window.__mockEmit("webdav-changed", ["待办"]);
+    });
+    assert.equal(await h.editor(), "初稿本机改动", "in-progress edit is not replaced");
+    await until(() => h.mockFile("", "待办"), "初稿本机改动", "local edit persists");
+    await p.waitForFunction(() => Object.entries(window.__mockFiles).some(
+      ([name, content]) => name.includes("冲突") && content === "网盘也改了"
+    ));
+  });
+
   ui(
     "delete page: the custom dialog names the page, Esc cancels, OK deletes",
     { seed: seed({ "": { 待办: "外部改过的内容!", 同步来的: "来自网盘" } }) },
