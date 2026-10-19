@@ -410,6 +410,7 @@ pub struct SyncReport {
     pub deleted: usize,
     pub conflicts: usize,
     pub changed: Vec<String>,
+    pub rescan_needed: bool,
 }
 
 /// 删除前先进行完整规划，超过保护阈值一律不碰本地或远端文件。
@@ -605,6 +606,19 @@ pub fn sync_once(
         save_journal(journal_file, &journal)?;
     }
     let mut report = SyncReport::default();
+    // 保存与网络同步可能同时发生；文件变化只跳过当前项。
+    macro_rules! checked_local {
+        ($path:expr, $expected:expr) => {
+            match check_local(root, $path, $expected) {
+                Ok(bytes) => bytes,
+                Err(message) if message.contains("在扫描后") => {
+                    report.rescan_needed = true;
+                    continue;
+                }
+                Err(message) => return Err(message),
+            }
+        };
+    }
     let mut created_dirs = BTreeSet::new();
     for (path, action) in actions {
         let local_hash = local.get(&path).map(String::as_str);
@@ -613,7 +627,7 @@ pub fn sync_once(
             Action::Skip => {
                 if let Some(info) = remote_file {
                     if let Some(hash) = local_hash {
-                        let local_data = check_local(root, &path, Some(hash))?;
+                        let local_data = checked_local!(&path, Some(hash));
                         journal.files.insert(
                             path.clone(),
                             record_for(
@@ -707,7 +721,7 @@ pub fn sync_once(
                 let etag = client.put(&path, upload.clone(), if first && mode == FirstSync::Local { None } else { remote_file.map(|f| &f.entry) })?;
                 if upload != local_data {
                     let _lock = WRITE_LOCK.lock().map_err(|e| e.to_string())?;
-                    check_local(root, &path, Some(hash))?;
+                    checked_local!(&path, Some(hash));
                     crate::notes::write_atomic_bytes(&root.join(&path), &upload)?;
                     report.changed.push(path.clone());
                 }
@@ -724,7 +738,7 @@ pub fn sync_once(
                     return Err(format!("「{path}」在下载期间变化，稍后重试"));
                 }
                 let _lock = WRITE_LOCK.lock().map_err(|e| e.to_string())?;
-                let current = check_local(root, &path, local_hash)?;
+                let current = checked_local!(&path, local_hash);
                 let bytes = if path.ends_with(".minipad.json") && local_hash.is_some() {
                     preserve_navigation(&current, &received)?
                 } else {
@@ -749,7 +763,7 @@ pub fn sync_once(
             }
             Action::DeleteLocal => {
                 let _lock = WRITE_LOCK.lock().map_err(|e| e.to_string())?;
-                check_local(root, &path, local_hash)?;
+                checked_local!(&path, local_hash);
                 local_trash(root, &path)?;
                 journal.files.remove(&path);
                 report.changed.push(path.clone());
@@ -757,7 +771,7 @@ pub fn sync_once(
             }
             Action::DeleteRemote => {
                 let info = remote_file.ok_or("远端文件已不存在")?;
-                check_local(root, &path, None)?;
+                checked_local!(&path, None);
                 let (contents, _) = client.get(&path)?;
                 if content_hash(&path, &contents) != info.hash {
                     return Err(format!("「{path}」在删除前已被别处修改，停止删除"));
