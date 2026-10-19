@@ -184,17 +184,23 @@ fn mobile_webdav_password_path(
     Ok(dir.join(format!("{name}.password")))
 }
 
-fn read_mobile_webdav_password(app: &AppHandle, config: &MobileWebdavConfig) -> Result<String, String> {
+fn read_mobile_webdav_password(
+    app: &AppHandle,
+    config: &MobileWebdavConfig,
+) -> Result<String, String> {
     let stable = mobile_webdav_password_path(app, config)?;
     if let Ok(password) = fs::read_to_string(&stable) {
         return Ok(password);
     }
     let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let old_id = crate::syncer::journal_path(&dir, &config.server, &config.user, &config.folder);
-    let name = old_id.file_stem().and_then(|v| v.to_str()).ok_or("账号标识无效")?;
+    let name = old_id
+        .file_stem()
+        .and_then(|v| v.to_str())
+        .ok_or("账号标识无效")?;
     let legacy = dir.join(format!("{name}.password"));
-    let password = fs::read_to_string(&legacy)
-        .map_err(|_| "请先保存 WebDAV 应用密码".to_string())?;
+    let password =
+        fs::read_to_string(&legacy).map_err(|_| "请先保存 WebDAV 应用密码".to_string())?;
     crate::notes::write_atomic(&stable, &password)?;
     let _ = fs::remove_file(&legacy);
     Ok(password)
