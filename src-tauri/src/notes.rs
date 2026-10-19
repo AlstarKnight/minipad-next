@@ -2348,6 +2348,20 @@ mod tests {
     }
 
     #[test]
+    fn webdav_auxiliary_trash_is_visible() {
+        let root = temp_dir("webdav-trash-test");
+        let archive = root.join(".trash/.webdav/assets");
+        fs::create_dir_all(&archive).unwrap();
+        fs::write(archive.join("image.1760000000.png"), b"old").unwrap();
+        let list = list_trash(&root).unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].name, "assets/image.png");
+        restore_trash(&root, &list[0].id).unwrap();
+        assert_eq!(fs::read(root.join("assets/image.png")).unwrap(), b"old");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn delete_book_moves_folder_to_trash() {
         let root = temp_dir("book-delete");
         create_book(&root, "工作").unwrap();
