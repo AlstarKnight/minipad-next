@@ -294,8 +294,12 @@ pub fn save_journal(path: &Path, journal: &Journal) -> Result<(), String> {
 /// 大小和修改时间均未改变时可以沿用上次的哈希；无法取得时间时重新读取。
 fn local_stamp(path: &Path) -> Option<(u64, u128)> {
     let meta = fs::metadata(path).ok()?;
-    let nanos = meta.modified().ok()?
-        .duration_since(std::time::UNIX_EPOCH).ok()?.as_nanos();
+    let nanos = meta
+        .modified()
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_nanos();
     Some((meta.len(), nanos))
 }
 
@@ -312,7 +316,11 @@ pub fn local_files(root: &Path, images: bool) -> Result<BTreeMap<String, String>
     local_files_cached(root, images, None)
 }
 
-fn local_files_cached(root: &Path, images: bool, journal: Option<&Journal>) -> Result<BTreeMap<String, String>, String> {
+fn local_files_cached(
+    root: &Path,
+    images: bool,
+    journal: Option<&Journal>,
+) -> Result<BTreeMap<String, String>, String> {
     fn scan(
         folder: &Path,
         prefix: &str,
@@ -443,7 +451,14 @@ pub fn remote_files(
                 (content_hash(&path, &bytes), Some(bytes))
             }
         };
-        files.insert(path, RemoteFile { entry, hash, downloaded });
+        files.insert(
+            path,
+            RemoteFile {
+                entry,
+                hash,
+                downloaded,
+            },
+        );
     }
     Ok(files)
 }
@@ -622,7 +637,11 @@ fn local_trash(root: &Path, path: &str) -> Result<(), String> {
     let base = root.join(".trash").join(".webdav").join(folder);
     fs::create_dir_all(&base).map_err(|e| format!("创建同步回收站失败：{e}"))?;
     for attempt in 0..100 {
-        let suffix = if attempt == 0 { String::new() } else { format!(" ({})", attempt + 1) };
+        let suffix = if attempt == 0 {
+            String::new()
+        } else {
+            format!(" ({})", attempt + 1)
+        };
         let saved = if ext.is_empty() {
             format!("{stem}.{stamp}{suffix}")
         } else {
@@ -684,7 +703,9 @@ pub fn sync_once(
     backup_first: impl FnOnce() -> Result<(), String>,
 ) -> Result<SyncReport, String> {
     let (mut journal, first) = read_journal(journal_file)?;
-    let previous_books: BTreeSet<String> = journal.files.keys()
+    let previous_books: BTreeSet<String> = journal
+        .files
+        .keys()
         .filter_map(|p| p.split_once('/').map(|(book, _)| book.to_string()))
         .filter(|book| book != "assets")
         .collect();
@@ -693,11 +714,24 @@ pub fn sync_once(
     let mut remote = remote_files(client, options.images, &journal)?;
     let (actions, deletes, total) = preview_actions(&journal, &local, &remote, mode, first);
     if !options.confirm_deletes
-        && deletion_needs_confirmation_with(deletes, total, options.delete_limit, options.delete_divisor)
+        && deletion_needs_confirmation_with(
+            deletes,
+            total,
+            options.delete_limit,
+            options.delete_divisor,
+        )
     {
-        let local_count = actions.iter().filter(|(p, a)| p.ends_with(".md") && *a == Action::DeleteLocal).count();
-        let remote_count = actions.iter().filter(|(p, a)| p.ends_with(".md") && *a == Action::DeleteRemote).count();
-        return Err(format!("WEB_DAV_CONFIRM_DELETE:{deletes}:{total}:{local_count}:{remote_count}"));
+        let local_count = actions
+            .iter()
+            .filter(|(p, a)| p.ends_with(".md") && *a == Action::DeleteLocal)
+            .count();
+        let remote_count = actions
+            .iter()
+            .filter(|(p, a)| p.ends_with(".md") && *a == Action::DeleteRemote)
+            .count();
+        return Err(format!(
+            "WEB_DAV_CONFIRM_DELETE:{deletes}:{total}:{local_count}:{remote_count}"
+        ));
     }
     if first {
         backup_first()?;
@@ -718,7 +752,8 @@ pub fn sync_once(
             }
         };
     }
-    let mut created_dirs: BTreeSet<String> = remote.keys()
+    let mut created_dirs: BTreeSet<String> = remote
+        .keys()
         .filter_map(|path| path.rsplit_once('/').map(|(folder, _)| folder.to_string()))
         .collect();
     for (path, action) in actions {
@@ -745,7 +780,9 @@ pub fn sync_once(
                                 info.entry.modified.clone(),
                             )
                         };
-                        journal.files.insert(path.clone(), stamp_record(root, &path, record));
+                        journal
+                            .files
+                            .insert(path.clone(), stamp_record(root, &path, record));
                     }
                 } else {
                     journal.files.remove(&path);
@@ -843,7 +880,11 @@ pub fn sync_once(
                 }
                 journal.files.insert(
                     path.clone(),
-                    stamp_record(root, &path, record_for(&path, &upload, etag, Some(upload.len() as u64), None)),
+                    stamp_record(
+                        root,
+                        &path,
+                        record_for(&path, &upload, etag, Some(upload.len() as u64), None),
+                    ),
                 );
                 report.uploaded += 1;
             }
@@ -866,13 +907,17 @@ pub fn sync_once(
                 crate::notes::write_atomic_bytes(&root.join(&path), &bytes)?;
                 journal.files.insert(
                     path.clone(),
-                    stamp_record(root, &path, record_for(
+                    stamp_record(
+                        root,
                         &path,
-                        &bytes,
-                        etag.or_else(|| info.entry.etag.clone()),
-                        info.entry.size,
-                        info.entry.modified.clone(),
-                    )),
+                        record_for(
+                            &path,
+                            &bytes,
+                            etag.or_else(|| info.entry.etag.clone()),
+                            info.entry.size,
+                            info.entry.modified.clone(),
+                        ),
+                    ),
                 );
                 report.changed.push(path.clone());
                 report.downloaded += 1;
@@ -920,10 +965,14 @@ pub fn sync_once(
                 continue;
             }
             let dir = root.join(&book);
-            if !dir.is_dir() || fs::read_dir(&dir)
-                .map_err(|e| e.to_string())?
-                .any(|entry| entry.is_ok_and(|e| e.file_type()
-                    .is_ok_and(|t| t.is_file() && e.path().extension().is_some_and(|ext| ext == "md"))))
+            if !dir.is_dir()
+                || fs::read_dir(&dir).map_err(|e| e.to_string())?.any(|entry| {
+                    entry.is_ok_and(|e| {
+                        e.file_type().is_ok_and(|t| {
+                            t.is_file() && e.path().extension().is_some_and(|ext| ext == "md")
+                        })
+                    })
+                })
             {
                 continue;
             }
