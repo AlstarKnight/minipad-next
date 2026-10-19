@@ -57,13 +57,13 @@ async function performWebdavSync(confirmed) {
     await saveMeta();
     const indicator = $("#st-webdav");
     if (indicator) {
-      indicator.textContent = "⟳";
-      indicator.classList.add("webdav-running");
+      indicator.innerHTML = `<span class="webdav-state-icon spinning">⟳</span>${state.settings?.webdav_status_style === "text" ? " 同步中" : ""}`;
+      
     }
     const result = await api.invoke("webdav_sync_now", { confirmDeletes: confirmed });
     recentConflicts = (result?.changed || []).filter((path) => path.includes("冲突"));
     if (result?.rescan_needed) rerun = true;
-    if (indicator) indicator.classList.remove("webdav-running");
+    if (indicator) 
     await webdavStatus();
     return result;
   } catch (error) {
@@ -77,7 +77,7 @@ async function performWebdavSync(confirmed) {
     } else if (!msg.includes("离线")) {
       toast(msg, 6500);
     }
-    $("#st-webdav")?.classList.remove("webdav-running");
+    
     await webdavStatus().catch(() => {});
   }
 }
