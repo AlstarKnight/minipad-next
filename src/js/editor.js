@@ -56,6 +56,7 @@ const EXTERNAL = "minipad-external";
 // 邮箱默认按普通文字显示，保留手动指定的 mailto 链接与网址自动识别。
 let autoEmailLinks = false;
 let pathSettings = { local_path_enabled: false };
+let editorMobile = false;
 let onLocalPath = () => {};
 let onLocalPathMenu = () => {};
 
@@ -469,6 +470,7 @@ export async function createEditor(opts) {
   onLocalPathMenu = opts.localPathMenu || (() => {});
   emptyBold = opts.emptyBold;
   const mobile = opts.mobile === true;
+  editorMobile = mobile;
   editor = await Editor.make()
     .config((c) => {
       c.set(rootCtx, $("#editor"));
@@ -656,7 +658,7 @@ export function insertText(text) {
 export function applyEditorSettings(s) {
   const oldPath = JSON.stringify(pathSettings);
   pathSettings = {
-    local_path_enabled: s.local_path_enabled !== false,
+    local_path_enabled: editorMobile ? s.local_path_enabled === true : s.local_path_enabled !== false,
     local_path_click: s.local_path_click,
     local_path_underline: s.local_path_underline || "dashed",
     local_path_color: s.local_path_color || "",
