@@ -55,6 +55,7 @@ fn mobile_save_note(
     expected: String,
 ) -> Result<SaveResult, String> {
     let stamp = chrono::Local::now().format("%Y-%m-%d %H.%M").to_string();
+    let _write = crate::syncer::WRITE_LOCK.lock().map_err(|e| e.to_string())?;
     let conflict = notes::save_page(
         &root(&app)?,
         &book,
