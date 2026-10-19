@@ -24,6 +24,7 @@ import { formatDate } from "./datetime.js";
 import { initMini, bindMiniMain } from "./mini.js";
 import { bindUpdate } from "./update.js";
 import { bindSidebar } from "./sidebar.js";
+import { bindWebdav, resetWebdavTimers, webdavRun } from "./webdav.js";
 
 // ---------- 启动 ----------
 async function init() {
@@ -55,6 +56,7 @@ async function init() {
   // 小窗:只放一页,别的(托盘退出、贴边隐藏、备份提示……)都归主窗口
   if (isMiniWindow) return initMini();
   await reload();
+  bindWebdav();
   void upgradeColorLibrary().catch(() => {});
   api.listen("flush", () => { void flushAll().catch(() => {}); });
   api.listen("before-quit", (e) => { void handleQuit(e.payload); });
@@ -69,6 +71,9 @@ async function init() {
     syncFromDisk();
   });
   // 贴边隐藏时,在露出来的那一条上显示标识
+  api.listen("edge-hidden", () => {
+    if (state.settings?.webdav_enabled && state.settings?.webdav_on_hide !== false) void webdavRun();
+  });
   api.listen("edge-hidden", (e) => {
     document.documentElement.dataset.edge = e.payload;
     applyEdgeAppearance();
