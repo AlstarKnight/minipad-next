@@ -640,13 +640,18 @@ pub fn sync_once(
                             .and_then(|entry| entry.base_metadata.as_ref());
                         match merge_metadata(base, &ours, &theirs) {
                             Ok(merged) => {
-                                upload = serde_json::to_vec_pretty(&merged).map_err(|e| e.to_string())?;
+                                upload = serde_json::to_vec_pretty(&merged)
+                                    .map_err(|e| e.to_string())?;
                             }
                             Err(fields) if options.conflict_copy => {
                                 let copy = backup_metadata_conflict(root, &path, &remote_data)?;
                                 report.conflicts += 1;
                                 report.changed.push(path.clone());
-                                eprintln!("WebDAV 元数据字段冲突：{}；远端副本已保存到 {}", fields.join("、"), copy.display());
+                                eprintln!(
+                                    "WebDAV 元数据字段冲突：{}；远端副本已保存到 {}",
+                                    fields.join("、"),
+                                    copy.display()
+                                );
                             }
                             Err(_) => {} // 按用户“直接覆盖”设置保留本机字段。
                         }
@@ -826,7 +831,10 @@ mod tests {
         let base = serde_json::json!({"order": ["旧"]});
         let local = serde_json::json!({"order": ["本机"]});
         let theirs = serde_json::json!({"order": ["远端"]});
-        assert_eq!(merge_metadata(Some(&base), &local, &theirs), Err(vec!["order".to_string()]));
+        assert_eq!(
+            merge_metadata(Some(&base), &local, &theirs),
+            Err(vec!["order".to_string()])
+        );
         fs::remove_dir_all(root).unwrap();
     }
 
