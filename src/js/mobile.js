@@ -669,8 +669,9 @@ async function performMobileSync(confirmed) {
   } catch (e) {
     const text = String(e);
     if (text.includes("WEB_DAV_CONFIRM_DELETE:")) {
-      const match = /WEB_DAV_CONFIRM_DELETE:(\d+):(\d+)/.exec(text);
-      if (window.confirm("同步准备删除 " + (match?.[1] || "多") + " 页，确定继续吗？取消后不会删除任何文件。")) {
+      const match = /WEB_DAV_CONFIRM_DELETE:(\d+):(\d+):(\d+):(\d+)/.exec(text);
+      const where = "手机 " + (match?.[3] || 0) + " 页移进回收站，网盘 " + (match?.[4] || 0) + " 页移进 .trash。";
+      if (window.confirm("同步涉及大量删除：" + where + "确定继续吗？取消后不会删除任何文件。")) {
         return performMobileSync(true);
       }
     } else if (!text.includes("离线")) {
