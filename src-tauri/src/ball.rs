@@ -111,13 +111,33 @@ mod tests {
         let mut cache = ImageCache::default();
         let mtime = SystemTime::UNIX_EPOCH;
         let a = Path::new("ball-icon.png");
-        assert_eq!(cache.get_or_load(a, 10, mtime, || Some("first".into())), Some("first".into()));
-        assert_eq!(cache.get_or_load(a, 10, mtime, || panic!("缓存命中不应读文件")), Some("first".into()));
-        assert_eq!(cache.get_or_load(a, 11, mtime, || Some("larger".into())), Some("larger".into()));
-        assert_eq!(cache.get_or_load(a, 11, mtime + Duration::from_secs(1), || Some("changed".into())), Some("changed".into()));
-        assert_eq!(cache.get_or_load(Path::new("new.png"), 11, mtime, || Some("new".into())), Some("new".into()));
+        assert_eq!(
+            cache.get_or_load(a, 10, mtime, || Some("first".into())),
+            Some("first".into())
+        );
+        assert_eq!(
+            cache.get_or_load(a, 10, mtime, || panic!("缓存命中不应读文件")),
+            Some("first".into())
+        );
+        assert_eq!(
+            cache.get_or_load(a, 11, mtime, || Some("larger".into())),
+            Some("larger".into())
+        );
+        assert_eq!(
+            cache.get_or_load(a, 11, mtime + Duration::from_secs(1), || Some(
+                "changed".into()
+            )),
+            Some("changed".into())
+        );
+        assert_eq!(
+            cache.get_or_load(Path::new("new.png"), 11, mtime, || Some("new".into())),
+            Some("new".into())
+        );
         cache.clear();
-        assert_eq!(cache.get_or_load(Path::new("new.png"), 11, mtime, || Some("refreshed".into())), Some("refreshed".into()));
+        assert_eq!(
+            cache.get_or_load(Path::new("new.png"), 11, mtime, || Some("refreshed".into())),
+            Some("refreshed".into())
+        );
     }
 
     #[test]

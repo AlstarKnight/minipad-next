@@ -97,13 +97,19 @@ pub fn before_sync(notes: &Path, dest: &Path) -> Result<Made, String> {
     let temp = target.with_extension("zip.tmp~");
     let result = write_zip(notes, &temp, dest).and_then(|skipped| {
         if !skipped.is_empty() {
-            return Err(format!("同步前备份有 {} 个无法读取的项目，已取消同步", skipped.len()));
+            return Err(format!(
+                "同步前备份有 {} 个无法读取的项目，已取消同步",
+                skipped.len()
+            ));
         }
         fs::rename(&temp, &target).map_err(|e| e.to_string())?;
         Ok(skipped)
     });
     match result {
-        Ok(skipped) => Ok(Made { path: target, skipped }),
+        Ok(skipped) => Ok(Made {
+            path: target,
+            skipped,
+        }),
         Err(error) => {
             let _ = fs::remove_file(&temp);
             Err(error)
@@ -311,10 +317,18 @@ mod tests {
         fs::write(notes.join("a.md"), "latest").unwrap();
         let snapshot = before_sync(&notes, &dest).unwrap();
         assert_eq!(
-            read_zip(&snapshot.path).iter().find(|(name, _)| name == "a.md").unwrap().1,
+            read_zip(&snapshot.path)
+                .iter()
+                .find(|(name, _)| name == "a.md")
+                .unwrap()
+                .1,
             "latest"
         );
-        assert_eq!(list(&dest).len(), 1, "existing daily backups remain unchanged");
+        assert_eq!(
+            list(&dest).len(),
+            1,
+            "existing daily backups remain unchanged"
+        );
         fs::remove_dir_all(root).unwrap();
     }
 
