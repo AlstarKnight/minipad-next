@@ -52,9 +52,19 @@ async function open({ colorScheme, keyboard, look = { ui: "classic" } } = {}) {
     const images = {};
     const calls = { list: 0, read: 0, commands: [] };
     const listeners = {};
+    // Android 返回键(Tauri 的 onBackButtonPress):登记了才由页面处理,back() 模拟按一次
+    const backHandlers = [];
     window.__mobileTest = { disk, writes, images, calls, failSaves: 0, readDelay: 0, conflictNext: false,
-      emit: (name, payload) => listeners[name]?.({ payload }) };
-    window.__TAURI__ = { event: { listen: async (name, handler) => { listeners[name] = handler; return () => {}; } }, core: {
+      emit: (name, payload) => listeners[name]?.({ payload }),
+      backListeners: () => backHandlers.length,
+      back: () => { for (const handler of [...backHandlers]) handler({ canGoBack: false }); } };
+    window.__TAURI__ = { event: { listen: async (name, handler) => { listeners[name] = handler; return () => {}; } },
+    app: {
+      async onBackButtonPress(handler) {
+        backHandlers.push(handler);
+        return { unregister: async () => { backHandlers.splice(backHandlers.indexOf(handler), 1); } };
+      },
+    }, core: {
       async invoke(command, args = {}) {
         calls.commands.push(command);
         const book = disk.find((b) => b.name === args.book) || disk[0];
@@ -1301,6 +1311,63 @@ test("links open in the system or in-app browser and never take the app away fro
     await page.click("#open-settings");
     assert.equal(await page.locator('[data-link-open="inapp"]').getAttribute("aria-pressed"), "true");
     assert.equal(await page.locator("#look-link-tap-edit").isChecked(), true);
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test("the back button closes the top layer first and is left to the system when nothing is open", async () => {
+  const { context, page, errors } = await open();
+  try {
+    const listeners = () => page.evaluate(() => window.__mobileTest.backListeners());
+    const back = () => page.evaluate(() => window.__mobileTest.back());
+    const released = () => page.waitForFunction(() => window.__mobileTest.backListeners() === 0);
+    assert.equal(await listeners(), 0, "nothing open: the system handles Back");
+
+    // dialog on top of the drawer: one press each
+    await page.click("#open-drawer");
+    await page.click("#add-note");
+    await page.locator("#dialog").waitFor({ state: "visible" });
+    assert.equal(await listeners(), 1);
+    await back();
+    await page.locator("#dialog").waitFor({ state: "hidden" });
+    assert.equal(await page.locator("#mobile-drawer").isVisible(), true);
+    assert.equal(await page.evaluate(() => window.__mobileTest.disk[0].notes.length), 2, "Back cancels the dialog");
+    await back();
+    await page.locator("#mobile-drawer").waitFor({ state: "hidden" });
+    await released();
+
+    // appearance settings, sync settings, find panel, block menu and format bar popup
+    const layers = [
+      ["#open-settings", "#mobile-settings"],
+      ["#open-sync-settings", "#mobile-webdav-settings"],
+    ];
+    for (const [button, layer] of layers) {
+      await page.click("#open-drawer");
+      await page.click(button);
+      await page.locator(layer).waitFor({ state: "visible" });
+      await back();
+      await page.locator(layer).waitFor({ state: "hidden" });
+      assert.equal(await page.locator("#mobile-drawer").isVisible(), false);
+      await released();
+    }
+    await page.locator("#editor .ProseMirror p").first().click();
+    await page.click("#find-open");
+    await page.locator("#find-panel").waitFor({ state: "visible" });
+    await back();
+    await page.locator("#find-panel").waitFor({ state: "hidden" });
+    await released();
+    await page.click("#block-actions");
+    await page.locator("#ctx").waitFor({ state: "visible" });
+    await back();
+    await page.locator("#ctx").waitFor({ state: "hidden" });
+    await released();
+    await page.locator("#editor .ProseMirror p").first().click();
+    await page.click('#format-bar button[data-cmd="color"]');
+    const pop = page.locator(".fb-pop");
+    await pop.waitFor({ state: "visible" });
+    await back();
+    await pop.waitFor({ state: "hidden" });
+    await released();
     assert.deepEqual(errors, []);
   } finally { await context.close(); }
 });

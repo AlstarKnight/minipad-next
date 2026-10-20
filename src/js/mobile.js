@@ -911,6 +911,37 @@ el("close-settings").addEventListener("click", () => showSettings(false));
 settingsBackdrop.addEventListener("click", () => showSettings(false));
 applyLook();
 
+// ---- 返回键(0.4.6):按一次关掉最上面开着的一层,顺序是 对话框 → 菜单和弹窗 → 查找栏 → 同步设置 → 外观设置 → 抽屉。
+// 只在有东西开着时才接管返回键(Tauri 的 onBackButtonPress),全关了就交还,返回键照常让应用退到后台。
+const syncSheet = el("mobile-webdav-settings");
+const openMenus = () => [...document.querySelectorAll(".menu:not([hidden])")];
+const layerOpen = () => dialogOpen() || openMenus().length > 0 || !findPanel.hidden || !syncSheet.hidden || !settingsSheet.hidden || !drawer.hidden;
+function closeTopLayer() {
+  if (dialogOpen()) closeDialog(false);
+  else if (openMenus().length) for (const menu of openMenus()) menu.hidden = true;
+  else if (!findPanel.hidden) showFind(false);
+  else if (!syncSheet.hidden) closeSyncSettings();
+  else if (!settingsSheet.hidden) showSettings(false);
+  else if (!drawer.hidden) toggleDrawer(false);
+}
+let backListener = null; // 正在用的那一次登记;换掉以后旧的即使晚一步注销,也不会多关一层
+function watchBackButton() {
+  const app = window.__TAURI__?.app;
+  if (!app?.onBackButtonPress) return;
+  if (layerOpen() && !backListener) {
+    const mine = {};
+    mine.listener = app.onBackButtonPress(() => { if (backListener === mine) closeTopLayer(); }).catch(() => null);
+    backListener = mine;
+  } else if (!layerOpen() && backListener) {
+    const old = backListener;
+    backListener = null;
+    void old.listener.then((listener) => listener?.unregister()).catch(() => {});
+  }
+}
+// 各层开关时都会改 hidden;菜单和弹窗第一次用到时才放进 body
+new MutationObserver(watchBackButton).observe(document.body, { subtree: true, attributes: true, attributeFilter: ["hidden"] });
+new MutationObserver(watchBackButton).observe(document.body, { childList: true });
+
 // The soft keyboard must not cover the toolbar. Some WebViews shrink only the visual viewport,
 // so the page height follows it, and the status line steps aside while the keyboard is up.
 // Others resize the whole page for the keyboard and still shrink the visual viewport on top of
