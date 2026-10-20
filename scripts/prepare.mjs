@@ -28,6 +28,21 @@ await build({
   logLevel: "warning",
 });
 
+// 按拼音找页面(Ctrl+P、[[ 补全)用的拼音表:pinyin-match 的常用字表(6700 多个常用汉字,含多音字),MIT 许可证
+const pinyinLicense = readFileSync("node_modules/pinyin-match/LICENSE", "utf8").trim();
+await build({
+  entryPoints: ["node_modules/pinyin-match/src/simplified_dict.js"],
+  outfile: "src/vendor/pinyin.js",
+  charset: "utf8",
+  bundle: true,
+  format: "esm",
+  minify: true,
+  target: "chrome110",
+  legalComments: "none",
+  banner: { js: `/*! 拼音表(pinyin-match 的 simplified_dict.js),由 scripts/prepare.mjs 打包\n\n${pinyinLicense}\n*/` },
+  logLevel: "warning",
+});
+
 if (!existsSync("src-tauri/icons/icon.ico")) {
   execSync("npx tauri icon app-icon.svg -o src-tauri/icons", { stdio: "inherit" });
   for (const d of ["android", "ios"]) rmSync(`src-tauri/icons/${d}`, { recursive: true, force: true });

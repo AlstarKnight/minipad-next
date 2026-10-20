@@ -12,6 +12,8 @@ import { groupsOn, groupOf, tidyGroups, groupChip, groupMenuItems, joinNeighbour
 import { refreshTabBar, afterSwitch, tabsVertical, revealActive } from "./tabbar.js";
 import { openInMini, focusMini, recallMini, refuseInMini, miniAllowed } from "./mini.js";
 import { renderSidebar, markCurrentPage } from "./sidebar.js";
+import { pageNamesChanged } from "./pagelinkview.js";
+import { planLinks, updateLinks } from "./pagelinkapp.js";
 
 // 正在拖动的标签对应的页面
 let dragged = null;
@@ -193,6 +195,7 @@ export function renderTabs() {
   revealActive();
   refreshTabBar();
   renderSidebar();
+  pageNamesChanged();
 }
 
 // 只换了当前页面时不重画全部标签(几千页时重画一次要几百毫秒):把高亮挪到新的标签上,
@@ -303,10 +306,14 @@ export function startRename(n) {
     if (done) return;
     done = true;
     const val = input.value.trim();
+    let links = null;
     if (commit && val && val !== n.name) {
       try {
         await mutate(() => holdSaves(async () => {
-          n.name = await api.invoke("rename_note", { book: b.name, old: n.name, new: val });
+          const name = await api.invoke("rename_note", { book: b.name, old: n.name, new: val });
+          // 别的页面里指向它的链接(用改名前的名单找)
+          links = planLinks({ page: [b.name, n.name, name] });
+          n.name = name;
           scheduleMeta(b);
         }));
       } catch (e) {
@@ -315,6 +322,7 @@ export function startRename(n) {
     }
     renderTabs();
     focusEditor();
+    await updateLinks(links);
   };
   input.addEventListener("keydown", (e) => {
     e.stopPropagation();

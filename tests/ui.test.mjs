@@ -4689,7 +4689,7 @@ describe("0.3.2: settings in five categories", () => {
     assert.ok(await p.isHidden("#set-hotkey"));
     assert.deepEqual(
       await p.$$eval('.set-page[data-page="edit"] h3', (els) => els.map((e) => e.textContent)),
-      ["编辑器", "链接", "块管理", "悬浮工具栏", "悬浮目录", "查找替换"],
+      ["编辑器", "链接", "页面链接", "块管理", "悬浮工具栏", "悬浮目录", "查找替换"],
       "with a small heading for each part",
     );
     await p.keyboard.press("ArrowDown");
@@ -7083,5 +7083,328 @@ describe("0.4.7: many pages", () => {
     await syncUntil(h, h.editor, "别处改的", "a change elsewhere still shows up");
     await p.evaluate(() => (window.__mockFiles["甲"] = "别的页面改了"));
     await readAgain(h, [], "other pages are never read");
+  });
+});
+
+describe("0.5.0: page links", () => {
+  const links = (pages = {}, settings = {}, more = {}) => {
+    const db = seed({ "": { 首页: "看 [[周报]] 和 [[工作/计划]]", 周报: "本周", 开发计划: "", ...pages }, 工作: { 计划: "工作计划", 周报: "工作周报" }, ...more });
+    Object.assign(db.settings, settings);
+    return db;
+  };
+  // 编辑区里的链接(不含两边的方括号),不存在的页面前面加 ?
+  const shown = (p) => p.$$eval("#editor .page-link:not(.page-link-mark)", (els) => els.map((e) => (e.classList.contains("broken") ? "?" : "") + e.textContent));
+  const link = (p, text) => p.locator("#editor .page-link:not(.page-link-mark)").filter({ hasText: new RegExp(`^${escapeRe(text)}$`) }).first();
+  // 补全列表:页面名,别的笔记本的后面写 @笔记本
+  const menu = (p) => p.$$eval(".page-link-menu:not([hidden]) button", (bs) => bs.map((b) => b.querySelector("span").textContent + (b.querySelector("small") ? "@" + b.querySelector("small").textContent : "")));
+  const picked = (p) => p.$$eval(".page-link-menu:not([hidden]) button.active", (bs) => bs.map((b) => b.querySelector("span").textContent));
+  // 光标放到这一段里 text 前面
+  const cursorAt = (p, text) => p.evaluate((t) => {
+    const { view } = window.__minipad.editor();
+    const pos = 1 + view.state.doc.textContent.indexOf(t);
+    view.dispatch(view.state.tr.setSelection(view.state.selection.constructor.near(view.state.doc.resolve(pos))));
+  }, text);
+  const typeAtEnd = async (p, text) => {
+    await p.click("#editor .ProseMirror");
+    await p.keyboard.press("Control+End");
+    await p.keyboard.type(text);
+  };
+  // 从标签的右键菜单改名,当前页面不变
+  const renameTab = async (h, from, to) => {
+    await h.tabMenu(from);
+    await h.p.click('#ctx button[data-act="rename"]');
+    await h.p.locator("#tabs .tab input").waitFor();
+    await h.p.fill("#tabs .tab input", to);
+    await h.p.keyboard.press("Enter");
+  };
+
+  ui("links are saved as typed, and links older versions saved with backslashes are cleaned up", {
+    seed: links({ 旧: "\\[\\[周报]] 和 \\[\\[工作/计划]]" }),
+  }, async (h) => {
+    const { p } = h;
+    await h.tab("旧").click();
+    await until(() => shown(p), ["周报", "工作/计划"], "old escaped links show as links");
+    await typeAtEnd(p, " [[开发计划]]。");
+    await until(() => h.mockFile("", "旧"), "[[周报]] 和 [[工作/计划]] [[开发计划]]。", "saved without backslashes");
+    await until(() => shown(p), ["周报", "工作/计划", "开发计划"]);
+    // 读回来还是一样
+    await p.reload();
+    await h.tab("旧").click();
+    await until(h.editor, "[[周报]] 和 [[工作/计划]] [[开发计划]]。", "read back the same");
+  });
+
+  ui("pages that exist and pages that do not look different; Ctrl+click opens, a plain click only places the cursor", {
+    seed: links({ 首页: "看 [[周报]] 和 [[工作/计划]],[[没有]] `[[代码]]`" }),
+  }, async (h) => {
+    const { p } = h;
+    await until(() => shown(p), ["周报", "工作/计划", "?没有"], "code is not a link");
+    assert.equal(await link(p, "周报").getAttribute("title"), "Ctrl+点击打开「周报」");
+    assert.equal(await link(p, "没有").getAttribute("title"), "还没有「没有」这一页,Ctrl+点击新建");
+    // 方括号淡一点
+    assert.equal(await p.locator("#editor .page-link-mark").first().evaluate((e) => getComputedStyle(e).opacity), "0.45");
+    await link(p, "周报").click();
+    await sleep(200);
+    assert.equal(await h.activeTab(), "首页", "a plain click stays");
+    await link(p, "周报").click({ modifiers: ["Control"] });
+    await until(h.activeTab, "周报", "Ctrl+click opens the page");
+    await h.tab("首页").click();
+    await link(p, "工作/计划").click({ modifiers: ["Control"] });
+    await until(h.bookName, "工作", "a link to another notebook goes there");
+    assert.equal(await h.activeTab(), "计划");
+    assert.equal(await h.editor(), "工作计划");
+  });
+
+  ui("a single click can open links; brackets, underline and colors follow the settings", {
+    seed: links({}, { page_link_click: "click", page_link_brackets: "hide", page_link_underline: "dashed", page_link_color: "#16a34a" }),
+  }, async (h) => {
+    const { p } = h;
+    await until(() => shown(p), ["周报", "工作/计划"]);
+    assert.equal(await link(p, "周报").getAttribute("title"), "点击打开「周报」");
+    const style = await link(p, "周报").evaluate((e) => [getComputedStyle(e).color, getComputedStyle(e).textDecorationStyle]);
+    assert.deepEqual(style, ["rgb(22, 163, 74)", "dashed"]);
+    // 隐藏的方括号:光标进到链接里才显示
+    const marks = () => p.$$eval("#editor .page-link-mark", (els) => els.map((e) => getComputedStyle(e).display === "none"));
+    await cursorAt(p, "看");
+    await until(marks, [true, true, true, true], "hidden");
+    await cursorAt(p, "报");
+    await until(marks, [false, false, true, true], "the link with the cursor shows its brackets");
+    await link(p, "周报").click();
+    await until(h.activeTab, "周报", "a single click opens it");
+  });
+
+  ui("clicking a link to a missing page creates it; a cleaned-up name keeps working; a missing notebook is only reported", {
+    seed: links({ 首页: "[[新页]] [[工作/新计划]] [[a?b]] [[没有的本/x]]" }),
+  }, async (h) => {
+    const { p } = h;
+    await until(() => shown(p), ["?新页", "?工作/新计划", "?a?b", "?没有的本/x"]);
+    assert.equal(await link(p, "没有的本/x").getAttribute("title"), "没有「没有的本」这个笔记本");
+    await link(p, "新页").click({ modifiers: ["Control"] });
+    await until(h.activeTab, "新页", "the page is created and opened");
+    assert.deepEqual(await h.tabs(), ["首页", "周报", "开发计划", "新页"]);
+    assert.equal(await h.mockFile("", "新页"), "");
+    await h.tab("首页").click();
+    await until(() => shown(p), ["新页", "?工作/新计划", "?a?b", "?没有的本/x"], "the link is no longer missing");
+    await link(p, "工作/新计划").click({ modifiers: ["Control"] });
+    await until(h.bookName, "工作", "created in the notebook the link names");
+    assert.equal(await h.activeTab(), "新计划");
+    assert.equal(await h.mockFile("工作", "新计划"), "");
+    await h.switchBook("");
+    await h.tab("首页").click();
+    // 系统不允许的 ? 换成了 _,链接照样指向它,再点不会再建一页
+    await link(p, "a?b").click({ modifiers: ["Control"] });
+    await until(h.activeTab, "a_b", "the backend cleaned the name");
+    await h.tab("首页").click();
+    await until(() => shown(p), ["新页", "工作/新计划", "a?b", "?没有的本/x"]);
+    await link(p, "a?b").click({ modifiers: ["Control"] });
+    await until(h.activeTab, "a_b");
+    assert.deepEqual(await h.tabs(), ["首页", "周报", "开发计划", "新页", "a_b"], "no second page");
+    await h.tab("首页").click();
+    await link(p, "没有的本/x").click({ modifiers: ["Control"] });
+    await until(h.toast, "没有「没有的本」这个笔记本");
+    assert.ok(!("没有的本" in (await h.mock())), "no notebook is created");
+    assert.equal(await h.activeTab(), "首页");
+  });
+
+  ui("typing [[ lists pages; typing filters by name and pinyin; arrows, Enter, Tab and Esc work", {
+    seed: links({ 首页: "", "React 笔记": "" }),
+  }, async (h) => {
+    const { p } = h;
+    await typeAtEnd(p, "[[");
+    await until(() => menu(p), ["周报", "开发计划", "React 笔记", "计划@工作", "周报@工作"], "this notebook first, the current page left out");
+    await p.keyboard.type("kf");
+    await until(() => menu(p), ["开发计划"], "pinyin initials");
+    await p.keyboard.press("Backspace");
+    await p.keyboard.press("Backspace");
+    await p.keyboard.type("jh");
+    await until(() => menu(p), ["计划@工作", "开发计划"], "a name that starts with it comes first");
+    await p.keyboard.press("ArrowDown");
+    assert.deepEqual(await picked(p), ["开发计划"]);
+    await p.keyboard.press("Enter");
+    await until(h.editor, "[[开发计划]]", "Enter fills in the name and the closing brackets");
+    assert.deepEqual(await menu(p), [], "the list closes");
+    // 笔记本/页面:先按笔记本筛
+    await p.keyboard.type(" [[gz/zb");
+    await until(() => menu(p), ["周报@工作"]);
+    await p.keyboard.press("Tab");
+    await until(h.editor, "[[开发计划]] [[工作/周报]]", "Tab fills it in with the notebook name");
+    // Esc 关掉以后接着打字也不再弹出,下一个 [[ 照常弹出
+    await p.keyboard.type(" [[周");
+    await until(() => menu(p), ["周报", "周报@工作"]);
+    await p.keyboard.press("Escape");
+    assert.deepEqual(await menu(p), []);
+    await p.keyboard.type("报");
+    await sleep(100);
+    assert.deepEqual(await menu(p), [], "stays closed for this [[");
+    assert.equal(await p.isVisible("#editor"), true, "Esc did not hide the window");
+    await p.keyboard.type("]] [[React");
+    await until(() => menu(p), ["React 笔记"]);
+    await p.keyboard.press("Enter");
+    await until(h.editor, "[[开发计划]] [[工作/周报]] [[周报]] [[React 笔记]]");
+    await until(() => h.mockFile("", "首页"), "[[开发计划]] [[工作/周报]] [[周报]] [[React 笔记]]");
+  });
+
+  ui("Chinese 【【 and 】】 become [[ and ]]; the completion settings are kept", {
+    seed: links({ 首页: "" }),
+  }, async (h) => {
+    const { p } = h;
+    await typeAtEnd(p, "【【周报】】");
+    await until(h.editor, "[[周报]]", "converted");
+    await until(() => shown(p), ["周报"]);
+    await p.click("#btn-settings");
+    await settingsPage(p, "edit");
+    assert.equal(await p.locator("#set-page-links").isChecked(), true);
+    assert.equal(await p.inputValue("#set-page-link-suggest"), "brackets");
+    await p.uncheck("#set-page-link-cn");
+    await p.selectOption("#set-page-link-suggest", "typing");
+    await p.click("#set-save");
+    await typeAtEnd(p, " 【【x");
+    await until(h.editor, "[[周报]] 【【x", "not converted when turned off");
+    // 打了字才弹出
+    await p.keyboard.type(" [[");
+    await sleep(100);
+    assert.deepEqual(await menu(p), []);
+    await p.keyboard.type("开");
+    await until(() => menu(p), ["开发计划"]);
+    await p.keyboard.press("Escape");
+    await p.click("#btn-settings");
+    await settingsPage(p, "edit");
+    assert.equal(await p.locator("#set-page-link-cn").isChecked(), false);
+    assert.equal(await p.inputValue("#set-page-link-suggest"), "typing");
+    // 总开关关掉:不显示、不弹出
+    await p.uncheck("#set-page-links");
+    await p.click("#set-save");
+    await until(() => shown(p), [], "no links when turned off");
+    await typeAtEnd(p, " [[周");
+    await sleep(100);
+    assert.deepEqual(await menu(p), []);
+  });
+
+  ui("renaming a page updates the links to it; one page is changed right away and can be undone", {
+    seed: links({ 首页: "看 [[周报]],[[默认/周报]]", 其他: "[[工作/周报]] 不是它" }),
+  }, async (h) => {
+    const { p } = h;
+    await renameTab(h, "周报", "每周");
+    await until(() => h.mockFile("", "首页"), "看 [[每周]],[[默认/每周]]", "the links follow");
+    assert.equal(await h.mockFile("", "其他"), "[[工作/周报]] 不是它", "a page with the same name elsewhere is left alone");
+    await until(h.toast, "已更新 1 个页面里的链接 撤销");
+    await p.click("#toast button");
+    await until(() => h.mockFile("", "首页"), "看 [[周报]],[[默认/周报]]", "undone");
+    await until(h.toast, "已撤销链接的修改");
+    assert.deepEqual(await h.tabs(), ["首页", "每周", "开发计划", "其他"], "the page keeps its new name");
+  });
+
+  ui("renaming a page linked from two pages asks first; undo leaves pages changed since", {
+    seed: links({ 首页: "[[周报]]", 第二页: "[[周报]] 也是" }),
+  }, async (h) => {
+    const { p } = h;
+    await renameTab(h, "周报", "周总结");
+    await p.locator("#dialog").waitFor();
+    assert.equal(await p.textContent("#dialog-msg"), "有 2 个页面里有指向它的链接:「首页」、「第二页」\n要同时更新这些链接吗?");
+    assert.equal(await p.textContent("#dialog-ok"), "更新链接");
+    await p.click("#dialog-cancel");
+    await sleep(200);
+    assert.equal(await h.mockFile("", "首页"), "[[周报]]", "cancel changes nothing");
+    await until(() => shown(p), ["?周报"], "the link now points to a missing page");
+    // 改回来,链接又对上了(这次没有要改的链接,不问)
+    await renameTab(h, "周总结", "周报");
+    await until(() => shown(p), ["周报"]);
+    assert.equal(await p.isVisible("#dialog"), false);
+    await renameTab(h, "周报", "周总结");
+    await p.locator("#dialog").waitFor();
+    await p.click("#dialog-ok");
+    await until(() => h.mockFile("", "第二页"), "[[周总结]] 也是");
+    assert.equal(await h.mockFile("", "首页"), "[[周总结]]");
+    await until(() => shown(p), ["周总结"], "the page on screen shows the new link");
+    // 第二页后来又改过:撤销时不动它
+    await h.tab("第二页").click();
+    await typeAtEnd(p, "!");
+    await until(() => h.mockFile("", "第二页"), "[[周总结]] 也是!");
+    await p.click("#toast button");
+    await until(h.toast, "已撤销;1 个页面后来又改过,没有动");
+    await until(() => h.mockFile("", "首页"), "[[周报]]");
+    assert.equal(await h.mockFile("", "第二页"), "[[周总结]] 也是!");
+    // 设成「不改」
+    await p.click("#btn-settings");
+    await settingsPage(p, "edit");
+    await p.selectOption("#set-page-link-rename", "off");
+    await p.click("#set-save");
+    await renameTab(h, "周总结", "周记");
+    await until(h.tabs, ["首页", "周记", "开发计划", "第二页"]);
+    await sleep(200);
+    assert.equal(await h.mockFile("", "第二页"), "[[周总结]] 也是!", "links are left alone");
+    assert.equal(await p.isVisible("#dialog"), false);
+  });
+
+  ui("renaming a notebook and moving a page update the links; pages open in a small window are skipped", {
+    seed: links({ 首页: "[[工作/计划]] [[开发计划]]", 小窗页: "[[工作/周报]]" }, { page_link_rename: "auto" }),
+  }, async (h) => {
+    const { p } = h;
+    await p.evaluate(() => window.__mockEmit("mini-changed", [{ book: "", name: "小窗页" }]));
+    await until(() => p.locator("#tabs .tab.in-mini").count(), 1);
+    await h.bookMenu("工作");
+    await p.click('#ctx button[data-act="rename"]');
+    await h.answer("项目");
+    await until(() => h.mockFile("", "首页"), "[[项目/计划]] [[开发计划]]", "a link naming the notebook follows");
+    await until(h.toast, "已更新 1 个页面里的链接;「小窗页」正在小窗里编辑,里面的链接没有更新 撤销");
+    assert.equal(await h.mockFile("", "小窗页"), "[[工作/周报]]");
+    assert.equal(await h.mockFile("项目", "计划"), "工作计划");
+    await h.closeBooks();
+    // 移到别的笔记本:指向它的短链接补上笔记本名
+    await h.tabMenu("开发计划");
+    await p.click('#ctx button[data-act="move"]');
+    await p.locator("#books").waitFor();
+    await h.item("项目").click();
+    await until(() => h.mockFile("", "首页"), "[[项目/计划]] [[项目/开发计划]]");
+    await until(() => shown(p), ["项目/计划", "项目/开发计划"]);
+  });
+
+  ui("quick switch finds pages by pinyin and puts an exact name first", {
+    seed: links({ 首页: "", 周报汇总: "" }),
+  }, async (h) => {
+    const { p } = h;
+    const results = () => p.$$eval("#quick-results .result .title", (els) => els.map((e) => e.textContent));
+    await p.keyboard.press("Control+p");
+    await p.keyboard.type("kfjh");
+    await until(results, ["开发计划"]);
+    await p.fill("#quick-input", "zb");
+    await until(results, ["周报", "周报汇总", "周报"], "both notebooks");
+    await p.fill("#quick-input", "周报");
+    await until(results, ["周报", "周报", "周报汇总"], "the exact name first");
+    await p.keyboard.press("Escape");
+    await p.click("#btn-settings");
+    await settingsPage(p, "general");
+    assert.equal(await p.locator("#set-pinyin").isChecked(), true);
+    await p.uncheck("#set-pinyin");
+    await p.click("#set-save");
+    await p.keyboard.press("Control+p");
+    await p.keyboard.type("kfjh");
+    await until(results, [], "pinyin turned off");
+  });
+
+  ui("a small window shows and completes links and opens them in the main window", {
+    seed: links({ 首页: "[[周报]] [[没有]]" }), url: miniUrl("", "首页"), mockControl: {},
+  }, async (h) => {
+    const { p } = h;
+    await until(() => shown(p), ["周报", "?没有"], "the small window knows the page names");
+    await typeAtEnd(p, " [[kf");
+    await until(() => menu(p), ["开发计划"]);
+    await p.keyboard.press("Enter");
+    await until(h.editor, "[[周报]] [[没有]] [[开发计划]]");
+    await link(p, "周报").click({ modifiers: ["Control"] });
+    await until(() => mockCtl(p, "openedInMain"), [{ book: "", target: "周报" }], "the main window opens it");
+    // 主窗口那边新建了页面:窗口回到前面时名单更新
+    await p.evaluate(() => (window.__mockBooks[""].files["没有"] = ""));
+    await p.evaluate(() => window.__mockEmit("window-focus", null));
+    await until(() => shown(p), ["周报", "没有", "开发计划"]);
+  });
+
+  ui("the main window opens a link clicked in a small window", { seed: links() }, async (h) => {
+    const { p } = h;
+    await p.evaluate(() => window.__mockEmit("open-page", { book: "工作", target: "周报" }));
+    await until(h.bookName, "工作", "a short link from a page in 工作 means 工作/周报");
+    assert.equal(await h.activeTab(), "周报");
+    await p.evaluate(() => window.__mockEmit("open-page", { book: "", target: "新建的" }));
+    await until(h.bookName, "默认");
+    await until(h.activeTab, "新建的", "a missing page is created");
   });
 });

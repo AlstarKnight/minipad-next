@@ -193,7 +193,7 @@ html[data-mobile] .mobile-toast { position: fixed; z-index: 50; left: 50%; botto
   color: white; background: #303a32; border-radius: 14px; padding: 12px 18px;
   font-size: 13px; box-shadow: var(--mobile-shadow); text-align: center; }
 html[data-mobile] #ctx.menu, html[data-mobile] .fb-pop.menu,
-html[data-mobile] .cb-lang-menu.menu { z-index: 52; max-width: calc(100vw - 12px); max-height: 60dvh; overflow-y: auto; }
+html[data-mobile] .cb-lang-menu.menu, html[data-mobile] .page-link-menu.menu { z-index: 52; max-width: calc(100vw - 12px); max-height: 60dvh; overflow-y: auto; }
 /* The same palette twice: the media query paints dark before the script runs; the data-theme rule
    (set from the system setting) is more specific than the shared editor's :root[data-theme="dark"],
    so these greens win over its orange accent. */

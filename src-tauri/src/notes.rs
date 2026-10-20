@@ -742,8 +742,7 @@ pub fn load_books_with(
     Ok(books)
 }
 
-/// 手机端的目录:笔记本和页面名字(按保存过的顺序),不读页面内容
-#[cfg(any(mobile, test))]
+/// 笔记本和页面名字(按保存过的顺序),不读页面内容:手机端的目录、电脑小窗里的页面链接
 #[derive(Serialize, Clone, Debug, PartialEq)]
 pub struct BookIndex {
     pub name: String,
@@ -751,7 +750,6 @@ pub struct BookIndex {
 }
 
 /// 和 load_books 一样,无法读取的子笔记本跳过,默认笔记本读不出来才报错
-#[cfg(any(mobile, test))]
 pub fn index_books(root: &Path) -> Result<Vec<BookIndex>, String> {
     let index = |book: &str| -> Result<BookIndex, String> {
         let dir = book_dir(root, book)?;

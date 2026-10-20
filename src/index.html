@@ -176,6 +176,7 @@
                 <option value="book">只找当前笔记本</option>
               </select>
             </label>
+            <label class="row check"><input id="set-pinyin" type="checkbox" /> <span>按拼音找页面(打 kf 或 kaifa 能找到「开发」;[[ 补全页面名时也一样)</span></label>
           </section>
 
           <section id="set-page-look" class="set-page" role="tabpanel" data-page="look" hidden>
@@ -448,6 +449,33 @@
               <span id="set-date-preview" class="muted"></span>
               <span>写法:yyyy 年、M 月、d 日、H 时、mm 分、ss 秒、dddd 星期几</span>
             </div>
+            <h3>页面链接</h3>
+            <label class="row check"><input id="set-page-links" type="checkbox" /> <span>识别页面链接:[[页面名]] 指向同一个笔记本里的页面,[[笔记本/页面名]] 指向别的笔记本</span></label>
+            <label class="row"><span>打开页面链接</span><select id="set-page-link-click"><option value="ctrl">Ctrl+点击</option><option value="click">单击</option></select></label>
+            <label class="row"><span>补全页面名</span><select id="set-page-link-suggest">
+              <option value="brackets">输入 [[ 就弹出</option>
+              <option value="typing">[[ 后再打字才弹出</option>
+              <option value="off">不弹出</option>
+            </select></label>
+            <label class="row check"><input id="set-page-link-cn" type="checkbox" /> <span>中文标点打出的【【 自动换成 [[</span></label>
+            <label class="row"><span>页面改名、移到别的笔记本时</span><select id="set-page-link-rename">
+              <option value="ask">更新链接(要改 2 个以上页面时先问)</option>
+              <option value="auto">直接更新链接</option>
+              <option value="off">不更新链接</option>
+            </select></label>
+            <div class="row col"><span>链接颜色</span><div id="set-page-link-color" class="swatches"></div></div>
+            <div class="row col"><span>还没有的页面的链接颜色</span><div id="set-page-link-broken-color" class="swatches"></div></div>
+            <label class="row"><span>方括号</span><select id="set-page-link-brackets">
+              <option value="faint">淡色</option>
+              <option value="show">正常</option>
+              <option value="hide">隐藏(光标在链接上时显示)</option>
+            </select></label>
+            <label class="row"><span>下划线</span><select id="set-page-link-underline">
+              <option value="hover">鼠标移上去时</option>
+              <option value="solid">实线</option>
+              <option value="dashed">虚线</option>
+              <option value="none">无</option>
+            </select></label>
             <h3>块管理</h3>
             <label class="row check"><input id="set-block-enabled" type="checkbox" /> <span>显示块管理手柄与菜单（关闭后使用原有编辑区布局）</span></label>
             <label class="row"><span>正文右键菜单</span><select id="set-block-context">

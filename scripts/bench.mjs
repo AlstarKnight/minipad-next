@@ -32,6 +32,7 @@ const DESKTOP = [
   ["newPage", "新建页面", 1500],
   ["typing", "打字(每次输入)", 10],
   ["save", "保存一页", 150],
+  ["linkFilter", "[[ 补全筛选(拼音)", 150],
   ["syncSame", "切回窗口(都没变)", 150],
   ["syncOne", "切回窗口(别处改了一页)", 150],
   ["search", "搜索全部页面", 200],
@@ -122,6 +123,19 @@ async function desktop(browser, base, settings) {
       return ms;
     });
     out.save = median(saves);
+
+    // 0.5.0 页面链接:打了 [[ 以后再打拼音和数字,列表筛到这一页
+    out.linkFilter = await repeat(3, async () => {
+      const ms = await page.evaluate(async () => {
+        const view = window.__minipad.editor().view;
+        view.dispatch(view.state.tr.insertText(" [["));
+        await __bench.time(() => {}, () => document.querySelector(".page-link-menu:not([hidden])"));
+        return __bench.time(() => view.dispatch(view.state.tr.insertText("ym 4321")),
+          () => document.querySelectorAll(".page-link-menu:not([hidden]) button").length === 1);
+      });
+      await page.keyboard.press("Escape");
+      return ms;
+    });
 
     // 切回窗口时的重新读取;sync 正忙(返回 false)时过一会儿再来
     const sync = () => page.evaluate(async () => {
