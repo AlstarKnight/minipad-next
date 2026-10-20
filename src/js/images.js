@@ -7,7 +7,9 @@ import { state, book } from "./state.js";
 import { toast } from "./ui.js";
 
 const TYPES = { "image/png": "png", "image/jpeg": "jpg", "image/gif": "gif", "image/webp": "webp", "image/bmp": "bmp" };
-const WINDOWS = /Windows/.test(navigator.userAgent);
+// Windows 和 Android 上自定义协议的地址是 http(s)://note.localhost/…,和页面本身用同一个协议
+// (Windows 主窗口是 https,小窗和手机是 http);别的系统是 note://localhost/…
+const HOSTED = /Windows/.test(navigator.userAgent) || document.documentElement.dataset.mobile === "true";
 const SIZES = ["full", "medium", "small"];
 
 export function applyImageSettings(s) {
@@ -19,7 +21,7 @@ export function imageSrc(src, bookName = book()?.name ?? "") {
   if (!src || /^(https?:|data:|blob:)/i.test(src)) return src || "";
   if (isMock) return window.__mockImage?.(bookName, src) || "";
   const q = `book=${encodeURIComponent(bookName)}&path=${encodeURIComponent(src)}`;
-  return (WINDOWS ? "http://note.localhost/img?" : "note://localhost/img?") + q;
+  return (HOSTED ? `${location.protocol}//note.localhost/img?` : "note://localhost/img?") + q;
 }
 
 const imageFiles = (list) => [...(list || [])].filter((f) => TYPES[f.type]);

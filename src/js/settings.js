@@ -23,6 +23,7 @@ import { ALL_ITEMS, DEFAULT_SEL_ITEMS, itemChecklist, orderedItems } from "./for
 import { renderTabs } from "./tabs.js";
 import { comboOf } from "./quickswitch.js";
 import { makeSharedColorTools, refreshSharedColors, quickLimit, askResetColors } from "./sharedcolors.js";
+import { webdavStatus, webdavSavePassword, webdavTest, webdavRun, webdavForget, resetWebdavTimers } from "./webdav.js";
 
 const REPO_URL = "https://github.com/AlstarKnight/minipad-next";
 
@@ -211,6 +212,12 @@ export function openSettings() {
   $("#set-code-lang-menu").checked = s.code_lang_menu !== false;
   $("#set-code-title-color").checked = s.code_title_color !== false;
   $("#set-email-links").checked = s.email_auto_link === true;
+  $("#set-local-path").checked = s.local_path_enabled !== false;
+  $("#set-local-path-click").value = s.local_path_click === "click" ? "click" : "ctrl";
+  $("#set-local-path-underline").value = ["solid", "none"].includes(s.local_path_underline) ? s.local_path_underline : "dashed";
+  $("#set-local-path-missing").checked = s.local_path_missing !== false;
+  $("#set-local-path-confirm").checked = s.local_path_confirm !== false;
+  localPathColor.show(s.local_path_color || "");
   $("#set-block-enabled").checked = s.block_enabled !== false;
   $("#set-block-context").value = s.block_context_menu === "block" ? "block" : "system";
   $("#set-code-exit").value = ["blank2", "blank3", "ctrl"].includes(s.code_exit_mode) ? s.code_exit_mode : "blank3";
@@ -230,6 +237,24 @@ export function openSettings() {
   $("#set-find-pos").value = s.find_bar_pos === "bottom" ? "bottom" : "top";
   findColor.show(s.find_color || "");
   $("#set-conflict").value = s.conflict_mode === "overwrite" ? "overwrite" : "copy";
+  $("#set-webdav-enabled").checked = s.webdav_enabled === true;
+  $("#set-webdav-server").value = s.webdav_server || "";
+  $("#set-webdav-user").value = s.webdav_user || "";
+  $("#set-webdav-password").value = "";
+  $("#set-webdav-folder").value = s.webdav_folder || "/MinipadNext/";
+  $("#set-webdav-http").checked = s.webdav_allow_http === true;
+  $("#set-webdav-first").value = ["remote", "local"].includes(s.webdav_first_mode) ? s.webdav_first_mode : "merge";
+  $("#set-webdav-images").checked = s.webdav_images !== false;
+  $("#set-webdav-start").checked = s.webdav_on_start !== false;
+  $("#set-webdav-save").checked = s.webdav_after_save !== false;
+  $("#set-webdav-delay").value = s.webdav_delay_seconds ?? 30;
+  $("#set-webdav-interval").value = String(s.webdav_interval_minutes ?? 5);
+  $("#set-webdav-hide").checked = s.webdav_on_hide !== false;
+  $("#set-webdav-display").value = s.webdav_status_style || "icon";
+  $("#set-webdav-delete-limit").value = s.webdav_delete_limit ?? 20;
+  $("#set-webdav-delete-divisor").value = s.webdav_delete_divisor ?? 3;
+  webdavColor.show(s.webdav_status_color || "");
+  void webdavStatus().catch(() => {});
   $("#set-backup").checked = s.backup_enabled;
   $("#set-backup-keep").value = s.backup_keep;
   $("#set-backup-dir").value = s.backup_dir;
@@ -257,7 +282,7 @@ export function openSettings() {
   backupInfo = null;
   updateBackup();
   $("#settings").hidden = false;
-  for (const picker of [accentColor, edgeColor, findColor, outlineColor, ballColor]) picker.reopen();
+  for (const picker of [accentColor, edgeColor, localPathColor, webdavColor, findColor, outlineColor, ballColor]) picker.reopen();
   showSettingsPage(page, { focus: true });
   api
     .invoke("backup_info")
@@ -327,6 +352,20 @@ const edgeColor = colorPicker(
   [{ name: "跟随强调色", value: "" }, ...ACCENTS.filter((a) => a.value)],
   "var(--accent-grad)",
   () => updateEdgeLinePreview(),
+);
+
+const webdavColor = colorPicker(
+  "webdav",
+  "#set-webdav-color",
+  [{ name: "跟随强调色", value: "" }, ...ACCENTS.filter((a) => a.value)],
+  "var(--accent-grad)",
+);
+
+const localPathColor = colorPicker(
+  "local-path",
+  "#set-local-path-color",
+  [{ name: "跟随链接", value: "" }, ...ACCENTS.filter((a) => a.value)],
+  "var(--accent-grad)",
 );
 
 // 查找高亮的颜色,上面那句话是预览
@@ -616,6 +655,12 @@ async function submitSettings() {
     code_lang_menu: $("#set-code-lang-menu").checked,
     code_title_color: $("#set-code-title-color").checked,
     email_auto_link: $("#set-email-links").checked,
+    local_path_enabled: $("#set-local-path").checked,
+    local_path_click: $("#set-local-path-click").value,
+    local_path_color: localPathColor.value,
+    local_path_underline: $("#set-local-path-underline").value,
+    local_path_missing: $("#set-local-path-missing").checked,
+    local_path_confirm: $("#set-local-path-confirm").checked,
     block_enabled: $("#set-block-enabled").checked,
     block_context_menu: $("#set-block-context").value,
     code_exit_mode: $("#set-code-exit").value,
@@ -634,6 +679,22 @@ async function submitSettings() {
     find_bar_pos: $("#set-find-pos").value,
     find_color: findColor.value,
     conflict_mode: $("#set-conflict").value,
+    webdav_enabled: $("#set-webdav-enabled").checked,
+    webdav_server: $("#set-webdav-server").value.trim(),
+    webdav_user: $("#set-webdav-user").value.trim(),
+    webdav_folder: $("#set-webdav-folder").value.trim() || "/MinipadNext/",
+    webdav_allow_http: $("#set-webdav-http").checked,
+    webdav_first_mode: $("#set-webdav-first").value,
+    webdav_images: $("#set-webdav-images").checked,
+    webdav_on_start: $("#set-webdav-start").checked,
+    webdav_after_save: $("#set-webdav-save").checked,
+    webdav_delay_seconds: Math.min(300, Math.max(10, Number($("#set-webdav-delay").value) || 30)),
+    webdav_interval_minutes: Number($("#set-webdav-interval").value),
+    webdav_on_hide: $("#set-webdav-hide").checked,
+    webdav_status_style: $("#set-webdav-display").value,
+    webdav_delete_limit: Math.max(1, Math.min(1000, Math.round(Number($("#set-webdav-delete-limit").value) || 20))),
+    webdav_delete_divisor: Math.max(1, Math.min(10, Math.round(Number($("#set-webdav-delete-divisor").value) || 3))),
+    webdav_status_color: webdavColor.value,
     settings_nav: $("#set-nav-pos").value,
     tab_overflow: $("#set-tab-overflow").value,
     tab_fade: $("#set-tab-fade").checked,
@@ -654,6 +715,11 @@ async function submitSettings() {
   };
   try {
     await saveSettings(next, { migrateNotes: $("#set-migrate-notes").checked });
+    if ($("#set-webdav-password").value) {
+      await webdavSavePassword($("#set-webdav-password").value);
+      $("#set-webdav-password").value = "";
+    }
+    resetWebdavTimers();
     closeOverlays();
     toast("设置已保存");
   } catch (e) {
@@ -683,7 +749,7 @@ function updateMigration() {
 }
 
 export function bindSettings() {
-  for (const picker of [accentColor, edgeColor, findColor, outlineColor, ballColor]) picker.install();
+  for (const picker of [accentColor, edgeColor, localPathColor, webdavColor, findColor, outlineColor, ballColor]) picker.install();
   // 录热键时先停用全局热键,不然按下现在的热键会把窗口藏起来
   const hk = $("#set-hotkey");
   hk.addEventListener("focus", () => {
@@ -780,11 +846,47 @@ export function bindSettings() {
   for (const id of ["#set-mini", "#set-mini-opacity"]) $(id).addEventListener("input", updateMiniOptions);
   for (const r of document.querySelectorAll('input[name="set-ball-icon"]')) r.addEventListener("change", updateBall);
   $("#set-ball-pick").addEventListener("click", pickBallIcon);
+  $("#set-ball-refresh").addEventListener("click", async () => {
+    try {
+      ballImage = await api.invoke("refresh_ball_icon");
+      updateBall();
+    } catch (e) { toast(String(e)); }
+  });
   $("#set-pick-dir").addEventListener("click", () => pickFolder("#set-dir", "选择笔记文件夹"));
   $("#set-open-dir").addEventListener("click", () => api.invoke("open_notes_dir").catch((e) => toast(String(e))));
   $("#set-date-format").placeholder = DEFAULT_DATE_FORMAT;
   $("#set-date-format").addEventListener("input", updateDatePreview);
   $("#set-backup").addEventListener("change", updateBackup);
+  $("#set-webdav-preset").addEventListener("change", () => {
+    const preset = $("#set-webdav-preset").value;
+    if (preset === "jianguoyun") $("#set-webdav-server").value = "https://dav.jianguoyun.com/dav/";
+    else if (preset === "infinicloud") $("#set-webdav-server").value = "https://webdav.teracloud.jp/";
+    else if (preset === "nextcloud") $("#set-webdav-server").placeholder = "https://域名/remote.php/dav/files/用户名/";
+  });
+  $("#set-webdav-enabled").addEventListener("change", () => {
+    const dir = $("#set-dir").value || state.settings?.notes_dir || "";
+    if ($("#set-webdav-enabled").checked &&
+        /(?:onedrive|百度网盘|baidunetdisk|dropbox|坚果云)/i.test(dir)) {
+      toast("当前笔记文件夹位于同步盘，同时开启 WebDAV 可能产生冲突。", 6000);
+    }
+  });
+  $("#set-webdav-test").addEventListener("click", async () => {
+    try {
+      await webdavTest({
+        server: $("#set-webdav-server").value.trim(),
+        username: $("#set-webdav-user").value.trim(),
+        folder: $("#set-webdav-folder").value.trim(),
+        allowHttp: $("#set-webdav-http").checked,
+        password: $("#set-webdav-password").value,
+      });
+    } catch (e) { toast(String(e), 6000); }
+  });
+  $("#set-webdav-sync").addEventListener("click", () => void webdavRun());
+  $("#set-webdav-forget").addEventListener("click", async () => {
+    try {
+      if (await webdavForget()) $("#set-webdav-enabled").checked = false;
+    } catch (e) { toast(String(e)); }
+  });
   $("#set-pick-backup").addEventListener("click", () => pickFolder("#set-backup-dir", "选择备份位置"));
   $("#set-open-backup").addEventListener("click", () => api.invoke("open_backup_dir").catch((e) => toast(String(e))));
   $("#set-repo").addEventListener("click", () => api.invoke("open_link", { url: REPO_URL }).catch((e) => toast(String(e))));

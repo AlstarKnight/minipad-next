@@ -2,7 +2,7 @@
 import { api, isMock, isMiniWindow } from "./api.js";
 import { $ } from "./dom.js";
 import { state, book, current } from "./state.js";
-import { toast, dialogOpen, closeDialog, closeMenu, closeOverlays, focusEditor, ask, askText } from "./ui.js";
+import { toast, dialogOpen, closeDialog, closeMenu, closeOverlays, focusEditor, ask, askText, askWithCheckbox, openMenu } from "./ui.js";
 import { markDirty, flushAll, saveMeta, pendingNoteCount, resetActivity } from "./save.js";
 import { reload, syncFromDisk, addConflictCopy, showPendingNotice } from "./sync.js";
 import { rememberView } from "./page.js";
@@ -18,22 +18,54 @@ import { bindQuick } from "./quickswitch.js";
 import { openSettings, saveSettings, applySettings, applyEdgeAppearance, bindSettings, skippedText } from "./settings.js";
 import { bindOutline } from "./outline.js";
 import { upgradeColorLibrary } from "./sharedcolors.js";
-import { createEditor, editorDebug, insertText, toggleTask } from "./editor.js";
+import { createEditor, editorDebug, insertText, toggleTask, markLocalPathMissing } from "./editor.js";
 import { setLinkPrompt, setTaskCommand } from "./toolbar.js";
 import { formatDate } from "./datetime.js";
 import { initMini, bindMiniMain } from "./mini.js";
 import { bindUpdate } from "./update.js";
 import { bindSidebar } from "./sidebar.js";
+import { bindWebdav, resetWebdavTimers, webdavRun } from "./webdav.js";
 
 // ---------- 启动 ----------
 async function init() {
   setLinkPrompt(() => askText("链接地址", "https://"));
   setTaskCommand(toggleTask);
-  await createEditor({ onChange: markDirty, openLink, emptyBold: () => isMiniWindow || toggleBooks() });
+  await createEditor({
+    onChange: markDirty, openLink, emptyBold: () => isMiniWindow || toggleBooks(),
+    openLocalPath: (path) => void openLocalPath(path),
+    localPathMenu: (path, x, y) => openMenu([
+      { id: "open", label: "打开", act: () => void openLocalPath(path) },
+      { id: "reveal", label: "在文件夹中显示", act: () => void showLocalPath(path) },
+      { id: "copy", label: "复制路径", act: () => navigator.clipboard.writeText(path).catch((e) => toast(String(e))) },
+    ], x, y),
+  });
   bindUi();
+  // 只检查当前可见的路径；节点重建时重新检查，失败时保留普通样式。
+  const observedPaths = new WeakMap();
+  const pathChecks = new Map();
+  const pathObserver = new MutationObserver(() => {
+    if (state.settings?.local_path_missing === false) return;
+    for (const el of document.querySelectorAll("#editor [data-local-path]")) {
+      if (observedPaths.has(el)) continue;
+      observedPaths.set(el, true);
+      const path = el.dataset.localPath;
+      if (path.startsWith("\\\\")) continue; // 网络共享离线时不阻塞存在性检查。
+      const cached = pathChecks.get(path);
+      const check = cached && cached.until > Date.now() ? cached.check
+        : api.invoke("local_path_exists", { path });
+      if (!cached || cached.until <= Date.now()) {
+        pathChecks.set(path, { check, until: Date.now() + 60_000 });
+      }
+      Promise.resolve(check)
+        .then((exists) => { if (el.isConnected) markLocalPathMissing(path, !exists); })
+        .catch(() => { pathChecks.delete(path); });
+    }
+  });
+  pathObserver.observe($("#editor"), { subtree: true, childList: true });
   // 小窗:只放一页,别的(托盘退出、贴边隐藏、备份提示……)都归主窗口
-  if (isMiniWindow) return initMini();
+  if (isMiniWindow) { bindWebdav(); return initMini(); }
   await reload();
+  bindWebdav();
   void upgradeColorLibrary().catch(() => {});
   api.listen("flush", () => { void flushAll().catch(() => {}); });
   api.listen("before-quit", (e) => { void handleQuit(e.payload); });
@@ -46,6 +78,10 @@ async function init() {
     resetActivity();
     showPendingNotice();
     syncFromDisk();
+  });
+  // 贴边隐藏也算窗口隐藏,按「窗口隐藏时同步」同步一次
+  api.listen("edge-hidden", () => {
+    if (state.settings?.webdav_enabled && state.settings?.webdav_on_hide !== false) void webdavRun();
   });
   // 贴边隐藏时,在露出来的那一条上显示标识
   api.listen("edge-hidden", (e) => {
@@ -129,6 +165,27 @@ async function handleQuit(id) {
 // 用系统浏览器打开链接(编辑区里 Ctrl+点击链接)
 function openLink(href) {
   if (/^(https?:|mailto:)/i.test(href || "")) api.invoke("open_link", { url: href }).catch((err) => toast(String(err)));
+}
+
+// 后端再次检查路径是否存在，并阻止未确认的可执行文件运行。
+async function openLocalPath(path) {
+  try {
+    const trusted = state.settings?.local_path_trusted || [];
+    const danger = /\.(exe|bat|cmd|ps1|vbs|js|msi|lnk|scr|com|pif|cpl|hta|wsf|wsh|jse|vbe|reg|msc|url|appref-ms)$/i.test(path);
+    let confirmed = false;
+    if (danger && state.settings?.local_path_confirm !== false && !trusted.includes(path)) {
+      const choice = await askWithCheckbox("将要运行以下文件，是否继续？\n" + path, "运行", "这个文件以后不再问");
+      if (!choice.ok) return;
+      confirmed = true;
+      if (choice.checked) await saveSettings({ ...state.settings, local_path_trusted: [...trusted, path] });
+    }
+    await api.invoke("open_path", { path, reveal: false, confirmed });
+  } catch (e) { toast(String(e)); }
+}
+async function showLocalPath(path) {
+  try {
+    await api.invoke("open_path", { path, reveal: true, confirmed: false });
+  } catch (e) { toast(String(e)); }
 }
 
 // 有没有开着的弹层、菜单或对话框

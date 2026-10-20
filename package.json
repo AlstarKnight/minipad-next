@@ -1,12 +1,12 @@
 {
   "name": "minipad-next",
-  "version": "0.4.4",
+  "version": "0.4.7",
   "private": true,
   "description": "热键呼出的悬浮多标签笔记本,参考 minipad2 的使用体验",
   "scripts": {
     "prepare-assets": "node scripts/prepare.mjs",
     "preview": "node scripts/prepare.mjs && node scripts/serve.mjs",
-    "test:ui": "node scripts/prepare.mjs && node --test tests/ui.test.mjs",
+    "test:ui": "node scripts/prepare.mjs && node --test tests/localpaths.test.mjs && node --test tests/webdav-ui.test.mjs && node --test tests/ui.test.mjs",
     "icons": "tauri icon app-icon.svg -o src-tauri/icons",
     "tauri": "tauri",
     "dev": "tauri dev",
@@ -14,7 +14,8 @@
     "android:init": "tauri android init",
     "android:build": "tauri android build --apk --target aarch64",
     "prepare-mobile": "node scripts/prepare-mobile.mjs",
-    "test:mobile": "npm run prepare-mobile && node --test tests/mobile.test.mjs"
+    "test:mobile": "npm run prepare-mobile && node --test tests/android-paths.test.mjs && node --test tests/mobile.test.mjs",
+    "bench": "node scripts/prepare-mobile.mjs && node scripts/bench.mjs"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.12.1",

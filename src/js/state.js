@@ -20,7 +20,8 @@ export function inMini(bookName, name) {
 // disk 是最近一次从磁盘读到或写到磁盘的内容,用来判断文件有没有在别处被改过;
 // scroll 是阅读模式的滚动位置;state / snap 是编辑器的状态(光标、撤销记录)和滚动位置,第一次编辑时才有;
 // group 是所在标签分组的 id,不在分组里是空的;pinned 是固定在标签栏最前面;
-// mini 是这一页正在小窗里编辑(主窗口里只读,不保存)
+// mini 是这一页正在小窗里编辑(主窗口里只读,不保存);
+// stamp 是读到 disk 那次文件的指纹(大小和修改时间,见后端 notes::page_stamp),重新读磁盘时带上,没变的页面后端不再读
 export function makeNote(name, content, mode = "edit", unreadable = false, reason = null, group = "") {
   return { name, content, mode, unreadable, reason, dirty: false, scroll: 0, disk: content, state: null, snap: null, group, pinned: false, mini: false };
 }
@@ -35,12 +36,27 @@ export function makeBook(name, notes = [], active = 0, groups = [], icon = "", i
 export function noteFromDisk(n) {
   const note = makeNote(n.name, n.content, n.mode, !!n.unreadable, n.reason ?? null, n.group || "");
   note.pinned = !!n.pinned;
+  note.stamp = n.stamp || "";
   return note;
 }
 export function bookFromDisk(d) {
   const notes = d.notes.map(noteFromDisk);
   for (const n of notes) n.mini = inMini(d.name, n.name);
-  return makeBook(d.name, notes, Math.max(0, notes.findIndex((n) => n.name === d.active)), (d.groups || []).map((g) => ({ ...g })), d.icon || "", d.icon_color || "");
+  const b = makeBook(d.name, notes, Math.max(0, notes.findIndex((n) => n.name === d.active)), (d.groups || []).map((g) => ({ ...g })), d.icon || "", d.icon_color || "");
+  b.diskMeta = sharedMeta(d.notes, d.groups || []);
+  return b;
+}
+
+// 笔记本信息里会同步到别的设备的几项(页面顺序、固定、分组),按写进 .minipad.json 的样子比较;
+// 磁盘上的笔记本和这里的笔记本都能算。固定和分组只看有哪些,不看先后(和后端 keep_disk_changes 一样)
+const byKey = (key) => (a, b) => (key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : 0);
+export function sharedMeta(notes, groups) {
+  return {
+    order: JSON.stringify(notes.map((n) => n.name)),
+    pinned: JSON.stringify(notes.filter((n) => n.pinned).map((n) => n.name).sort()),
+    note_groups: JSON.stringify(notes.filter((n) => n.group).map((n) => [n.name, n.group]).sort(byKey((p) => p[0]))),
+    groups: JSON.stringify(groups.filter((g) => notes.some((n) => n.group === g.id)).sort(byKey((g) => g.id))),
+  };
 }
 
 export function book() {

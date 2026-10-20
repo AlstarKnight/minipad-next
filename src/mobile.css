@@ -173,6 +173,11 @@ html[data-mobile] .book-list button.active, html[data-mobile] .note-list button.
 html[data-mobile] .book-list button span, html[data-mobile] .note-list button span {
   min-width: 0; overflow-wrap: anywhere;
 }
+/* 几千页时抽屉里屏幕外的行不排版(浏览器会记住排过的行高);
+   没排过的行按下面的高度占位,这个高度不含上下各 10px 的内边距 */
+html[data-mobile] .note-list button { content-visibility: auto; contain-intrinsic-size: auto 29px; }
+html[data-mobile][data-ui="material"] .note-list button { contain-intrinsic-size: auto 36px; }
+html[data-mobile][data-ui="paper"] .note-list button.tree-page { contain-intrinsic-size: auto 24px; }
 html[data-mobile] .search-wrap {
   display: flex; gap: 9px; align-items: center; margin: 2px 7px 12px; padding: 0 12px;
   background: var(--canvas); border-radius: 12px; color: var(--subtle);
@@ -389,3 +394,28 @@ html[data-mobile][data-fab][data-ui="starry"] .new-page { width: 60px; height: 6
 html[data-mobile] .viewport-debug { position: fixed; z-index: 60; top: calc(var(--app-top, 0px) + 4px); right: 4px; margin: 0; padding: 6px 8px;
   max-width: calc(100vw - 8px); white-space: pre-wrap; font: 11px/1.4 ui-monospace, monospace; color: #fff; background: rgba(0, 0, 0, .72);
   border-radius: 8px; pointer-events: none; }
+
+/* 0.4.5: WebDAV 在四种主题下都使用抽屉已有的字体、表面和边框。 */
+html[data-mobile] .sync-field { display: grid; gap: 6px; margin: 12px 0; font-size: 13px; color: var(--subtle); }
+html[data-mobile] .sync-field input, html[data-mobile] .sync-field select {
+  width: 100%; min-height: 44px; border-radius: 12px;
+  border: 1px solid var(--border); background: var(--surface); color: var(--ink);
+  padding: 10px 12px; font: inherit; font-size: 15px;
+}
+html[data-mobile] .sync-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 16px; }
+html[data-mobile] .sync-actions button {
+  min-height: 44px; padding: 8px; border-radius: 12px;
+  border: 1px solid var(--border); background: var(--surface); color: var(--ink);
+  font-size: 13px; font-weight: 600;
+}
+html[data-mobile] #ms-history { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 140px; overflow-y: auto; font-size: 12px; color: var(--subtle); }
+html[data-mobile] #mobile-sync-message { margin: 4px 0 0; overflow-wrap: anywhere; }
+
+/* 0.4.6 应用内对话框(代替系统的 prompt / confirm):盖住可见区域,键盘弹出时整个在键盘上面;
+   颜色、圆角和电脑版一样跟着界面风格(desktop-editor.css 的 .panel、.actions),这里只放大到手指好点的尺寸 */
+html[data-mobile] #dialog { z-index: 55; top: var(--app-top, 0px); bottom: auto; height: var(--app-height, 100dvh); padding: 16px; }
+html[data-mobile] .dialog { max-width: 360px; padding: 20px 20px 16px; border-radius: var(--r-lg); }
+html[data-mobile] #dialog-msg { font-size: 15px; overflow-wrap: anywhere; }
+html[data-mobile] #dialog-input { min-height: 44px; margin-top: 14px; padding: 10px 12px; border-radius: var(--r-md); font-size: 16px; }
+html[data-mobile] .dialog .actions { margin-top: 18px; }
+html[data-mobile] .dialog .actions > button { min-height: 44px; min-width: 80px; padding: 8px 18px; border-radius: var(--r-md); font-size: 14px; font-weight: 600; }

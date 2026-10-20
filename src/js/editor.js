@@ -41,6 +41,8 @@ import { findPlugin, reapplyFind } from "./find.js";
 import { outlinePlugin } from "./outline.js";
 import { codeToText } from "./toolbar.js";
 import { imagePlugin, applyImageSettings } from "./images.js";
+import { findLocalPaths } from "./localpaths.js";
+import { parseAccent } from "./accent.js";
 
 let editor = null;
 let view = null;
@@ -54,6 +56,96 @@ const EXTERNAL = "minipad-external";
 
 // 邮箱默认按普通文字显示，保留手动指定的 mailto 链接与网址自动识别。
 let autoEmailLinks = false;
+let pathSettings = { local_path_enabled: false };
+let editorMobile = false;
+let onLocalPath = () => {};
+let onLocalPathMenu = () => {};
+
+const localPathKey = new PluginKey("minipad-local-paths");
+const missingLocalPaths = new Map();
+
+// 通过 ProseMirror 的装饰事务更新，不直接改编辑器 DOM，避免触发重复解析。
+// Android 只切换本地路径文字装饰，不运行桌面专用的设置面板逻辑。
+export function setMobileLocalPathEnabled(enabled) {
+  pathSettings.local_path_enabled = enabled === true;
+  if (view) view.dispatch(view.state.tr.setMeta(localPathKey, true).setMeta("addToHistory", false));
+}
+
+export function markLocalPathMissing(path, missing) {
+  if (missingLocalPaths.get(path) === missing) return;
+  missingLocalPaths.set(path, missing);
+  if (view) view.dispatch(view.state.tr.setMeta(localPathKey, true).setMeta("addToHistory", false));
+}
+const localPathDecorations = (doc, from = 0, to = doc.content.size) => {
+  if (!pathSettings.local_path_enabled) return DecorationSet.empty;
+  const decorations = [];
+  doc.nodesBetween(from, to, (node, pos) => {
+    if (node.type.spec.code) return false;
+    if (!node.isTextblock || node.type.name === "code_block") return true;
+    node.forEach((child, offset) => {
+      if (!child.isText) return;
+      for (const match of findLocalPaths(child.text)) {
+        decorations.push(Decoration.inline(pos + 1 + offset + match.from, pos + 1 + offset + match.to, {
+          class: pathSettings.local_path_missing !== false && missingLocalPaths.get(match.path) ? "local-file-path missing" : "local-file-path",
+          "data-local-path": match.path,
+        }));
+      }
+    });
+    return false;
+  });
+  return DecorationSet.create(doc, decorations);
+};
+const localPathPlugin = $prose(() => new Plugin({
+  key: localPathKey,
+  state: {
+    init: (_, state) => localPathDecorations(state.doc),
+    apply(tr, old) {
+      if (tr.getMeta(localPathKey)) return localPathDecorations(tr.doc);
+      if (!tr.docChanged) return old;
+      let mapped = old.map(tr.mapping, tr.doc);
+      const blocks = new Map();
+      tr.mapping.maps.forEach((stepMap, index) => {
+        stepMap.forEach((_, __, newStart, newEnd) => {
+          const remaining = tr.mapping.slice(index + 1);
+          const from = Math.max(0, remaining.map(newStart) - 1);
+          const to = Math.min(tr.doc.content.size, remaining.map(newEnd) + 1);
+          tr.doc.nodesBetween(from, to, (node, pos) => {
+            if (node.isTextblock && node.type.name !== "code_block") {
+              blocks.set(pos, { from: pos, to: pos + node.nodeSize });
+              return false;
+            }
+            return !node.type.spec.code;
+          });
+        });
+      });
+      for (const block of blocks.values()) {
+        mapped = mapped.remove(mapped.find(block.from, block.to));
+        mapped = mapped.add(tr.doc, localPathDecorations(tr.doc, block.from, block.to).find());
+      }
+      return mapped;
+    },
+  },
+  props: {
+    decorations: (state) => localPathKey.getState(state),
+    handleDOMEvents: {
+      click: (v, e) => {
+        const el = e.target.closest?.("[data-local-path]");
+        if (!el || !v.dom.contains(el) || !pathSettings.local_path_enabled) return false;
+        if (pathSettings.local_path_click !== "click" && !(e.ctrlKey || e.metaKey)) return false;
+        e.preventDefault();
+        onLocalPath(el.dataset.localPath);
+        return true;
+      },
+      contextmenu: (v, e) => {
+        const el = e.target.closest?.("[data-local-path]");
+        if (!el || !v.dom.contains(el) || !pathSettings.local_path_enabled) return false;
+        e.preventDefault();
+        onLocalPathMenu(el.dataset.localPath, e.clientX, e.clientY);
+        return true;
+      },
+    },
+  },
+}));
 let emailLinkVersion = 0;
 // GFM 会把裸邮箱解析成 mailto 链接。对照原始 Markdown 的源码区间，仅还原
 // 裸邮箱生成的链接，避免误伤 [标题](mailto:...) 或 <name@example.com>。
@@ -413,8 +505,11 @@ function writeText(node, parent, state, info) {
 export async function createEditor(opts) {
   onChange = opts.onChange;
   openLink = opts.openLink;
+  onLocalPath = opts.openLocalPath || (() => {});
+  onLocalPathMenu = opts.localPathMenu || (() => {});
   emptyBold = opts.emptyBold;
   const mobile = opts.mobile === true;
+  editorMobile = mobile;
   editor = await Editor.make()
     .config((c) => {
       c.set(rootCtx, $("#editor"));
@@ -428,6 +523,7 @@ export async function createEditor(opts) {
     .use(commonmark)
     .use(gfm)
     .use(plainEmails)
+    .use(localPathPlugin)
     .use(history)
     .use(clipboard)
     .use([colorSpans, textColor, textBg].flat())
@@ -599,6 +695,23 @@ export function insertText(text) {
 }
 
 export function applyEditorSettings(s) {
+  const oldPath = JSON.stringify(pathSettings);
+  pathSettings = {
+    local_path_enabled: editorMobile ? s.local_path_enabled === true : s.local_path_enabled !== false,
+    local_path_click: s.local_path_click,
+    local_path_underline: s.local_path_underline || "dashed",
+    local_path_color: s.local_path_color || "",
+    local_path_missing: s.local_path_missing !== false,
+  };
+  const root = $("#editor");
+  root.dataset.localPathUnderline = pathSettings.local_path_underline;
+  const pathColor = parseAccent(pathSettings.local_path_color);
+  root.style.setProperty("--local-path-color", pathColor?.from || "var(--accent)");
+  root.style.setProperty("--local-path-gradient", pathColor?.to ? pathSettings.local_path_color : "none");
+  root.toggleAttribute("data-local-path-gradient", !!pathColor?.to);
+  if (view && oldPath !== JSON.stringify(pathSettings)) {
+    view.dispatch(view.state.tr.setMeta(localPathKey, true).setMeta("addToHistory", false));
+  }
   const wasEnabled = autoEmailLinks;
   autoEmailLinks = s.email_auto_link === true;
   // 切换选项时重新读取当前 Markdown，仅更新编辑器状态，不当作一次编辑保存。

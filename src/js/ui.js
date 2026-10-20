@@ -30,8 +30,11 @@ export function dialogOpen() {
 
 function openDialog(message, okLabel, danger, value, keepOverlays = false) {
   // 在编辑颜色库时保留正在打开的颜色面板；其他对话框沿用现有行为。
-  if (keepOverlays) dialogReturnFocus = document.activeElement;
-  else {
+  if (keepOverlays) {
+    // 已经开着一个对话框(比如手机上后台同步要确认时正在输入页面名):先当作取消,免得它一直等不到结果
+    closeDialog(false);
+    dialogReturnFocus = document.activeElement;
+  } else {
     dialogReturnFocus = null;
     // 笔记本列表留着:在列表里改名、删除笔记本以后还回到列表
     closeOverlays(true);
@@ -54,15 +57,33 @@ function openDialog(message, okLabel, danger, value, keepOverlays = false) {
   return new Promise((resolve) => (dialogResolve = resolve));
 }
 
+// 手机上没有电脑版的那些弹层,对话框直接盖在抽屉、设置上面,关掉后回到原来的地方
+const mobile = () => document.documentElement.dataset.mobile === "true";
+
 // 得到 true / false
 export function ask(message, okLabel = "确定", danger = false, keepOverlays = false) {
-  return openDialog(message, okLabel, danger, null, keepOverlays);
+  return openDialog(message, okLabel, danger, null, keepOverlays || mobile());
+}
+
+// 单个确认框同时提供“不再询问”选项，取消时不会保存勾选结果。
+export async function askWithCheckbox(message, okLabel, checkboxLabel) {
+  const pending = openDialog(message, okLabel, true, null);
+  const label = document.createElement("label");
+  const checkbox = document.createElement("input");
+  checkbox.type = "checkbox";
+  label.append(checkbox, document.createTextNode(checkboxLabel));
+  $("#dialog-msg").after(label);
+  try {
+    const ok = await pending;
+    return { ok, checked: ok && checkbox.checked };
+  } finally {
+    label.remove();
+  }
 }
 
 // 得到去掉首尾空白的文字,取消时得到 null
 export function askText(message, value = "", okLabel = "确定") {
-  if (document.documentElement.dataset.mobile === "true") return Promise.resolve(window.prompt(message, value));
-  return openDialog(message, okLabel, false, value);
+  return openDialog(message, okLabel, false, value, mobile());
 }
 
 export function closeDialog(ok) {
