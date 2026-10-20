@@ -230,7 +230,15 @@ const tidyDateFormat = (f) => [...String(f ?? "").trim()].slice(0, 64).join("").
 
 export function mockApi() {
   const db = load();
+  // 性能测试用 __mockControl.books 直接给出几千页的笔记本(localStorage 放不下),这时不往 localStorage 存
+  const big = window.__mockControl?.books;
+  if (big) {
+    db.books = big;
+    for (const b of Object.values(db.books)) fixBook(b);
+    db.book = window.__mockControl.book ?? db.book;
+  }
   const persist = () => {
+    if (big) return;
     try {
       localStorage.setItem(KEY, JSON.stringify(db));
     } catch (_) {}
@@ -285,11 +293,17 @@ export function mockApi() {
     });
   };
 
-  // 页面的指纹:后端用文件大小和修改时间,这里没有修改时间,用内容算(测试直接改 __mockBooks 也能认出来)
-  const stamp = (text) => {
+  // 页面的指纹:后端用文件大小和修改时间,这里没有修改时间,用内容算(测试直接改 __mockBooks 也能认出来);
+  // 内容没换过的页面用上次算好的(后端看文件属性不花时间,这里几千页时每次都算太慢)
+  const stamps = new Map();
+  const stamp = (key, text) => {
+    const known = stamps.get(key);
+    if (known?.text === text) return known.stamp;
     let h = 2166136261;
     for (let i = 0; i < text.length; i++) h = Math.imul(h ^ text.charCodeAt(i), 16777619);
-    return `${text.length}-${(h >>> 0).toString(16)}`;
+    const st = `${text.length}-${(h >>> 0).toString(16)}`;
+    stamps.set(key, { text, stamp: st });
+    return st;
   };
   // 按保存过的顺序读出一个笔记本,新出现的页面排在后面(和后端一样,重复的名字只算一次);
   // known 里指纹没变的页面不给内容(same),only 给了时只要这一页
@@ -306,7 +320,7 @@ export function mockApi() {
         const reason = window.__mockControl?.unreadable?.[name]?.[n] || null;
         const g = meta.note_groups?.[n];
         const group = g && (meta.groups || []).some((x) => x.id === g) ? g : "";
-        const st = reason ? "" : stamp(files[n]);
+        const st = reason ? "" : stamp(name + "\n" + n, files[n]);
         const same = !!st && known?.[n] === st;
         return { name: n, content: same || (reason && !window.__mockControl?.keepUnreadableContent) ? "" : files[n],
           mode: meta.modes[n] || "edit", unreadable: !!reason, reason, group, pinned: (meta.pinned || []).includes(n), stamp: st, same };
