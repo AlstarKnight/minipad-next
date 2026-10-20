@@ -32,7 +32,7 @@
 
 每个版本改了什么见 [CHANGELOG.md](CHANGELOG.md)。
 
-Android 版提供与桌面版共用的 Markdown 编辑器，0.4.5 起新增可选 WebDAV 同步。安装、配置与真机测试说明见 [Android 开发文档](docs/android.md)。
+Android 版提供与桌面版共用的 Markdown 编辑器，0.4.5 起新增可选 WebDAV 同步；0.4.6 起点链接交给浏览器打开，新建、确认用应用内对话框，返回键先关掉开着的抽屉、设置和对话框。安装、配置与真机测试说明见 [Android 开发文档](docs/android.md)。
 
 ---
 
