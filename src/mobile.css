@@ -173,8 +173,11 @@ html[data-mobile] .book-list button.active, html[data-mobile] .note-list button.
 html[data-mobile] .book-list button span, html[data-mobile] .note-list button span {
   min-width: 0; overflow-wrap: anywhere;
 }
-/* 几千页时抽屉里屏幕外的行不排版(浏览器会记住排过的行高) */
-html[data-mobile] .note-list button { content-visibility: auto; contain-intrinsic-size: auto 49px; }
+/* 几千页时抽屉里屏幕外的行不排版(浏览器会记住排过的行高);
+   没排过的行按下面的高度占位,这个高度不含上下各 10px 的内边距 */
+html[data-mobile] .note-list button { content-visibility: auto; contain-intrinsic-size: auto 29px; }
+html[data-mobile][data-ui="material"] .note-list button { contain-intrinsic-size: auto 36px; }
+html[data-mobile][data-ui="paper"] .note-list button.tree-page { contain-intrinsic-size: auto 24px; }
 html[data-mobile] .search-wrap {
   display: flex; gap: 9px; align-items: center; margin: 2px 7px 12px; padding: 0 12px;
   background: var(--canvas); border-radius: 12px; color: var(--subtle);

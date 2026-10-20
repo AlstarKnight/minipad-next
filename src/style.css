@@ -1977,8 +1977,8 @@ html[data-ui="starry"][data-theme="dark"][data-stars] #side { background-image: 
 }
 .side-book { font-weight: 600; }
 .side-page { padding-left: 32px; color: var(--muted); }
-/* 几千页时屏幕外的行不排版(浏览器会记住排过的行高) */
-.side-page { content-visibility: auto; contain-intrinsic-size: auto 30px; }
+/* 几千页时屏幕外的行不排版(浏览器会记住排过的行高);没排过的行按 18px 占位(不含上下各 6px 的内边距) */
+.side-page { content-visibility: auto; contain-intrinsic-size: auto 18px; }
 .side-book:hover, .side-page:hover { background: var(--code-bg); }
 .side-page.current { background: var(--accent-soft); color: var(--accent-on-soft); }
 .side-more { margin-top: 6px; padding: 6px 10px; border-radius: var(--r-sm); color: var(--muted); font-size: 12px; text-align: left; }
