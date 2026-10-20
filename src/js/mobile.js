@@ -6,6 +6,7 @@ import { state as desktopState } from "./state.js";
 import { setSelectionBar } from "./formatbar.js";
 import { ACCENTS, applyAccent, tidyAccent, parseAccent } from "./accent.js";
 import { makeSharedColorTools, setColorLibrarySaver } from "./sharedcolors.js";
+import { ask, askText, closeDialog, dialogOpen } from "./ui.js";
 
 const invoke = window.__TAURI__?.core?.invoke;
 const el = (id) => document.getElementById(id);
@@ -402,9 +403,25 @@ el("close-drawer").addEventListener("click", () => toggleDrawer(false));
 backdrop.addEventListener("click", () => toggleDrawer(false));
 el("note-filter").addEventListener("input", renderDrawer);
 document.addEventListener("keydown", (e) => {
+  // 输入法正在拼字时按的回车、Esc 是给输入法的
+  if (e.isComposing || e.keyCode === 229) return;
+  if (dialogOpen()) {
+    if (e.key === "Escape" || e.key === "Enter") {
+      e.preventDefault();
+      // 焦点在「取消」上时按回车也是取消
+      closeDialog(e.key === "Enter" && e.target !== el("dialog-cancel"));
+    }
+    return;
+  }
   if (e.key === "Escape" && !settingsSheet.hidden) showSettings(false);
   else if (e.key === "Escape" && !drawer.hidden) toggleDrawer(false);
 });
+// 应用内对话框(代替系统的 prompt / confirm)。按按钮时不抢走输入框的焦点:
+// 键盘留到对话框关掉才收起,对话框不会在手指按下和抬起之间跟着键盘挪位置
+el("dialog").addEventListener("pointerdown", (e) => { if (e.target.closest("button")) e.preventDefault(); });
+el("dialog-ok").addEventListener("click", () => closeDialog(true));
+el("dialog-cancel").addEventListener("click", () => closeDialog(false));
+el("dialog").addEventListener("click", (e) => { if (e.target === e.currentTarget) closeDialog(false); });
 el("insert-image").addEventListener("click", () => {
   if (view?.editable && selected && !selected.sourceOnly) fileInput.click();
 });
@@ -485,7 +502,7 @@ booksSelect.addEventListener("change", () => { void refresh(booksSelect.value, n
 notesSelect.addEventListener("change", () => { void refresh(currentBook, notesSelect.value); });
 
 el("add-book").addEventListener("click", async () => {
-  const name = prompt("新笔记本名称");
+  const name = await askText("新笔记本名称", "", "新建");
   if (!name?.trim()) return;
   try {
     await flush();
@@ -495,7 +512,7 @@ el("add-book").addEventListener("click", async () => {
 });
 
 el("add-note").addEventListener("click", async () => {
-  const name = prompt("新页面名称");
+  const name = await askText("新页面名称", "", "新建");
   if (!name?.trim()) return;
   try {
     await flush();
@@ -657,7 +674,7 @@ async function performMobileSync(confirmed) {
     if (text.includes("WEB_DAV_CONFIRM_DELETE:")) {
       const match = /WEB_DAV_CONFIRM_DELETE:(\d+):(\d+):(\d+):(\d+)/.exec(text);
       const where = "手机 " + (match?.[3] || 0) + " 页移进回收站，网盘 " + (match?.[4] || 0) + " 页移进 .trash。";
-      if (window.confirm("同步涉及大量删除：" + where + "确定继续吗？取消后不会删除任何文件。")) {
+      if (await ask("同步涉及大量删除：" + where + "确定继续吗？取消后不会删除任何文件。", "继续同步", true)) {
         return performMobileSync(true);
       }
     } else if (!text.includes("离线")) {
@@ -749,7 +766,7 @@ el("ms-test").addEventListener("click", () => void (async () => {
 el("ms-run").addEventListener("click", () => void mobileSync());
 el("mobile-sync-now").addEventListener("click", () => void mobileSync());
 el("ms-forget").addEventListener("click", () => void (async () => {
-  if (!window.confirm("清除当前账号的同步密码与记录？手机笔记不会删除。")) return;
+  if (!(await ask("清除当前账号的同步密码与记录？手机笔记不会删除。", "断开"))) return;
   try {
     await invoke("mobile_webdav_forget", { config: syncSettings });
     syncSettings.enabled = false;

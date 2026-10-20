@@ -182,6 +182,17 @@
     <p id="ms-result" class="sheet-note" role="status"></p>
     <details><summary>最近同步记录</summary><pre id="ms-history"></pre></details>
   </section>
+  <!-- 应用内的确认 / 输入名字对话框(和电脑版同一套,代替系统的 prompt、confirm) -->
+  <div id="dialog" class="overlay center" hidden>
+    <div class="panel form dialog" role="dialog" aria-modal="true" aria-labelledby="dialog-msg">
+      <p id="dialog-msg"></p>
+      <input id="dialog-input" type="text" spellcheck="false" autocomplete="off" enterkeyhint="done" hidden>
+      <div class="actions">
+        <button id="dialog-cancel" type="button">取消</button>
+        <button id="dialog-ok" type="button" class="primary">确定</button>
+      </div>
+    </div>
+  </div>
   <div id="ctx" class="menu" role="menu" hidden></div>
   <div id="toast" class="mobile-toast" role="status" hidden></div>
   <pre id="viewport-debug" class="viewport-debug" aria-hidden="true" hidden></pre>

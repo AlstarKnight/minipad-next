@@ -107,6 +107,7 @@ async function open({ colorScheme, keyboard, look = { ui: "classic" } } = {}) {
           window.__mobileTest.syncCalls = (window.__mobileTest.syncCalls || 0) + 1;
           if (window.__mobileTest.syncDelay) await new Promise(r => setTimeout(r, window.__mobileTest.syncDelay));
           window.__mobileTest.lastSync = args;
+          if (window.__mobileTest.bigDelete && !args.confirmDeletes) throw new Error("WEB_DAV_CONFIRM_DELETE:30:60:12:3");
           return { uploaded: 0, downloaded: 0, deleted: 0, conflicts: 0, changed: [] };
         }
         if (command === "mobile_webdav_forget") {
@@ -129,6 +130,11 @@ async function open({ colorScheme, keyboard, look = { ui: "classic" } } = {}) {
   const page = await context.newPage();
   const errors = [];
   page.on("pageerror", (error) => errors.push(String(error)));
+  // 0.4.6 起手机上只用应用内对话框:系统的 prompt / confirm / alert 一出现就算错
+  page.on("dialog", (dialog) => {
+    errors.push(`system ${dialog.type()} dialog: ${dialog.message()}`);
+    void dialog.dismiss();
+  });
   await page.goto(url);
   try {
     await page.locator("#editor .ProseMirror h1").waitFor({ timeout: 3500 });
@@ -145,6 +151,13 @@ const NOTE_IMAGE = (path, book = "") =>
   `http://note.localhost/img?book=${encodeURIComponent(book)}&path=${encodeURIComponent(path)}`;
 // 图片真的显示出来了(解码成功,不是坏图)
 const imageLoaded = (img) => img.evaluate((el) => el.complete && el.naturalWidth > 0 && !el.classList.contains("broken"));
+// 应用内对话框:给了文字就填进输入框,然后点确定
+async function answerDialog(page, text) {
+  await page.locator("#dialog").waitFor({ state: "visible" });
+  if (text != null) await page.fill("#dialog-input", text);
+  await page.click("#dialog-ok");
+  await page.locator("#dialog").waitFor({ state: "hidden" });
+}
 
 test("mobile Milkdown renders notes, saves edits and switches pages", async () => {
   const { context, page, errors } = await open();
@@ -389,16 +402,16 @@ test("a missing local image shows as broken and says which file is missing", asy
 test("a new notebook gets its own first page and shows an empty editor", async () => {
   const { context, page, errors } = await open();
   try {
-    const answers = ["工作", "第一页"];
-    page.on("dialog", (dialog) => { void dialog.accept(answers.shift()); });
     await page.click("#open-drawer");
     await page.click("#add-book");
+    await answerDialog(page, "工作");
     await page.waitForFunction(() => document.getElementById("book-title").textContent.startsWith("工作"));
     await page.waitForFunction(() => document.querySelector("#editor .ProseMirror")?.textContent === "");
     assert.equal(await page.locator("#page-title").textContent(), "空笔记本");
     assert.match(await page.locator("#hint").textContent(), /新建/);
     assert.equal(await page.locator(".ProseMirror").getAttribute("contenteditable"), "false");
     await page.click("#add-note");
+    await answerDialog(page, "第一页");
     await page.waitForFunction(() => document.getElementById("page-title").textContent === "第一页");
     const disk = await page.evaluate(() => window.__mobileTest.disk.map((b) => [b.name, b.notes.map((n) => n.name)]));
     assert.deepEqual(disk, [["", ["一", "二"]], ["工作", ["第一页"]]]);
@@ -513,11 +526,11 @@ test("the toolbar stays visible while another page loads", async () => {
 test("a notebook created while a page is loading is still opened", async () => {
   const { context, page, errors } = await open();
   try {
-    page.on("dialog", (dialog) => { void dialog.accept("新书"); });
     await page.evaluate(() => { window.__mobileTest.readDelay = 600; });
     await page.click("#open-drawer");
     await page.locator("#notes-list button").filter({ hasText: "二" }).click();
     await page.click("#add-book");
+    await answerDialog(page, "新书");
     await page.waitForFunction(() => document.getElementById("book-title").textContent.startsWith("新书"),
       null, { timeout: 8000 });
     assert.equal(await page.locator("#page-title").textContent(), "空笔记本");
@@ -814,7 +827,6 @@ test("the floating new-page button creates a page, steps aside for the keyboard 
   for (const ui of ["starry", "material", "paper", "classic"]) {
     const { context, page, errors } = await open({ keyboard: true, look: { ui } });
     try {
-      page.on("dialog", (dialog) => { void dialog.accept("三"); });
       const fab = page.locator("#new-page");
       await fab.waitFor({ state: "visible" });
       const box = await fab.boundingBox();
@@ -822,6 +834,7 @@ test("the floating new-page button creates a page, steps aside for the keyboard 
       assert.ok(box.y + box.height <= dockTop - 8, `${ui}: the button sits above the toolbar`);
       assert.ok(box.width >= 44 && box.height >= 44, `${ui}: finger-sized`);
       await fab.click();
+      await answerDialog(page, "三");
       await page.waitForFunction(() => document.getElementById("page-title").textContent === "三");
       assert.deepEqual(await page.evaluate(() => window.__mobileTest.disk[0].notes.map((n) => n.name)), ["一", "二", "三"]);
       await page.evaluate(() => {
@@ -964,7 +977,6 @@ test("Android lists pages WebDAV downloaded while a page is being edited and kee
 test("Android sync status color uses the shared solid, gradient and material library", async () => {
   const { context, page, errors } = await open();
   try {
-    page.on("dialog", (dialog) => void dialog.accept());
     await page.click("#open-drawer");
     await page.click("#open-sync-settings");
     const tool = page.locator("#mobile-webdav-settings .shared-colors");
@@ -1003,6 +1015,7 @@ test("Android sync status color uses the shared solid, gradient and material lib
     assert.equal(await tool.locator('.uc-swatch[data-color="#123456"]').count(), 1);
     assert.equal(await page.locator("#ms-color button").first().getAttribute("aria-checked"), "true");
     await tool.locator(".uc-reset").click();
+    await answerDialog(page);
     await page.waitForFunction(() => !JSON.parse(localStorage.getItem("minipad-mobile-colors")).color_library.includes("#123456"));
     assert.deepEqual(errors, []);
   } finally { await context.close(); }
@@ -1073,4 +1086,114 @@ test("Android local path option stays optional and changing appearance keeps edi
     await page.waitForFunction(() => window.__mobileTest.disk[0].notes[0].content.includes("继续编辑"));
     assert.deepEqual(errors, []);
   } finally { await context.close(); }
+});
+
+test("new pages and notebooks are named in the in-app dialog: Enter creates, cancel, Esc and outside taps do not", async () => {
+  const { context, page, errors } = await open();
+  try {
+    await page.click("#open-drawer");
+    await page.click("#add-note");
+    await page.locator("#dialog").waitFor({ state: "visible" });
+    assert.equal(await page.locator("#dialog-msg").textContent(), "新页面名称");
+    assert.equal(await page.locator("#dialog-ok").textContent(), "新建");
+    assert.equal(await page.evaluate(() => document.activeElement.id), "dialog-input", "the keyboard comes up for the name");
+    await page.keyboard.type("四");
+    await page.keyboard.press("Enter");
+    await page.waitForFunction(() => document.getElementById("page-title").textContent === "四");
+    assert.equal(await page.locator("#dialog").isHidden(), true);
+
+    const cancelWays = [
+      () => page.click("#dialog-cancel"),
+      () => page.keyboard.press("Escape"),
+      () => page.mouse.click(8, 8), // outside the panel
+    ];
+    for (const cancel of cancelWays) {
+      await page.click("#add-book");
+      await page.locator("#dialog").waitFor({ state: "visible" });
+      await page.fill("#dialog-input", "不要");
+      await cancel();
+      await page.locator("#dialog").waitFor({ state: "hidden" });
+    }
+    assert.equal(await page.locator("#mobile-drawer").isVisible(), true, "cancelling keeps the drawer open");
+    const state = await page.evaluate(() => ({
+      books: window.__mobileTest.disk.map((b) => b.name),
+      created: window.__mobileTest.calls.commands.filter((c) => c === "mobile_create_book").length,
+    }));
+    assert.deepEqual(state, { books: [""], created: 0 });
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test("a sync that deletes many pages and disconnecting sync ask in the in-app dialog", async () => {
+  const { context, page, errors } = await open();
+  try {
+    await page.click("#open-drawer");
+    await page.click("#open-sync-settings");
+    await page.locator("#ms-enable").check();
+    await page.fill("#ms-server", "https://dav.example.com/");
+    await page.fill("#ms-user", "tester");
+    await page.click("#ms-save-config");
+    await page.waitForFunction(() => JSON.parse(localStorage.getItem("minipad-mobile-webdav") || "{}").enabled);
+    await page.evaluate(() => { window.__mobileTest.bigDelete = true; });
+
+    await page.click("#ms-run");
+    await page.locator("#dialog").waitFor({ state: "visible" });
+    assert.match(await page.locator("#dialog-msg").textContent(), /手机 12 页移进回收站，网盘 3 页移进 \.trash/);
+    assert.equal(await page.locator("#dialog-ok").textContent(), "继续同步");
+    assert.equal(await page.locator("#dialog-ok").evaluate((b) => b.classList.contains("danger")), true);
+    assert.equal(await page.locator("#dialog-input").isHidden(), true);
+    await page.click("#dialog-cancel");
+    await page.locator("#dialog").waitFor({ state: "hidden" });
+    assert.equal(await page.evaluate(() => window.__mobileTest.syncCalls), 1, "cancelling does not sync again");
+
+    await page.click("#ms-run");
+    await answerDialog(page);
+    await page.waitForFunction(() => window.__mobileTest.syncCalls === 3);
+    assert.equal(await page.evaluate(() => window.__mobileTest.lastSync.confirmDeletes), true);
+
+    await page.click("#ms-forget");
+    await page.locator("#dialog").waitFor({ state: "visible" });
+    assert.match(await page.locator("#dialog-msg").textContent(), /清除当前账号的同步密码与记录/);
+    assert.equal(await page.locator("#dialog-ok").textContent(), "断开");
+    await page.click("#dialog-ok");
+    await page.waitForFunction(() => JSON.parse(localStorage.getItem("minipad-mobile-webdav")).enabled === false);
+    assert.equal(await page.locator("#ms-enable").isChecked(), false);
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test("the in-app dialog sits above the soft keyboard in every interface style, light and dark", async () => {
+  for (const ui of ["starry", "material", "paper", "classic"]) {
+    for (const colorScheme of ["light", "dark"]) {
+      const label = `${ui} ${colorScheme}`;
+      const { context, page, errors } = await open({ keyboard: true, colorScheme, look: { ui } });
+      try {
+        await page.click("#open-drawer");
+        await page.click("#add-note");
+        await page.locator("#dialog").waitFor({ state: "visible" });
+        // the name field has the focus, so the keyboard comes up and covers the lower part of the screen
+        const visible = await page.evaluate(() => {
+          window.visualViewport.height = innerHeight - 320;
+          window.visualViewport.dispatchEvent(new Event("resize"));
+          return window.visualViewport.height;
+        });
+        const box = await page.locator("#dialog .panel").boundingBox();
+        assert.ok(box.y >= 0 && box.y + box.height <= visible, `${label}: the dialog is above the keyboard`);
+        for (const button of ["#dialog-ok", "#dialog-cancel"]) {
+          assert.ok((await page.locator(button).boundingBox()).height >= 44, `${label}: ${button} is finger-sized`);
+        }
+        const look = await page.locator("#dialog .panel").evaluate((panel) => {
+          const lightness = (color) => { const [r, g, b] = color.match(/\d+(\.\d+)?/g).map(Number); return (r + g + b) / 3; };
+          const style = getComputedStyle(panel);
+          return { background: lightness(style.backgroundColor), text: lightness(getComputedStyle(document.getElementById("dialog-msg")).color) };
+        });
+        if (colorScheme === "dark") assert.ok(look.background < 100 && look.text > 150, `${label}: dark panel, light text`);
+        else assert.ok(look.background > 200 && look.text < 100, `${label}: light panel, dark text`);
+        await page.keyboard.type("五");
+        await page.keyboard.press("Enter");
+        await page.waitForFunction(() => document.getElementById("page-title").textContent === "五");
+        assert.deepEqual(errors, [], label);
+      } finally { await context.close(); }
+    }
+  }
 });
