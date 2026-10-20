@@ -72,7 +72,7 @@ function render() {
       name.textContent = it.name;
       const meta = document.createElement("div");
       meta.className = "ti-meta";
-      const from = it.kind === "book" ? `笔记本 · ${it.pages} 页` : `来自「${bookLabel({ name: it.book })}」`;
+      const from = it.kind === "book" ? `笔记本 · ${it.pages} 页` : it.kind === "file" ? "WebDAV 同步文件" : `来自「${bookLabel({ name: it.book })}」`;
       meta.textContent = `${from} · ${when(it.deleted)} 删除`;
       body.append(name, meta);
       if (it.preview) {
@@ -85,7 +85,7 @@ function render() {
       restore.className = "small";
       restore.dataset.act = "restore";
       restore.textContent = "恢复";
-      restore.title = it.kind === "book" ? "恢复这个笔记本" : `恢复到「${bookLabel({ name: it.book })}」笔记本`;
+      restore.title = it.kind === "book" ? "恢复这个笔记本" : it.kind === "file" ? "恢复到原来的文件夹" : `恢复到「${bookLabel({ name: it.book })}」笔记本`;
       restore.addEventListener("click", () => restoreItem(it));
       const purge = document.createElement("button");
       purge.className = "small danger-text";
@@ -94,7 +94,14 @@ function render() {
       purge.addEventListener("click", () => purgeItem(it));
       const acts = document.createElement("div");
       acts.className = "ti-acts";
-      acts.append(restore, purge);
+      const metadataBackup = it.kind === "file" &&
+        (it.name === ".minipad.json" || it.name.endsWith("/.minipad.json"));
+      if (metadataBackup) {
+        meta.textContent = `笔记本设置备份 · ${when(it.deleted)} 留下`;
+      } else {
+        acts.append(restore);
+      }
+      acts.append(purge);
       row.append(icon, body, acts);
       return row;
     }),
@@ -131,6 +138,7 @@ async function change(fn) {
 async function restoreItem(it) {
   const r = await change(() => api.invoke("trash_restore", { id: it.id }));
   if (!r) return;
+  if (it.kind === "file") { toast(`已恢复文件「${it.name}」`); return; }
   const b = state.books.find((x) => x.name === r.book);
   const where = r.name ? `「${bookLabel({ name: r.book })}」里的「${r.name}」` : `笔记本「${r.book}」`;
   toast(`已恢复${where}`);
@@ -140,7 +148,7 @@ async function restoreItem(it) {
 }
 
 async function purgeItem(it) {
-  const what = it.kind === "book" ? `笔记本「${it.name}」和里面的 ${it.pages} 页` : `页面「${it.name}」`;
+  const what = it.kind === "book" ? `笔记本「${it.name}」和里面的 ${it.pages} 页` : it.kind === "file" ? `文件「${it.name}」` : `页面「${it.name}」`;
   if (!(await ask(`彻底删除${what}?\n删除以后只能从每日备份里找回。`, "彻底删除", true, true))) return;
   await change(() => api.invoke("trash_purge", { id: it.id }));
 }

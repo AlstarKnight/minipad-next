@@ -51,8 +51,10 @@ async function open({ colorScheme, keyboard, look = { ui: "classic" } } = {}) {
     const writes = [];
     const images = {};
     const calls = { list: 0, read: 0, readImage: 0 };
-    window.__mobileTest = { disk, writes, images, calls, failSaves: 0, readDelay: 0, conflictNext: false };
-    window.__TAURI__ = { core: {
+    const listeners = {};
+    window.__mobileTest = { disk, writes, images, calls, failSaves: 0, readDelay: 0, conflictNext: false,
+      emit: (name, payload) => listeners[name]?.({ payload }) };
+    window.__TAURI__ = { event: { listen: async (name, handler) => { listeners[name] = handler; return () => {}; } }, core: {
       async invoke(command, args = {}) {
         const book = disk.find((b) => b.name === args.book) || disk[0];
         if (command === "mobile_list_books") {
@@ -93,6 +95,26 @@ async function open({ colorScheme, keyboard, look = { ui: "classic" } } = {}) {
         if (command === "mobile_read_image") {
           calls.readImage++;
           return images[args.path] ?? Promise.reject("missing file");
+        }
+        if (command === "mobile_webdav_status") return { state: "synced", message: "已同步（测试）", history: [] };
+        if (command === "mobile_webdav_set_password") {
+          window.__mobileTest.savedWebdavPassword = args.password;
+          return null;
+        }
+        if (command === "mobile_webdav_test") {
+          window.__mobileTest.lastTest = args;
+          if (!args.config.server) throw new Error("地址不能为空");
+          return "连接测试成功";
+        }
+        if (command === "mobile_webdav_sync_now") {
+          window.__mobileTest.syncCalls = (window.__mobileTest.syncCalls || 0) + 1;
+          if (window.__mobileTest.syncDelay) await new Promise(r => setTimeout(r, window.__mobileTest.syncDelay));
+          window.__mobileTest.lastSync = args;
+          return { uploaded: 0, downloaded: 0, deleted: 0, conflicts: 0, changed: [] };
+        }
+        if (command === "mobile_webdav_forget") {
+          window.__mobileTest.savedWebdavPassword = null;
+          return null;
         }
         throw new Error("Unknown command " + command);
       },
@@ -824,4 +846,191 @@ test("when the WebView pans the visual viewport down for the keyboard, the page 
   } finally {
     await context.close();
   }
+});
+
+test("WebDAV settings stay on this phone and never put the password in localStorage", async () => {
+  const { context, page, errors } = await open();
+  try {
+    await page.click("#open-drawer");
+    await page.click("#open-sync-settings");
+    await page.locator("#mobile-webdav-settings").waitFor();
+    assert.equal(await page.locator("#ms-enable").isChecked(), false);
+    await page.locator("#ms-enable").check();
+    await page.fill("#ms-server", "https://dav.example.com/dav/");
+    await page.fill("#ms-user", "tester");
+    await page.fill("#ms-password", "private-test-password");
+    await page.selectOption("#ms-first", "merge");
+    await page.click("#ms-save-config");
+    await page.waitForFunction(() => !!localStorage.getItem("minipad-mobile-webdav"));
+    const stored = await page.evaluate(() => localStorage.getItem("minipad-mobile-webdav"));
+    assert.equal(stored.includes("private-test-password"), false);
+    assert.equal(JSON.parse(stored).enabled, true);
+    assert.equal(await page.locator("#ms-password").inputValue(), "");
+    assert.equal(await page.evaluate(() => window.__mobileTest.savedWebdavPassword), "private-test-password");
+    await page.click("#ms-test");
+    await page.waitForFunction(() => document.getElementById("ms-result").textContent.includes("连接测试成功"));
+    await page.click("#ms-run");
+    await page.waitForFunction(() => window.__mobileTest.lastSync?.config?.server === "https://dav.example.com/dav/");
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test("Android WebDAV connection test uses the unsaved form and saves nothing", async () => {
+  const { context, page, errors } = await open();
+  try {
+    await page.click("#open-drawer");
+    await page.click("#open-sync-settings");
+    await page.locator("#ms-enable").check();
+    await page.fill("#ms-server", "https://dav.example.com/dav/");
+    await page.fill("#ms-user", "tester");
+    await page.fill("#ms-password", "draft-password");
+    await page.click("#ms-test");
+    await page.waitForFunction(() => document.getElementById("ms-result").textContent.includes("连接测试成功"));
+    const sent = await page.evaluate(() => window.__mobileTest.lastTest);
+    assert.equal(sent.config.server, "https://dav.example.com/dav/");
+    assert.equal(sent.config.user, "tester");
+    assert.equal(sent.password, "draft-password");
+    assert.equal(await page.evaluate(() => localStorage.getItem("minipad-mobile-webdav")), null);
+    assert.equal(await page.evaluate(() => window.__mobileTest.savedWebdavPassword), undefined);
+    assert.equal(await page.locator("#ms-password").inputValue(), "draft-password");
+    await page.fill("#ms-server", "");
+    await page.click("#ms-test");
+    await page.waitForFunction(() => document.getElementById("ms-result").textContent.includes("地址不能为空"));
+    assert.equal(await page.evaluate(() => localStorage.getItem("minipad-mobile-webdav")), null);
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test("Android lists pages WebDAV downloaded while a page is being edited and keeps the edit", async () => {
+  const { context, page, errors } = await open();
+  try {
+    await page.locator(".ProseMirror p").first().click();
+    await page.keyboard.press("End");
+    await page.keyboard.type("手机上的改动");
+    // 还没保存的时候，网盘同步下来一页新页面
+    const reads = await page.evaluate(() => {
+      window.__mobileTest.disk[0].notes.push({ name: "电脑新建", content: "电脑上写的", unreadable: false });
+      const before = window.__mobileTest.calls.read;
+      return window.__mobileTest.emit("webdav-changed", ["电脑新建.md"]).then(() => before);
+    });
+    await page.locator("#notes-list button").filter({ hasText: "电脑新建" }).waitFor({ state: "attached" });
+    assert.equal(await page.evaluate(() => window.__mobileTest.calls.read), reads, "the page being edited is not reloaded");
+    assert.match(await page.locator(".ProseMirror").textContent(), /第一段手机上的改动/);
+    await page.waitForFunction(() => window.__mobileTest.disk[0].notes[0].content.includes("第一段手机上的改动"));
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test("Android sync status color uses the shared solid, gradient and material library", async () => {
+  const { context, page, errors } = await open();
+  try {
+    page.on("dialog", (dialog) => void dialog.accept());
+    await page.click("#open-drawer");
+    await page.click("#open-sync-settings");
+    const tool = page.locator("#mobile-webdav-settings .shared-colors");
+    await tool.waitFor();
+    assert.deepEqual(await tool.locator(".uc-kind").allTextContents(), ["纯色", "渐变", "材质"]);
+    await tool.locator('.uc-kind[data-kind="material"]').click();
+    const material = await tool.locator(".uc-swatch").first().getAttribute("data-color");
+    assert.match(material, /^linear-gradient/);
+    await tool.locator(".uc-swatch").first().click();
+    assert.equal(await page.locator("#ms-color button").first().getAttribute("aria-checked"), "false");
+    await page.locator("#ms-enable").check();
+    await page.fill("#ms-server", "https://dav.example.com/");
+    await page.fill("#ms-user", "tester");
+    await page.click("#ms-save-config");
+    await page.waitForFunction(() => JSON.parse(localStorage.getItem("minipad-mobile-webdav") || "{}").enabled);
+    assert.equal(JSON.parse(await page.evaluate(() => localStorage.getItem("minipad-mobile-webdav"))).status_color, material);
+    assert.match(await page.locator("#mobile-sync-state").evaluate((node) => node.style.backgroundImage), /^linear-gradient\(135deg, rgb\(142, 158, 171\) 0%/);
+
+    // 存进颜色库的颜色留在手机上，重开应用后还在；「跟随强调色」清掉自选颜色。
+    await tool.locator('.uc-kind[data-kind="solid"]').click();
+    await tool.locator(".uc-more").click();
+    await tool.locator(".uc-actions button", { hasText: "自定义" }).click();
+    await tool.locator(".uc-editor select").selectOption("solid");
+    await tool.locator('.uc-stop input[type="color"]').fill("#123456");
+    await tool.locator(".uc-actions button", { hasText: /^保存$/ }).click();
+    await page.waitForFunction(() => JSON.parse(localStorage.getItem("minipad-mobile-colors") || "{}").color_library?.includes("#123456"));
+    await page.locator("#ms-color button").first().click();
+    await page.click("#ms-save-config");
+    await page.waitForFunction(() => JSON.parse(localStorage.getItem("minipad-mobile-webdav")).status_color === "");
+    await page.reload();
+    await page.locator("#editor .ProseMirror").waitFor();
+    await page.click("#open-drawer");
+    await page.click("#open-sync-settings");
+    await tool.locator('.uc-kind[data-kind="solid"]').click();
+    await tool.locator(".uc-more").click();
+    assert.equal(await tool.locator('.uc-swatch[data-color="#123456"]').count(), 1);
+    assert.equal(await page.locator("#ms-color button").first().getAttribute("aria-checked"), "true");
+    await tool.locator(".uc-reset").click();
+    await page.waitForFunction(() => !JSON.parse(localStorage.getItem("minipad-mobile-colors")).color_library.includes("#123456"));
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test("WebDAV queues a second Android sync instead of dropping it", async () => {
+  const { context, page, errors } = await open();
+  try {
+    await page.click("#open-drawer");
+    await page.click("#open-sync-settings");
+    await page.locator("#ms-enable").check();
+    await page.fill("#ms-server", "https://dav.example.com/");
+    await page.fill("#ms-user", "tester");
+    await page.click("#ms-save-config");
+    await page.waitForFunction(() => JSON.parse(localStorage.getItem("minipad-mobile-webdav") || "{}").enabled);
+    await page.evaluate(() => { window.__mobileTest.syncDelay = 350; });
+    await page.click("#ms-run");
+    await page.click("#ms-run");
+    await page.waitForFunction(() => window.__mobileTest.syncCalls === 2, { timeout: 6000 });
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test("refresh button uses WebDAV when enabled and keeps local refresh when disabled", async () => {
+  const { context, page, errors } = await open();
+  try {
+    await page.click("#refresh");
+    assert.equal(await page.evaluate(() => window.__mobileTest.syncCalls || 0), 0);
+    await page.click("#open-drawer");
+    await page.click("#open-sync-settings");
+    await page.locator("#ms-enable").check();
+    await page.fill("#ms-server", "https://dav.example.com/");
+    await page.fill("#ms-user", "tester");
+    await page.click("#ms-save-config");
+    await page.click("#close-sync-settings");
+    await page.click("#refresh");
+    await page.waitForFunction(() => window.__mobileTest.syncCalls === 1);
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test("WebDAV settings are visible in all four Android interface styles", async () => {
+  for (const style of ["classic", "starry", "material", "paper"]) {
+    const { context, page, errors } = await open({ look: { ui: style } });
+    try {
+      await page.click("#open-drawer");
+      await page.click("#open-sync-settings");
+      assert.equal(await page.locator("#mobile-webdav-settings").isVisible(), true, style);
+      assert.equal(await page.locator("#ms-server").isVisible(), true, style);
+      assert.equal(await page.locator("#ms-save-config").isVisible(), true, style);
+      assert.deepEqual(errors, [], style);
+    } finally { await context.close(); }
+  }
+});
+
+test("Android local path option stays optional and changing appearance keeps editor usable", async () => {
+  const { context, page, errors } = await open();
+  try {
+    await page.click("#open-drawer");
+    await page.click("#open-settings");
+    assert.equal(await page.locator("#look-local-path").isChecked(), false);
+    await page.locator("#look-local-path").check();
+    await page.click("#close-settings");
+    assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem("minipad-mobile-look")).local_path_enabled), true);
+    await page.locator("#editor .ProseMirror p").first().click();
+    await page.keyboard.press("End");
+    await page.keyboard.type("继续编辑");
+    await page.waitForFunction(() => window.__mobileTest.disk[0].notes[0].content.includes("继续编辑"));
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
 });

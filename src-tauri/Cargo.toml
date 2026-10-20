@@ -1,6 +1,6 @@
 [package]
 name = "minipad-next"
-version = "0.4.4"
+version = "0.4.5"
 description = "Minipad Next"
 authors = ["AlstarKnight"]
 repository = "https://github.com/AlstarKnight/minipad-next"
@@ -19,6 +19,13 @@ encoding_rs = "0.8"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 base64 = "0.22"
+quick-xml = "0.42"
+reqwest = { version = "0.13", default-features = false, features = ["blocking", "rustls"] }
+# Same rustls as reqwest; only used to tell certificate errors from other TLS failures.
+rustls = { version = "0.23", default-features = false, features = ["std"] }
+sha2 = "0.10"
+webpki-root-certs = "1.0.9"
+percent-encoding = "2"
 chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
 zip = { version = "9", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 
@@ -30,6 +37,7 @@ tauri-plugin-single-instance = "2"
 tauri-plugin-autostart = "2"
 tauri-plugin-opener = "2"
 tauri-plugin-dialog = "2"
+keyring = { version = "3.6", default-features = false, features = ["windows-native"] }
 
 [profile.release]
 codegen-units = 1

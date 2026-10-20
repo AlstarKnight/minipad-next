@@ -1,9 +1,10 @@
 // Android-only Milkdown editor. Persist Markdown; binary images go to the book's assets folder.
 import { $prose, Plugin, TextSelection } from "../vendor/milkdown.js";
-import { createEditor, editorDebug, showInEditor, syncContent } from "./editor.js";
+import { createEditor, editorDebug, showInEditor, syncContent, setMobileLocalPathEnabled } from "./editor.js";
 import { state as desktopState } from "./state.js";
 import { setSelectionBar } from "./formatbar.js";
-import { ACCENTS, applyAccent, tidyAccent } from "./accent.js";
+import { ACCENTS, applyAccent, tidyAccent, parseAccent } from "./accent.js";
+import { makeSharedColorTools, setColorLibrarySaver } from "./sharedcolors.js";
 
 const invoke = window.__TAURI__?.core?.invoke;
 const el = (id) => document.getElementById(id);
@@ -301,6 +302,7 @@ async function flush() {
       note.disk = content;
       retries = 0;
       notify(result?.conflict_name ? "已保存，产生冲突副本" : "已保存");
+      scheduleMobileSync();
       if (result?.conflict_name) await showNewPages();
     } catch (error) {
       dirty = true;
@@ -557,11 +559,244 @@ for (const b of el("dock-cats").children) {
   });
 }
 toolbar.dataset.cat = "text";
-el("refresh").addEventListener("click", () => { void refresh(); });
+el("refresh").addEventListener("click", () => {
+  if (syncSettings.enabled) void mobileSync();
+  else void refresh();
+});
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) void flush().catch(() => {});
 });
 
+// 颜色库（纯色、渐变、材质和快捷色）和电脑版是同一套界面，只存在这台手机上。
+const COLOR_KEY = "minipad-mobile-colors";
+const COLOR_FIELDS = ["color_library", "material_library", "quick_colors", "color_library_rev"];
+function loadColors() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(COLOR_KEY) || "{}") || {};
+    return Object.fromEntries(COLOR_FIELDS.filter((key) => key in saved).map((key) => [key, saved[key]]));
+  } catch { return {}; }
+}
+desktopState.settings = loadColors();
+setColorLibrarySaver(async (next) => {
+  const colors = Object.fromEntries(COLOR_FIELDS.map((key) => [key, next[key]]));
+  localStorage.setItem(COLOR_KEY, JSON.stringify(colors));
+  desktopState.settings = { ...desktopState.settings, ...colors };
+});
+
+// WebDAV 同步配置只存手机外观以外的本地设置，密码由 Rust 私有存储保管。
+const SYNC_KEY = "minipad-mobile-webdav";
+const syncDefaults = {
+  enabled: false, server: "", user: "", folder: "/MinipadNext/",
+  allow_http: false, images: true, first_mode: "merge",
+  on_start: true, after_save: true, delay: 30, interval: 5,
+  on_hide: true, display: "icon", status_color: "",
+  delete_limit: 20, delete_divisor: 3,
+};
+let syncSettings = (() => {
+  try { return { ...syncDefaults, ...JSON.parse(localStorage.getItem(SYNC_KEY) || "{}") }; }
+  catch { return { ...syncDefaults }; }
+})();
+let syncing = null;
+let syncQueued = false;
+let syncTimer = null;
+let syncDelay = null;
+function updateSyncForm() {
+  for (const [id, value] of Object.entries({
+    "ms-enable": syncSettings.enabled, "ms-server": syncSettings.server,
+    "ms-user": syncSettings.user, "ms-folder": syncSettings.folder,
+    "ms-http": syncSettings.allow_http, "ms-first": syncSettings.first_mode,
+    "ms-images": syncSettings.images, "ms-start": syncSettings.on_start,
+    "ms-save": syncSettings.after_save, "ms-delay": syncSettings.delay,
+    "ms-interval": syncSettings.interval, "ms-hide": syncSettings.on_hide,
+    "ms-display": syncSettings.display,
+    "ms-delete-limit": syncSettings.delete_limit,
+    "ms-delete-divisor": syncSettings.delete_divisor,
+  })) {
+    if (el(id).type === "checkbox") el(id).checked = value;
+    else el(id).value = String(value);
+  }
+  el("ms-password").value = "";
+  showSyncColor(syncSettings.status_color || "");
+}
+function readSyncForm() {
+  return {
+    enabled: el("ms-enable").checked,
+    server: el("ms-server").value.trim(),
+    user: el("ms-user").value.trim(),
+    folder: el("ms-folder").value.trim() || "/MinipadNext/",
+    allow_http: el("ms-http").checked,
+    first_mode: el("ms-first").value,
+    images: el("ms-images").checked,
+    on_start: el("ms-start").checked,
+    after_save: el("ms-save").checked,
+    delay: Math.min(300, Math.max(10, Number(el("ms-delay").value) || 30)),
+    interval: Number(el("ms-interval").value),
+    on_hide: el("ms-hide").checked,
+    display: el("ms-display").value,
+    status_color: el("ms-color").dataset.selected || "",
+    delete_limit: Math.max(1, Math.min(1000, Math.round(Number(el("ms-delete-limit").value) || 20))),
+    delete_divisor: Math.max(1, Math.min(10, Math.round(Number(el("ms-delete-divisor").value) || 3))),
+  };
+}
+async function saveSyncForm() {
+  const config = readSyncForm();
+  if (el("ms-password").value) {
+    await invoke("mobile_webdav_set_password", { config, password: el("ms-password").value });
+    el("ms-password").value = "";
+  }
+  syncSettings = config;
+  localStorage.setItem(SYNC_KEY, JSON.stringify(config));
+  updateSyncTimers();
+  await showSyncStatus();
+  el("ms-result").textContent = "同步设置已保存";
+}
+async function showSyncStatus() {
+  if (!invoke) return;
+  try {
+    const result = await invoke("mobile_webdav_status");
+    const labels = { synced: "已同步", syncing: "同步中", conflict: "有冲突", offline: "离线", error: "出错", confirm: "需要确认", off: "未同步" };
+    const symbols = { synced: "✓", syncing: "⟳", conflict: "!", offline: "○", error: "!", confirm: "?", off: "○" };
+    const kind = result.state || "off";
+    const icon = symbols[kind] || "○";
+    el("mobile-sync-state").textContent = syncSettings.enabled
+      ? icon + (syncSettings.display === "text" ? " " + (labels[kind] || "未同步") : "")
+      : "同步未开启";
+    const color = parseAccent(syncSettings.status_color);
+    const syncState = el("mobile-sync-state");
+    syncState.style.color = color?.from || "var(--accent)";
+    syncState.style.backgroundImage = color?.to ? syncSettings.status_color : "";
+    syncState.style.backgroundClip = color?.to ? "text" : "";
+    syncState.style.webkitBackgroundClip = color?.to ? "text" : "";
+    syncState.style.webkitTextFillColor = color?.to ? "transparent" : "";
+    el("mobile-sync-message").textContent = result.message || "尚无同步记录";
+    el("ms-history").textContent = (result.history || []).join("\n");
+    el("ms-result").textContent = result.message || "";
+    el("mobile-sync-state").hidden = syncSettings.enabled && syncSettings.display === "none";
+  } catch (e) { el("ms-result").textContent = String(e); }
+}
+async function performMobileSync(confirmed) {
+  try {
+    await flush();
+    const result = await invoke("mobile_webdav_sync_now", { config: syncSettings, confirmDeletes: confirmed });
+    if (result?.rescan_needed) scheduleMobileSync(true);
+    await showSyncStatus();
+    // 有尚未保存的输入时保持原状态；下次保存会按 expected 留冲突副本。
+    // webdav-changed 监听器统一刷新，避免同一次下载重复加载页面。
+    return result;
+  } catch (e) {
+    const text = String(e);
+    if (text.includes("WEB_DAV_CONFIRM_DELETE:")) {
+      const match = /WEB_DAV_CONFIRM_DELETE:(\d+):(\d+):(\d+):(\d+)/.exec(text);
+      const where = "手机 " + (match?.[3] || 0) + " 页移进回收站，网盘 " + (match?.[4] || 0) + " 页移进 .trash。";
+      if (window.confirm("同步涉及大量删除：" + where + "确定继续吗？取消后不会删除任何文件。")) {
+        return performMobileSync(true);
+      }
+    } else if (!text.includes("离线")) {
+      el("ms-result").textContent = text;
+    }
+    await showSyncStatus();
+  }
+}
+
+async function mobileSync(confirmed = false) {
+  if (!syncSettings.enabled || !invoke) return;
+  if (syncing) {
+    syncQueued = true;
+    return syncing;
+  }
+  syncing = (async () => {
+    do {
+      syncQueued = false;
+      await performMobileSync(confirmed);
+      confirmed = false;
+    } while (syncQueued && syncSettings.enabled);
+  })();
+  try { return await syncing; }
+  finally { syncing = null; }
+}
+
+function scheduleMobileSync(force = false) {
+  if (!syncSettings.enabled || (!force && !syncSettings.after_save)) return;
+  clearTimeout(syncDelay);
+  syncDelay = setTimeout(() => { void mobileSync(); }, (syncSettings.delay || 30) * 1000);
+}
+function updateSyncTimers() {
+  clearInterval(syncTimer);
+  clearTimeout(syncDelay);
+  const min = Number(syncSettings.interval);
+  if (syncSettings.enabled && [1, 5, 15, 30].includes(min)) {
+    syncTimer = setInterval(() => { if (!document.hidden) void mobileSync(); }, min * 60_000);
+  }
+}
+// 状态颜色：「跟随强调色」加上共用的颜色库，和电脑版的设置一样。
+const followAccent = document.createElement("button");
+followAccent.type = "button";
+followAccent.dataset.color = "";
+followAccent.title = "跟随强调色";
+followAccent.setAttribute("aria-label", "跟随强调色");
+followAccent.style.setProperty("--sw", "var(--accent)");
+followAccent.addEventListener("click", () => showSyncColor(""));
+el("ms-color").append(followAccent);
+const syncColorTool = makeSharedColorTools({
+  id: "mobile-sync-status",
+  getValue: () => el("ms-color").dataset.selected || getComputedStyle(document.documentElement).getPropertyValue("--accent").trim(),
+  onApply: (value) => showSyncColor(value),
+  compact: true,
+});
+// 放在 .sync-field 外面，编辑器里的小输入框不套用表单输入框的大尺寸。
+el("ms-color").closest(".sync-field").after(syncColorTool.root);
+function showSyncColor(value) {
+  el("ms-color").dataset.selected = tidyAccent(value);
+  followAccent.setAttribute("aria-checked", String(!el("ms-color").dataset.selected));
+  syncColorTool.sync();
+}
+el("open-sync-settings").addEventListener("click", () => {
+  if (!drawer.hidden) toggleDrawer(false);
+  updateSyncForm();
+  syncColorTool.reopen();
+  el("mobile-webdav-settings").hidden = false;
+  el("sync-settings-backdrop").hidden = false;
+  void showSyncStatus();
+});
+function closeSyncSettings() {
+  el("mobile-webdav-settings").hidden = true;
+  el("sync-settings-backdrop").hidden = true;
+}
+el("close-sync-settings").addEventListener("click", closeSyncSettings);
+el("sync-settings-backdrop").addEventListener("click", closeSyncSettings);
+el("ms-save-config").addEventListener("click", () => void saveSyncForm().catch(e => { el("ms-result").textContent = String(e); }));
+el("ms-preset").addEventListener("change", () => {
+  const kind = el("ms-preset").value;
+  if (kind === "jianguoyun") el("ms-server").value = "https://dav.jianguoyun.com/dav/";
+  else if (kind === "infinicloud") el("ms-server").value = "https://webdav.teracloud.jp/";
+  else if (kind === "nextcloud") el("ms-server").placeholder = "https://域名/remote.php/dav/files/用户名/";
+});
+// 测试连接只用表单里的草稿，不保存设置和密码。
+el("ms-test").addEventListener("click", () => void (async () => {
+  try {
+    el("ms-result").textContent = await invoke("mobile_webdav_test", { config: readSyncForm(), password: el("ms-password").value });
+  } catch (e) { el("ms-result").textContent = String(e); }
+})());
+el("ms-run").addEventListener("click", () => void mobileSync());
+el("mobile-sync-now").addEventListener("click", () => void mobileSync());
+el("ms-forget").addEventListener("click", () => void (async () => {
+  if (!window.confirm("清除当前账号的同步密码与记录？手机笔记不会删除。")) return;
+  try {
+    await invoke("mobile_webdav_forget", { config: syncSettings });
+    syncSettings.enabled = false;
+    localStorage.setItem(SYNC_KEY, JSON.stringify(syncSettings));
+    updateSyncForm();
+    updateSyncTimers();
+    await showSyncStatus();
+  } catch (e) { el("ms-result").textContent = String(e); }
+})());
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden && syncSettings.enabled && syncSettings.on_hide) {
+    void flush().then(() => mobileSync()).catch(() => {});
+  } else if (!document.hidden && syncSettings.enabled && syncSettings.on_start) {
+    void mobileSync();
+  }
+});
 // ---- 外观(0.4.4):界面风格、明暗、强调色,只存在这台手机上 ----
 // 界面风格写在 <html data-ui>,和 data-theme 一起决定整套颜色(共用的菜单和浮条也跟着变);
 // 经典是原来的绿色样子,不加 data-ui。
@@ -584,6 +819,7 @@ function loadLook() {
     cats: saved.cats !== false,
     fab: saved.fab !== false,
     debug: saved.debug === true,
+    local_path_enabled: saved.local_path_enabled === true,
   };
 }
 
@@ -591,6 +827,7 @@ function setLook(change) {
   look = { ...look, ...change };
   try { localStorage.setItem(LOOK_KEY, JSON.stringify(look)); } catch { /* 这次照样生效,只是下次打开不记得 */ }
   applyLook();
+  setMobileLocalPathEnabled(look.local_path_enabled);
 }
 
 function applyLook() {
@@ -614,6 +851,7 @@ function applyLook() {
   el("look-cats").checked = look.cats;
   el("look-fab").checked = look.fab;
   el("look-debug").checked = look.debug;
+  el("look-local-path").checked = look.local_path_enabled;
   el("viewport-debug").hidden = !look.debug;
   if (look.debug) requestAnimationFrame(fitViewport);
   renderDrawer();
@@ -636,6 +874,7 @@ el("look-stars").addEventListener("change", (e) => setLook({ stars: e.target.che
 el("look-cats").addEventListener("change", (e) => setLook({ cats: e.target.checked }));
 el("look-fab").addEventListener("change", (e) => setLook({ fab: e.target.checked }));
 el("look-debug").addEventListener("change", (e) => setLook({ debug: e.target.checked }));
+el("look-local-path").addEventListener("change", (e) => setLook({ local_path_enabled: e.target.checked }));
 systemDark.addEventListener("change", applyLook);
 
 function showSettings(open) {
@@ -723,7 +962,6 @@ document.addEventListener("pointerdown", (event) => {
 
 async function start() {
   try {
-    desktopState.settings = {};
     document.documentElement.dataset.mobile = "true";
     // The floating selection bar sits below the selection: the system's own copy/paste popup
     // and the selection handles use the space above it.
@@ -738,9 +976,24 @@ async function start() {
       emptyBold: () => {},
     });
     view = editorDebug().view;
+    setMobileLocalPathEnabled(look.local_path_enabled);
     view.dom.addEventListener("open-find", () => showFind(true));
     if (!invoke) throw new Error("请使用 Android 应用打开");
     await refresh(null, null);
+    updateSyncTimers();
+    if (window.__TAURI__?.event?.listen) {
+      await window.__TAURI__.event.listen("webdav-changed", async () => {
+        if (!dirty && !saving && !switching) {
+          await refresh();
+        } else {
+          // 正在编辑：只重新列出页面，当前页不动，保存时 expected 不符会自动留冲突副本
+          notify("网盘有更新，保存当前编辑后会安全处理冲突");
+          await showNewPages();
+        }
+        await showSyncStatus();
+      });
+    }
+    if (syncSettings.enabled && syncSettings.on_start) void mobileSync();
   } catch (error) {
     notify("编辑器初始化失败：" + error);
   }

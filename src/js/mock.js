@@ -41,6 +41,13 @@ const DEFAULT_SETTINGS = {
   code_title_color: true,
   update_check: true,
   email_auto_link: false,
+  local_path_enabled: true,
+  local_path_click: "ctrl",
+  local_path_color: "",
+  local_path_underline: "dashed",
+  local_path_missing: true,
+  local_path_confirm: true,
+  local_path_trusted: [],
   block_enabled: true,
   block_context_menu: "system",
   code_exit_mode: "blank3",
@@ -71,6 +78,20 @@ const DEFAULT_SETTINGS = {
   find_bar_pos: "top",
   find_color: "",
   conflict_mode: "copy",
+  webdav_enabled: false,
+  webdav_server: "",
+  webdav_user: "",
+  webdav_folder: "/MinipadNext/",
+  webdav_allow_http: false,
+  webdav_first_mode: "merge",
+  webdav_images: true,
+  webdav_on_start: true,
+  webdav_after_save: true,
+  webdav_delay_seconds: 30,
+  webdav_interval_minutes: 5,
+  webdav_on_hide: true,
+  webdav_status_style: "icon",
+  webdav_status_color: "",
   settings_nav: "left",
   outline_enabled: false,
   outline_mode: "hover",
@@ -110,6 +131,33 @@ const DEFAULT_SETTINGS = {
 
 const has = (obj, key) => Object.prototype.hasOwnProperty.call(obj, key);
 const emptyMeta = () => ({ order: [], active: "", modes: {} });
+
+// 和后端 keep_disk_changes 一样:页面顺序、固定、分组里,磁盘上(d,读出来的笔记本)在前端上次读到(base)
+// 以后被别处改了、前端这一项(mine)没改的,保留磁盘上的。固定和分组只看有哪些,不看先后
+function keepDiskChanges(d, base, mine) {
+  const byKey = ([a], [b]) => (a < b ? -1 : a > b ? 1 : 0);
+  const canon = (value) => JSON.stringify(value, (_, v) =>
+    v && typeof v === "object" && !Array.isArray(v) ? Object.fromEntries(Object.entries(v).sort(byKey)) : v);
+  const pins = (names) => canon([...names].sort());
+  const grouping = (groups, pages) => canon({ groups: Object.fromEntries(groups.map((g) => [g.id, g])), pages: Object.fromEntries(pages) });
+  const disk = {
+    order: d.notes.map((n) => n.name),
+    pinned: d.notes.filter((n) => n.pinned).map((n) => n.name),
+    note_groups: d.notes.filter((n) => n.group).map((n) => [n.name, n.group]),
+    groups: d.groups,
+  };
+  const out = { ...mine };
+  if (canon(disk.order) !== canon(base.order) && canon(mine.order) === canon(base.order)) out.order = disk.order;
+  if (mine.pinned && pins(disk.pinned) !== pins(base.pinned) && pins(mine.pinned) === pins(base.pinned)) out.pinned = disk.pinned;
+  if (mine.groups) {
+    const before = grouping(base.groups, base.note_groups);
+    if (grouping(disk.groups, disk.note_groups) !== before && grouping(mine.groups, Object.entries(mine.note_groups || {})) === before) {
+      out.groups = disk.groups;
+      out.note_groups = Object.fromEntries(disk.note_groups);
+    }
+  }
+  return out;
+}
 
 // 测试会直接往 __mockBooks 里放笔记本,缺的字段补上
 function fixBook(b) {
@@ -344,8 +392,9 @@ export function mockApi() {
     },
     // 笔记本已经不在了就不写,免得把删掉的笔记本又建出来
     // 带了 groups 才改分组(和 Rust 一样只记还有页面的分组);带了 pinned 才改固定的页面
-    save_meta: ({ book, order, active, modes, groups, note_groups, pinned }) => {
+    save_meta: ({ book, order, active, modes, groups, note_groups, pinned, base }) => {
       if (!has(db.books, book)) return;
+      if (base) ({ order, groups, note_groups, pinned } = keepDiskChanges(readBook(book), base, { order, groups, note_groups, pinned }));
       const old = db.books[book].meta || {};
       const meta = { ...old, order, active, modes, groups: old.groups || [], note_groups: old.note_groups || {} };
       if (pinned) meta.pinned = pinned.filter((n, i, a) => order.includes(n) && a.indexOf(n) === i);
@@ -549,6 +598,7 @@ export function mockApi() {
       return { size: s.ball_size ?? 48, icon: s.ball_icon || "app", color: s.ball_color || "", opacity: s.ball_opacity ?? 100, open: s.ball_open || "click", image: window.__mockControl?.ballImage || null };
     },
     pick_ball_icon: () => window.__mockControl?.pickBallImage ?? null,
+    refresh_ball_icon: () => window.__mockControl?.ballImage || null,
     collapse_to_ball: () => {
       if (window.__mockControl) window.__mockControl.collapsed = (window.__mockControl.collapsed || 0) + 1;
       toast("(预览)窗口会缩成悬浮图标,点图标再放出来");
@@ -556,6 +606,33 @@ export function mockApi() {
     expand_from_ball: () => {},
     open_notes_dir: () => toast("(预览)会在资源管理器里打开笔记文件夹"),
     open_link: ({ url }) => void window.open(url, "_blank", "noopener"),
+    webdav_test: (draft = {}) => {
+      if (window.__mockControl?.webdavTestError) throw window.__mockControl.webdavTestError;
+      if (!draft.server && !db.settings?.webdav_server) throw "请先填写服务器地址";
+      return "连接成功，目录读取和写入测试通过（预览模拟）";
+    },
+    webdav_set_password: () => {},
+    webdav_status: () => window.__mockControl?.webdavStatus || ({
+      state: db.settings?.webdav_enabled ? "synced" : "off",
+      message: db.settings?.webdav_enabled ? "已同步（预览模拟）" : "WebDAV 尚未开启",
+      last_time: "", history: [],
+    }),
+    webdav_sync_now: () => {
+      const control = window.__mockControl;
+      if (control) control.webdavSyncCalls = (control.webdavSyncCalls || 0) + 1;
+      return { uploaded: 0, downloaded: 0, deleted: 0, conflicts: 0,
+        changed: [], rescan_needed: control?.webdavRescanNeeded || false };
+    },
+    webdav_forget: () => { db.settings.webdav_enabled = false; persist(); },
+    local_path_exists: async ({ path }) => {
+      const control = window.__mockControl;
+      if (control?.slowLocalPathMs) await new Promise(resolve => setTimeout(resolve, control.slowLocalPathMs));
+      return !!control?.existingLocalPaths?.includes(path);
+    },
+    open_path: ({ path, reveal, confirmed }) => {
+      if (window.__mockControl) (window.__mockControl.openedPaths ||= []).push({ path, reveal, confirmed });
+      toast("(预览)本地路径：" + path);
+    },
     quit_ack: () => true,
     quit_cancel: () => {},
     show_window: () => {},

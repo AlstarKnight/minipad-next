@@ -94,6 +94,11 @@ pub struct Book {
 }
 
 pub fn write_atomic(path: &Path, data: &str) -> Result<(), String> {
+    write_atomic_bytes(path, data.as_bytes())
+}
+
+/// 下载的图片也用与 Markdown 完全一致的原子写入路径。
+pub fn write_atomic_bytes(path: &Path, data: &[u8]) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
@@ -108,7 +113,7 @@ pub fn write_atomic(path: &Path, data: &str) -> Result<(), String> {
         .open(&tmp)
         .map_err(|e| e.to_string())?;
     let result = (|| {
-        file.write_all(data.as_bytes()).map_err(|e| e.to_string())?;
+        file.write_all(data).map_err(|e| e.to_string())?;
         file.sync_all().map_err(|e| e.to_string())?;
         drop(file);
         rename_with_retry(|| fs::rename(&tmp, path)).map_err(|e| e.to_string())
@@ -731,6 +736,116 @@ pub fn save_book_meta(
     write_meta(&dir, &meta)
 }
 
+/// 前端看到的(load_book 给它的)页面顺序、固定和分组。前端写笔记本信息时带上它上次读到(或写进去)的
+/// 那份,用来判断磁盘上的这几项在那之后有没有被别处改过,比如 WebDAV 刚从另一台电脑同步下来、前端还没读到
+#[derive(Deserialize, Default, Debug, PartialEq)]
+#[serde(default)]
+pub struct SharedMeta {
+    pub order: Vec<String>,
+    pub pinned: Vec<String>,
+    /// [页面名, 分组 id]
+    pub note_groups: Vec<(String, String)>,
+    pub groups: Vec<TabGroup>,
+}
+
+impl SharedMeta {
+    /// 磁盘上现在的样子,算法和 load_book 一样:只算存在的页面,分组得在分组列表里
+    fn on_disk(dir: &Path, meta: &Meta) -> Result<Self, String> {
+        let order = order_names(&list_names(dir)?, &meta.order);
+        let group_of = |name: &String| {
+            meta.note_groups
+                .get(name)
+                .filter(|id| meta.groups.iter().any(|g| &g.id == *id))
+                .map_or("", String::as_str)
+        };
+        let pinned = order
+            .iter()
+            .filter(|n| meta.pinned.contains(n))
+            .cloned()
+            .collect();
+        let note_groups = order
+            .iter()
+            .filter(|n| !group_of(n).is_empty())
+            .map(|n| (n.clone(), group_of(n).to_string()))
+            .collect();
+        let groups = meta
+            .groups
+            .iter()
+            .filter(|g| order.iter().any(|n| group_of(n) == g.id))
+            .cloned()
+            .collect();
+        Ok(Self {
+            order,
+            pinned,
+            note_groups,
+            groups,
+        })
+    }
+}
+
+/// 固定和分组只看有哪些,不看先后(页面顺序单独比)
+fn pin_set(names: &[String]) -> std::collections::BTreeSet<&str> {
+    names.iter().map(String::as_str).collect()
+}
+
+type Grouping<'a> = (
+    std::collections::BTreeMap<&'a str, &'a TabGroup>,
+    std::collections::BTreeMap<&'a str, &'a str>,
+);
+
+fn grouping<'a>(
+    groups: &'a [TabGroup],
+    pages: impl IntoIterator<Item = (&'a String, &'a String)>,
+) -> Grouping<'a> {
+    (
+        groups.iter().map(|g| (g.id.as_str(), g)).collect(),
+        pages
+            .into_iter()
+            .map(|(name, id)| (name.as_str(), id.as_str()))
+            .collect(),
+    )
+}
+
+/// 写笔记本信息之前调用:页面顺序、固定、分组里,磁盘上在前端上次看到(base)以后被别处改过、
+/// 前端这一项又没改的,换成磁盘上的,免得拿前端手里的旧样子把刚同步下来的改动盖回去;
+/// 两边都改了的照前端的写。没有或读不出 .minipad.json 时没得比,也照前端的写
+pub fn keep_disk_changes(
+    root: &Path,
+    book: &str,
+    base: &SharedMeta,
+    order: &mut Vec<String>,
+    pinned: &mut Option<Vec<String>>,
+    groups: &mut Option<Groups>,
+) -> Result<(), String> {
+    let dir = book_dir(root, book)?;
+    let Ok(bytes) = fs::read(dir.join(META_FILE)) else {
+        return Ok(());
+    };
+    let Ok(meta) = serde_json::from_str::<Meta>(&decode_text(&bytes)) else {
+        return Ok(());
+    };
+    let disk = SharedMeta::on_disk(&dir, &meta)?;
+    if disk.order != base.order && *order == base.order {
+        order.clone_from(&disk.order);
+    }
+    if let Some(mine) = pinned {
+        let before = pin_set(&base.pinned);
+        if pin_set(&disk.pinned) != before && pin_set(mine) == before {
+            mine.clone_from(&disk.pinned);
+        }
+    }
+    if let Some(mine) = groups {
+        let before = grouping(&base.groups, base.note_groups.iter().map(|(n, g)| (n, g)));
+        if grouping(&disk.groups, disk.note_groups.iter().map(|(n, g)| (n, g))) != before
+            && grouping(&mine.groups, &mine.note_groups) == before
+        {
+            mine.groups.clone_from(&disk.groups);
+            mine.note_groups = disk.note_groups.iter().cloned().collect();
+        }
+    }
+    Ok(())
+}
+
 /// 仅接受纯色或与应用强调色一致的安全渐变写法，绝不信任任意 CSS。
 pub fn normalized_book_color(value: &str) -> Option<String> {
     let value = value.trim();
@@ -1010,6 +1125,64 @@ fn trash_page(path: &Path, id: String, book: &str) -> TrashItem {
     }
 }
 
+/// WebDAV 回收的图片和元数据也列入普通回收站，保留原来的相对目录。
+fn collect_webdav_trash(
+    directory: &Path,
+    relative: &str,
+    depth: usize,
+    items: &mut Vec<TrashItem>,
+) -> Result<(), String> {
+    if depth > 3 {
+        return Ok(());
+    }
+    for entry in fs::read_dir(directory).map_err(|e| format!("读取同步回收站失败：{e}"))?
+    {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let kind = entry.file_type().map_err(|e| e.to_string())?;
+        if kind.is_symlink() {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let next = if relative.is_empty() {
+            name.clone()
+        } else {
+            format!("{relative}/{name}")
+        };
+        if kind.is_dir() {
+            collect_webdav_trash(&entry.path(), &next, depth + 1, items)?;
+        } else if kind.is_file() {
+            let (stem, extension) = name.rsplit_once('.').unwrap_or((&name, ""));
+            if let Some((original, deleted)) = split_stamp(stem) {
+                let parent = relative;
+                let display = if extension.is_empty() {
+                    original.to_string()
+                } else {
+                    format!("{original}.{extension}")
+                };
+                items.push(TrashItem {
+                    id: format!(".webdav/{next}"),
+                    kind: "file".into(),
+                    book: String::new(),
+                    name: if parent.is_empty() {
+                        display
+                    } else {
+                        format!("{parent}/{display}")
+                    },
+                    deleted,
+                    // 冲突时网盘那边的版本和同步替换、删除的本机版本都存成 .minipad.<时间>.json
+                    preview: if original == ".minipad" && extension == "json" {
+                        "WebDAV 同步留下的笔记本设置备份，不能直接恢复，可在笔记文件夹的 .trash/.webdav 里查看".into()
+                    } else {
+                        "WebDAV 同步回收的文件".into()
+                    },
+                    pages: 0,
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
 /// 回收站里的全部东西,最近删的在前
 pub fn list_trash(root: &Path) -> Result<Vec<TrashItem>, String> {
     let trash = root.join(TRASH_DIR);
@@ -1022,7 +1195,9 @@ pub fn list_trash(root: &Path) -> Result<Vec<TrashItem>, String> {
     for entry in entries.flatten() {
         let path = entry.path();
         let file = entry.file_name().to_string_lossy().to_string();
-        if is_note_file(&path) {
+        if file == ".webdav" && path.is_dir() {
+            collect_webdav_trash(&path, "", 0, &mut items)?;
+        } else if is_note_file(&path) {
             items.push(trash_page(&path, file, ""));
         } else if !path.is_dir() {
             continue;
@@ -1054,12 +1229,21 @@ pub fn list_trash(root: &Path) -> Result<Vec<TrashItem>, String> {
 /// 回收站里 `id` 对应的文件或文件夹,和它在 .trash 里的位置(一层或两层)
 fn trash_path(root: &Path, id: &str) -> Result<(PathBuf, Vec<String>), String> {
     let parts: Vec<String> = id.split('/').map(String::from).collect();
-    if parts.is_empty() || parts.len() > 2 || parts.iter().any(|p| check_name(p).is_err()) {
+    let special = parts.first().is_some_and(|part| part == ".webdav");
+    if parts.is_empty()
+        || (special && (parts.len() < 2 || parts.len() > 5))
+        || (!special && parts.len() > 2)
+        || parts.iter().any(|p| check_name(p).is_err())
+    {
         return Err(format!("回收站里没有「{id}」"));
     }
-    let path = parts
-        .iter()
-        .fold(root.join(TRASH_DIR), |acc, p| acc.join(p));
+    let mut path = root.join(TRASH_DIR);
+    for part in &parts {
+        path.push(part);
+        if special && fs::symlink_metadata(&path).is_ok_and(|meta| meta.file_type().is_symlink()) {
+            return Err("同步回收站路径中包含不允许的符号链接".into());
+        }
+    }
     if fs::symlink_metadata(&path).is_err() {
         return Err("回收站里已经没有这一项了".into());
     }
@@ -1070,6 +1254,33 @@ fn trash_path(root: &Path, id: &str) -> Result<(PathBuf, Vec<String>), String> {
 /// 重名时加编号。返回恢复后的 (笔记本, 页面名),恢复的是笔记本时页面名是空的
 pub fn restore_trash(root: &Path, id: &str) -> Result<(String, String), String> {
     let (path, parts) = trash_path(root, id)?;
+    if parts.first().is_some_and(|part| part == ".webdav") {
+        if !path.is_file() {
+            return Err("同步回收站中的原件已不存在".into());
+        }
+        let filename = parts.last().unwrap();
+        if filename.starts_with(".minipad.") && filename.ends_with(".json") {
+            return Err(
+                "这是 WebDAV 同步留下的笔记本设置备份，不支持直接恢复，请在笔记文件夹的 .trash/.webdav 里查看"
+                    .into(),
+            );
+        }
+        let (stem, extension) = filename.rsplit_once('.').unwrap_or((filename.as_str(), ""));
+        let (name, _) = split_stamp(stem).ok_or("同步回收文件名称无效")?;
+        let dir = parts[1..parts.len() - 1]
+            .iter()
+            .fold(root.to_path_buf(), |folder, part| folder.join(part));
+        fs::create_dir_all(&dir).map_err(|e| format!("恢复同步文件失败：{e}"))?;
+        let suffix = if extension.is_empty() {
+            String::new()
+        } else {
+            format!(".{extension}")
+        };
+        let destination = free_path(&dir, name, &suffix);
+        fs::rename(&path, destination).map_err(|e| format!("恢复同步文件失败：{e}"))?;
+        remove_if_empty(&path);
+        return Ok((String::new(), String::new()));
+    }
     if parts.len() == 1 && path.is_dir() {
         let Some((name, _)) = split_stamp(&parts[0]) else {
             return Err(format!("回收站里没有「{id}」"));
@@ -1836,6 +2047,174 @@ mod tests {
         fs::remove_dir_all(&root).unwrap();
     }
 
+    /// 三页 a、b、c,磁盘上先是前端读到的样子,再被「同步」换成 c、a、b,c 固定,b 在分组 g1
+    fn synced_book(tag: &str) -> (PathBuf, SharedMeta, TabGroup) {
+        let root = temp_dir(tag);
+        for n in ["a", "b", "c"] {
+            fs::write(note_path(&root, n), n).unwrap();
+        }
+        let names = |list: &[&str]| list.iter().map(|n| n.to_string()).collect::<Vec<_>>();
+        save_book_meta(
+            &root,
+            "",
+            names(&["a", "b", "c"]),
+            "a".into(),
+            HashMap::new(),
+            None,
+            None,
+        )
+        .unwrap();
+        let base = SharedMeta::on_disk(&root, &read_meta(&root)).unwrap();
+        let group = TabGroup {
+            id: "g1".into(),
+            name: "工作".into(),
+            color: "#4c8bf5".into(),
+            collapsed: false,
+        };
+        save_book_meta(
+            &root,
+            "",
+            names(&["c", "a", "b"]),
+            "a".into(),
+            HashMap::new(),
+            Some(Groups {
+                groups: vec![group.clone()],
+                note_groups: HashMap::from([("b".into(), "g1".into())]),
+            }),
+            Some(names(&["c"])),
+        )
+        .unwrap();
+        (root, base, group)
+    }
+
+    #[test]
+    fn book_meta_synced_after_the_frontend_read_is_not_written_back() {
+        let (root, base, group) = synced_book("keep-synced-meta");
+        // 前端还拿着旧的样子,只是换了当前页
+        let mut order = base.order.clone();
+        let mut pinned = Some(vec![]);
+        let mut groups = Some(Groups {
+            groups: vec![],
+            note_groups: HashMap::new(),
+        });
+        keep_disk_changes(&root, "", &base, &mut order, &mut pinned, &mut groups).unwrap();
+        save_book_meta(&root, "", order, "b".into(), HashMap::new(), groups, pinned).unwrap();
+        let meta = read_meta(&root);
+        assert_eq!(meta.order, ["c", "a", "b"]);
+        assert_eq!(meta.active, "b");
+        assert_eq!(meta.pinned, ["c"]);
+        assert_eq!(meta.groups, [group]);
+        assert_eq!(
+            meta.note_groups,
+            HashMap::from([("b".to_string(), "g1".to_string())])
+        );
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn book_meta_changed_here_wins_field_by_field() {
+        let (root, base, group) = synced_book("local-meta-wins");
+        // 这里把 b 拖到了最前面、新建了分组,固定没动
+        let mut order = vec!["b".to_string(), "a".into(), "c".into()];
+        let mut pinned = Some(vec![]);
+        let mine = TabGroup {
+            id: "g2".into(),
+            ..group.clone()
+        };
+        let mut groups = Some(Groups {
+            groups: vec![mine.clone()],
+            note_groups: HashMap::from([("a".into(), "g2".into())]),
+        });
+        keep_disk_changes(&root, "", &base, &mut order, &mut pinned, &mut groups).unwrap();
+        assert_eq!(order, ["b", "a", "c"]);
+        assert_eq!(pinned, Some(vec!["c".to_string()]));
+        let groups = groups.unwrap();
+        assert_eq!(groups.groups, [mine]);
+        assert_eq!(
+            groups.note_groups,
+            HashMap::from([("a".to_string(), "g2".to_string())])
+        );
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn book_meta_unchanged_on_disk_is_written_as_the_frontend_has_it() {
+        let root = temp_dir("meta-unchanged-on-disk");
+        for n in ["a", "b", "c"] {
+            fs::write(note_path(&root, n), n).unwrap();
+        }
+        save_book_meta(
+            &root,
+            "",
+            vec!["a".into(), "b".into(), "c".into()],
+            "a".into(),
+            HashMap::new(),
+            None,
+            Some(vec!["c".into(), "a".into()]),
+        )
+        .unwrap();
+        let mut base = SharedMeta::on_disk(&root, &read_meta(&root)).unwrap();
+        // 固定只看有哪些:前端记的先后不一样也算没改
+        base.pinned.reverse();
+        let mut order = vec!["c".to_string(), "b".into(), "a".into()];
+        let mut pinned = Some(vec![]);
+        keep_disk_changes(&root, "", &base, &mut order, &mut pinned, &mut None).unwrap();
+        assert_eq!(order, ["c", "b", "a"]);
+        assert_eq!(pinned, Some(vec![]));
+        // 没有 .minipad.json 时没得比,照前端的写
+        fs::remove_file(root.join(META_FILE)).unwrap();
+        let mut order = base.order.clone();
+        keep_disk_changes(&root, "", &base, &mut order, &mut None, &mut None).unwrap();
+        assert_eq!(order, base.order);
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn shared_meta_on_disk_matches_what_the_frontend_reads() {
+        let root = temp_dir("shared-meta-view");
+        for n in ["a", "b", "c", "d"] {
+            fs::write(note_path(&root, n), n).unwrap();
+        }
+        let group = |id: &str| TabGroup {
+            id: id.into(),
+            ..TabGroup::default()
+        };
+        write_meta(
+            &root,
+            &Meta {
+                order: vec!["c".into(), "没有这页".into(), "a".into()],
+                pinned: vec!["a".into(), "没有这页".into()],
+                groups: vec![group("g1"), group("空的")],
+                note_groups: HashMap::from([
+                    ("c".into(), "g1".into()),
+                    ("d".into(), "不存在的分组".into()),
+                ]),
+                ..Meta::default()
+            },
+        )
+        .unwrap();
+        let book = load_book(&root, "").unwrap();
+        let read = SharedMeta {
+            order: book.notes.iter().map(|n| n.name.clone()).collect(),
+            pinned: book
+                .notes
+                .iter()
+                .filter(|n| n.pinned)
+                .map(|n| n.name.clone())
+                .collect(),
+            note_groups: book
+                .notes
+                .iter()
+                .filter(|n| !n.group.is_empty())
+                .map(|n| (n.name.clone(), n.group.clone()))
+                .collect(),
+            groups: book.groups.clone(),
+        };
+        assert_eq!(read.order, ["c", "a", "b", "d"]);
+        assert_eq!(SharedMeta::on_disk(&root, &read_meta(&root)).unwrap(), read);
+        fs::remove_dir_all(&root).unwrap();
+    }
+
     #[test]
     fn tab_groups_are_saved_with_the_book_and_empty_groups_dropped() {
         let root = temp_dir("groups");
@@ -2272,6 +2651,40 @@ mod tests {
         assert_eq!(rename_book(&root, "Work", "WORK").unwrap(), "WORK");
         assert!(rename_book(&root, "", "随便").is_err());
         fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn metadata_conflict_backup_cannot_be_restored_as_unused_settings_file() {
+        let root = temp_dir("webdav-settings-backup");
+        let folder = root.join(".trash/.webdav/工作");
+        fs::create_dir_all(&folder).unwrap();
+        let id = ".webdav/工作/.minipad.1760000000.json";
+        fs::write(folder.join(".minipad.1760000000.json"), "{}").unwrap();
+        let item = list_trash(&root)
+            .unwrap()
+            .into_iter()
+            .find(|item| item.id == id)
+            .unwrap();
+        assert!(item.preview.contains("笔记本设置备份"));
+        assert!(restore_trash(&root, id)
+            .unwrap_err()
+            .contains("不支持直接恢复"));
+        assert!(folder.join(".minipad.1760000000.json").exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn webdav_auxiliary_trash_is_visible() {
+        let root = temp_dir("webdav-trash-test");
+        let archive = root.join(".trash/.webdav/assets");
+        fs::create_dir_all(&archive).unwrap();
+        fs::write(archive.join("image.1760000000.png"), b"old").unwrap();
+        let list = list_trash(&root).unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].name, "assets/image.png");
+        restore_trash(&root, &list[0].id).unwrap();
+        assert_eq!(fs::read(root.join("assets/image.png")).unwrap(), b"old");
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
