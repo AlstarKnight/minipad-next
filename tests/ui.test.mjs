@@ -6819,7 +6819,6 @@ suite("0.4.5: WebDAV settings", { concurrency: 1 }, () => {
     }
   });
 
-
   ui("WebDAV connection failure stays in Chinese and does not save draft", {
     seed: seed({ "": { "笔记": "内容" } }),
     mockControl: { webdavTestError: "账号或应用密码错误" },
@@ -6873,6 +6872,31 @@ suite("0.4.5: WebDAV downloads", { concurrency: 1 }, () => {
     assert.deepEqual(meta.pinned, ["丙"]);
     assert.deepEqual(meta.note_groups, { "乙": "g1" });
     assert.equal(meta.groups[0]?.name, "工作");
+  });
+
+  ui("switching pages while a sync is still running does not write the old order over the downloaded one", {
+    seed: { ...seed({ "": { "甲": "1", "乙": "2", "丙": "3" } }), settings: webdavOn },
+  }, async (h) => {
+    const { p } = h;
+    await until(h.tabs, ["甲", "乙", "丙"], "initial order");
+    // WebDAV 已经把另一台设备改的 .minipad.json 写到本机,同步还没结束,这里还没读到
+    await p.evaluate(() => {
+      Object.assign(window.__mockBooks[""].meta, {
+        order: ["丙", "甲", "乙"], pinned: ["丙"],
+        groups: [{ id: "g1", name: "工作", color: "#3b82f6", collapsed: false }], note_groups: { "乙": "g1" },
+      });
+    });
+    await h.tab("乙").click();
+    await p.evaluate(() => window.__minipad.flush());
+    const meta = (await h.mock())[""].meta;
+    assert.equal(meta.active, "乙", "the page switch is saved");
+    assert.deepEqual(meta.order, ["丙", "甲", "乙"], "the downloaded order is kept");
+    assert.deepEqual(meta.pinned, ["丙"]);
+    assert.deepEqual(meta.note_groups, { "乙": "g1" });
+    assert.equal(meta.groups[0]?.name, "工作");
+    // 同步结束读到以后,标签栏也换成新的样子
+    await p.evaluate(() => window.__mockEmit("webdav-changed", [".minipad.json"]));
+    await until(h.tabs, ["丙", "甲", "乙"], "the downloaded order is shown");
   });
 
   ui("downloaded changes are applied once the editor is free again", {

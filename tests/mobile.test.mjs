@@ -51,8 +51,10 @@ async function open({ colorScheme, keyboard, look = { ui: "classic" } } = {}) {
     const writes = [];
     const images = {};
     const calls = { list: 0, read: 0, readImage: 0 };
-    window.__mobileTest = { disk, writes, images, calls, failSaves: 0, readDelay: 0, conflictNext: false };
-    window.__TAURI__ = { core: {
+    const listeners = {};
+    window.__mobileTest = { disk, writes, images, calls, failSaves: 0, readDelay: 0, conflictNext: false,
+      emit: (name, payload) => listeners[name]?.({ payload }) };
+    window.__TAURI__ = { event: { listen: async (name, handler) => { listeners[name] = handler; return () => {}; } }, core: {
       async invoke(command, args = {}) {
         const book = disk.find((b) => b.name === args.book) || disk[0];
         if (command === "mobile_list_books") {
@@ -895,6 +897,26 @@ test("Android WebDAV connection test uses the unsaved form and saves nothing", a
     await page.click("#ms-test");
     await page.waitForFunction(() => document.getElementById("ms-result").textContent.includes("地址不能为空"));
     assert.equal(await page.evaluate(() => localStorage.getItem("minipad-mobile-webdav")), null);
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test("Android lists pages WebDAV downloaded while a page is being edited and keeps the edit", async () => {
+  const { context, page, errors } = await open();
+  try {
+    await page.locator(".ProseMirror p").first().click();
+    await page.keyboard.press("End");
+    await page.keyboard.type("手机上的改动");
+    // 还没保存的时候，网盘同步下来一页新页面
+    const reads = await page.evaluate(() => {
+      window.__mobileTest.disk[0].notes.push({ name: "电脑新建", content: "电脑上写的", unreadable: false });
+      const before = window.__mobileTest.calls.read;
+      return window.__mobileTest.emit("webdav-changed", ["电脑新建.md"]).then(() => before);
+    });
+    await page.locator("#notes-list button").filter({ hasText: "电脑新建" }).waitFor({ state: "attached" });
+    assert.equal(await page.evaluate(() => window.__mobileTest.calls.read), reads, "the page being edited is not reloaded");
+    assert.match(await page.locator(".ProseMirror").textContent(), /第一段手机上的改动/);
+    await page.waitForFunction(() => window.__mobileTest.disk[0].notes[0].content.includes("第一段手机上的改动"));
     assert.deepEqual(errors, []);
   } finally { await context.close(); }
 });

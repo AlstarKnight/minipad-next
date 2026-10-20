@@ -46,13 +46,14 @@ export function bookFromDisk(d) {
 }
 
 // 笔记本信息里会同步到别的设备的几项(页面顺序、固定、分组),按写进 .minipad.json 的样子比较;
-// 磁盘上的笔记本和这里的笔记本都能算
+// 磁盘上的笔记本和这里的笔记本都能算。固定和分组只看有哪些,不看先后(和后端 keep_disk_changes 一样)
+const byKey = (key) => (a, b) => (key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : 0);
 export function sharedMeta(notes, groups) {
   return {
     order: JSON.stringify(notes.map((n) => n.name)),
-    pinned: JSON.stringify(notes.filter((n) => n.pinned).map((n) => n.name)),
-    note_groups: JSON.stringify(notes.filter((n) => n.group).map((n) => [n.name, n.group])),
-    groups: JSON.stringify(groups.filter((g) => notes.some((n) => n.group === g.id))),
+    pinned: JSON.stringify(notes.filter((n) => n.pinned).map((n) => n.name).sort()),
+    note_groups: JSON.stringify(notes.filter((n) => n.group).map((n) => [n.name, n.group]).sort(byKey((p) => p[0]))),
+    groups: JSON.stringify(groups.filter((g) => notes.some((n) => n.group === g.id)).sort(byKey((g) => g.id))),
   };
 }
 

@@ -1254,34 +1254,35 @@ fn note_image(app: &AppHandle, uri: &tauri::http::Uri) -> tauri::http::Response<
     }
 }
 
-/// 参数和前端发来的字段一一对应
+/// 参数和前端发来的字段一一对应;base 是前端上次从磁盘读到(或写进去)的页面顺序、固定和分组
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 fn save_meta(
     app: AppHandle,
     book: String,
-    order: Vec<String>,
+    mut order: Vec<String>,
     active: String,
     modes: HashMap<String, String>,
     groups: Option<Vec<notes::TabGroup>>,
     note_groups: Option<HashMap<String, String>>,
-    pinned: Option<Vec<String>>,
+    mut pinned: Option<Vec<String>>,
+    base: Option<notes::SharedMeta>,
 ) -> Result<(), String> {
-    let groups = groups.map(|groups| notes::Groups {
+    let mut groups = groups.map(|groups| notes::Groups {
         groups,
         note_groups: note_groups.unwrap_or_default(),
     });
     let st = app.state::<AppState>();
     let _guard = st.meta_io.lock().unwrap();
-    notes::save_book_meta(
-        &current_notes_dir(&app),
-        &book,
-        order,
-        active,
-        modes,
-        groups,
-        pinned,
-    )
+    // WebDAV 同步写 .minipad.json 时等着,比较磁盘上的样子和写回去之间不会被它插进来
+    let _write = crate::syncer::WRITE_LOCK
+        .lock()
+        .map_err(|e| e.to_string())?;
+    let root = current_notes_dir(&app);
+    if let Some(base) = &base {
+        notes::keep_disk_changes(&root, &book, base, &mut order, &mut pinned, &mut groups)?;
+    }
+    notes::save_book_meta(&root, &book, order, active, modes, groups, pinned)
 }
 
 #[tauri::command]
@@ -1352,6 +1353,10 @@ fn set_book_appearance(
     maybe_backup(&app);
     let st = app.state::<AppState>();
     let _guard = st.meta_io.lock().unwrap();
+    // 和 WebDAV 同步写 .minipad.json 排队
+    let _write = crate::syncer::WRITE_LOCK
+        .lock()
+        .map_err(|e| e.to_string())?;
     notes::set_book_appearance(&current_notes_dir(&app), &book, &icon, &color)
 }
 
@@ -1360,6 +1365,10 @@ fn set_book_appearance(
 fn set_current_book(app: AppHandle, book: String) -> Result<(), String> {
     let st = app.state::<AppState>();
     let _guard = st.meta_io.lock().unwrap();
+    // 和 WebDAV 同步写 .minipad.json 排队
+    let _write = crate::syncer::WRITE_LOCK
+        .lock()
+        .map_err(|e| e.to_string())?;
     notes::set_current_book(&current_notes_dir(&app), &book)
 }
 
@@ -1767,11 +1776,8 @@ fn webdav_credential(settings: &Settings) -> Result<keyring::Entry, String> {
         .map_err(|e| format!("无法打开 Windows 凭据管理器：{e}"))
 }
 
-// 从旧版按远程文件夹区分的凭据迁移，避免升级后要求重复输入应用密码。
-fn webdav_password(settings: &Settings) -> Result<String, String> {
-    if let Ok(password) = webdav_credential(settings)?.get_password() {
-        return Ok(password);
-    }
+/// 旧版本按服务器、用户名和远程文件夹存的那份凭据
+fn legacy_webdav_credential(settings: &Settings) -> Result<keyring::Entry, String> {
     let old_id = crate::syncer::journal_path(
         Path::new(""),
         &settings.webdav_server,
@@ -1782,7 +1788,15 @@ fn webdav_password(settings: &Settings) -> Result<String, String> {
         .file_stem()
         .and_then(|s| s.to_str())
         .ok_or("账号标识无效")?;
-    let legacy = keyring::Entry::new("Minipad Next WebDAV", name).map_err(|e| e.to_string())?;
+    keyring::Entry::new("Minipad Next WebDAV", name).map_err(|e| e.to_string())
+}
+
+// 从旧版按远程文件夹区分的凭据迁移，避免升级后要求重复输入应用密码。
+fn webdav_password(settings: &Settings) -> Result<String, String> {
+    if let Ok(password) = webdav_credential(settings)?.get_password() {
+        return Ok(password);
+    }
+    let legacy = legacy_webdav_credential(settings)?;
     let password = legacy
         .get_password()
         .map_err(|_| "请先填写并保存 WebDAV 应用密码")?;
@@ -1861,9 +1875,12 @@ fn webdav_forget(app: AppHandle) -> Result<(), String> {
         &s.webdav_user,
         &s.webdav_folder,
     );
-    match webdav_credential(&s)?.delete_credential() {
-        Ok(()) | Err(keyring::Error::NoEntry) => {}
-        Err(e) => return Err(format!("无法清除系统凭据中的 WebDAV 密码：{e}")),
+    // 旧版本存的那份也删掉，不然下次同步又会把它迁移回来
+    for credential in [webdav_credential(&s)?, legacy_webdav_credential(&s)?] {
+        match credential.delete_credential() {
+            Ok(()) | Err(keyring::Error::NoEntry) => {}
+            Err(e) => return Err(format!("无法清除系统凭据中的 WebDAV 密码：{e}")),
+        }
     }
     match fs::remove_file(file) {
         Ok(()) => {}

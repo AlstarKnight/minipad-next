@@ -983,13 +983,17 @@ async function start() {
     updateSyncTimers();
     if (window.__TAURI__?.event?.listen) {
       await window.__TAURI__.event.listen("webdav-changed", async () => {
-        if (!dirty && !saving && !switching) await refresh();
-        else notify("网盘有更新，保存当前编辑后会安全处理冲突");
+        if (!dirty && !saving && !switching) {
+          await refresh();
+        } else {
+          // 正在编辑：只重新列出页面，当前页不动，保存时 expected 不符会自动留冲突副本
+          notify("网盘有更新，保存当前编辑后会安全处理冲突");
+          await showNewPages();
+        }
         await showSyncStatus();
       });
     }
     if (syncSettings.enabled && syncSettings.on_start) void mobileSync();
-
   } catch (error) {
     notify("编辑器初始化失败：" + error);
   }

@@ -79,10 +79,11 @@ async function init() {
     showPendingNotice();
     syncFromDisk();
   });
-  // 贴边隐藏时,在露出来的那一条上显示标识
+  // 贴边隐藏也算窗口隐藏,按「窗口隐藏时同步」同步一次
   api.listen("edge-hidden", () => {
     if (state.settings?.webdav_enabled && state.settings?.webdav_on_hide !== false) void webdavRun();
   });
+  // 贴边隐藏时,在露出来的那一条上显示标识
   api.listen("edge-hidden", (e) => {
     document.documentElement.dataset.edge = e.payload;
     applyEdgeAppearance();

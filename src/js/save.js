@@ -161,6 +161,8 @@ async function writeDirtyMeta() {
       });
       // 写进去的就是磁盘上现在的样子,和磁盘同步时拿它判断哪边改过(见 sync.js 的 mergeBook)
       const written = sharedMeta(b.notes, b.groups);
+      // 上次读到(或写进去)的样子:磁盘上在那之后被别处(WebDAV)改了、这里没改的项,后端保留磁盘上的
+      const base = b.diskMeta && Object.fromEntries(Object.entries(b.diskMeta).map(([key, json]) => [key, JSON.parse(json)]));
       try {
         await api.invoke("save_meta", {
           book: b.name,
@@ -170,6 +172,7 @@ async function writeDirtyMeta() {
           groups: b.groups.filter((g) => b.notes.some((n) => n.group === g.id)),
           note_groups: noteGroups,
           pinned: b.notes.filter((n) => n.pinned).map((n) => n.name),
+          base,
         });
         b.diskMeta = written;
       } catch (e) {

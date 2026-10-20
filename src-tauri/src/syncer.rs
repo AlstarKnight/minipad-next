@@ -138,7 +138,7 @@ pub fn plan<'a>(
         .collect()
 }
 
-/// 笔记本元数据按字段三方合并。当前页和阅读/编辑模式只留在本机。
+/// 笔记本元数据按字段三方合并。导航信息(NAVIGATION)只留在本机。
 /// 同一字段两边都更改且值不同时返回冲突，调用方必须留副本。
 pub fn merge_metadata(
     base: Option<&serde_json::Value>,
@@ -154,7 +154,7 @@ pub fn merge_metadata(
     let mut conflicts = Vec::new();
     let keys: BTreeSet<_> = l.keys().chain(r.keys()).collect();
     for key in keys {
-        if matches!(key.as_str(), "active" | "modes" | "current_book") {
+        if NAVIGATION.contains(&key.as_str()) {
             continue;
         }
         let lv = l.get(key);
@@ -189,8 +189,12 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-/// 同步下载和页面保存共用此锁，避免同一文件并发改写。
+/// 同步下载和页面、笔记本信息的保存共用此锁，避免同一文件并发改写。
 pub static WRITE_LOCK: Mutex<()> = Mutex::new(());
+
+/// .minipad.json 里每台设备各记各的导航信息：当前页面、阅读/编辑模式，
+/// 和笔记文件夹根目录那份里的当前笔记本(notes::Meta 的 book)。
+const NAVIGATION: [&str; 3] = ["active", "modes", "book"];
 
 /// 后台网络同步排队执行，防止多个触发器同时改写笔记和同步状态。
 pub static RUN_LOCK: Mutex<()> = Mutex::new(());
@@ -375,7 +379,7 @@ pub fn content_hash(path: &str, bytes: &[u8]) -> String {
     if path.ends_with(".minipad.json") {
         if let Ok(mut value) = serde_json::from_slice::<serde_json::Value>(bytes) {
             if let Some(meta) = value.as_object_mut() {
-                for local in ["active", "modes", "current_book"] {
+                for local in NAVIGATION {
                     meta.remove(local);
                 }
                 if let Ok(shared) = serde_json::to_vec(&value) {
@@ -540,7 +544,7 @@ fn shared_metadata(path: &str, data: &[u8]) -> Option<serde_json::Value> {
     }
     let mut meta = serde_json::from_slice::<serde_json::Value>(data).ok()?;
     let object = meta.as_object_mut()?;
-    for key in ["active", "modes", "current_book"] {
+    for key in NAVIGATION {
         object.remove(key);
     }
     Some(meta)
@@ -552,7 +556,7 @@ fn preserve_navigation(local: &[u8], remote: &[u8]) -> Result<Vec<u8>, String> {
     };
     let current = serde_json::from_slice::<serde_json::Value>(local).ok();
     if let Some(object) = incoming.as_object_mut() {
-        for key in ["active", "modes", "current_book"] {
+        for key in NAVIGATION {
             match current.as_ref().and_then(|v| v.get(key)) {
                 Some(value) => {
                     object.insert(key.into(), value.clone());
@@ -1441,6 +1445,30 @@ mod tests {
             vec!["icon".to_string()]
         );
         assert!(merge_metadata(None, &json!([]), &remote).is_err());
+    }
+
+    #[test]
+    fn current_notebook_stays_on_each_device() {
+        use serde_json::json;
+        // 笔记文件夹根目录那份 .minipad.json 用 book 记着当前打开的笔记本
+        let here = json!({"book": "工作", "order": ["甲"]});
+        let there = json!({"book": "生活", "order": ["甲"]});
+        let (a, b) = (
+            here.to_string().into_bytes(),
+            there.to_string().into_bytes(),
+        );
+        assert_eq!(
+            content_hash(".minipad.json", &a),
+            content_hash(".minipad.json", &b),
+            "switching notebooks does not upload the root settings"
+        );
+        let base = json!({"order": ["甲"]});
+        let (merged, conflicts) = merge_metadata(Some(&base), &here, &there).unwrap();
+        assert!(conflicts.is_empty());
+        assert_eq!(merged["book"], "工作");
+        let downloaded: serde_json::Value =
+            serde_json::from_slice(&preserve_navigation(&a, &b).unwrap()).unwrap();
+        assert_eq!(downloaded["book"], "工作");
     }
 
     #[test]

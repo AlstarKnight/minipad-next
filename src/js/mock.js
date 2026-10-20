@@ -132,6 +132,33 @@ const DEFAULT_SETTINGS = {
 const has = (obj, key) => Object.prototype.hasOwnProperty.call(obj, key);
 const emptyMeta = () => ({ order: [], active: "", modes: {} });
 
+// 和后端 keep_disk_changes 一样:页面顺序、固定、分组里,磁盘上(d,读出来的笔记本)在前端上次读到(base)
+// 以后被别处改了、前端这一项(mine)没改的,保留磁盘上的。固定和分组只看有哪些,不看先后
+function keepDiskChanges(d, base, mine) {
+  const byKey = ([a], [b]) => (a < b ? -1 : a > b ? 1 : 0);
+  const canon = (value) => JSON.stringify(value, (_, v) =>
+    v && typeof v === "object" && !Array.isArray(v) ? Object.fromEntries(Object.entries(v).sort(byKey)) : v);
+  const pins = (names) => canon([...names].sort());
+  const grouping = (groups, pages) => canon({ groups: Object.fromEntries(groups.map((g) => [g.id, g])), pages: Object.fromEntries(pages) });
+  const disk = {
+    order: d.notes.map((n) => n.name),
+    pinned: d.notes.filter((n) => n.pinned).map((n) => n.name),
+    note_groups: d.notes.filter((n) => n.group).map((n) => [n.name, n.group]),
+    groups: d.groups,
+  };
+  const out = { ...mine };
+  if (canon(disk.order) !== canon(base.order) && canon(mine.order) === canon(base.order)) out.order = disk.order;
+  if (mine.pinned && pins(disk.pinned) !== pins(base.pinned) && pins(mine.pinned) === pins(base.pinned)) out.pinned = disk.pinned;
+  if (mine.groups) {
+    const before = grouping(base.groups, base.note_groups);
+    if (grouping(disk.groups, disk.note_groups) !== before && grouping(mine.groups, Object.entries(mine.note_groups || {})) === before) {
+      out.groups = disk.groups;
+      out.note_groups = Object.fromEntries(disk.note_groups);
+    }
+  }
+  return out;
+}
+
 // 测试会直接往 __mockBooks 里放笔记本,缺的字段补上
 function fixBook(b) {
   b.files ||= {};
@@ -365,8 +392,9 @@ export function mockApi() {
     },
     // 笔记本已经不在了就不写,免得把删掉的笔记本又建出来
     // 带了 groups 才改分组(和 Rust 一样只记还有页面的分组);带了 pinned 才改固定的页面
-    save_meta: ({ book, order, active, modes, groups, note_groups, pinned }) => {
+    save_meta: ({ book, order, active, modes, groups, note_groups, pinned, base }) => {
       if (!has(db.books, book)) return;
+      if (base) ({ order, groups, note_groups, pinned } = keepDiskChanges(readBook(book), base, { order, groups, note_groups, pinned }));
       const old = db.books[book].meta || {};
       const meta = { ...old, order, active, modes, groups: old.groups || [], note_groups: old.note_groups || {} };
       if (pinned) meta.pinned = pinned.filter((n, i, a) => order.includes(n) && a.indexOf(n) === i);

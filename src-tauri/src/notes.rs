@@ -736,6 +736,116 @@ pub fn save_book_meta(
     write_meta(&dir, &meta)
 }
 
+/// 前端看到的(load_book 给它的)页面顺序、固定和分组。前端写笔记本信息时带上它上次读到(或写进去)的
+/// 那份,用来判断磁盘上的这几项在那之后有没有被别处改过,比如 WebDAV 刚从另一台电脑同步下来、前端还没读到
+#[derive(Deserialize, Default, Debug, PartialEq)]
+#[serde(default)]
+pub struct SharedMeta {
+    pub order: Vec<String>,
+    pub pinned: Vec<String>,
+    /// [页面名, 分组 id]
+    pub note_groups: Vec<(String, String)>,
+    pub groups: Vec<TabGroup>,
+}
+
+impl SharedMeta {
+    /// 磁盘上现在的样子,算法和 load_book 一样:只算存在的页面,分组得在分组列表里
+    fn on_disk(dir: &Path, meta: &Meta) -> Result<Self, String> {
+        let order = order_names(&list_names(dir)?, &meta.order);
+        let group_of = |name: &String| {
+            meta.note_groups
+                .get(name)
+                .filter(|id| meta.groups.iter().any(|g| &g.id == *id))
+                .map_or("", String::as_str)
+        };
+        let pinned = order
+            .iter()
+            .filter(|n| meta.pinned.contains(n))
+            .cloned()
+            .collect();
+        let note_groups = order
+            .iter()
+            .filter(|n| !group_of(n).is_empty())
+            .map(|n| (n.clone(), group_of(n).to_string()))
+            .collect();
+        let groups = meta
+            .groups
+            .iter()
+            .filter(|g| order.iter().any(|n| group_of(n) == g.id))
+            .cloned()
+            .collect();
+        Ok(Self {
+            order,
+            pinned,
+            note_groups,
+            groups,
+        })
+    }
+}
+
+/// 固定和分组只看有哪些,不看先后(页面顺序单独比)
+fn pin_set(names: &[String]) -> std::collections::BTreeSet<&str> {
+    names.iter().map(String::as_str).collect()
+}
+
+type Grouping<'a> = (
+    std::collections::BTreeMap<&'a str, &'a TabGroup>,
+    std::collections::BTreeMap<&'a str, &'a str>,
+);
+
+fn grouping<'a>(
+    groups: &'a [TabGroup],
+    pages: impl IntoIterator<Item = (&'a String, &'a String)>,
+) -> Grouping<'a> {
+    (
+        groups.iter().map(|g| (g.id.as_str(), g)).collect(),
+        pages
+            .into_iter()
+            .map(|(name, id)| (name.as_str(), id.as_str()))
+            .collect(),
+    )
+}
+
+/// 写笔记本信息之前调用:页面顺序、固定、分组里,磁盘上在前端上次看到(base)以后被别处改过、
+/// 前端这一项又没改的,换成磁盘上的,免得拿前端手里的旧样子把刚同步下来的改动盖回去;
+/// 两边都改了的照前端的写。没有或读不出 .minipad.json 时没得比,也照前端的写
+pub fn keep_disk_changes(
+    root: &Path,
+    book: &str,
+    base: &SharedMeta,
+    order: &mut Vec<String>,
+    pinned: &mut Option<Vec<String>>,
+    groups: &mut Option<Groups>,
+) -> Result<(), String> {
+    let dir = book_dir(root, book)?;
+    let Ok(bytes) = fs::read(dir.join(META_FILE)) else {
+        return Ok(());
+    };
+    let Ok(meta) = serde_json::from_str::<Meta>(&decode_text(&bytes)) else {
+        return Ok(());
+    };
+    let disk = SharedMeta::on_disk(&dir, &meta)?;
+    if disk.order != base.order && *order == base.order {
+        order.clone_from(&disk.order);
+    }
+    if let Some(mine) = pinned {
+        let before = pin_set(&base.pinned);
+        if pin_set(&disk.pinned) != before && pin_set(mine) == before {
+            mine.clone_from(&disk.pinned);
+        }
+    }
+    if let Some(mine) = groups {
+        let before = grouping(&base.groups, base.note_groups.iter().map(|(n, g)| (n, g)));
+        if grouping(&disk.groups, disk.note_groups.iter().map(|(n, g)| (n, g))) != before
+            && grouping(&mine.groups, &mine.note_groups) == before
+        {
+            mine.groups.clone_from(&disk.groups);
+            mine.note_groups = disk.note_groups.iter().cloned().collect();
+        }
+    }
+    Ok(())
+}
+
 /// 仅接受纯色或与应用强调色一致的安全渐变写法，绝不信任任意 CSS。
 pub fn normalized_book_color(value: &str) -> Option<String> {
     let value = value.trim();
@@ -1934,6 +2044,174 @@ mod tests {
         assert!(!fs::read_to_string(root.join(META_FILE))
             .unwrap()
             .contains("pinned"));
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// 三页 a、b、c,磁盘上先是前端读到的样子,再被「同步」换成 c、a、b,c 固定,b 在分组 g1
+    fn synced_book(tag: &str) -> (PathBuf, SharedMeta, TabGroup) {
+        let root = temp_dir(tag);
+        for n in ["a", "b", "c"] {
+            fs::write(note_path(&root, n), n).unwrap();
+        }
+        let names = |list: &[&str]| list.iter().map(|n| n.to_string()).collect::<Vec<_>>();
+        save_book_meta(
+            &root,
+            "",
+            names(&["a", "b", "c"]),
+            "a".into(),
+            HashMap::new(),
+            None,
+            None,
+        )
+        .unwrap();
+        let base = SharedMeta::on_disk(&root, &read_meta(&root)).unwrap();
+        let group = TabGroup {
+            id: "g1".into(),
+            name: "工作".into(),
+            color: "#4c8bf5".into(),
+            collapsed: false,
+        };
+        save_book_meta(
+            &root,
+            "",
+            names(&["c", "a", "b"]),
+            "a".into(),
+            HashMap::new(),
+            Some(Groups {
+                groups: vec![group.clone()],
+                note_groups: HashMap::from([("b".into(), "g1".into())]),
+            }),
+            Some(names(&["c"])),
+        )
+        .unwrap();
+        (root, base, group)
+    }
+
+    #[test]
+    fn book_meta_synced_after_the_frontend_read_is_not_written_back() {
+        let (root, base, group) = synced_book("keep-synced-meta");
+        // 前端还拿着旧的样子,只是换了当前页
+        let mut order = base.order.clone();
+        let mut pinned = Some(vec![]);
+        let mut groups = Some(Groups {
+            groups: vec![],
+            note_groups: HashMap::new(),
+        });
+        keep_disk_changes(&root, "", &base, &mut order, &mut pinned, &mut groups).unwrap();
+        save_book_meta(&root, "", order, "b".into(), HashMap::new(), groups, pinned).unwrap();
+        let meta = read_meta(&root);
+        assert_eq!(meta.order, ["c", "a", "b"]);
+        assert_eq!(meta.active, "b");
+        assert_eq!(meta.pinned, ["c"]);
+        assert_eq!(meta.groups, [group]);
+        assert_eq!(
+            meta.note_groups,
+            HashMap::from([("b".to_string(), "g1".to_string())])
+        );
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn book_meta_changed_here_wins_field_by_field() {
+        let (root, base, group) = synced_book("local-meta-wins");
+        // 这里把 b 拖到了最前面、新建了分组,固定没动
+        let mut order = vec!["b".to_string(), "a".into(), "c".into()];
+        let mut pinned = Some(vec![]);
+        let mine = TabGroup {
+            id: "g2".into(),
+            ..group.clone()
+        };
+        let mut groups = Some(Groups {
+            groups: vec![mine.clone()],
+            note_groups: HashMap::from([("a".into(), "g2".into())]),
+        });
+        keep_disk_changes(&root, "", &base, &mut order, &mut pinned, &mut groups).unwrap();
+        assert_eq!(order, ["b", "a", "c"]);
+        assert_eq!(pinned, Some(vec!["c".to_string()]));
+        let groups = groups.unwrap();
+        assert_eq!(groups.groups, [mine]);
+        assert_eq!(
+            groups.note_groups,
+            HashMap::from([("a".to_string(), "g2".to_string())])
+        );
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn book_meta_unchanged_on_disk_is_written_as_the_frontend_has_it() {
+        let root = temp_dir("meta-unchanged-on-disk");
+        for n in ["a", "b", "c"] {
+            fs::write(note_path(&root, n), n).unwrap();
+        }
+        save_book_meta(
+            &root,
+            "",
+            vec!["a".into(), "b".into(), "c".into()],
+            "a".into(),
+            HashMap::new(),
+            None,
+            Some(vec!["c".into(), "a".into()]),
+        )
+        .unwrap();
+        let mut base = SharedMeta::on_disk(&root, &read_meta(&root)).unwrap();
+        // 固定只看有哪些:前端记的先后不一样也算没改
+        base.pinned.reverse();
+        let mut order = vec!["c".to_string(), "b".into(), "a".into()];
+        let mut pinned = Some(vec![]);
+        keep_disk_changes(&root, "", &base, &mut order, &mut pinned, &mut None).unwrap();
+        assert_eq!(order, ["c", "b", "a"]);
+        assert_eq!(pinned, Some(vec![]));
+        // 没有 .minipad.json 时没得比,照前端的写
+        fs::remove_file(root.join(META_FILE)).unwrap();
+        let mut order = base.order.clone();
+        keep_disk_changes(&root, "", &base, &mut order, &mut None, &mut None).unwrap();
+        assert_eq!(order, base.order);
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn shared_meta_on_disk_matches_what_the_frontend_reads() {
+        let root = temp_dir("shared-meta-view");
+        for n in ["a", "b", "c", "d"] {
+            fs::write(note_path(&root, n), n).unwrap();
+        }
+        let group = |id: &str| TabGroup {
+            id: id.into(),
+            ..TabGroup::default()
+        };
+        write_meta(
+            &root,
+            &Meta {
+                order: vec!["c".into(), "没有这页".into(), "a".into()],
+                pinned: vec!["a".into(), "没有这页".into()],
+                groups: vec![group("g1"), group("空的")],
+                note_groups: HashMap::from([
+                    ("c".into(), "g1".into()),
+                    ("d".into(), "不存在的分组".into()),
+                ]),
+                ..Meta::default()
+            },
+        )
+        .unwrap();
+        let book = load_book(&root, "").unwrap();
+        let read = SharedMeta {
+            order: book.notes.iter().map(|n| n.name.clone()).collect(),
+            pinned: book
+                .notes
+                .iter()
+                .filter(|n| n.pinned)
+                .map(|n| n.name.clone())
+                .collect(),
+            note_groups: book
+                .notes
+                .iter()
+                .filter(|n| !n.group.is_empty())
+                .map(|n| (n.name.clone(), n.group.clone()))
+                .collect(),
+            groups: book.groups.clone(),
+        };
+        assert_eq!(read.order, ["c", "a", "b", "d"]);
+        assert_eq!(SharedMeta::on_disk(&root, &read_meta(&root)).unwrap(), read);
         fs::remove_dir_all(&root).unwrap();
     }
 
