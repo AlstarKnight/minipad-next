@@ -1,9 +1,10 @@
 // Android-only Milkdown editor. Persist Markdown; binary images go to the book's assets folder.
 import { $prose, Plugin, TextSelection } from "../vendor/milkdown.js";
-import { createEditor, editorDebug, showInEditor, syncContent, setMobileLocalPathEnabled } from "./editor.js";
+import { createEditor, editorDebug, showInEditor, syncContent, setMobileLocalPathEnabled, toggleTask } from "./editor.js";
 import { imageSrc } from "./images.js";
 import { state as desktopState } from "./state.js";
-import { setSelectionBar } from "./formatbar.js";
+import { setSelectionBar, setFormatBarItems } from "./formatbar.js";
+import { setLinkPrompt, setTaskCommand } from "./toolbar.js";
 import { ACCENTS, applyAccent, tidyAccent, parseAccent } from "./accent.js";
 import { makeSharedColorTools, setColorLibrarySaver } from "./sharedcolors.js";
 import { ask, askText, closeDialog, dialogOpen } from "./ui.js";
@@ -806,6 +807,9 @@ function loadLook() {
     fab: saved.fab !== false,
     debug: saved.debug === true,
     local_path_enabled: saved.local_path_enabled === true,
+    // 格式栏右边「自定义」挑的按钮和顺序(和电脑版设置里的同名字段一样)
+    format_bar_hidden: Array.isArray(saved.format_bar_hidden) ? saved.format_bar_hidden : [],
+    format_bar_order: Array.isArray(saved.format_bar_order) ? saved.format_bar_order : [],
   };
 }
 
@@ -862,6 +866,8 @@ el("look-fab").addEventListener("change", (e) => setLook({ fab: e.target.checked
 el("look-debug").addEventListener("change", (e) => setLook({ debug: e.target.checked }));
 el("look-local-path").addEventListener("change", (e) => setLook({ local_path_enabled: e.target.checked }));
 systemDark.addEventListener("change", applyLook);
+// 格式栏「自定义」改了就记下来,重启后照旧
+el("format-bar").addEventListener("format-bar-items", (e) => setLook(e.detail));
 
 function showSettings(open) {
   settingsSheet.hidden = !open;
@@ -954,6 +960,10 @@ async function start() {
     setSelectionBar({ sel_bar: "always", sel_bar_pos: "below" });
     const { applyBlockSettings } = await import("./blocks.js");
     applyBlockSettings({ block_enabled: true, block_context_menu: "block" });
+    // 格式栏的「链接」「任务」按钮和电脑版一样:链接地址用应用内对话框问
+    setLinkPrompt(() => askText("链接地址", "https://"));
+    setTaskCommand(toggleTask);
+    setFormatBarItems(look.format_bar_hidden, look.format_bar_order);
     await createEditor({
       mobile: true,
       mobileImagePlugin: images,

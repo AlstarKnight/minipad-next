@@ -1197,3 +1197,53 @@ test("the in-app dialog sits above the soft keyboard in every interface style, l
     }
   }
 });
+
+test("the format bar's link and task buttons work on the phone", async () => {
+  const { context, page, errors } = await open();
+  try {
+    const paragraph = page.locator("#editor .ProseMirror p").first();
+    await paragraph.click();
+    await page.keyboard.press("End");
+    await page.keyboard.press("Shift+Home");
+    await page.click('#format-bar button[data-cmd="link"]');
+    await page.locator("#dialog").waitFor({ state: "visible" });
+    assert.equal(await page.locator("#dialog-msg").textContent(), "链接地址");
+    assert.equal(await page.locator("#dialog-input").inputValue(), "https://");
+    await page.fill("#dialog-input", "https://example.com/");
+    await page.click("#dialog-ok");
+    await page.waitForFunction(() => window.__mobileTest.disk[0].notes[0].content.includes("[第一段](https://example.com/)"));
+    await paragraph.click();
+    await page.click('#format-bar button[data-cmd="task"]');
+    await page.waitForFunction(() => /^- \[ \] \[第一段\]\(https:\/\/example\.com\/\)$/m.test(window.__mobileTest.disk[0].notes[0].content));
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test("the format bar's customization is remembered on the phone", async () => {
+  const { context, page, errors } = await open();
+  try {
+    const shown = () => page.locator("#format-bar .fb-items > button[data-cmd]:not([hidden])")
+      .evaluateAll((list) => list.map((b) => b.dataset.cmd));
+    assert.ok((await shown()).includes("strike"));
+    await page.click("#format-bar .fb-more");
+    await page.locator('.fb-checks input[value="strike"]').uncheck();
+    assert.ok(!(await shown()).includes("strike"));
+    const saved = await page.evaluate(() => JSON.parse(localStorage.getItem("minipad-mobile-look")));
+    assert.deepEqual(saved.format_bar_hidden, ["strike"]);
+    assert.ok(saved.format_bar_order.includes("strike") && saved.format_bar_order.includes("link"));
+
+    // a reordered bar (dragging in the same list saves the order the same way) comes back in that order
+    const reversed = [...saved.format_bar_order].reverse();
+    await page.evaluate((order) => {
+      const look = JSON.parse(localStorage.getItem("minipad-mobile-look"));
+      localStorage.setItem("minipad-mobile-look", JSON.stringify({ ...look, format_bar_order: order }));
+    }, reversed);
+    await page.reload();
+    await page.locator("#editor .ProseMirror h1").waitFor();
+    const buttons = await page.locator("#format-bar .fb-items > button[data-cmd]")
+      .evaluateAll((list) => list.map((b) => b.dataset.cmd));
+    assert.deepEqual(buttons, reversed.filter((id) => buttons.includes(id)));
+    assert.ok(!(await shown()).includes("strike"), "the hidden button stays hidden after a restart");
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
