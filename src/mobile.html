@@ -106,18 +106,23 @@
       <div id="notes-list" class="note-list"></div>
       <select id="note" aria-label="选择页面" class="test-select"></select>
     </section>
+    <section class="drawer-section" aria-label="WebDAV 同步">
+      <div class="section-heading"><h3 id="mobile-sync-state">同步未开启</h3><button type="button" id="mobile-sync-now">立即同步</button></div>
+      <p id="mobile-sync-message" class="sheet-note">可在同步设置中连接坚果云、Nextcloud 等 WebDAV 服务。</p>
+    </section>
     <div class="drawer-actions">
       <div id="drawer-theme" class="seg" role="group" aria-label="明暗">
         <button type="button" data-theme-choice="light">浅色</button>
         <button type="button" data-theme-choice="dark">深色</button>
         <button type="button" data-theme-choice="system">跟随系统</button>
       </div>
+      <button id="open-sync-settings" type="button" class="drawer-settings">◉ <span>同步设置</span></button>
       <button id="open-settings" type="button" class="drawer-settings">
         <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M5.5 18.5l1.7-1.7M16.8 7.2l1.7-1.7"/></svg>
         <span>外观设置</span>
       </button>
     </div>
-    <p class="drawer-footnote">本地优先 · WebDAV 同步功能正在开发</p>
+    <p class="drawer-footnote">本地优先 · 可选 WebDAV 跨设备同步</p>
   </aside>
   <div id="settings-backdrop" class="drawer-backdrop" hidden></div>
   <section id="mobile-settings" class="sheet" role="dialog" aria-modal="true" aria-labelledby="settings-title" hidden>
@@ -146,9 +151,64 @@
       <label class="switch-row"><span>深色时顶栏和抽屉有星光</span><input id="look-stars" type="checkbox"></label>
       <label class="switch-row"><span>分类工具栏:文字 / 段落 / 插入 / 颜色</span><input id="look-cats" type="checkbox"></label>
     </div>
+    <label class="switch-row"><span>识别 Windows 本地文件路径（仅显示样式，不会打开）</span><input id="look-local-path" type="checkbox"></label>
     <label class="switch-row"><span>键盘调试信息:右上角显示屏幕和键盘的尺寸,截图发给开发者</span><input id="look-debug" type="checkbox"></label>
+    <h3>链接</h3>
+    <div id="look-link-open" class="seg" role="group" aria-label="打开网页链接用">
+      <button type="button" data-link-open="system">系统浏览器</button>
+      <button type="button" data-link-open="inapp">应用内浏览器</button>
+    </div>
+    <label class="switch-row"><span>编辑时点链接也直接打开(关着时只把光标放进去,方便改字;阅读模式里点链接总是打开)</span><input id="look-link-tap-edit" type="checkbox"></label>
+    <h3>页面链接 [[页面名]]</h3>
+    <label class="switch-row"><span>识别页面链接:显示成链接,点了打开那一页(还没有就新建)</span><input id="look-page-links" type="checkbox"></label>
+    <div id="look-page-link-suggest" class="seg" role="group" aria-label="页面补全">
+      <button type="button" data-suggest="brackets">打 [[ 就列出页面</button>
+      <button type="button" data-suggest="typing">再打字才列</button>
+      <button type="button" data-suggest="off">不列</button>
+    </div>
+    <label class="switch-row"><span>中文的 【【 】】 当作 [[ ]]</span><input id="look-page-link-cn" type="checkbox"></label>
+    <div class="sync-field"><span>链接颜色</span><div id="look-page-link-color" class="accent-swatches" role="radiogroup" aria-label="页面链接颜色"></div></div>
+    <div class="sync-field"><span>还没有的页面的颜色</span><div id="look-page-link-broken-color" class="accent-swatches" role="radiogroup" aria-label="还没有的页面的颜色"></div></div>
     <p class="sheet-note">只保存在这台手机上,改了马上生效。</p>
   </section>
+  <div id="sync-settings-backdrop" class="drawer-backdrop" hidden></div>
+  <section id="mobile-webdav-settings" class="sheet" role="dialog" aria-modal="true" aria-labelledby="sync-settings-title" hidden>
+    <div class="sheet-grip" aria-hidden="true"></div>
+    <div class="sheet-top"><h2 id="sync-settings-title">WebDAV 同步</h2><button id="close-sync-settings" type="button" class="icon-button" aria-label="关闭同步设置">✕</button></div>
+    <label class="switch-row"><span>开启同步</span><input id="ms-enable" type="checkbox"></label>
+    <label class="sync-field">常用网盘<select id="ms-preset"><option value="custom">自定义</option><option value="jianguoyun">坚果云</option><option value="nextcloud">Nextcloud</option><option value="infinicloud">InfiniCLOUD</option></select></label>
+    <label class="sync-field">服务器地址<input id="ms-server" type="url" autocapitalize="off" spellcheck="false"></label>
+    <label class="sync-field">用户名<input id="ms-user" autocapitalize="off" autocomplete="username"></label>
+    <label class="sync-field">应用密码<input id="ms-password" type="password" autocomplete="new-password" placeholder="留空保持已保存密码"></label>
+    <p class="sheet-note">坚果云请使用第三方应用密码。密码只存在这台手机的应用私有目录，不参加系统自动备份，卸载时清除。“测试连接”只用表单里填的内容，不保存。</p>
+    <label class="sync-field">远程文件夹<input id="ms-folder" value="/MinipadNext/" autocapitalize="off"></label>
+    <label class="switch-row"><span>允许 HTTP（仅可信局域网，连接未加密）</span><input id="ms-http" type="checkbox"></label>
+    <label class="sync-field">首次同步方式<select id="ms-first"><option value="merge">合并并保留冲突副本</option><option value="remote">以网盘为准</option><option value="local">以手机为准</option></select></label>
+    <label class="switch-row"><span>同步图片</span><input id="ms-images" type="checkbox" checked></label>
+    <label class="switch-row"><span>启动和切回应用时同步</span><input id="ms-start" type="checkbox" checked></label>
+    <label class="switch-row"><span>保存后同步</span><input id="ms-save" type="checkbox" checked></label>
+    <label class="sync-field">保存后等待秒数<input id="ms-delay" type="number" min="10" max="300" value="30"></label>
+    <label class="sync-field">打开时定期同步<select id="ms-interval"><option value="0">关闭</option><option value="1">1 分钟</option><option value="5">5 分钟</option><option value="15">15 分钟</option><option value="30">30 分钟</option></select></label>
+    <label class="switch-row"><span>切换到后台时同步</span><input id="ms-hide" type="checkbox" checked></label>
+    <label class="sync-field">状态显示<select id="ms-display"><option value="icon">图标</option><option value="text">图标和文字</option><option value="none">隐藏</option></select></label>
+    <div class="sync-field"><span>同步状态颜色（留空跟随强调色）</span><div id="ms-color" class="accent-swatches" role="radiogroup" aria-label="同步状态颜色"></div></div>
+    <label class="sync-field">单次页面数量上限<input id="ms-delete-limit" type="number" min="1" max="1000" value="20"></label>
+    <label class="sync-field">超过全部页面的几分之一（填 3 表示三分之一）<input id="ms-delete-divisor" type="number" min="1" max="10" value="3"></label>
+    <div class="sync-actions"><button type="button" id="ms-save-config">保存同步设置</button><button type="button" id="ms-test">测试连接</button><button type="button" id="ms-run">立即同步</button><button type="button" id="ms-forget">断开同步</button></div>
+    <p id="ms-result" class="sheet-note" role="status"></p>
+    <details><summary>最近同步记录</summary><pre id="ms-history"></pre></details>
+  </section>
+  <!-- 应用内的确认 / 输入名字对话框(和电脑版同一套,代替系统的 prompt、confirm) -->
+  <div id="dialog" class="overlay center" hidden>
+    <div class="panel form dialog" role="dialog" aria-modal="true" aria-labelledby="dialog-msg">
+      <p id="dialog-msg"></p>
+      <input id="dialog-input" type="text" spellcheck="false" autocomplete="off" enterkeyhint="done" hidden>
+      <div class="actions">
+        <button id="dialog-cancel" type="button">取消</button>
+        <button id="dialog-ok" type="button" class="primary">确定</button>
+      </div>
+    </div>
+  </div>
   <div id="ctx" class="menu" role="menu" hidden></div>
   <div id="toast" class="mobile-toast" role="status" hidden></div>
   <pre id="viewport-debug" class="viewport-debug" aria-hidden="true" hidden></pre>

@@ -3,7 +3,7 @@
 // 所有主动等待保存的操作都要等队列真正清空，失败则拒绝继续。
 import { api, isMiniWindow } from "./api.js";
 import { $ } from "./dom.js";
-import { state, book, current } from "./state.js";
+import { state, book, current, sharedMeta } from "./state.js";
 import { updateCount } from "./page.js";
 import { syncContent } from "./editor.js";
 
@@ -104,6 +104,7 @@ async function writeDirtyNotes() {
         // expected:上次读到(或写进去)的内容。文件在别处被改过时,后端先把那边的版本另存成冲突副本
         const r = await api.invoke("save_note", { book: b.name, name: n.name, content, expected: n.disk });
         n.disk = content;
+        document.dispatchEvent(new Event("webdav-saved"));
         if (r?.conflict) document.dispatchEvent(new CustomEvent("conflict-copy", { detail: { book: b, note: n, copy: r.conflict } }));
       } catch (e) {
         n.dirty = true;
@@ -158,6 +159,10 @@ async function writeDirtyMeta() {
         modes[n.name] = n.mode;
         if (n.group) noteGroups[n.name] = n.group;
       });
+      // 写进去的就是磁盘上现在的样子,和磁盘同步时拿它判断哪边改过(见 sync.js 的 mergeBook)
+      const written = sharedMeta(b.notes, b.groups);
+      // 上次读到(或写进去)的样子:磁盘上在那之后被别处(WebDAV)改了、这里没改的项,后端保留磁盘上的
+      const base = b.diskMeta && Object.fromEntries(Object.entries(b.diskMeta).map(([key, json]) => [key, JSON.parse(json)]));
       try {
         await api.invoke("save_meta", {
           book: b.name,
@@ -167,12 +172,17 @@ async function writeDirtyMeta() {
           groups: b.groups.filter((g) => b.notes.some((n) => n.group === g.id)),
           note_groups: noteGroups,
           pinned: b.notes.filter((n) => n.pinned).map((n) => n.name),
+          base,
         });
+        b.diskMeta = written;
       } catch (e) {
         metaDirty.add(b);
         setSaveStatus("err", String(e));
         metaTimer = setTimeout(backgroundMeta, 3000);
         throw e;
+      } finally {
+        // 和磁盘同步时正在读的结果可能是写之前的,作废重读
+        diskRevision++;
       }
     } else {
       const selected = book()?.name;

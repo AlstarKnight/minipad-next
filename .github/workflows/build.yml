@@ -54,6 +54,10 @@ jobs:
       - name: Android frontend integration tests
         run: npm run test:mobile
 
+      # 5000 页时的耗时,超过上限就失败;每次的数字在这次运行的摘要页里
+      - name: Performance benchmark (5000 pages)
+        run: npm run bench -- --check
+
   rust:
     name: Rust lint and unit tests
     runs-on: windows-latest

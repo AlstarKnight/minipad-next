@@ -1,5 +1,5 @@
 // ---------- 快速切换页面(默认 Ctrl+P,设置里可以换或者关掉) ----------
-// 打几个字找页面名字(也能带上笔记本的名字,空格隔开),上下键选,回车打开(Shift+回车放进小窗);
+// 打几个字找页面名字(也能带上笔记本的名字,空格隔开;可以打拼音),上下键选,回车打开(Shift+回车放进小窗);
 // 什么都没打时列出最近打开过的页面。设置里可以只找当前笔记本
 import { $ } from "./dom.js";
 import { state, book, current, bookLabel } from "./state.js";
@@ -8,6 +8,7 @@ import { recent } from "./page.js";
 import { goTo } from "./tabs.js";
 import { openInMini } from "./mini.js";
 import { isMiniWindow } from "./api.js";
+import { pageScore, termsOf } from "./match.js";
 
 // [{ b, n }]
 let results = [];
@@ -53,30 +54,13 @@ function pool() {
   return books.flatMap((b) => b.notes.map((n) => ({ b, n })));
 }
 
-// s 里能不能按顺序找到 q 的每个字(中间可以隔着别的字)
-function inOrder(s, q) {
-  let i = 0;
-  for (const ch of s) if (ch === q[i]) i++;
-  return i === q.length;
-}
-
-// 每个词都要对上页面名字或者笔记本名字;对上页面名字开头的最靠前
+// 每个词都要对上页面名字或者笔记本名字;名字一样、对上名字开头的最靠前,也能按拼音找(见 match.js)
 function score({ b, n }, terms) {
-  const name = n.name.toLowerCase();
-  const label = bookLabel(b).toLowerCase();
-  let total = 0;
-  for (const t of terms) {
-    if (name.startsWith(t)) total += 4;
-    else if (name.includes(t)) total += 3;
-    else if (label.includes(t)) total += 1;
-    else if (inOrder(name, t)) total += 0.5;
-    else return -1;
-  }
-  return total;
+  return pageScore(n.name, bookLabel(b), terms, state.settings?.pinyin_match !== false);
 }
 
 function run() {
-  const terms = $("#quick-input").value.toLowerCase().split(/\s+/).filter(Boolean);
+  const terms = termsOf($("#quick-input").value);
   const all = pool();
   const order = new Map(all.map((x, i) => [x.n, i]));
   const live = new Set(all.map((x) => x.n));

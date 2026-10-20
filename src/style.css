@@ -1018,6 +1018,8 @@ html[data-find-pos="bottom"] #status { order: 2; }
   white-space: pre-line;
   z-index: 30;
 }
+/* 提示后面的按钮(比如「撤销」) */
+#toast button { margin-left: 4px; padding: 0 2px; border: none; background: none; color: inherit; font: inherit; font-weight: 600; text-decoration: underline; cursor: pointer; }
 
 /* 背景颜色:深色主题里调淡,不然浅色的底配浅色的字看不清。
    上面盖一层半透明的页面底色,纯色和渐变色都能调淡 */
@@ -1977,6 +1979,8 @@ html[data-ui="starry"][data-theme="dark"][data-stars] #side { background-image: 
 }
 .side-book { font-weight: 600; }
 .side-page { padding-left: 32px; color: var(--muted); }
+/* 几千页时屏幕外的行不排版(浏览器会记住排过的行高);没排过的行按 18px 占位(不含上下各 6px 的内边距) */
+.side-page { content-visibility: auto; contain-intrinsic-size: auto 18px; }
 .side-book:hover, .side-page:hover { background: var(--code-bg); }
 .side-page.current { background: var(--accent-soft); color: var(--accent-on-soft); }
 .side-more { margin-top: 6px; padding: 6px 10px; border-radius: var(--r-sm); color: var(--muted); font-size: 12px; text-align: left; }
@@ -2014,3 +2018,47 @@ html[data-side="rail"] .side-list { align-items: center; gap: 6px; padding: 10px
 .ui-styles [data-ui="paper"] .ui-thumb { --t1: #fff; --t3: #e6e6e1; --t4: #1f2023; --t5: #3e63dd; }
 .ui-styles [data-ui="starry"] .ui-thumb { --t1: #0e1024; --t3: #2c3058; --t4: #b3a6ff; --t5: linear-gradient(90deg, #4f6bef, #b34fd8); }
 .ui-styles [data-ui="classic"] .ui-thumb { --t1: #fffdf6; --t3: #e2dac4; --t4: #2b2a26; --t5: #d9822b; }
+
+/* 本地文件路径仅装饰编辑器中的可识别文字，Markdown 保持原样。 */
+#editor .local-file-path {
+  color: var(--local-path-color, var(--accent));
+  text-decoration-line: underline;
+  text-decoration-style: dashed;
+  cursor: pointer;
+}
+#editor[data-local-path-gradient] .local-file-path:not(.missing) {
+  background: var(--local-path-gradient);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+#editor[data-local-path-underline="solid"] .local-file-path { text-decoration-style: solid; }
+#editor[data-local-path-underline="none"] .local-file-path { text-decoration: none; }
+#editor .local-file-path.missing { color: var(--muted); text-decoration: line-through; }
+
+/* ---------- 页面链接 [[页面名]](见 js/pagelinkview.js):只是装饰,文件里还是原样的文字 ---------- */
+#editor .page-link { color: var(--page-link-color, var(--accent)); text-decoration: none; text-underline-offset: 3px; cursor: pointer; }
+#editor .page-link:hover { text-decoration: underline; }
+#editor .page-link.broken { color: var(--page-link-broken-color, var(--muted)); }
+#editor[data-page-link-underline="solid"] .page-link { text-decoration: underline; }
+#editor[data-page-link-underline="dashed"] .page-link { text-decoration: underline dashed; }
+#editor[data-page-link-underline="none"] .page-link { text-decoration: none; }
+#editor[data-page-link-gradient] .page-link:not(.broken),
+#editor[data-page-link-broken-gradient] .page-link.broken { -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
+#editor[data-page-link-gradient] .page-link:not(.broken) { background-image: var(--page-link-gradient); }
+#editor[data-page-link-broken-gradient] .page-link.broken { background-image: var(--page-link-broken-gradient); }
+/* 两边的 [[ ]]:默认淡一点;「隐藏」时光标在链接上才显示 */
+#editor .page-link-mark { opacity: 0.45; }
+#editor[data-page-link-brackets="show"] .page-link-mark { opacity: 1; }
+#editor[data-page-link-brackets="hide"] .page-link-mark:not(.page-link-near) { display: none; }
+/* 打 [[ 弹出的页面列表:名字再长也整个显示(折行),别的笔记本的页面后面写上笔记本名 */
+.page-link-menu { max-height: 280px; overflow-y: auto; min-width: 200px; max-width: min(420px, calc(100vw - 8px)); }
+.page-link-menu button { display: flex; align-items: baseline; gap: 12px; justify-content: space-between; }
+.page-link-menu button span { min-width: 0; overflow-wrap: anywhere; }
+.page-link-menu button small { flex-shrink: 0; max-width: 45%; overflow-wrap: anywhere; text-align: right; color: var(--muted); font-size: 11px; }
+.page-link-menu button.active { background: var(--accent-soft); }
+
+/* WebDAV 正在同步的轻量状态提示，避免旋转整条状态文字。 */
+.webdav-state-icon.spinning { display: inline-block; animation: webdav-rotate 1.3s linear infinite; }
+@keyframes webdav-rotate { to { transform: rotate(360deg); } }
+#st-webdav { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }

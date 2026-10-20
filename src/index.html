@@ -120,6 +120,7 @@
   <footer id="status" data-tauri-drag-region title="拖动状态栏可移动窗口">
     <span id="st-count"></span>
     <span class="spacer" data-tauri-drag-region></span>
+    <button id="st-webdav" class="link" type="button" hidden title="WebDAV 同步状态"></button>
     <span id="st-save"></span>
     <button id="st-update" class="link" title="打开下载页" hidden></button>
   </footer>
@@ -175,6 +176,7 @@
                 <option value="book">只找当前笔记本</option>
               </select>
             </label>
+            <label class="row check"><input id="set-pinyin" type="checkbox" /> <span>按拼音找页面(打 kf 或 kaifa 能找到「开发」;[[ 补全页面名时也一样)</span></label>
           </section>
 
           <section id="set-page-look" class="set-page" role="tabpanel" data-page="look" hidden>
@@ -384,6 +386,7 @@
                   <label><input type="radio" name="set-ball-icon" value="app" /> 应用图标</label>
                   <label><input type="radio" name="set-ball-icon" value="custom" /> 自定义图片</label>
                   <button id="set-ball-pick" class="small">选择图片…</button>
+                  <button id="set-ball-refresh" class="small" type="button">重新读取图片</button>
                 </div>
               </div>
             </div>
@@ -421,7 +424,14 @@
             <label class="row check"><input id="set-code-lines" type="checkbox" /> <span>代码块显示行号</span></label>
             <label class="row check"><input id="set-code-lang-menu" type="checkbox" /> <span>点代码块的语言时列出常用语言(也可以直接输入)</span></label>
             <label class="row check"><input id="set-code-title-color" type="checkbox" /> <span>代码块标题旁显示色块,可以给标题选颜色</span></label>
+            <h3>链接</h3>
             <label class="row check"><input id="set-email-links" type="checkbox" /> <span>自动将邮箱地址识别为链接（默认关闭；手动链接不受影响）</span></label>
+            <label class="row check"><input id="set-local-path" type="checkbox" /> <span>识别本地文件路径</span></label>
+            <label class="row"><span>打开本地路径</span><select id="set-local-path-click"><option value="ctrl">Ctrl+点击</option><option value="click">单击</option></select></label>
+            <div class="row col"><span>本地路径颜色（留空跟随链接颜色）</span><div id="set-local-path-color" class="swatches"></div></div>
+            <label class="row"><span>下划线</span><select id="set-local-path-underline"><option value="dashed">虚线</option><option value="solid">实线</option><option value="none">无</option></select></label>
+            <label class="row check"><input id="set-local-path-missing" type="checkbox" /> <span>不存在的路径显示灰色</span></label>
+            <label class="row check"><input id="set-local-path-confirm" type="checkbox" /> <span>运行可执行文件和脚本前确认</span></label>
             <label class="row"><span>代码块退出方式</span><select id="set-code-exit">
               <option value="blank3">第三次 Enter 退出（默认）</option>
               <option value="blank2">第二次 Enter 退出</option>
@@ -439,6 +449,33 @@
               <span id="set-date-preview" class="muted"></span>
               <span>写法:yyyy 年、M 月、d 日、H 时、mm 分、ss 秒、dddd 星期几</span>
             </div>
+            <h3>页面链接</h3>
+            <label class="row check"><input id="set-page-links" type="checkbox" /> <span>识别页面链接:[[页面名]] 指向同一个笔记本里的页面,[[笔记本/页面名]] 指向别的笔记本</span></label>
+            <label class="row"><span>打开页面链接</span><select id="set-page-link-click"><option value="ctrl">Ctrl+点击</option><option value="click">单击</option></select></label>
+            <label class="row"><span>补全页面名</span><select id="set-page-link-suggest">
+              <option value="brackets">输入 [[ 就弹出</option>
+              <option value="typing">[[ 后再打字才弹出</option>
+              <option value="off">不弹出</option>
+            </select></label>
+            <label class="row check"><input id="set-page-link-cn" type="checkbox" /> <span>中文标点打出的【【 自动换成 [[</span></label>
+            <label class="row"><span>页面改名、移到别的笔记本时</span><select id="set-page-link-rename">
+              <option value="ask">更新链接(要改 2 个以上页面时先问)</option>
+              <option value="auto">直接更新链接</option>
+              <option value="off">不更新链接</option>
+            </select></label>
+            <div class="row col"><span>链接颜色</span><div id="set-page-link-color" class="swatches"></div></div>
+            <div class="row col"><span>还没有的页面的链接颜色</span><div id="set-page-link-broken-color" class="swatches"></div></div>
+            <label class="row"><span>方括号</span><select id="set-page-link-brackets">
+              <option value="faint">淡色</option>
+              <option value="show">正常</option>
+              <option value="hide">隐藏(光标在链接上时显示)</option>
+            </select></label>
+            <label class="row"><span>下划线</span><select id="set-page-link-underline">
+              <option value="hover">鼠标移上去时</option>
+              <option value="solid">实线</option>
+              <option value="dashed">虚线</option>
+              <option value="none">无</option>
+            </select></label>
             <h3>块管理</h3>
             <label class="row check"><input id="set-block-enabled" type="checkbox" /> <span>显示块管理手柄与菜单（关闭后使用原有编辑区布局）</span></label>
             <label class="row"><span>正文右键菜单</span><select id="set-block-context">
@@ -559,6 +596,28 @@
                 <option value="overwrite">只留这里的:用这里的内容覆盖别处的修改</option>
               </select>
             </div>
+            <h3>同步</h3>
+            <label class="row check"><input id="set-webdav-enabled" type="checkbox"> <span>开启 WebDAV 同步</span></label>
+            <label class="row"><span>常用网盘</span><select id="set-webdav-preset"><option value="custom">自定义</option><option value="jianguoyun">坚果云</option><option value="nextcloud">Nextcloud</option><option value="infinicloud">InfiniCLOUD</option></select></label>
+            <div class="row col"><span>服务器地址</span><input id="set-webdav-server" type="url" spellcheck="false" placeholder="https://dav.example.com/"></div>
+            <label class="row"><span>用户名</span><input id="set-webdav-user" autocomplete="username" spellcheck="false"></label>
+            <label class="row"><span>应用密码</span><input id="set-webdav-password" type="password" autocomplete="new-password" placeholder="留空则保持已保存的密码"></label>
+            <p class="muted">坚果云请使用第三方应用密码。密码单独保存在 Windows 凭据管理器，不写入设置或笔记。</p>
+            <label class="row"><span>远程文件夹</span><input id="set-webdav-folder" spellcheck="false" value="/MinipadNext/"></label>
+            <label class="row check"><input id="set-webdav-http" type="checkbox"><span>允许不加密 HTTP 连接（仅可信局域网；密码可能被截获）</span></label>
+            <label class="row"><span>第一次同步</span><select id="set-webdav-first"><option value="merge">合并并保留冲突副本</option><option value="remote">以网盘为准（本地多余文件移入回收站）</option><option value="local">以本机为准（远端多余文件移入回收站）</option></select></label>
+            <label class="row check"><input id="set-webdav-images" type="checkbox"><span>同步图片</span></label>
+            <label class="row check"><input id="set-webdav-start" type="checkbox"><span>启动时同步</span></label>
+            <label class="row check"><input id="set-webdav-save" type="checkbox"><span>保存笔记后同步</span></label>
+            <label class="row"><span>保存后等待（秒）</span><input id="set-webdav-delay" type="number" min="10" max="300"></label>
+            <label class="row"><span>定时同步</span><select id="set-webdav-interval"><option value="0">关闭</option><option value="1">每 1 分钟</option><option value="5">每 5 分钟</option><option value="15">每 15 分钟</option><option value="30">每 30 分钟</option></select></label>
+            <label class="row check"><input id="set-webdav-hide" type="checkbox"><span>窗口隐藏时同步</span></label>
+            <label class="row"><span>状态栏</span><select id="set-webdav-display"><option value="icon">图标</option><option value="text">图标和文字</option><option value="none">不显示</option></select></label>
+            <div class="row col"><span>同步图标颜色（留空跟随强调色）</span><div id="set-webdav-color" class="accent-swatches"></div></div>
+            <label class="row"><span>删除保护：单次页面数</span><input id="set-webdav-delete-limit" type="number" min="1" max="1000" value="20"></label>
+            <label class="row"><span>删除保护：超过全部页面的几分之一（填 3 表示三分之一）</span><input id="set-webdav-delete-divisor" type="number" min="1" max="10" value="3"></label>
+            <div class="row"><button type="button" id="set-webdav-test" class="small">测试连接</button><button type="button" id="set-webdav-sync" class="small">立即同步</button><button type="button" id="set-webdav-forget" class="small">断开并清除同步记录</button></div>
+            <div class="row col"><span id="set-webdav-last" class="muted">上次成功同步：尚无</span><span id="set-webdav-info" class="muted">同步尚未开启</span><details><summary>最近同步记录</summary><pre id="set-webdav-history"></pre></details></div>
             <h3>备份</h3>
             <label class="row check"><input id="set-backup" type="checkbox" /> <span>每天第一次保存时,把笔记文件夹备份成 zip</span></label>
             <label class="row"><span>保留份数</span><input id="set-backup-keep" type="number" min="1" max="365" /></label>

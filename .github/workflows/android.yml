@@ -1,16 +1,30 @@
 name: Android prototype
 
 on:
+  # Only files that end up in the APK trigger a PR build; desktop-only code is excluded with '!'
+  # (the last matching line wins). tests/android-paths.test.mjs checks this list against what the
+  # Android build really compiles and bundles, and says which line to add when something is missing.
   pull_request:
     paths:
       - 'src-tauri/**'
+      - '!src-tauri/src/desktop.rs'
+      - '!src-tauri/src/backup.rs'
+      - '!src-tauri/src/ball.rs'
+      - '!src-tauri/src/edge.rs'
+      - '!src-tauri/src/mini.rs'
+      - '!src-tauri/src/minipad2.rs'
       - 'src/mobile*'
-      - 'src/js/**'
       - 'src/style.css'
-      - 'scripts/**'
-      - 'tests/mobile.test.mjs'
+      - 'src/js/**'
+      - '!src/js/main.js'
+      - '!src/js/ball.js'
+      - '!src/js/search.js'
+      - '!src/js/trash.js'
+      - 'scripts/prepare.mjs'
       - 'scripts/prepare-mobile.mjs'
-      - 'package*.json'
+      - 'scripts/milkdown.mjs'
+      - 'package.json'
+      - 'package-lock.json'
       - '.github/workflows/android.yml'
   workflow_dispatch:
   # Called by build.yml when a version is about to be released (release: true). In that mode the

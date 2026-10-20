@@ -121,13 +121,13 @@ export function toggleGroup(g, collapsed = !g.collapsed) {
   scheduleMeta(book());
 }
 
-// 换到折叠起来的分组里的页面时,把分组展开
+// 换到折叠起来的分组里的页面时,把分组展开(展开了就返回 true,标签要整排重画)
 export function revealNote(b, n) {
   const g = groupsOn() && groupOf(b, n);
-  if (g && g.collapsed) {
-    g.collapsed = false;
-    scheduleMeta(b);
-  }
+  if (!g || !g.collapsed) return false;
+  g.collapsed = false;
+  scheduleMeta(b);
+  return true;
 }
 
 // 拖动的标签放到 target 旁边以后,跟 target 进同一个分组(target 不在分组里就出组)
