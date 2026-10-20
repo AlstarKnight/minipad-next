@@ -50,12 +50,13 @@ async function open({ colorScheme, keyboard, look = { ui: "classic" } } = {}) {
     ];
     const writes = [];
     const images = {};
-    const calls = { list: 0, read: 0, readImage: 0 };
+    const calls = { list: 0, read: 0, commands: [] };
     const listeners = {};
     window.__mobileTest = { disk, writes, images, calls, failSaves: 0, readDelay: 0, conflictNext: false,
       emit: (name, payload) => listeners[name]?.({ payload }) };
     window.__TAURI__ = { event: { listen: async (name, handler) => { listeners[name] = handler; return () => {}; } }, core: {
       async invoke(command, args = {}) {
+        calls.commands.push(command);
         const book = disk.find((b) => b.name === args.book) || disk[0];
         if (command === "mobile_list_books") {
           calls.list++;
@@ -89,12 +90,8 @@ async function open({ colorScheme, keyboard, look = { ui: "classic" } } = {}) {
           return args.name;
         }
         if (command === "mobile_save_image") {
-          images["assets/test.png"] = "data:" + args.mime + ";base64," + args.data;
+          images["assets/test.png"] = { mime: args.mime, data: args.data };
           return "assets/test.png";
-        }
-        if (command === "mobile_read_image") {
-          calls.readImage++;
-          return images[args.path] ?? Promise.reject("missing file");
         }
         if (command === "mobile_webdav_status") return { state: "synced", message: "已同步（测试）", history: [] };
         if (command === "mobile_webdav_set_password") {
@@ -120,6 +117,15 @@ async function open({ colorScheme, keyboard, look = { ui: "classic" } } = {}) {
       },
     } };
   });
+  // 笔记本 assets 里的图片走 note 协议(http://note.localhost/img?book=…&path=…),这里用模拟磁盘上存的图片回应
+  const imageRequests = [];
+  await context.route("http://note.localhost/**", async (route) => {
+    const query = new URL(route.request().url()).searchParams;
+    imageRequests.push({ book: query.get("book"), path: query.get("path") });
+    const saved = await route.request().frame().evaluate((path) => window.__mobileTest.images[path] ?? null, query.get("path"));
+    if (!saved) return route.fulfill({ status: 404, body: "" });
+    await route.fulfill({ status: 200, contentType: saved.mime, body: Buffer.from(saved.data, "base64") });
+  });
   const page = await context.newPage();
   const errors = [];
   page.on("pageerror", (error) => errors.push(String(error)));
@@ -132,8 +138,13 @@ async function open({ colorScheme, keyboard, look = { ui: "classic" } } = {}) {
     throw new Error("Android editor did not initialize: " +
       JSON.stringify({ status, errors, snippet: snippet.slice(0, 500), reason: String(error) }));
   }
-  return { context, page, errors };
+  return { context, page, errors, imageRequests };
 }
+
+const NOTE_IMAGE = (path, book = "") =>
+  `http://note.localhost/img?book=${encodeURIComponent(book)}&path=${encodeURIComponent(path)}`;
+// 图片真的显示出来了(解码成功,不是坏图)
+const imageLoaded = (img) => img.evaluate((el) => el.complete && el.naturalWidth > 0 && !el.classList.contains("broken"));
 
 test("mobile Milkdown renders notes, saves edits and switches pages", async () => {
   const { context, page, errors } = await open();
@@ -187,8 +198,10 @@ test("picker image is stored under assets and Markdown keeps a relative path", a
       window.__mobileTest.disk[0].notes[0].content.includes("assets/test.png"));
     const content = await page.evaluate(() => window.__mobileTest.disk[0].notes[0].content);
     assert.match(content, /!\[example\]\(assets\/test\.png\)/);
-    assert.equal(await page.locator(".ProseMirror img:not(.ProseMirror-separator)").getAttribute("src"),
-      "data:image/png;base64," + TINY_PNG.toString("base64"));
+    const img = page.locator(".ProseMirror img:not(.ProseMirror-separator)");
+    assert.equal(await img.getAttribute("src"), NOTE_IMAGE("assets/test.png"));
+    await page.waitForFunction(() => document.querySelector(".ProseMirror img:not(.ProseMirror-separator)")?.naturalWidth > 0);
+    assert.equal(await imageLoaded(img), true);
     assert.deepEqual(errors, []);
   } finally {
     await context.close();
@@ -324,8 +337,8 @@ test("a failed autosave is retried without another edit", async () => {
   }
 });
 
-test("inserted images are cached and not read back over IPC", async () => {
-  const { context, page, errors } = await open();
+test("images are shown from their note protocol address and never read over IPC", async () => {
+  const { context, page, errors, imageRequests } = await open();
   try {
     await page.locator(".ProseMirror p").first().click();
     await page.locator("#image-file").setInputFiles({
@@ -333,13 +346,40 @@ test("inserted images are cached and not read back over IPC", async () => {
     });
     await page.locator(".ProseMirror img:not(.ProseMirror-separator)").waitFor({ timeout: 10000 });
     await page.waitForFunction(() => window.__mobileTest.disk[0].notes[0].content.includes("assets/test.png"));
+    await page.waitForFunction(() => document.querySelector(".ProseMirror img:not(.ProseMirror-separator)")?.naturalWidth > 0);
+    const shown = imageRequests.length;
+    assert.ok(shown >= 1, "the inserted image was read from its address");
     await chooseNote(page, "二");
     await page.locator(".ProseMirror p").filter({ hasText: "第二页" }).waitFor();
     await chooseNote(page, "一");
-    await page.locator(".ProseMirror img:not(.ProseMirror-separator)").waitFor();
-    assert.equal(await page.evaluate(() => window.__mobileTest.calls.readImage), 0);
-    assert.equal(await page.locator(".ProseMirror img:not(.ProseMirror-separator)").getAttribute("src"),
-      "data:image/png;base64," + TINY_PNG.toString("base64"));
+    const img = page.locator(".ProseMirror img:not(.ProseMirror-separator)");
+    await img.waitFor();
+    assert.equal(await img.getAttribute("src"), NOTE_IMAGE("assets/test.png"));
+    await page.waitForFunction(() => document.querySelector(".ProseMirror img:not(.ProseMirror-separator)")?.naturalWidth > 0);
+    assert.equal(await imageLoaded(img), true);
+    assert.ok(imageRequests.length > shown, "switching back reads the image from its address again");
+    assert.deepEqual(imageRequests.at(-1), { book: "", path: "assets/test.png" });
+    // 存图片是唯一和图片有关的 IPC;显示图片不经过 IPC
+    const imageCommands = await page.evaluate(() => window.__mobileTest.calls.commands.filter((c) => /image/i.test(c)));
+    assert.deepEqual(imageCommands, ["mobile_save_image"]);
+    assert.deepEqual(errors, []);
+  } finally {
+    await context.close();
+  }
+});
+
+test("a missing local image shows as broken and says which file is missing", async () => {
+  const { context, page, errors } = await open();
+  try {
+    await page.evaluate(() => window.__mobileTest.disk[0].notes.push(
+      { name: "三", content: "![坏图](assets/missing.png)\n\n文字", unreadable: false }));
+    await page.click("#refresh");
+    await chooseNote(page, "三");
+    const img = page.locator(".ProseMirror img:not(.ProseMirror-separator)");
+    await img.waitFor();
+    assert.equal(await img.getAttribute("src"), NOTE_IMAGE("assets/missing.png"));
+    await page.waitForFunction(() => document.querySelector(".ProseMirror img:not(.ProseMirror-separator)")?.classList.contains("broken"));
+    assert.equal(await img.getAttribute("title"), "找不到本地图片：assets/missing.png");
     assert.deepEqual(errors, []);
   } finally {
     await context.close();

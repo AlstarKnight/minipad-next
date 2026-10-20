@@ -1217,41 +1217,9 @@ fn save_image(app: AppHandle, request: tauri::ipc::Request<'_>) -> Result<String
     images::save(&dir, bytes, &meta.ext, &stamp)
 }
 
-/// 编辑器里显示图片:http://note.localhost/img?book=…&path=assets/…(Windows 上的写法)
+/// 编辑器里显示图片:https://note.localhost/img?book=…&path=assets/…(Windows 上的写法,小窗是 http)
 fn note_image(app: &AppHandle, uri: &tauri::http::Uri) -> tauri::http::Response<Vec<u8>> {
-    let not_found = || {
-        tauri::http::Response::builder()
-            .status(404)
-            .body(Vec::new())
-            .unwrap()
-    };
-    let query = uri.query().unwrap_or_default();
-    let (Some(book), Some(rel)) = (
-        images::query_value(query, "book"),
-        images::query_value(query, "path"),
-    ) else {
-        return not_found();
-    };
-    let root = current_notes_dir(app);
-    let Some(path) = notes::book_dir(&root, &book)
-        .ok()
-        .and_then(|dir| images::resolve(&dir, &rel))
-    else {
-        return not_found();
-    };
-    let mime = path
-        .extension()
-        .and_then(|x| x.to_str())
-        .and_then(images::mime_for)
-        .unwrap_or("application/octet-stream");
-    match fs::read(&path) {
-        Ok(bytes) => tauri::http::Response::builder()
-            .header("Content-Type", mime)
-            .header("Cache-Control", "no-cache")
-            .body(bytes)
-            .unwrap_or_else(|_| not_found()),
-        Err(_) => not_found(),
-    }
+    images::protocol_response(&current_notes_dir(app), uri)
 }
 
 /// 参数和前端发来的字段一一对应;base 是前端上次从磁盘读到(或写进去)的页面顺序、固定和分组

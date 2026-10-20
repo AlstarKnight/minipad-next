@@ -121,30 +121,6 @@ fn mobile_save_image(
     crate::images::save(&dir, &bytes, ext, &stamp)
 }
 
-// Private-directory images are returned as data URLs, not served by a public
-// localhost endpoint. All paths are validated by the shared desktop helper.
-#[tauri::command]
-fn mobile_read_image(app: AppHandle, book: String, path: String) -> Result<String, String> {
-    use base64::Engine;
-    let dir = notes::book_dir(&root(&app)?, &book)?;
-    let file = crate::images::resolve(&dir, &path).ok_or("只能读取笔记本 assets 目录中的图片")?;
-    let mime = crate::images::mime_for(
-        file.extension()
-            .and_then(|v| v.to_str())
-            .ok_or("无效的图片扩展名")?,
-    )
-    .ok_or("不支持的图片格式")?;
-    let size = fs::metadata(&file).map_err(|e| e.to_string())?.len();
-    if size > 12 * 1024 * 1024 {
-        return Err("图片超过读取限制".into());
-    }
-    let bytes = fs::read(file).map_err(|e| e.to_string())?;
-    Ok(format!(
-        "data:{mime};base64,{}",
-        base64::engine::general_purpose::STANDARD.encode(bytes)
-    ))
-}
-
 #[derive(Clone, Deserialize)]
 #[serde(default)]
 struct MobileWebdavConfig {
@@ -382,6 +358,14 @@ async fn mobile_webdav_sync_now(
 
 pub fn run() {
     tauri::Builder::default()
+        // 页面里的图片和电脑一样按地址读(note 协议,只能读笔记本 assets 里的图片),不再整张转成 base64 经 IPC 传
+        .register_uri_scheme_protocol("note", |ctx, request| match root(ctx.app_handle()) {
+            Ok(dir) => crate::images::protocol_response(&dir, request.uri()),
+            Err(_) => tauri::http::Response::builder()
+                .status(404)
+                .body(Vec::new())
+                .unwrap(),
+        })
         .invoke_handler(tauri::generate_handler![
             mobile_list_books,
             mobile_read_note,
@@ -389,7 +373,6 @@ pub fn run() {
             mobile_create_note,
             mobile_save_note,
             mobile_save_image,
-            mobile_read_image,
             mobile_webdav_set_password,
             mobile_webdav_test,
             mobile_webdav_status,

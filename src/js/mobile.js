@@ -1,6 +1,7 @@
 // Android-only Milkdown editor. Persist Markdown; binary images go to the book's assets folder.
 import { $prose, Plugin, TextSelection } from "../vendor/milkdown.js";
 import { createEditor, editorDebug, showInEditor, syncContent, setMobileLocalPathEnabled } from "./editor.js";
+import { imageSrc } from "./images.js";
 import { state as desktopState } from "./state.js";
 import { setSelectionBar } from "./formatbar.js";
 import { ACCENTS, applyAccent, tidyAccent, parseAccent } from "./accent.js";
@@ -57,41 +58,18 @@ function scheduleSave() {
   saveSoon(500);
 }
 
-// Images are immutable (a new file name per save), so decoded data URLs can be kept for reuse.
-// Re-rendering a page, or switching back to it, then costs no IPC round trip.
-const IMAGE_CACHE_LIMIT = 24 * 1024 * 1024;
-const imageCache = new Map(); // oldest first
-let imageCacheSize = 0;
-function cacheImage(book, path, data) {
-  const key = book + "\0" + path;
-  if (data.length > IMAGE_CACHE_LIMIT || imageCache.has(key)) return;
-  imageCache.set(key, data);
-  imageCacheSize += data.length;
-  for (const [oldest, value] of imageCache) {
-    if (imageCacheSize <= IMAGE_CACHE_LIMIT) break;
-    imageCache.delete(oldest);
-    imageCacheSize -= value.length;
-  }
-}
-async function readImage(book, path) {
-  const key = book + "\0" + path;
-  const hit = imageCache.get(key);
-  if (hit) {
-    imageCache.delete(key); // most recently used goes last
-    imageCache.set(key, hit);
-    return hit;
-  }
-  const data = await invoke("mobile_read_image", { book, path });
-  cacheImage(book, path, data);
-  return data;
-}
-
+// 笔记本 assets 里的图片按地址读(note 协议,和电脑一样),由 WebView 自己读取、解码,不经过 IPC
 class MobileImageView {
   constructor(node) {
     this.dom = document.createElement("img");
-    this.dom.addEventListener("error", () => this.dom.classList.add("broken"));
-    this.dom.addEventListener("load", () => this.dom.classList.remove("broken"));
-    this.token = 0;
+    this.dom.addEventListener("error", () => {
+      this.dom.classList.add("broken");
+      if (this.local) this.dom.title = "找不到本地图片：" + this.path;
+    });
+    this.dom.addEventListener("load", () => {
+      this.dom.classList.remove("broken");
+      this.dom.removeAttribute("title");
+    });
     this.update(node);
   }
 
@@ -104,22 +82,15 @@ class MobileImageView {
     if (this.path === src && this.book === book) return true;
     this.path = src;
     this.book = book;
-    const token = ++this.token;
-    this.dom.removeAttribute("src");
-    if (src.startsWith("assets/") || src.startsWith("./assets/")) {
-      void readImage(book, src)
-        .then((data) => {
-          if (token === this.token) this.dom.src = data;
-        })
-        .catch(() => {
-          if (token === this.token) {
-            this.dom.classList.add("broken");
-            this.dom.title = "找不到本地图片：" + src;
-          }
-        });
+    this.local = src.startsWith("assets/") || src.startsWith("./assets/");
+    this.dom.classList.remove("broken");
+    this.dom.removeAttribute("title");
+    if (this.local) {
+      this.dom.src = imageSrc(src, book);
     } else if (/^https:\/\//i.test(src) || /^data:image\/(?:png|jpeg|webp|gif|bmp);base64,/i.test(src)) {
       this.dom.src = src;
     } else {
+      this.dom.removeAttribute("src");
       this.dom.classList.add("broken");
       this.dom.title = "不支持的图片路径";
     }
@@ -127,7 +98,6 @@ class MobileImageView {
   }
 
   ignoreMutation() { return true; }
-  destroy() { this.token++; }
 }
 
 const images = $prose(() => new Plugin({
@@ -409,7 +379,6 @@ async function insertImage(file) {
     await flush();
     const data = await dataURL(file);
     const src = await invoke("mobile_save_image", { book: note.book, mime: file.type, data });
-    cacheImage(note.book, src, `data:${file.type};base64,${data}`);
     if (selected !== note || reading) return;
     const alt = (file.name || "").replace(/\.[^.]+$/, "").slice(0, 100);
     const image = view.state.schema.nodes.image.create({ src, alt });
