@@ -6990,6 +6990,63 @@ describe("0.4.7: many pages", () => {
     if (meta) Object.assign(db.books[""].meta, meta);
     return db;
   };
+  // 给现在的标签做个记号:换页以后记号还在,说明标签没有重画
+  const markTabs = (p) => p.$$eval("#tabs .tab", (ts) => ts.forEach((t, i) => (t.__mark = i)));
+  const unchanged = (p) => p.$$eval("#tabs .tab", (ts) => ts.every((t, i) => t.__mark === i));
+
+  ui("switching pages moves the highlight and leaves the other tabs alone", { seed: many() }, async (h) => {
+    const { p } = h;
+    await markTabs(p);
+    await p.keyboard.press("Control+Tab");
+    await until(h.activeTab, "乙", "Ctrl+Tab");
+    assert.equal(await h.editor(), "乙的内容");
+    await h.tab("丁").click();
+    await until(h.activeTab, "丁", "a click");
+    await p.keyboard.press("Control+1");
+    await until(h.activeTab, "甲", "Ctrl+1");
+    await p.keyboard.press("Control+p");
+    await p.keyboard.type("戊");
+    await p.keyboard.press("Enter");
+    await until(h.activeTab, "戊", "Ctrl+P");
+    assert.equal(await h.editor(), "戊的内容");
+    assert.ok(await unchanged(p), "the tabs were not redrawn");
+    assert.equal(await p.locator("#tabs .tab.active").count(), 1);
+    // 换笔记本照旧整排重画
+    await h.switchBook("工作");
+    assert.deepEqual(await h.tabs(), ["周报"]);
+    assert.equal(await h.editor(), "本周");
+  });
+
+  ui("leaving a page in a folded group folds its tab", {
+    seed: many({ tab_groups: true }, { active: "乙", groups: [{ id: "g1", name: "组", color: "#4c8bf5", collapsed: true }], note_groups: { 乙: "g1", 丙: "g1" } }),
+  }, async (h) => {
+    const { p } = h;
+    const strip = () => p.$$eval("#tabs > *", (els) => els.map((e) => (e.classList.contains("tab-group") ? "[组]" : e.classList.contains("folded") ? `(${e.textContent})` : e.textContent)));
+    assert.deepEqual(await strip(), ["甲", "[组]", "乙", "(丙)", "丁", "戊"]);
+    await markTabs(p);
+    await h.tab("丁").click();
+    await until(strip, ["甲", "[组]", "(乙)", "(丙)", "丁", "戊"], "the page left behind folds away");
+    assert.ok(await unchanged(p), "without redrawing the tabs");
+    // 换回折叠的组里的页面:组展开
+    await p.keyboard.press("Control+2");
+    await until(strip, ["甲", "[组]", "乙", "丙", "丁", "戊"], "going back unfolds the group");
+  });
+
+  ui("paper: the outline tree follows the current page without being redrawn", { seed: many({ ui_style: "paper" }) }, async (h) => {
+    const { p } = h;
+    await p.setViewportSize({ width: 900, height: 600 });
+    await until(() => p.locator("#side .side-page").count(), 5, "the tree shows");
+    const current = () => p.$$eval("#side .side-page.current", (rs) => rs.map((r) => [r.textContent, r.getAttribute("aria-current")]));
+    assert.deepEqual(await current(), [["甲", "page"]]);
+    await p.$$eval("#side .side-page", (rs) => rs.forEach((r) => (r.__mark = true)));
+    await p.keyboard.press("Control+Tab");
+    await until(current, [["乙", "page"]], "Ctrl+Tab moves the highlight");
+    await p.locator("#side .side-page").filter({ hasText: "丁" }).click();
+    await until(current, [["丁", "page"]], "so does a click in the tree");
+    assert.equal(await h.activeTab(), "丁");
+    assert.ok(await p.$$eval("#side .side-page", (rs) => rs.every((r) => r.__mark)), "the tree was not redrawn");
+  });
+
   // 每次 sync 前清掉记录,sync 正忙没读时下一轮再试
   const readAgain = (h, expected, message) => syncUntil(h, async () => {
     const read = await mockCtl(h.p, "lastRead");

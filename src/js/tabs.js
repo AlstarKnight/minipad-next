@@ -11,10 +11,21 @@ import { openBooks, renderBook } from "./notebooks.js";
 import { groupsOn, groupOf, tidyGroups, groupChip, groupMenuItems, joinNeighbour, revealNote, groupVars } from "./groups.js";
 import { refreshTabBar, afterSwitch, tabsVertical, revealActive } from "./tabbar.js";
 import { openInMini, focusMini, recallMini, refuseInMini, miniAllowed } from "./mini.js";
-import { renderSidebar } from "./sidebar.js";
+import { renderSidebar, markCurrentPage } from "./sidebar.js";
 
 // 正在拖动的标签对应的页面
 let dragged = null;
+// 每个标签是哪个页面(只换当前页面时先核对一下标签和页面还对得上)
+let tabNotes = new WeakMap();
+
+// 标签上的图标从模板克隆,比每个标签都解析一遍 SVG 快(几千个标签时省几十毫秒)
+function icon(svg) {
+  const t = document.createElement("template");
+  t.innerHTML = svg;
+  return t.content.firstChild;
+}
+const PIN_ICON = icon('<svg viewBox="0 0 16 16"><path d="M6 1.5h4M7 1.5v4L4.5 8.5h7L9 5.5v-4M8 8.5v6"/></svg>');
+const MINI_ICON = icon('<svg viewBox="0 0 16 16"><path d="M9 3h4v4M13 3 7.5 8.5M11.5 10v2.5a1 1 0 0 1-1 1h-7a1 1 0 0 1-1-1v-7a1 1 0 0 1 1-1H6"/></svg>');
 
 // 第 i 页的标签(打开分组时标签前面还夹着分组的名字,不能按位置找)
 export function tabAt(i) {
@@ -47,6 +58,7 @@ export function togglePin(n) {
 export function renderTabs() {
   const b = book();
   tabsEl.innerHTML = "";
+  tabNotes = new WeakMap();
   if (!b) return refreshTabBar();
   const grouped = groupsOn();
   if (grouped) tidyGroups(b);
@@ -72,7 +84,7 @@ export function renderTabs() {
     if (n.pinned) {
       const mark = document.createElement("i");
       mark.className = "pin-mark";
-      mark.innerHTML = '<svg viewBox="0 0 16 16"><path d="M6 1.5h4M7 1.5v4L4.5 8.5h7L9 5.5v-4M8 8.5v6"/></svg>';
+      mark.appendChild(PIN_ICON.cloneNode(true));
       t.appendChild(mark);
       t.title += "(已固定)";
     }
@@ -93,7 +105,7 @@ export function renderTabs() {
       pop.type = "button";
       pop.title = "在小窗中打开";
       pop.setAttribute("aria-label", `在小窗中打开「${n.name}」`);
-      pop.innerHTML = '<svg viewBox="0 0 16 16"><path d="M9 3h4v4M13 3 7.5 8.5M11.5 10v2.5a1 1 0 0 1-1 1h-7a1 1 0 0 1-1-1v-7a1 1 0 0 1 1-1H6"/></svg>';
+      pop.appendChild(MINI_ICON.cloneNode(true));
       pop.addEventListener("mousedown", (e) => (e.stopPropagation(), e.preventDefault()));
       pop.addEventListener("click", (e) => {
         e.stopPropagation();
@@ -175,11 +187,29 @@ export function renderTabs() {
       if (!notes.includes(n) || !dragged) return;
       moveTab(notes.indexOf(dragged), notes.indexOf(n) + (a ? 1 : 0), n);
     });
+    tabNotes.set(t, n);
     tabsEl.appendChild(t);
   });
   revealActive();
   refreshTabBar();
   renderSidebar();
+}
+
+// 只换了当前页面时不重画全部标签(几千页时重画一次要几百毫秒):把高亮挪到新的标签上,
+// 原来那页在折叠的分组里就收起来;标签和页面对不上时(防万一)照旧整排重画
+function markActive(b) {
+  const t = tabAt(b.active);
+  if (!t || tabNotes.get(t) !== b.notes[b.active]) return renderTabs();
+  const old = tabsEl.querySelector(".tab.active");
+  if (old && old !== t) {
+    old.classList.remove("active");
+    if (groupsOn() && groupOf(b, tabNotes.get(old))?.collapsed) old.classList.add("folded");
+  }
+  t.classList.remove("folded");
+  t.classList.add("active");
+  revealActive();
+  refreshTabBar();
+  markCurrentPage();
 }
 
 // 拖动标签:放到 target 旁边(打开分组时也就进了 target 所在的分组)
@@ -204,8 +234,9 @@ export function switchTo(i) {
   if (b.notes[i].mini) return focusMini(b, b.notes[i]);
   rememberView();
   b.active = i;
-  revealNote(b, b.notes[i]);
-  renderTabs();
+  // 要展开折叠的分组时整排重画,否则只挪高亮
+  if (revealNote(b, b.notes[i])) renderTabs();
+  else markActive(b);
   showNote();
   scheduleMeta(b);
   afterSwitch();
@@ -216,14 +247,16 @@ export function goTo(b, n) {
   if (!state.books.includes(b) || !b.notes.includes(n)) return;
   if (n.mini) return focusMini(b, n);
   rememberView();
-  if (b !== book()) {
+  const otherBook = b !== book();
+  if (otherBook) {
     state.book = state.books.indexOf(b);
     renderBook();
     scheduleBooks();
   }
   b.active = b.notes.indexOf(n);
-  revealNote(b, n);
-  renderTabs();
+  // 换了笔记本、要展开折叠的分组时整排重画,否则只挪高亮
+  if (revealNote(b, n) || otherBook) renderTabs();
+  else markActive(b);
   showNote();
   scheduleMeta(b);
   afterSwitch();
