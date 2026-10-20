@@ -173,6 +173,8 @@ html[data-mobile] .book-list button.active, html[data-mobile] .note-list button.
 html[data-mobile] .book-list button span, html[data-mobile] .note-list button span {
   min-width: 0; overflow-wrap: anywhere;
 }
+/* 几千页时抽屉里屏幕外的行不排版(浏览器会记住排过的行高) */
+html[data-mobile] .note-list button { content-visibility: auto; contain-intrinsic-size: auto 49px; }
 html[data-mobile] .search-wrap {
   display: flex; gap: 9px; align-items: center; margin: 2px 7px 12px; padding: 0 12px;
   background: var(--canvas); border-radius: 12px; color: var(--subtle);

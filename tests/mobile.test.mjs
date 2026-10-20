@@ -1371,3 +1371,66 @@ test("the back button closes the top layer first and is left to the system when 
     assert.deepEqual(errors, []);
   } finally { await context.close(); }
 });
+
+// ---------- 0.4.7:几千页时换页不重建抽屉 ----------
+// 抽屉里的行和页面选择框的选项打上记号:换页以后还带着记号,说明没有重建
+const markDrawer = (page) => page.evaluate(() => {
+  for (const x of document.querySelectorAll("#notes-list button, #note option")) x.dataset.kept = "1";
+});
+const drawerRows = (page) => page.$$eval("#notes-list button", (bs) =>
+  bs.map((b) => (b.dataset.kept ? "" : "new ") + b.className + ":" + b.textContent));
+const pickerOptions = (page) => page.$$eval("#note option", (os) => os.map((o) => (o.dataset.kept ? "" : "new ") + o.value));
+
+test("switching pages keeps the drawer rows and the page picker and only moves the highlight", async () => {
+  const { context, page, errors } = await open();
+  try {
+    await page.click("#open-drawer");
+    await markDrawer(page);
+    await page.locator("#notes-list button").filter({ hasText: "二" }).click();
+    await page.waitForFunction(() => document.getElementById("page-title").textContent === "二");
+    await page.click("#open-drawer");
+    assert.deepEqual(await drawerRows(page), [":一", "active:二"]);
+    assert.deepEqual(await page.$$eval('#notes-list [aria-current="page"]', (bs) => bs.map((b) => b.textContent)), ["二"]);
+    assert.deepEqual(await pickerOptions(page), ["一", "二"]);
+    assert.equal(await page.inputValue("#note"), "二");
+
+    // 筛选、清空筛选:列表跟着变,高亮还在当前页上
+    await page.locator("#note-filter").fill("一");
+    assert.deepEqual(await drawerRows(page), ["new :一"]);
+    await page.locator("#note-filter").fill("");
+    assert.deepEqual(await drawerRows(page), ["new :一", "new active:二"]);
+
+    // 别处新建的页面:列表和选择框都要有它
+    await page.click("#close-drawer");
+    await page.evaluate(() => window.__mobileTest.disk[0].notes.push({ name: "三", content: "第三页", unreadable: false }));
+    await page.click("#refresh");
+    await page.waitForFunction(() => [...document.querySelectorAll("#note option")].some((o) => o.value === "三"));
+    await page.click("#open-drawer");
+    assert.deepEqual((await drawerRows(page)).map((r) => r.replace(/^new /, "")), [":一", "active:二", ":三"]);
+    assert.deepEqual((await pickerOptions(page)).map((o) => o.replace(/^new /, "")), ["一", "二", "三"]);
+    assert.deepEqual(errors, []);
+  } finally {
+    await context.close();
+  }
+});
+
+test("paper: the outline tree keeps its rows while switching pages and is redrawn for another style", async () => {
+  const { context, page, errors } = await open({ look: { ui: "paper" } });
+  try {
+    await page.click("#open-drawer");
+    await markDrawer(page);
+    await page.locator("#notes-list .tree-page").filter({ hasText: "二" }).click();
+    await page.waitForFunction(() => document.getElementById("page-title").textContent === "二");
+    await page.click("#open-drawer");
+    assert.deepEqual(await drawerRows(page), ["tree-book open:默认笔记本", "tree-page:一", "tree-page active:二"]);
+    await page.click("#open-settings");
+    await page.click('#ui-styles [data-ui="starry"]');
+    await page.keyboard.press("Escape");
+    await page.click("#open-drawer");
+    assert.deepEqual(await drawerRows(page), ["new :一", "new active:二"]);
+    assert.equal(await page.locator("#pages-heading").textContent(), "页面");
+    assert.deepEqual(errors, []);
+  } finally {
+    await context.close();
+  }
+});

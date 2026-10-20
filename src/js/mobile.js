@@ -115,13 +115,19 @@ const images = $prose(() => new Plugin({
   },
 }));
 
+// 选项没变时不重建:页面的选择框每换一页都要更新,几千页时重建很慢
+const optionKeys = new WeakMap();
 function options(select, pairs, value) {
-  select.replaceChildren();
-  for (const [key, label] of pairs) {
-    const option = document.createElement("option");
-    option.value = key;
-    option.textContent = label;
-    select.add(option);
+  const list = JSON.stringify(pairs);
+  if (optionKeys.get(select) !== list) {
+    optionKeys.set(select, list);
+    select.replaceChildren();
+    for (const [key, label] of pairs) {
+      const option = document.createElement("option");
+      option.value = key;
+      option.textContent = label;
+      select.add(option);
+    }
   }
   if (value != null) select.value = value;
 }
@@ -140,15 +146,37 @@ function toggleDrawer(open) {
   }
 }
 
+// 抽屉里显示的东西(笔记本、页面名单、筛选词、界面风格)没变时不重建,只挪当前页的高亮:
+// 每换一页都要画两次,几千页时重建一次要几百毫秒
+let drawerKey = "";
+// 抽屉里每个页面的那一行(按页面名)
+const drawerRows = new Map();
+
+function markDrawerPage() {
+  const row = drawerRows.get(selected?.name);
+  for (const b of el("notes-list").querySelectorAll('[aria-current="page"]')) {
+    if (b === row) continue;
+    b.classList.remove("active");
+    b.setAttribute("aria-current", "false");
+  }
+  row?.classList.add("active");
+  row?.setAttribute("aria-current", "page");
+}
+
 function renderDrawer() {
   const bookName = currentBook;
   const book = books.find((b) => b.name === bookName);
+  // 语雀纸感:页面列表是目录树,笔记本一行一行排下来,当前笔记本的页面缩进排在它下面
+  const tree = look.ui === "paper";
+  const key = JSON.stringify([tree, bookName, el("note-filter").value.trim().toLowerCase(),
+    books.map((b) => b.name), book?.notes.map((n) => n.name)]);
+  if (key === drawerKey) return markDrawerPage();
+  drawerKey = key;
+  drawerRows.clear();
   const bookList = el("books-list");
   const noteList = el("notes-list");
   bookList.replaceChildren();
   noteList.replaceChildren();
-  // 语雀纸感:页面列表是目录树,笔记本一行一行排下来,当前笔记本的页面缩进排在它下面
-  const tree = look.ui === "paper";
   el("pages-heading").textContent = tree ? "目录" : "页面";
   if (tree) {
     for (const b of books) {
@@ -206,6 +234,7 @@ function pageButtons(book, bookName, className) {
       await refresh(bookName, n.name);
       if (selected?.name === n.name && selected?.book === bookName) toggleDrawer(false);
     });
+    drawerRows.set(n.name, button);
     out.push(button);
   }
   if (!notes.length) {
