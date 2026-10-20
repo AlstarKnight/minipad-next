@@ -423,6 +423,28 @@ el("dialog").addEventListener("pointerdown", (e) => { if (e.target.closest("butt
 el("dialog-ok").addEventListener("click", () => closeDialog(true));
 el("dialog-cancel").addEventListener("click", () => closeDialog(false));
 el("dialog").addEventListener("click", (e) => { if (e.target === e.currentTarget) closeDialog(false); });
+// 链接交给系统浏览器(或应用内浏览器)、邮件和电话应用打开,应用自己的页面不跳走
+async function openLink(href) {
+  const url = (href || "").trim();
+  if (!/^(https?:|mailto:|tel:)/i.test(url)) {
+    notify("这个链接不能在手机上打开");
+    return;
+  }
+  try {
+    await invoke("mobile_open_url", { url, inApp: look.link_open === "inapp" });
+  } catch (error) {
+    notify("打不开链接：" + error);
+  }
+}
+// 不能编辑时(阅读模式、只读页面)点链接就打开;编辑时默认只放光标,外观设置里可以改成也打开。
+// Ctrl / ⌘ + 点击(接了实体键盘时)由编辑器自己交给 openLink
+el("editor").addEventListener("click", (e) => {
+  const link = e.target.closest?.("a[href]");
+  if (!link || e.ctrlKey || e.metaKey) return;
+  e.preventDefault();
+  if (view?.editable && !look.link_tap_edit) return;
+  void openLink(link.getAttribute("href"));
+}, true);
 el("insert-image").addEventListener("click", () => {
   if (view?.editable && selected && !selected.sourceOnly) fileInput.click();
 });
@@ -810,6 +832,9 @@ function loadLook() {
     // 格式栏右边「自定义」挑的按钮和顺序(和电脑版设置里的同名字段一样)
     format_bar_hidden: Array.isArray(saved.format_bar_hidden) ? saved.format_bar_hidden : [],
     format_bar_order: Array.isArray(saved.format_bar_order) ? saved.format_bar_order : [],
+    // 网页链接用系统浏览器(system)还是应用内浏览器(inapp)打开;编辑时点链接要不要也直接打开
+    link_open: saved.link_open === "inapp" ? "inapp" : "system",
+    link_tap_edit: saved.link_tap_edit === true,
   };
 }
 
@@ -842,6 +867,8 @@ function applyLook() {
   el("look-fab").checked = look.fab;
   el("look-debug").checked = look.debug;
   el("look-local-path").checked = look.local_path_enabled;
+  for (const b of el("look-link-open").children) b.setAttribute("aria-pressed", String(b.dataset.linkOpen === look.link_open));
+  el("look-link-tap-edit").checked = look.link_tap_edit;
   el("viewport-debug").hidden = !look.debug;
   if (look.debug) requestAnimationFrame(fitViewport);
   renderDrawer();
@@ -865,6 +892,8 @@ el("look-cats").addEventListener("change", (e) => setLook({ cats: e.target.check
 el("look-fab").addEventListener("change", (e) => setLook({ fab: e.target.checked }));
 el("look-debug").addEventListener("change", (e) => setLook({ debug: e.target.checked }));
 el("look-local-path").addEventListener("change", (e) => setLook({ local_path_enabled: e.target.checked }));
+for (const b of el("look-link-open").children) b.addEventListener("click", () => setLook({ link_open: b.dataset.linkOpen }));
+el("look-link-tap-edit").addEventListener("change", (e) => setLook({ link_tap_edit: e.target.checked }));
 systemDark.addEventListener("change", applyLook);
 // 格式栏「自定义」改了就记下来,重启后照旧
 el("format-bar").addEventListener("format-bar-items", (e) => setLook(e.detail));
@@ -968,7 +997,7 @@ async function start() {
       mobile: true,
       mobileImagePlugin: images,
       onChange: (note) => { if (note === selected) scheduleSave(); },
-      openLink: (href) => { if (/^https?:\/\//i.test(href)) window.open(href, "_blank", "noopener"); },
+      openLink,
       emptyBold: () => {},
     });
     view = editorDebug().view;

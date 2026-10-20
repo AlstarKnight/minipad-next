@@ -93,6 +93,10 @@ async function open({ colorScheme, keyboard, look = { ui: "classic" } } = {}) {
           images["assets/test.png"] = { mime: args.mime, data: args.data };
           return "assets/test.png";
         }
+        if (command === "mobile_open_url") {
+          (window.__mobileTest.opened ||= []).push(args);
+          return null;
+        }
         if (command === "mobile_webdav_status") return { state: "synced", message: "已同步（测试）", history: [] };
         if (command === "mobile_webdav_set_password") {
           window.__mobileTest.savedWebdavPassword = args.password;
@@ -1244,6 +1248,59 @@ test("the format bar's customization is remembered on the phone", async () => {
       .evaluateAll((list) => list.map((b) => b.dataset.cmd));
     assert.deepEqual(buttons, reversed.filter((id) => buttons.includes(id)));
     assert.ok(!(await shown()).includes("strike"), "the hidden button stays hidden after a restart");
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test("links open in the system or in-app browser and never take the app away from its page", async () => {
+  const { context, page, errors } = await open();
+  try {
+    await page.evaluate(() => {
+      window.__windowOpened = [];
+      window.open = (...args) => { window.__windowOpened.push(args); return null; };
+      window.__mobileTest.disk[0].notes.push({ name: "链接", unreadable: false,
+        content: "[示例](https://example.com/) [邮件](mailto:a@example.com) [本地](notes/x.md)" });
+    });
+    await page.click("#refresh");
+    await chooseNote(page, "链接");
+    await page.locator("#editor a", { hasText: "示例" }).waitFor();
+    const opened = () => page.evaluate(() => window.__mobileTest.opened || []);
+    const link = (text) => page.locator("#editor a", { hasText: text });
+
+    // editing: a tap only puts the caret in the link (default); Ctrl+tap still opens it
+    await link("示例").click();
+    assert.deepEqual(await opened(), []);
+    await link("示例").click({ modifiers: ["Control"] });
+    assert.deepEqual(await opened(), [{ url: "https://example.com/", inApp: false }]);
+
+    // reading: a tap opens web and mail links; other links only say why not
+    await page.click("#mode");
+    await link("邮件").click();
+    assert.deepEqual((await opened()).at(-1), { url: "mailto:a@example.com", inApp: false });
+    await link("本地").click();
+    assert.equal(await page.locator("#status").textContent(), "这个链接不能在手机上打开");
+    assert.equal((await opened()).length, 2);
+
+    // the in-app browser and tap-to-open while editing are settings that are remembered
+    await page.click("#open-drawer");
+    await page.click("#open-settings");
+    assert.equal(await page.locator('[data-link-open="system"]').getAttribute("aria-pressed"), "true");
+    await page.click('[data-link-open="inapp"]');
+    await page.locator("#look-link-tap-edit").check();
+    await page.click("#close-settings");
+    await page.click("#mode");
+    await link("示例").click();
+    assert.deepEqual((await opened()).at(-1), { url: "https://example.com/", inApp: true });
+    assert.equal((await opened()).length, 3);
+    assert.ok(page.url().endsWith("/mobile.html"), "the app stays on its own page");
+    assert.deepEqual(await page.evaluate(() => window.__windowOpened), []);
+
+    await page.reload();
+    await page.locator("#editor .ProseMirror h1").waitFor();
+    await page.click("#open-drawer");
+    await page.click("#open-settings");
+    assert.equal(await page.locator('[data-link-open="inapp"]').getAttribute("aria-pressed"), "true");
+    assert.equal(await page.locator("#look-link-tap-edit").isChecked(), true);
     assert.deepEqual(errors, []);
   } finally { await context.close(); }
 });

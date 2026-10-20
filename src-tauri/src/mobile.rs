@@ -7,6 +7,7 @@ use std::{
     path::{Path, PathBuf},
 };
 use tauri::{AppHandle, Manager};
+use tauri_plugin_opener::OpenerExt;
 
 fn root(app: &AppHandle) -> Result<PathBuf, String> {
     let dir = app
@@ -356,8 +357,61 @@ async fn mobile_webdav_sync_now(
     result
 }
 
+/// 能交给手机打开的链接:网页、邮件、电话。别的(相对路径、file:、javascript: 等)一律不开
+fn external_link(url: &str) -> bool {
+    let lower = url.to_ascii_lowercase();
+    ["http://", "https://", "mailto:", "tel:"]
+        .iter()
+        .any(|scheme| lower.starts_with(scheme))
+}
+
+/// 点页面里的链接:网页用系统浏览器或应用内浏览器(Custom Tabs)打开,邮件、电话交给对应的应用
+#[tauri::command]
+async fn mobile_open_url(app: AppHandle, url: String, in_app: bool) -> Result<(), String> {
+    if !external_link(&url) {
+        return Err("这个链接不能在手机上打开".into());
+    }
+    // 应用内浏览器只能开网页
+    let with = (in_app && url.to_ascii_lowercase().starts_with("http")).then_some("inAppBrowser");
+    tauri::async_runtime::spawn_blocking(move || app.opener().open_url(url, with))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())
+}
+
+/// 兜底:WebView 要离开应用自己的页面(tauri.localhost)时一律拦下,网页、邮件、电话链接转交系统打开。
+/// 页面里哪里漏拦了链接,也不会把整个应用换成那个网页
+fn link_guard<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
+    tauri::plugin::Builder::new("link-guard")
+        .on_navigation(|webview, url| {
+            if tauri::is_dev()
+                || url.host_str() == Some("tauri.localhost")
+                || url.scheme() == "about"
+            {
+                return true;
+            }
+            if external_link(url.as_str()) {
+                let app = webview.app_handle().clone();
+                let url = url.to_string();
+                // 这里在 Android 的界面线程上,而 opener 要等界面线程回话,所以换个线程去开
+                std::thread::spawn(move || {
+                    let _ = app.opener().open_url(url, None::<&str>);
+                });
+            }
+            false
+        })
+        .build()
+}
+
 pub fn run() {
     tauri::Builder::default()
+        // 链接交给系统打开;opener 自带的点击拦截脚本不要(页面自己处理点链接)
+        .plugin(
+            tauri_plugin_opener::Builder::new()
+                .open_js_links_on_click(false)
+                .build(),
+        )
+        .plugin(link_guard())
         // 页面里的图片和电脑一样按地址读(note 协议,只能读笔记本 assets 里的图片),不再整张转成 base64 经 IPC 传
         .register_uri_scheme_protocol("note", |ctx, request| match root(ctx.app_handle()) {
             Ok(dir) => crate::images::protocol_response(&dir, request.uri()),
@@ -373,6 +427,7 @@ pub fn run() {
             mobile_create_note,
             mobile_save_note,
             mobile_save_image,
+            mobile_open_url,
             mobile_webdav_set_password,
             mobile_webdav_test,
             mobile_webdav_status,

@@ -153,6 +153,12 @@
     </div>
     <label class="switch-row"><span>识别 Windows 本地文件路径（仅显示样式，不会打开）</span><input id="look-local-path" type="checkbox"></label>
     <label class="switch-row"><span>键盘调试信息:右上角显示屏幕和键盘的尺寸,截图发给开发者</span><input id="look-debug" type="checkbox"></label>
+    <h3>链接</h3>
+    <div id="look-link-open" class="seg" role="group" aria-label="打开网页链接用">
+      <button type="button" data-link-open="system">系统浏览器</button>
+      <button type="button" data-link-open="inapp">应用内浏览器</button>
+    </div>
+    <label class="switch-row"><span>编辑时点链接也直接打开(关着时只把光标放进去,方便改字;阅读模式里点链接总是打开)</span><input id="look-link-tap-edit" type="checkbox"></label>
     <p class="sheet-note">只保存在这台手机上,改了马上生效。</p>
   </section>
   <div id="sync-settings-backdrop" class="drawer-backdrop" hidden></div>
