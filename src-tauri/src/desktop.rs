@@ -1046,8 +1046,9 @@ print("点右上角的复制按钮试试")
 
 // ---------- 命令 ----------
 
+/// only:小窗只要自己那一页(其他笔记本和页面不读)
 #[tauri::command]
-fn load_state(app: AppHandle) -> Result<LoadedState, String> {
+fn load_state(app: AppHandle, only: Option<notes::OnlyPage>) -> Result<LoadedState, String> {
     let st = app.state::<AppState>();
     let settings = st.settings.lock().unwrap().clone();
     let dir = notes_dir(&app, &settings);
@@ -1057,7 +1058,7 @@ fn load_state(app: AppHandle) -> Result<LoadedState, String> {
     if notes::list_names(&dir)?.is_empty() && notes::list_books(&dir)?.is_empty() {
         notes::write_atomic(&notes::note_path(&dir, "欢迎"), WELCOME)?;
     }
-    let books = notes::load_books(&dir)?;
+    let books = notes::load_books_with(&dir, None, only.as_ref())?;
     let saved = notes::read_meta(&dir).book;
     let book = if books.iter().any(|b| b.name == saved) {
         saved
@@ -1080,10 +1081,15 @@ fn load_state(app: AppHandle) -> Result<LoadedState, String> {
     })
 }
 
-/// 重新读一遍笔记文件夹,用来发现在别处(网盘同步、其他编辑器)改过的内容
+/// 重新读一遍笔记文件夹,用来发现在别处(网盘同步、其他编辑器)改过的内容。
+/// known 是前端已有页面的指纹,没改过的页面不读内容;小窗用 only 只读自己那一页
 #[tauri::command]
-fn read_notes(app: AppHandle) -> Result<Vec<Book>, String> {
-    notes::load_books(&current_notes_dir(&app))
+fn read_notes(
+    app: AppHandle,
+    known: Option<notes::Known>,
+    only: Option<notes::OnlyPage>,
+) -> Result<Vec<Book>, String> {
+    notes::load_books_with(&current_notes_dir(&app), known.as_ref(), only.as_ref())
 }
 
 #[tauri::command]

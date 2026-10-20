@@ -285,19 +285,31 @@ export function mockApi() {
     });
   };
 
-  // 按保存过的顺序读出一个笔记本,新出现的页面排在后面
-  const readBook = (name) => {
+  // 页面的指纹:后端用文件大小和修改时间,这里没有修改时间,用内容算(测试直接改 __mockBooks 也能认出来)
+  const stamp = (text) => {
+    let h = 2166136261;
+    for (let i = 0; i < text.length; i++) h = Math.imul(h ^ text.charCodeAt(i), 16777619);
+    return `${text.length}-${(h >>> 0).toString(16)}`;
+  };
+  // 按保存过的顺序读出一个笔记本,新出现的页面排在后面(和后端一样,重复的名字只算一次);
+  // known 里指纹没变的页面不给内容(same),only 给了时只要这一页
+  const readBook = (name, known = null, only = null) => {
     const { files, meta } = fixBook(db.books[name]);
     const names = Object.keys(files).sort();
-    const order = meta.order.filter((n) => names.includes(n)).concat(names.filter((n) => !meta.order.includes(n)));
+    const exists = new Set(names);
+    const order = [...new Set(meta.order.filter((n) => exists.has(n)))];
+    const placed = new Set(order);
+    order.push(...names.filter((n) => !placed.has(n)));
     return {
       name,
-      notes: order.map((n) => {
+      notes: order.filter((n) => !only || n === only).map((n) => {
         const reason = window.__mockControl?.unreadable?.[name]?.[n] || null;
         const g = meta.note_groups?.[n];
         const group = g && (meta.groups || []).some((x) => x.id === g) ? g : "";
-        return { name: n, content: reason && !window.__mockControl?.keepUnreadableContent ? "" : files[n],
-          mode: meta.modes[n] || "edit", unreadable: !!reason, reason, group, pinned: (meta.pinned || []).includes(n) };
+        const st = reason ? "" : stamp(files[n]);
+        const same = !!st && known?.[n] === st;
+        return { name: n, content: same || (reason && !window.__mockControl?.keepUnreadableContent) ? "" : files[n],
+          mode: meta.modes[n] || "edit", unreadable: !!reason, reason, group, pinned: (meta.pinned || []).includes(n), stamp: st, same };
       }),
       active: order.includes(meta.active) ? meta.active : (order[0] ?? ""),
       groups: (meta.groups || []).filter((x) => order.some((n) => meta.note_groups?.[n] === x.id)),
@@ -305,13 +317,21 @@ export function mockApi() {
       icon_color: meta.icon_color || "",
     };
   };
-  const readBooks = () => ["", ...bookNames()].filter((name) => !window.__mockControl?.unreadableBook?.includes(name)).map(readBook);
+  const readBooks = ({ known, only } = {}) => {
+    const books = only
+      ? (has(db.books, only.book) ? [readBook(only.book, known?.[only.book], only.name)] : [])
+      : ["", ...bookNames()].filter((name) => !window.__mockControl?.unreadableBook?.includes(name))
+        .map((name) => readBook(name, known?.[name]));
+    // 测试用:最近一次读出了哪些页面的内容("笔记本/页面",没变的页面不算)
+    if (window.__mockControl) window.__mockControl.lastRead = books.flatMap((b) => b.notes.filter((n) => !n.same).map((n) => `${b.name}/${n.name}`));
+    return books;
+  };
 
   // 开着的小窗 [{ book, name }]
   let minis = [];
   const emitMinis = () => window.__mockEmit?.("mini-changed", minis.map((m) => ({ ...m })));
   const cmds = {
-    load_state: () => {
+    load_state: ({ only } = {}) => {
       // 第一次用(既没有页面也没有笔记本)时放一页说明
       const root = bookOf("");
       if (!Object.keys(root.files).length && !bookNames().length) {
@@ -321,7 +341,7 @@ export function mockApi() {
       return {
         settings: db.settings,
         notes_dir: "(浏览器预览)",
-        books: readBooks(),
+        books: readBooks({ only }),
         book: bookNames().includes(db.book) ? db.book : "",
         hotkey_error: null,
         settings_error: null,
@@ -332,7 +352,7 @@ export function mockApi() {
         debug: true,
       };
     },
-    read_notes: () => readBooks(),
+    read_notes: (args) => readBooks(args),
     book_exists: ({ book }) => has(db.books, book),
     // 和后端一样:文件在别处被改过(既不是上次读到的 expected,也不是要写的内容),
     // 先把别处的版本另存成冲突副本(设置里选了直接覆盖就不留)

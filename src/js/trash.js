@@ -5,7 +5,7 @@ import { $ } from "./dom.js";
 import { state, bookLabel } from "./state.js";
 import { toast, ask, focusEditor } from "./ui.js";
 import { flushAll, saveMeta } from "./save.js";
-import { mutate, applyDisk } from "./sync.js";
+import { mutate, applyDisk, readNotes } from "./sync.js";
 import { goTo } from "./tabs.js";
 import { switchBook, closeBooks } from "./notebooks.js";
 
@@ -122,7 +122,7 @@ async function change(fn) {
       try {
         return await fn();
       } finally {
-        await applyDisk(await api.invoke("read_notes"));
+        await applyDisk(await readNotes());
       }
     });
   } catch (e) {

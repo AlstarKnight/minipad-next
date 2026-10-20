@@ -7,7 +7,7 @@
 
 use encoding_rs::{Encoding, GB18030};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -79,6 +79,10 @@ pub struct Note {
     pub group: String,
     /// 固定在标签栏最前面
     pub pinned: bool,
+    /// 文件的指纹(见 page_stamp),前端下次读时带回来;空的表示下次照读
+    pub stamp: String,
+    /// 和前端带来的指纹一样:文件没改过,没读内容(content 是空的)
+    pub same: bool,
 }
 
 /// 一个笔记本和它的全部页面(按保存过的顺序)
@@ -284,22 +288,67 @@ fn is_note_file(path: &Path) -> bool {
             .is_some_and(|x| x.eq_ignore_ascii_case(NOTE_EXT))
 }
 
+/// 文件夹里的这一项是页面(.md 文件)就返回页面名。文件类型用列目录时顺带拿到的,不再逐个查文件属性
+/// (Windows 上每查一次都要打开一下文件,几千页时很慢);只有符号链接才去看它指向的是不是文件
+fn page_name(entry: &fs::DirEntry) -> Option<String> {
+    let path = entry.path();
+    let md = path
+        .extension()
+        .and_then(|x| x.to_str())
+        .is_some_and(|x| x.eq_ignore_ascii_case(NOTE_EXT));
+    let file = md
+        && match entry.file_type() {
+            Ok(kind) if !kind.is_symlink() => kind.is_file(),
+            _ => path.is_file(),
+        };
+    if !file {
+        return None;
+    }
+    path.file_stem().map(|s| s.to_string_lossy().to_string())
+}
+
 /// 一个文件夹里所有页面的名字(按名字排序)
 pub fn list_names(dir: &Path) -> Result<Vec<String>, String> {
     let mut names: Vec<String> = fs::read_dir(dir)
         .map_err(|e| e.to_string())?
         .flatten()
-        .filter_map(|e| {
-            let p = e.path();
-            if is_note_file(&p) {
-                p.file_stem().map(|s| s.to_string_lossy().to_string())
-            } else {
-                None
-            }
-        })
+        .filter_map(|e| page_name(&e))
         .collect();
     names.sort();
     Ok(names)
+}
+
+/// 页面文件的指纹:大小和修改时间(WebDAV 同步判断本机文件变没变也看这两样)。前端带着上次读到内容时的指纹来,
+/// 一样就说明没改过,不用再读(见 load_books_with)。3 秒内刚改过的不给指纹:有的文件系统修改时间只精确到 2 秒,
+/// 这么近的两次改动可能分不出来;符号链接也不给,它指向的文件改了,链接自己的时间不变
+fn page_stamp(entry: &fs::DirEntry, now: SystemTime) -> String {
+    let Ok(meta) = entry.metadata() else {
+        return String::new();
+    };
+    let Ok(modified) = meta.modified() else {
+        return String::new();
+    };
+    let settled = now
+        .duration_since(modified)
+        .is_ok_and(|age| age >= Duration::from_secs(3));
+    match modified.duration_since(std::time::UNIX_EPOCH) {
+        Ok(t) if settled && !meta.file_type().is_symlink() => {
+            format!("{}-{}", meta.len(), t.as_nanos())
+        }
+        _ => String::new(),
+    }
+}
+
+/// 页面名(按名字排序)和各自的指纹
+fn list_pages(dir: &Path) -> Result<Vec<(String, String)>, String> {
+    let now = SystemTime::now();
+    let mut pages: Vec<(String, String)> = fs::read_dir(dir)
+        .map_err(|e| e.to_string())?
+        .flatten()
+        .filter_map(|e| Some((page_name(&e)?, page_stamp(&e, now))))
+        .collect();
+    pages.sort();
+    Ok(pages)
 }
 
 /// 笔记文件夹下的笔记本(子文件夹,点开头的除外),按名字排序。
@@ -551,29 +600,53 @@ pub fn write_meta(dir: &Path, meta: &Meta) -> Result<(), String> {
     write_atomic(&dir.join(META_FILE), &json)
 }
 
-/// 按保存过的顺序排列页面,新出现的文件排在后面
+/// 按保存过的顺序排列页面,新出现的文件排在后面;保存的顺序里重复的名字只算一次。
+/// 几千页时每次读笔记、写笔记本信息都要排,所以用集合查,不在列表里逐个找
 pub fn order_names(names: &[String], saved: &[String]) -> Vec<String> {
+    let exists: HashSet<&str> = names.iter().map(String::as_str).collect();
+    let mut placed = HashSet::new();
     let mut ordered: Vec<String> = saved
         .iter()
-        .filter(|n| names.contains(n))
+        .filter(|n| exists.contains(n.as_str()) && placed.insert(n.as_str()))
         .cloned()
         .collect();
-    for n in names {
-        if !ordered.contains(n) {
-            ordered.push(n.clone());
-        }
-    }
+    ordered.extend(
+        names
+            .iter()
+            .filter(|n| !placed.contains(n.as_str()))
+            .cloned(),
+    );
     ordered
 }
 
+/// 前端已有页面的指纹:笔记本名 → 页面名 → 指纹(见 page_stamp)
+pub type Known = HashMap<String, HashMap<String, String>>;
+
+/// 只读这一页(小窗用)
+#[derive(Deserialize, Debug)]
+pub struct OnlyPage {
+    pub book: String,
+    pub name: String,
+}
+
 /// 测试可替换读取函数，确保单页失败不会影响其他页。
-fn load_book_with_reader<F>(root: &Path, book: &str, mut read: F) -> Result<Book, String>
+/// known 是前端已有的这个笔记本的页面指纹,指纹没变的页面不读内容;only 给了时只要这一页
+fn load_book_with_reader<F>(
+    root: &Path,
+    book: &str,
+    known: Option<&HashMap<String, String>>,
+    only: Option<&str>,
+    mut read: F,
+) -> Result<Book, String>
 where
     F: FnMut(&Path, &str) -> Result<(String, Option<String>), String>,
 {
     let dir = book_dir(root, book)?;
     let meta = read_meta(&dir);
-    let names = order_names(&list_names(&dir)?, &meta.order);
+    let pages = list_pages(&dir)?;
+    let names: Vec<String> = pages.iter().map(|(name, _)| name.clone()).collect();
+    let mut stamps: HashMap<String, String> = pages.into_iter().collect();
+    let names = order_names(&names, &meta.order);
     let active = if names.contains(&meta.active) {
         meta.active.clone()
     } else {
@@ -581,17 +654,27 @@ where
     };
     let notes: Vec<Note> = names
         .into_iter()
+        .filter(|name| only.is_none_or(|o| name.as_str() == o))
         .map(|name| {
-            let (content, unreadable, reason) = match read(&dir, &name) {
-                Ok((text, None)) => (text, false, None),
-                // 文件有损坏:内容照常显示,但和读不出来的页面一样只读
-                Ok((text, Some(why))) => (text, true, Some(why)),
-                Err(e) => (String::new(), true, Some(e)),
+            let stamp = stamps.remove(&name).unwrap_or_default();
+            let same = !stamp.is_empty() && known.and_then(|k| k.get(&name)) == Some(&stamp);
+            let (content, unreadable, reason) = if same {
+                (String::new(), false, None)
+            } else {
+                match read(&dir, &name) {
+                    Ok((text, None)) => (text, false, None),
+                    // 文件有损坏:内容照常显示,但和读不出来的页面一样只读
+                    Ok((text, Some(why))) => (text, true, Some(why)),
+                    Err(e) => (String::new(), true, Some(e)),
+                }
             };
             Note {
                 content,
                 unreadable,
                 reason,
+                // 读不出来、有损坏的页面不给指纹,下次照读
+                stamp: if unreadable { String::new() } else { stamp },
+                same,
                 pinned: meta.pinned.contains(&name),
                 group: meta
                     .note_groups
@@ -625,15 +708,34 @@ where
 }
 
 /// 读出一个笔记本；个别页面无法读取时仍将其保留为不可编辑的占位。
+#[cfg(test)]
 pub fn load_book(root: &Path, book: &str) -> Result<Book, String> {
-    load_book_with_reader(root, book, read_page)
+    load_book_with_reader(root, book, None, None, read_page)
+}
+
+#[cfg(test)]
+pub fn load_books(root: &Path) -> Result<Vec<Book>, String> {
+    load_books_with(root, None, None)
 }
 
 /// 无法读取的子笔记本跳过，不阻断其余笔记本；前端同步必须保留暂时缺失的笔记本。
-pub fn load_books(root: &Path) -> Result<Vec<Book>, String> {
-    let mut books = vec![load_book(root, "")?];
+/// known 里指纹没变的页面不读内容(Note::same,几千页时切回窗口只读变过的);
+/// only 给了时只读那一页,那个笔记本不在时返回空的
+pub fn load_books_with(
+    root: &Path,
+    known: Option<&Known>,
+    only: Option<&OnlyPage>,
+) -> Result<Vec<Book>, String> {
+    let load = |book: &str| {
+        let known = known.and_then(|k| k.get(book));
+        load_book_with_reader(root, book, known, only.map(|o| o.name.as_str()), read_page)
+    };
+    if let Some(only) = only {
+        return Ok(load(&only.book).into_iter().collect());
+    }
+    let mut books = vec![load("")?];
     for name in list_books(root)? {
-        if let Ok(book) = load_book(root, &name) {
+        if let Ok(book) = load(&name) {
             books.push(book);
         }
     }
@@ -1785,6 +1887,146 @@ mod tests {
     }
 
     #[test]
+    fn ordering_counts_a_repeated_name_once_and_stays_fast_with_many_pages() {
+        let names: Vec<String> = ["a", "b", "c"].map(String::from).to_vec();
+        let saved: Vec<String> = ["c", "a", "c", "gone"].map(String::from).to_vec();
+        assert_eq!(order_names(&names, &saved), vec!["c", "a", "b"]);
+        // 原来是在列表里逐个找,5 万页要比较十几亿次
+        let many: Vec<String> = (0..50_000).map(|i| format!("页面 {i:05}")).collect();
+        let reversed: Vec<String> = many.iter().rev().cloned().collect();
+        let start = std::time::Instant::now();
+        assert_eq!(order_names(&many, &reversed), reversed);
+        assert_eq!(order_names(&many, &[]), many);
+        assert!(
+            start.elapsed() < Duration::from_secs(1),
+            "{:?}",
+            start.elapsed()
+        );
+    }
+
+    /// 把文件的修改时间调到 secs 秒以前(指纹只给 3 秒前改过的文件)
+    fn age(path: &Path, secs: u64) {
+        fs::File::options()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_modified(SystemTime::now() - Duration::from_secs(secs))
+            .unwrap();
+    }
+
+    #[test]
+    fn unchanged_pages_are_not_read_again() {
+        let root = temp_dir("stamps");
+        for i in 0..200 {
+            let path = note_path(&root, &format!("页面 {i:03}"));
+            fs::write(&path, format!("内容 {i}")).unwrap();
+            age(&path, 60);
+        }
+        let mut reads = 0;
+        let mut load = |known: Option<&HashMap<String, String>>| {
+            load_book_with_reader(&root, "", known, None, |dir, name| {
+                reads += 1;
+                read_page(dir, name)
+            })
+            .unwrap()
+        };
+        let first = load(None);
+        assert!(first.notes.iter().all(|n| !n.stamp.is_empty() && !n.same));
+        let known: HashMap<String, String> = first
+            .notes
+            .iter()
+            .map(|n| (n.name.clone(), n.stamp.clone()))
+            .collect();
+
+        let again = load(Some(&known));
+        assert!(again.notes.iter().all(|n| n.same && n.content.is_empty()));
+        assert_eq!(again.notes.len(), 200);
+
+        // 别处改了一页:只读这一页
+        let changed = note_path(&root, "页面 007");
+        fs::write(&changed, "别处改过").unwrap();
+        age(&changed, 30);
+        let third = load(Some(&known));
+        let page = third.notes.iter().find(|n| n.name == "页面 007").unwrap();
+        assert!(!page.same);
+        assert_eq!(page.content, "别处改过");
+        assert_ne!(page.stamp, known["页面 007"]);
+        assert_eq!(third.notes.iter().filter(|n| !n.same).count(), 1);
+        drop(load);
+        // 第一次 200 页,没变的一次也不读,改过的那一页再读一次
+        assert_eq!(reads, 201);
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn pages_changed_moments_ago_or_unreadable_are_always_read() {
+        let root = temp_dir("fresh-stamps");
+        fs::write(note_path(&root, "刚改过"), "新的").unwrap();
+        fs::write(note_path(&root, "坏页面"), "读不了").unwrap();
+        age(&note_path(&root, "坏页面"), 60);
+        let book = load_book_with_reader(&root, "", None, None, |dir, name| {
+            if name == "坏页面" {
+                Err("模拟访问被拒绝".to_string())
+            } else {
+                read_page(dir, name)
+            }
+        })
+        .unwrap();
+        // 3 秒内改过的、读不出来的都不给指纹,前端带不回来,下次照读
+        assert!(book.notes.iter().all(|n| n.stamp.is_empty()));
+        let known = HashMap::from([("刚改过".to_string(), String::new())]);
+        let again = load_book_with_reader(&root, "", Some(&known), None, read_page).unwrap();
+        let fresh = again.notes.iter().find(|n| n.name == "刚改过").unwrap();
+        assert!(!fresh.same);
+        assert_eq!(fresh.content, "新的");
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_small_window_reads_only_its_own_page() {
+        let root = temp_dir("only-page");
+        fs::write(note_path(&root, "别的"), "不用读").unwrap();
+        fs::create_dir_all(root.join("工作")).unwrap();
+        fs::write(note_path(&root.join("工作"), "周报"), "本周").unwrap();
+        fs::write(note_path(&root.join("工作"), "月报"), "本月").unwrap();
+        let only = OnlyPage {
+            book: "工作".into(),
+            name: "周报".into(),
+        };
+        let books = load_books_with(&root, None, Some(&only)).unwrap();
+        assert_eq!(books.len(), 1);
+        assert_eq!(books[0].name, "工作");
+        assert_eq!(books[0].notes.len(), 1);
+        assert_eq!(books[0].notes[0].content, "本周");
+        let gone = OnlyPage {
+            book: "不在了".into(),
+            name: "周报".into(),
+        };
+        assert!(load_books_with(&root, None, Some(&gone))
+            .unwrap()
+            .is_empty());
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_linked_page_still_counts_but_is_always_read() {
+        let root = temp_dir("linked");
+        let target = root.join("外面.txt");
+        fs::write(&target, "链接的内容").unwrap();
+        std::os::unix::fs::symlink(&target, note_path(&root, "链接")).unwrap();
+        fs::create_dir_all(root.join("文件夹")).unwrap();
+        std::os::unix::fs::symlink(root.join("文件夹"), root.join("不是页面.md")).unwrap();
+        assert_eq!(list_names(&root).unwrap(), vec!["链接"]);
+        // 指向的文件改了,链接自己的修改时间不变,所以不给指纹
+        assert_eq!(
+            list_pages(&root).unwrap(),
+            vec![("链接".to_string(), String::new())]
+        );
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
     fn trash_keeps_deleted_pages() {
         let root = temp_dir("trash");
         fs::write(note_path(&root, "要删的"), "内容").unwrap();
@@ -2596,7 +2838,7 @@ mod tests {
         let root = temp_dir("unreadable");
         fs::write(note_path(&root, "好页面"), "安全内容").unwrap();
         fs::write(note_path(&root, "坏页面"), "原文件不得覆盖").unwrap();
-        let result = load_book_with_reader(&root, "", |dir, name| {
+        let result = load_book_with_reader(&root, "", None, None, |dir, name| {
             if name == "坏页面" {
                 Err("模拟访问被拒绝".to_string())
             } else {

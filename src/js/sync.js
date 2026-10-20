@@ -66,6 +66,17 @@ export function showPendingNotice() {
   pendingNotice = "";
 }
 
+// 重新读磁盘:带上已有页面的指纹,没改过的页面后端不读内容(回来的是 same);小窗只读自己那一页
+export function readNotes() {
+  const known = {};
+  for (const b of state.books) {
+    const pages = (known[b.name] = {});
+    for (const n of b.notes) if (n.stamp && !n.unreadable) pages[n.name] = n.stamp;
+  }
+  const only = isMiniWindow && current() ? { book: book().name, name: current().name } : undefined;
+  return api.invoke("read_notes", { known, only });
+}
+
 // 返回 false 表示这次没读(正忙,或者读回来的已经过时),调用方可以过一会儿再试
 export async function syncFromDisk(force = false) {
   if (syncing || busy || editorIsComposing() || noteSaveInFlight() || !state.books.length || tabsEl.querySelector("input")) return false;
@@ -76,7 +87,7 @@ export async function syncFromDisk(force = false) {
   const g = gen;
   const revision = noteDiskRevision();
   try {
-    let disk = await api.invoke("read_notes");
+    let disk = await readNotes();
     // 读的时候页面或笔记本有变动,这次的结果就不用了
     const fresh = () => !busy && gen === g && !editorIsComposing() && !noteSaveInFlight() &&
       noteDiskRevision() === revision && !tabsEl.querySelector("input");
@@ -194,7 +205,8 @@ function mergeBook(b, d) {
 
   for (const n of kept) {
     const dn = onDisk.get(n.name);
-    if (!dn) continue;
+    // same:文件和上次读到时一样(指纹没变),后端没读内容
+    if (!dn || dn.same) continue;
     if (dn.unreadable) {
       if (!n.unreadable) {
         if (edited(n)) toast(`「${n.name}」读取失败，已保留未保存的修改`, 5000);
@@ -222,7 +234,10 @@ function mergeBook(b, d) {
       if (n === before) content = true;
     }
     const text = dn.content;
-    if (text === n.disk && !recovered) continue;
+    if (text === n.disk && !recovered) {
+      n.stamp = dn.stamp || "";
+      continue;
+    }
     if (!edited(n)) {
       n.content = text;
       if (n === before) content = true;
@@ -236,6 +251,7 @@ function mergeBook(b, d) {
       toast(`「${n.name}」在别处也被修改了,这里保留了你正在编辑的内容`, 4000);
     }
     n.disk = text;
+    n.stamp = dn.stamp || "";
   }
 
   const known = new Set(kept.map((n) => n.name));

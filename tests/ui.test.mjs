@@ -6981,3 +6981,50 @@ suite("0.4.5: local file paths", { concurrency: 1 }, () => {
   });
 
 });
+
+describe("0.4.7: many pages", () => {
+  const PAGES = ["甲", "乙", "丙", "丁", "戊"];
+  const many = (settings = {}, meta = null) => {
+    const db = seed({ "": Object.fromEntries(PAGES.map((n) => [n, `${n}的内容`])), 工作: { 周报: "本周" } });
+    Object.assign(db.settings, settings);
+    if (meta) Object.assign(db.books[""].meta, meta);
+    return db;
+  };
+  // 每次 sync 前清掉记录,sync 正忙没读时下一轮再试
+  const readAgain = (h, expected, message) => syncUntil(h, async () => {
+    const read = await mockCtl(h.p, "lastRead");
+    await h.p.evaluate(() => (window.__mockControl.lastRead = null));
+    return read;
+  }, expected, message);
+
+  ui("switching back to the window reads only the pages changed elsewhere", { seed: many(), mockControl: {} }, async (h) => {
+    const { p } = h;
+    await p.evaluate(() => (window.__mockControl.lastRead = null));
+    await readAgain(h, [], "nothing changed: no page is read again");
+    await p.evaluate(() => (window.__mockFiles["丙"] = "别处改的"));
+    await readAgain(h, ["/丙"], "only the changed page is read");
+    await h.tab("丙").click();
+    await until(h.editor, "别处改的", "and the change shows up");
+    await readAgain(h, [], "it is not read again");
+    // 这里改了存下的页面再读一次内容,对上了以后就不再读
+    await p.click("#editor .ProseMirror");
+    await p.keyboard.press("Control+End");
+    await p.keyboard.type("!");
+    await until(() => h.mockFile("", "丙"), "别处改的!", "saved");
+    await readAgain(h, ["/丙"], "a page saved here is read once more");
+    await readAgain(h, [], "and then left alone");
+    assert.equal(await h.editor(), "别处改的!");
+  });
+
+  ui("a small window reads only its own page", { seed: many(), url: miniUrl("", "丙"), mockControl: {} }, async (h) => {
+    const { p } = h;
+    await until(h.editor, "丙的内容");
+    assert.deepEqual(await mockCtl(p, "lastRead"), ["/丙"], "opening it reads one page");
+    await p.evaluate(() => (window.__mockControl.lastRead = null));
+    await readAgain(h, [], "nothing changed");
+    await p.evaluate(() => (window.__mockFiles["丙"] = "别处改的"));
+    await syncUntil(h, h.editor, "别处改的", "a change elsewhere still shows up");
+    await p.evaluate(() => (window.__mockFiles["甲"] = "别的页面改了"));
+    await readAgain(h, [], "other pages are never read");
+  });
+});

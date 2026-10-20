@@ -6,7 +6,7 @@ import { api } from "./api.js";
 import { $ } from "./dom.js";
 import { state } from "./state.js";
 import { flushAll, saveMeta } from "./save.js";
-import { mutate, applyDisk } from "./sync.js";
+import { mutate, applyDisk, readNotes } from "./sync.js";
 import { switchBook, closeBooks } from "./notebooks.js";
 import { focusEditor } from "./ui.js";
 
@@ -301,7 +301,7 @@ async function runImport() {
         return await api.invoke("minipad2_import", { path: found.path, options: options(), leave: skip });
       } finally {
         // 中途出错时已经导入的笔记本也要显示出来
-        await applyDisk(await api.invoke("read_notes"));
+        await applyDisk(await readNotes());
       }
     });
     done = true;

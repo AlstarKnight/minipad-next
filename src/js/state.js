@@ -20,7 +20,8 @@ export function inMini(bookName, name) {
 // disk 是最近一次从磁盘读到或写到磁盘的内容,用来判断文件有没有在别处被改过;
 // scroll 是阅读模式的滚动位置;state / snap 是编辑器的状态(光标、撤销记录)和滚动位置,第一次编辑时才有;
 // group 是所在标签分组的 id,不在分组里是空的;pinned 是固定在标签栏最前面;
-// mini 是这一页正在小窗里编辑(主窗口里只读,不保存)
+// mini 是这一页正在小窗里编辑(主窗口里只读,不保存);
+// stamp 是读到 disk 那次文件的指纹(大小和修改时间,见后端 notes::page_stamp),重新读磁盘时带上,没变的页面后端不再读
 export function makeNote(name, content, mode = "edit", unreadable = false, reason = null, group = "") {
   return { name, content, mode, unreadable, reason, dirty: false, scroll: 0, disk: content, state: null, snap: null, group, pinned: false, mini: false };
 }
@@ -35,6 +36,7 @@ export function makeBook(name, notes = [], active = 0, groups = [], icon = "", i
 export function noteFromDisk(n) {
   const note = makeNote(n.name, n.content, n.mode, !!n.unreadable, n.reason ?? null, n.group || "");
   note.pinned = !!n.pinned;
+  note.stamp = n.stamp || "";
   return note;
 }
 export function bookFromDisk(d) {
