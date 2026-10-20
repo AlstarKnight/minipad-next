@@ -3,7 +3,7 @@
 // 所有主动等待保存的操作都要等队列真正清空，失败则拒绝继续。
 import { api, isMiniWindow } from "./api.js";
 import { $ } from "./dom.js";
-import { state, book, current } from "./state.js";
+import { state, book, current, sharedMeta } from "./state.js";
 import { updateCount } from "./page.js";
 import { syncContent } from "./editor.js";
 
@@ -159,6 +159,8 @@ async function writeDirtyMeta() {
         modes[n.name] = n.mode;
         if (n.group) noteGroups[n.name] = n.group;
       });
+      // 写进去的就是磁盘上现在的样子,和磁盘同步时拿它判断哪边改过(见 sync.js 的 mergeBook)
+      const written = sharedMeta(b.notes, b.groups);
       try {
         await api.invoke("save_meta", {
           book: b.name,
@@ -169,11 +171,15 @@ async function writeDirtyMeta() {
           note_groups: noteGroups,
           pinned: b.notes.filter((n) => n.pinned).map((n) => n.name),
         });
+        b.diskMeta = written;
       } catch (e) {
         metaDirty.add(b);
         setSaveStatus("err", String(e));
         metaTimer = setTimeout(backgroundMeta, 3000);
         throw e;
+      } finally {
+        // 和磁盘同步时正在读的结果可能是写之前的,作废重读
+        diskRevision++;
       }
     } else {
       const selected = book()?.name;

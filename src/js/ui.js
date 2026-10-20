@@ -56,6 +56,7 @@ function openDialog(message, okLabel, danger, value, keepOverlays = false) {
 
 // 得到 true / false
 export function ask(message, okLabel = "确定", danger = false, keepOverlays = false) {
+  if (document.documentElement.dataset.mobile === "true") return Promise.resolve(window.confirm(message));
   return openDialog(message, okLabel, danger, null, keepOverlays);
 }
 

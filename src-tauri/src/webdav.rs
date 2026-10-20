@@ -160,6 +160,29 @@ pub struct WebdavClient {
     password: String,
 }
 
+/// 按 rustls 的错误类型区分证书问题和其他 TLS 握手失败，两者都不当成离线。
+fn tls_failure(error: &reqwest::Error) -> Option<&'static str> {
+    use std::error::Error;
+    // rustls 的错误包在一层或多层 io::Error 里，io::Error 的 source() 会跳过它，要用 get_ref() 取出。
+    fn rustls_error<'a>(error: &'a (dyn Error + 'static)) -> Option<&'a rustls::Error> {
+        if let Some(tls) = error.downcast_ref::<rustls::Error>() {
+            return Some(tls);
+        }
+        rustls_error(error.downcast_ref::<std::io::Error>()?.get_ref()?)
+    }
+    let mut cause: Option<&(dyn Error + 'static)> = Some(error);
+    while let Some(current) = cause {
+        match rustls_error(current) {
+            Some(rustls::Error::InvalidCertificate(_)) => {
+                return Some("TLS 证书不受信任或已过期；此版本不支持自签名证书");
+            }
+            Some(_) => return Some("TLS 握手失败，请确认服务器地址的 https 和端口正确"),
+            None => cause = current.source(),
+        }
+    }
+    None
+}
+
 fn valid_part(part: &str) -> bool {
     !part.is_empty()
         && part != "."
@@ -284,28 +307,8 @@ impl WebdavClient {
             }
         }
         let response = req.send().map_err(|e| {
-            use std::error::Error;
-            let mut cause: Option<&(dyn Error + 'static)> = Some(&e);
-            let mut certificate_error = false;
-            while let Some(current) = cause {
-                let detail = current.to_string().to_ascii_lowercase();
-                if [
-                    "certificate",
-                    "certverify",
-                    "unknownissuer",
-                    "unknown issuer",
-                    "invalid peer",
-                ]
-                .iter()
-                .any(|marker| detail.contains(marker))
-                {
-                    certificate_error = true;
-                    break;
-                }
-                cause = current.source();
-            }
-            if certificate_error {
-                "TLS 证书不受信任或已过期；此版本不支持自签名证书".to_string()
+            if let Some(message) = tls_failure(&e) {
+                message.to_string()
             } else if e.is_timeout() {
                 "WebDAV 连接超时，请检查网络".to_string()
             } else if e.is_connect() {
@@ -644,6 +647,33 @@ mod tests {
             WebdavClient::new("http://localhost:8080", "a", "b", "/MinipadNext/", true).is_ok()
         );
         assert!(WebdavClient::new("https://example.com", "a", "b", "/../", false).is_err());
+    }
+
+    #[test]
+    fn https_to_a_plain_http_port_is_a_tls_error_not_offline() {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let _ = stream.read(&mut [0u8; 1024]);
+            let _ = stream.write_all(b"HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n");
+        });
+        let client = WebdavClient::new(
+            &format!("https://127.0.0.1:{port}/"),
+            "tester",
+            "test-password",
+            "/MinipadNext/",
+            false,
+        )
+        .unwrap();
+        let error = client.list("").unwrap_err();
+        server.join().unwrap();
+        assert!(error.contains("TLS 握手失败"), "{error}");
+        assert!(
+            !error.contains("离线") && !error.contains("证书"),
+            "{error}"
+        );
     }
 
     #[test]

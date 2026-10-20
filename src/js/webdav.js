@@ -12,6 +12,7 @@ let periodic = null;
 let running = null;
 let rerun = false;
 let recentConflicts = [];
+let applyTimer = null;
 
 const enabled = () => state.settings?.webdav_enabled === true;
 const states = {
@@ -142,12 +143,19 @@ export function resetWebdavTimers() {
   }
   void webdavStatus().catch(() => {});
 }
+// 下载完时可能正在输入、保存或改名,读磁盘会被跳过;跳过了就过一会儿再读,直到读到为止
+function applyDownloads() {
+  clearTimeout(applyTimer);
+  void syncFromDisk(true).then((done) => {
+    if (!done) applyTimer = setTimeout(applyDownloads, 1000);
+  });
+}
 export function bindWebdav() {
   api.listen("webdav-changed", () => {
-    void syncFromDisk(true);
+    applyDownloads();
     void webdavStatus();
   });
-  document.addEventListener("webdav-saved", scheduleWebdavSave);
+  document.addEventListener("webdav-saved", () => scheduleWebdavSave());
   if (isMiniWindow) return;
   $("#st-webdav")?.addEventListener("click", () => void openWebdavStatus());
   document.addEventListener("visibilitychange", () => {

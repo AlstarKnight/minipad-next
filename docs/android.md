@@ -127,14 +127,16 @@ so treat this stage as a test build and avoid storing important notes.
 3. Choose **合并** for the first sync unless you specifically need the server or
    phone as the authoritative copy. **以网盘为准** and **以手机为准** may move
    extra files to the corresponding trash; a high deletion count requires confirmation.
-4. Save settings, run **测试连接**, then enable synchronization. Use the drawer's
+4. Run **测试连接** (it tests what is typed in the form and saves nothing), then
+   enable synchronization and save the settings. Use the drawer's
    **立即同步** button when you need an immediate transfer.
 5. Automatic triggers are available for opening/returning to the app, successful
    saves, a foreground timer, and switching to the background. Android does
    not run a permanent background sync service.
 
 A WebDAV account's password stays in the Android app-private data folder,
-outside the synchronized `notes/` tree. The server URL and account options
+outside the synchronized `notes/` tree, in its `no_backup` folder so Android's
+automatic backup does not copy it. The server URL and account options
 remain on the current device. The file format is unchanged: ordinary `.md`
 files and `assets/` images. Conflicts are kept as separate files by default.
 Offline editing and normal local autosave continue without a server connection.

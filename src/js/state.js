@@ -40,7 +40,20 @@ export function noteFromDisk(n) {
 export function bookFromDisk(d) {
   const notes = d.notes.map(noteFromDisk);
   for (const n of notes) n.mini = inMini(d.name, n.name);
-  return makeBook(d.name, notes, Math.max(0, notes.findIndex((n) => n.name === d.active)), (d.groups || []).map((g) => ({ ...g })), d.icon || "", d.icon_color || "");
+  const b = makeBook(d.name, notes, Math.max(0, notes.findIndex((n) => n.name === d.active)), (d.groups || []).map((g) => ({ ...g })), d.icon || "", d.icon_color || "");
+  b.diskMeta = sharedMeta(d.notes, d.groups || []);
+  return b;
+}
+
+// 笔记本信息里会同步到别的设备的几项(页面顺序、固定、分组),按写进 .minipad.json 的样子比较;
+// 磁盘上的笔记本和这里的笔记本都能算
+export function sharedMeta(notes, groups) {
+  return {
+    order: JSON.stringify(notes.map((n) => n.name)),
+    pinned: JSON.stringify(notes.filter((n) => n.pinned).map((n) => n.name)),
+    note_groups: JSON.stringify(notes.filter((n) => n.group).map((n) => [n.name, n.group])),
+    groups: JSON.stringify(groups.filter((g) => notes.some((n) => n.group === g.id))),
+  };
 }
 
 export function book() {

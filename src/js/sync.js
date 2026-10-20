@@ -1,7 +1,7 @@
 // ---------- 读取笔记,和磁盘同步(别处改过的文件) ----------
 import { api, isMiniWindow } from "./api.js";
 import { tabsEl } from "./dom.js";
-import { state, book, current, makeNote, noteFromDisk, bookFromDisk, sortBooks, inMini } from "./state.js";
+import { state, book, current, makeNote, noteFromDisk, bookFromDisk, sortBooks, inMini, sharedMeta } from "./state.js";
 import { toast } from "./ui.js";
 import { scheduleMeta, scheduleBooks, scheduleSave, noteDiskRevision, noteSaveInFlight } from "./save.js";
 import { editorIsComposing } from "./editor.js";
@@ -66,10 +66,11 @@ export function showPendingNotice() {
   pendingNotice = "";
 }
 
+// 返回 false 表示这次没读(正忙,或者读回来的已经过时),调用方可以过一会儿再试
 export async function syncFromDisk(force = false) {
-  if (syncing || busy || editorIsComposing() || noteSaveInFlight() || !state.books.length || tabsEl.querySelector("input")) return;
+  if (syncing || busy || editorIsComposing() || noteSaveInFlight() || !state.books.length || tabsEl.querySelector("input")) return false;
   const now = Date.now();
-  if (!force && now - lastSync < 800) return;
+  if (!force && now - lastSync < 800) return false;
   lastSync = now;
   syncing = true;
   const g = gen;
@@ -79,12 +80,13 @@ export async function syncFromDisk(force = false) {
     // 读的时候页面或笔记本有变动,这次的结果就不用了
     const fresh = () => !busy && gen === g && !editorIsComposing() && !noteSaveInFlight() &&
       noteDiskRevision() === revision && !tabsEl.querySelector("input");
-    if (!fresh()) return;
+    if (!fresh()) return false;
     if (isMiniWindow) disk = onlyThisPage(disk);
-    if (!disk) return;
-    await applyDisk(disk, fresh);
+    if (!disk) return true;
+    return await applyDisk(disk, fresh);
   } catch (e) {
     console.error(e);
+    return true;
   } finally {
     syncing = false;
   }
@@ -102,7 +104,7 @@ function onlyThisPage(disk) {
 // 有没有还没保存(或者保存失败)的修改
 const edited = (n) => n.dirty || n.content !== n.disk;
 
-// fresh:读回来的结果还能不能用(等后端回话的时候页面或笔记本可能又变了)
+// fresh:读回来的结果还能不能用(等后端回话的时候页面或笔记本可能又变了);用不了时返回 false
 export async function applyDisk(disk, fresh = () => true) {
   const onDisk = new Map(disk.map((d) => [d.name, d]));
   let booksChanged = false;
@@ -121,7 +123,7 @@ export async function applyDisk(disk, fresh = () => true) {
     if (exists) books.push(b);
     else booksChanged = true;
   }
-  if (!fresh()) return;
+  if (!fresh()) return false;
   // 上面等后端回话的时候可能换过笔记本或页面,以现在的为准
   const cur = book();
   const before = current();
@@ -147,7 +149,7 @@ export async function applyDisk(disk, fresh = () => true) {
     booksChanged = true;
   }
 
-  if (!booksChanged && !currentChanged) return;
+  if (!booksChanged && !currentChanged) return true;
   state.books = books;
   if (books.includes(cur)) {
     state.book = books.indexOf(cur);
@@ -162,12 +164,20 @@ export async function applyDisk(disk, fresh = () => true) {
   if (tabsChanged || book() !== cur) renderTabs();
   if (current() !== before) showNote();
   else if (currentChanged) refreshCurrent();
+  return true;
 }
 
 // 同步读取失败不能覆盖本地内容，也不能把暂时不可读当作删除。
 function mergeBook(b, d) {
   const onDisk = new Map(d.notes.map((n) => [n.name, n]));
   const before = b.notes[b.active];
+  // 页面顺序、固定和分组逐项三方比较:磁盘上(比如 WebDAV 从别的设备同步下来)改了、这里没改的就采用,
+  // 免得下次保存笔记本信息时把旧的写回去。两边都改了的以这里为准
+  const base = b.diskMeta;
+  const ours = sharedMeta(b.notes, b.groups);
+  const theirs = sharedMeta(d.notes, d.groups || []);
+  const adopt = (key) => !isMiniWindow && !!base && theirs[key] !== base[key] && ours[key] === base[key];
+  b.diskMeta = theirs;
   const appearance = b.icon !== (d.icon || "") || b.icon_color !== (d.icon_color || "");
   if (appearance) {
     b.icon = d.icon || "";
@@ -236,9 +246,34 @@ function mergeBook(b, d) {
     kept.push(added);
     tabs = true;
   }
-  // 别处新建的分组(这里已有的分组以这里的为准)
-  for (const g of d.groups || []) {
-    if (!b.groups.some((x) => x.id === g.id)) b.groups.push({ ...g });
+  if (adopt("order")) {
+    const rank = new Map(d.notes.map((n, i) => [n.name, i]));
+    kept.sort((x, y) => (rank.get(x.name) ?? rank.size) - (rank.get(y.name) ?? rank.size));
+    tabs = true;
+  }
+  for (const n of kept) {
+    const dn = onDisk.get(n.name);
+    if (!dn) continue;
+    if (adopt("pinned") && n.pinned !== !!dn.pinned) {
+      n.pinned = !!dn.pinned;
+      tabs = true;
+    }
+    if (adopt("note_groups") && n.group !== (dn.group || "")) {
+      n.group = dn.group || "";
+      tabs = true;
+    }
+  }
+  if (adopt("groups")) {
+    const theirGroups = (d.groups || []).map((g) => ({ ...g }));
+    // 只在这里有页面用着的分组也留着
+    const used = b.groups.filter((g) => kept.some((n) => n.group === g.id) && !theirGroups.some((x) => x.id === g.id));
+    b.groups = [...theirGroups, ...used];
+    tabs = true;
+  } else {
+    // 别处新建的分组(这里已有的分组以这里的为准)
+    for (const g of d.groups || []) {
+      if (!b.groups.some((x) => x.id === g.id)) b.groups.push({ ...g });
+    }
   }
 
   if (tabs) {

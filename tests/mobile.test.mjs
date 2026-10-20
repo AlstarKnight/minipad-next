@@ -100,6 +100,7 @@ async function open({ colorScheme, keyboard, look = { ui: "classic" } } = {}) {
           return null;
         }
         if (command === "mobile_webdav_test") {
+          window.__mobileTest.lastTest = args;
           if (!args.config.server) throw new Error("地址不能为空");
           return "连接测试成功";
         }
@@ -868,6 +869,79 @@ test("WebDAV settings stay on this phone and never put the password in localStor
     await page.waitForFunction(() => document.getElementById("ms-result").textContent.includes("连接测试成功"));
     await page.click("#ms-run");
     await page.waitForFunction(() => window.__mobileTest.lastSync?.config?.server === "https://dav.example.com/dav/");
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test("Android WebDAV connection test uses the unsaved form and saves nothing", async () => {
+  const { context, page, errors } = await open();
+  try {
+    await page.click("#open-drawer");
+    await page.click("#open-sync-settings");
+    await page.locator("#ms-enable").check();
+    await page.fill("#ms-server", "https://dav.example.com/dav/");
+    await page.fill("#ms-user", "tester");
+    await page.fill("#ms-password", "draft-password");
+    await page.click("#ms-test");
+    await page.waitForFunction(() => document.getElementById("ms-result").textContent.includes("连接测试成功"));
+    const sent = await page.evaluate(() => window.__mobileTest.lastTest);
+    assert.equal(sent.config.server, "https://dav.example.com/dav/");
+    assert.equal(sent.config.user, "tester");
+    assert.equal(sent.password, "draft-password");
+    assert.equal(await page.evaluate(() => localStorage.getItem("minipad-mobile-webdav")), null);
+    assert.equal(await page.evaluate(() => window.__mobileTest.savedWebdavPassword), undefined);
+    assert.equal(await page.locator("#ms-password").inputValue(), "draft-password");
+    await page.fill("#ms-server", "");
+    await page.click("#ms-test");
+    await page.waitForFunction(() => document.getElementById("ms-result").textContent.includes("地址不能为空"));
+    assert.equal(await page.evaluate(() => localStorage.getItem("minipad-mobile-webdav")), null);
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test("Android sync status color uses the shared solid, gradient and material library", async () => {
+  const { context, page, errors } = await open();
+  try {
+    page.on("dialog", (dialog) => void dialog.accept());
+    await page.click("#open-drawer");
+    await page.click("#open-sync-settings");
+    const tool = page.locator("#mobile-webdav-settings .shared-colors");
+    await tool.waitFor();
+    assert.deepEqual(await tool.locator(".uc-kind").allTextContents(), ["纯色", "渐变", "材质"]);
+    await tool.locator('.uc-kind[data-kind="material"]').click();
+    const material = await tool.locator(".uc-swatch").first().getAttribute("data-color");
+    assert.match(material, /^linear-gradient/);
+    await tool.locator(".uc-swatch").first().click();
+    assert.equal(await page.locator("#ms-color button").first().getAttribute("aria-checked"), "false");
+    await page.locator("#ms-enable").check();
+    await page.fill("#ms-server", "https://dav.example.com/");
+    await page.fill("#ms-user", "tester");
+    await page.click("#ms-save-config");
+    await page.waitForFunction(() => JSON.parse(localStorage.getItem("minipad-mobile-webdav") || "{}").enabled);
+    assert.equal(JSON.parse(await page.evaluate(() => localStorage.getItem("minipad-mobile-webdav"))).status_color, material);
+    assert.match(await page.locator("#mobile-sync-state").evaluate((node) => node.style.backgroundImage), /^linear-gradient\(135deg, rgb\(142, 158, 171\) 0%/);
+
+    // 存进颜色库的颜色留在手机上，重开应用后还在；「跟随强调色」清掉自选颜色。
+    await tool.locator('.uc-kind[data-kind="solid"]').click();
+    await tool.locator(".uc-more").click();
+    await tool.locator(".uc-actions button", { hasText: "自定义" }).click();
+    await tool.locator(".uc-editor select").selectOption("solid");
+    await tool.locator('.uc-stop input[type="color"]').fill("#123456");
+    await tool.locator(".uc-actions button", { hasText: /^保存$/ }).click();
+    await page.waitForFunction(() => JSON.parse(localStorage.getItem("minipad-mobile-colors") || "{}").color_library?.includes("#123456"));
+    await page.locator("#ms-color button").first().click();
+    await page.click("#ms-save-config");
+    await page.waitForFunction(() => JSON.parse(localStorage.getItem("minipad-mobile-webdav")).status_color === "");
+    await page.reload();
+    await page.locator("#editor .ProseMirror").waitFor();
+    await page.click("#open-drawer");
+    await page.click("#open-sync-settings");
+    await tool.locator('.uc-kind[data-kind="solid"]').click();
+    await tool.locator(".uc-more").click();
+    assert.equal(await tool.locator('.uc-swatch[data-color="#123456"]').count(), 1);
+    assert.equal(await page.locator("#ms-color button").first().getAttribute("aria-checked"), "true");
+    await tool.locator(".uc-reset").click();
+    await page.waitForFunction(() => !JSON.parse(localStorage.getItem("minipad-mobile-colors")).color_library.includes("#123456"));
     assert.deepEqual(errors, []);
   } finally { await context.close(); }
 });

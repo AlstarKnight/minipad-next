@@ -2,7 +2,10 @@
 //! WebDAV is deliberately a later, separate layer; local edits never depend on network access.
 use crate::notes;
 use serde::{Deserialize, Serialize};
-use std::{fs, path::PathBuf};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 use tauri::{AppHandle, Manager};
 
 fn root(app: &AppHandle) -> Result<PathBuf, String> {
@@ -171,17 +174,42 @@ impl Default for MobileWebdavConfig {
     }
 }
 
+fn password_file(config: &MobileWebdavConfig, folder: &str) -> Result<String, String> {
+    let id = crate::syncer::journal_path(Path::new(""), &config.server, &config.user, folder);
+    let name = id
+        .file_stem()
+        .and_then(|v| v.to_str())
+        .ok_or("账号标识无效")?;
+    Ok(format!("{name}.password"))
+}
+
+/// 密码放在 Android 的 no_backup 目录，系统自动备份和换机迁移都不会带走它。
 fn mobile_webdav_password_path(
     app: &AppHandle,
     config: &MobileWebdavConfig,
 ) -> Result<PathBuf, String> {
+    let dir = app.path().data_dir().map_err(|e| e.to_string())?;
+    Ok(dir.join("no_backup").join(password_file(config, "")?))
+}
+
+/// 旧版本放在会被自动备份的应用目录里：按账号的一份，和更早按文件夹的一份。
+fn legacy_password_paths(
+    app: &AppHandle,
+    config: &MobileWebdavConfig,
+) -> Result<[PathBuf; 2], String> {
     let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    let journal = crate::syncer::journal_path(&dir, &config.server, &config.user, "");
-    let name = journal
-        .file_stem()
-        .and_then(|v| v.to_str())
-        .ok_or("账号标识无效")?;
-    Ok(dir.join(format!("{name}.password")))
+    Ok([
+        dir.join(password_file(config, "")?),
+        dir.join(password_file(config, &config.folder)?),
+    ])
+}
+
+fn remove_if_exists(path: &Path) -> Result<(), String> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e.to_string()),
+    }
 }
 
 fn read_mobile_webdav_password(
@@ -192,18 +220,14 @@ fn read_mobile_webdav_password(
     if let Ok(password) = fs::read_to_string(&stable) {
         return Ok(password);
     }
-    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    let old_id = crate::syncer::journal_path(&dir, &config.server, &config.user, &config.folder);
-    let name = old_id
-        .file_stem()
-        .and_then(|v| v.to_str())
-        .ok_or("账号标识无效")?;
-    let legacy = dir.join(format!("{name}.password"));
-    let password =
-        fs::read_to_string(&legacy).map_err(|_| "请先保存 WebDAV 应用密码".to_string())?;
-    crate::notes::write_atomic(&stable, &password)?;
-    let _ = fs::remove_file(&legacy);
-    Ok(password)
+    for legacy in legacy_password_paths(app, config)? {
+        if let Ok(password) = fs::read_to_string(&legacy) {
+            crate::notes::write_atomic(&stable, &password)?;
+            remove_if_exists(&legacy)?;
+            return Ok(password);
+        }
+    }
+    Err("请先保存 WebDAV 应用密码".into())
 }
 
 #[tauri::command]
@@ -215,14 +239,25 @@ fn mobile_webdav_set_password(
     if config.server.trim().is_empty() || config.user.trim().is_empty() {
         return Err("请先输入服务器地址和用户名".into());
     }
-    // Android 应用私有目录不属于同步、导出、备份的范围。
-    crate::notes::write_atomic(&mobile_webdav_password_path(&app, &config)?, &password)
+    crate::notes::write_atomic(&mobile_webdav_password_path(&app, &config)?, &password)?;
+    for legacy in legacy_password_paths(&app, &config)? {
+        remove_if_exists(&legacy)?;
+    }
+    Ok(())
 }
 
+/// 测试表单里还没保存的设置；密码框为空时用已保存的密码。
 #[tauri::command]
-async fn mobile_webdav_test(app: AppHandle, config: MobileWebdavConfig) -> Result<String, String> {
-    let password = read_mobile_webdav_password(&app, &config)
-        .map_err(|_| "请先保存 WebDAV 应用密码".to_string())?;
+async fn mobile_webdav_test(
+    app: AppHandle,
+    config: MobileWebdavConfig,
+    password: Option<String>,
+) -> Result<String, String> {
+    let password = match password.filter(|p| !p.is_empty()) {
+        Some(password) => password,
+        None => read_mobile_webdav_password(&app, &config)
+            .map_err(|_| "请先保存 WebDAV 应用密码".to_string())?,
+    };
     tauri::async_runtime::spawn_blocking(move || {
         let client = crate::webdav::WebdavClient::new(
             &config.server,
@@ -253,12 +288,14 @@ fn mobile_webdav_forget(app: AppHandle, config: MobileWebdavConfig) -> Result<()
         &config.user,
         &config.folder,
     );
-    for path in [journal, mobile_webdav_password_path(&app, &config)?] {
-        match fs::remove_file(path) {
-            Ok(()) => {}
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) => return Err(e.to_string()),
-        }
+    let [account, folder] = legacy_password_paths(&app, &config)?;
+    for path in [
+        journal,
+        mobile_webdav_password_path(&app, &config)?,
+        account,
+        folder,
+    ] {
+        remove_if_exists(&path)?;
     }
     crate::syncer::update_status("off", "已断开，手机笔记没有被删除");
     Ok(())

@@ -1059,8 +1059,9 @@ fn collect_webdav_trash(
                         format!("{parent}/{display}")
                     },
                     deleted,
+                    // 冲突时网盘那边的版本和同步替换、删除的本机版本都存成 .minipad.<时间>.json
                     preview: if original == ".minipad" && extension == "json" {
-                        "笔记本设置冲突时网盘那边的版本，仅供备份查看".into()
+                        "WebDAV 同步留下的笔记本设置备份，不能直接恢复，可在笔记文件夹的 .trash/.webdav 里查看".into()
                     } else {
                         "WebDAV 同步回收的文件".into()
                     },
@@ -1149,7 +1150,10 @@ pub fn restore_trash(root: &Path, id: &str) -> Result<(String, String), String> 
         }
         let filename = parts.last().unwrap();
         if filename.starts_with(".minipad.") && filename.ends_with(".json") {
-            return Err("这是笔记本设置冲突的备份，请手动查看，不支持直接恢复".into());
+            return Err(
+                "这是 WebDAV 同步留下的笔记本设置备份，不支持直接恢复，请在笔记文件夹的 .trash/.webdav 里查看"
+                    .into(),
+            );
         }
         let (stem, extension) = filename.rsplit_once('.').unwrap_or((filename.as_str(), ""));
         let (name, _) = split_stamp(stem).ok_or("同步回收文件名称无效")?;
@@ -2383,7 +2387,7 @@ mod tests {
             .into_iter()
             .find(|item| item.id == id)
             .unwrap();
-        assert!(item.preview.contains("设置冲突"));
+        assert!(item.preview.contains("笔记本设置备份"));
         assert!(restore_trash(&root, id)
             .unwrap_err()
             .contains("不支持直接恢复"));

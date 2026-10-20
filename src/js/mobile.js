@@ -4,6 +4,7 @@ import { createEditor, editorDebug, showInEditor, syncContent, setMobileLocalPat
 import { state as desktopState } from "./state.js";
 import { setSelectionBar } from "./formatbar.js";
 import { ACCENTS, applyAccent, tidyAccent, parseAccent } from "./accent.js";
+import { makeSharedColorTools, setColorLibrarySaver } from "./sharedcolors.js";
 
 const invoke = window.__TAURI__?.core?.invoke;
 const el = (id) => document.getElementById(id);
@@ -566,6 +567,22 @@ document.addEventListener("visibilitychange", () => {
   if (document.hidden) void flush().catch(() => {});
 });
 
+// 颜色库（纯色、渐变、材质和快捷色）和电脑版是同一套界面，只存在这台手机上。
+const COLOR_KEY = "minipad-mobile-colors";
+const COLOR_FIELDS = ["color_library", "material_library", "quick_colors", "color_library_rev"];
+function loadColors() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(COLOR_KEY) || "{}") || {};
+    return Object.fromEntries(COLOR_FIELDS.filter((key) => key in saved).map((key) => [key, saved[key]]));
+  } catch { return {}; }
+}
+desktopState.settings = loadColors();
+setColorLibrarySaver(async (next) => {
+  const colors = Object.fromEntries(COLOR_FIELDS.map((key) => [key, next[key]]));
+  localStorage.setItem(COLOR_KEY, JSON.stringify(colors));
+  desktopState.settings = { ...desktopState.settings, ...colors };
+});
+
 // WebDAV 同步配置只存手机外观以外的本地设置，密码由 Rust 私有存储保管。
 const SYNC_KEY = "minipad-mobile-webdav";
 const syncDefaults = {
@@ -599,7 +616,7 @@ function updateSyncForm() {
     else el(id).value = String(value);
   }
   el("ms-password").value = "";
-  for (const b of el("ms-color").children) b.setAttribute("aria-checked", String(b.dataset.color === syncSettings.status_color));
+  showSyncColor(syncSettings.status_color || "");
 }
 function readSyncForm() {
   return {
@@ -711,23 +728,32 @@ function updateSyncTimers() {
     syncTimer = setInterval(() => { if (!document.hidden) void mobileSync(); }, min * 60_000);
   }
 }
-for (const option of [{ value: "", name: "跟随强调色" }, ...ACCENTS.filter(x => x.value)]) {
-  const button = document.createElement("button");
-  button.type = "button";
-  button.dataset.color = option.value;
-  button.setAttribute("aria-label", option.name);
-  button.title = option.name;
-  button.style.setProperty("--sw", option.value || "var(--accent)");
-  button.addEventListener("click", () => {
-    el("ms-color").dataset.selected = option.value;
-    for (const item of el("ms-color").children) item.setAttribute("aria-checked", String(item === button));
-  });
-  el("ms-color").append(button);
+// 状态颜色：「跟随强调色」加上共用的颜色库，和电脑版的设置一样。
+const followAccent = document.createElement("button");
+followAccent.type = "button";
+followAccent.dataset.color = "";
+followAccent.title = "跟随强调色";
+followAccent.setAttribute("aria-label", "跟随强调色");
+followAccent.style.setProperty("--sw", "var(--accent)");
+followAccent.addEventListener("click", () => showSyncColor(""));
+el("ms-color").append(followAccent);
+const syncColorTool = makeSharedColorTools({
+  id: "mobile-sync-status",
+  getValue: () => el("ms-color").dataset.selected || getComputedStyle(document.documentElement).getPropertyValue("--accent").trim(),
+  onApply: (value) => showSyncColor(value),
+  compact: true,
+});
+// 放在 .sync-field 外面，编辑器里的小输入框不套用表单输入框的大尺寸。
+el("ms-color").closest(".sync-field").after(syncColorTool.root);
+function showSyncColor(value) {
+  el("ms-color").dataset.selected = tidyAccent(value);
+  followAccent.setAttribute("aria-checked", String(!el("ms-color").dataset.selected));
+  syncColorTool.sync();
 }
 el("open-sync-settings").addEventListener("click", () => {
-  el("ms-color").dataset.selected = syncSettings.status_color || "";
   if (!drawer.hidden) toggleDrawer(false);
   updateSyncForm();
+  syncColorTool.reopen();
   el("mobile-webdav-settings").hidden = false;
   el("sync-settings-backdrop").hidden = false;
   void showSyncStatus();
@@ -745,10 +771,10 @@ el("ms-preset").addEventListener("change", () => {
   else if (kind === "infinicloud") el("ms-server").value = "https://webdav.teracloud.jp/";
   else if (kind === "nextcloud") el("ms-server").placeholder = "https://域名/remote.php/dav/files/用户名/";
 });
+// 测试连接只用表单里的草稿，不保存设置和密码。
 el("ms-test").addEventListener("click", () => void (async () => {
   try {
-    await saveSyncForm();
-    el("ms-result").textContent = await invoke("mobile_webdav_test", { config: syncSettings });
+    el("ms-result").textContent = await invoke("mobile_webdav_test", { config: readSyncForm(), password: el("ms-password").value });
   } catch (e) { el("ms-result").textContent = String(e); }
 })());
 el("ms-run").addEventListener("click", () => void mobileSync());
@@ -936,7 +962,6 @@ document.addEventListener("pointerdown", (event) => {
 
 async function start() {
   try {
-    desktopState.settings = {};
     document.documentElement.dataset.mobile = "true";
     // The floating selection bar sits below the selection: the system's own copy/paste popup
     // and the selection handles use the space above it.

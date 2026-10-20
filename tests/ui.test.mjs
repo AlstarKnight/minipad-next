@@ -6781,6 +6781,25 @@ suite("0.4.5: WebDAV settings", { concurrency: 1 }, () => {
       "rescan should not immediately start another network scan");
   });
 
+  for (const afterSave of [false, true]) {
+    ui(`saving a page ${afterSave ? "schedules" : "does not schedule"} a sync when save-triggered syncing is ${afterSave ? "on" : "off"}`, {
+      seed: { ...seed({ "": { "笔记": "内容" } }), settings: {
+        ...SETTINGS, webdav_enabled: true, webdav_on_start: false, webdav_on_hide: false,
+        webdav_after_save: afterSave, webdav_interval_minutes: 0,
+      } },
+      mockControl: { webdavSyncCalls: 0 },
+    }, async ({ p }) => {
+      await p.clock.install();
+      await p.click("#editor");
+      await p.keyboard.press("Control+End");
+      await p.keyboard.type("改动");
+      await p.waitForFunction(() => window.__mockFiles["笔记"]?.includes("改动"));
+      await p.clock.fastForward(60_000);
+      await p.waitForTimeout(300);
+      assert.equal(await p.evaluate(() => window.__mockControl.webdavSyncCalls), afterSave ? 1 : 0);
+    });
+  }
+
   ui("WebDAV status distinguishes syncing, conflicts and offline states", {
     seed: { ...seed({ "": { "笔记": "内容" } }), settings: {
       ...SETTINGS, webdav_enabled: true, webdav_on_start: false, webdav_interval_minutes: 0,
@@ -6830,6 +6849,49 @@ suite("0.4.5: WebDAV settings", { concurrency: 1 }, () => {
   });
 });
 
+suite("0.4.5: WebDAV downloads", { concurrency: 1 }, () => {
+  const webdavOn = { ...SETTINGS, webdav_enabled: true, webdav_on_start: false, webdav_on_hide: false, webdav_interval_minutes: 0 };
+
+  ui("page order, pins and groups synced from another device are adopted and not written back", {
+    seed: { ...seed({ "": { "甲": "1", "乙": "2", "丙": "3" } }), settings: webdavOn },
+  }, async (h) => {
+    const { p } = h;
+    await until(h.tabs, ["甲", "乙", "丙"], "initial order");
+    // 另一台设备改了顺序、固定和分组,WebDAV 把合并后的 .minipad.json 写到了本机
+    await p.evaluate(() => {
+      Object.assign(window.__mockBooks[""].meta, {
+        order: ["丙", "甲", "乙"], pinned: ["丙"],
+        groups: [{ id: "g1", name: "工作", color: "#3b82f6", collapsed: false }], note_groups: { "乙": "g1" },
+      });
+      window.__mockEmit("webdav-changed", [".minipad.json"]);
+    });
+    await until(h.tabs, ["丙", "甲", "乙"], "the downloaded order is shown");
+    await h.tab("甲").click();
+    await p.evaluate(() => window.__minipad.flush());
+    const meta = (await h.mock())[""].meta;
+    assert.deepEqual(meta.order, ["丙", "甲", "乙"], "switching pages does not write the old order back");
+    assert.deepEqual(meta.pinned, ["丙"]);
+    assert.deepEqual(meta.note_groups, { "乙": "g1" });
+    assert.equal(meta.groups[0]?.name, "工作");
+  });
+
+  ui("downloaded changes are applied once the editor is free again", {
+    seed: { ...seed({ "": { "笔记": "旧内容" } }), settings: webdavOn },
+  }, async (h) => {
+    const { p } = h;
+    await h.tab("笔记").dblclick();
+    await p.locator("#tabs .tab input").waitFor();
+    await p.evaluate(() => {
+      window.__mockFiles["笔记"] = "网盘下来的内容";
+      window.__mockEmit("webdav-changed", ["笔记.md"]);
+    });
+    await p.waitForTimeout(300);
+    assert.equal(await h.editor(), "旧内容", "nothing is read while the page is being renamed");
+    await p.keyboard.press("Escape");
+    await until(h.editor, "网盘下来的内容", "read again after the rename box closed");
+  });
+});
+
 suite("0.4.5: local file paths", { concurrency: 1 }, () => {
   ui("executable path requires confirmation and offers a trust checkbox", {
     seed: seed({ "": { "程序": "C:\\files\\setup.exe" } }),
@@ -6865,6 +6927,13 @@ suite("0.4.5: local file paths", { concurrency: 1 }, () => {
   }, async ({ p }) => {
     await p.locator("#editor .local-file-path.missing").waitFor();
     assert.equal(await p.locator("#editor .local-file-path.missing").count(), 1);
+    // 关掉「不存在的文件显示为灰色」马上生效,不用重开
+    await p.click("#btn-settings");
+    await settingsPage(p, "edit");
+    await p.uncheck("#set-local-path-missing");
+    await p.click("#set-save");
+    await until(() => p.locator("#editor .local-file-path.missing").count(), 0, "missing style removed right away");
+    assert.equal(await p.locator("#editor .local-file-path").count(), 1, "the path is still decorated");
   });
 
 

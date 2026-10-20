@@ -354,7 +354,6 @@ const edgeColor = colorPicker(
   () => updateEdgeLinePreview(),
 );
 
-// 查找高亮的颜色,上面那句话是预览
 const webdavColor = colorPicker(
   "webdav",
   "#set-webdav-color",
@@ -369,6 +368,7 @@ const localPathColor = colorPicker(
   "var(--accent-grad)",
 );
 
+// 查找高亮的颜色,上面那句话是预览
 const findColor = colorPicker(
   "find",
   "#set-find-color",

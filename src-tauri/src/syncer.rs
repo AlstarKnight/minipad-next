@@ -709,20 +709,25 @@ fn finish_upload(
     etag: Option<String>,
 ) -> Result<(FileRecord, bool, bool), String> {
     let _lock = WRITE_LOCK.lock().map_err(|e| e.to_string())?;
-    let mut record = record_for(path, uploaded, etag, Some(uploaded.len() as u64), None);
+    let replaced = uploaded != original;
     match check_local(root, path, Some(scanned_hash)) {
         Ok(_) => {
-            let replaced = uploaded != original;
             if replaced {
                 crate::notes::write_atomic_bytes(&root.join(path), uploaded)?;
             }
+            let record = record_for(path, uploaded, etag, Some(uploaded.len() as u64), None);
             Ok((stamp_record(root, path, record), false, replaced))
         }
-        Err(message) if message.contains("在扫描后") => {
-            record.local_size = None;
-            record.local_modified_ns = None;
-            Ok((record, true, false))
+        // 合并后的笔记本信息没能写回本机：以合并前的本机内容为基准、不记 ETag，
+        // 下一轮重新读取网盘再合并，网盘那边改的字段不会被本机的新版本盖掉。
+        Err(message) if message.contains("在扫描后") && replaced => {
+            Ok((record_for(path, original, None, None, None), true, false))
         }
+        Err(message) if message.contains("在扫描后") => Ok((
+            record_for(path, uploaded, etag, Some(uploaded.len() as u64), None),
+            true,
+            false,
+        )),
         Err(message) => Err(message),
     }
 }
@@ -1137,6 +1142,54 @@ mod tests {
             ),
             Action::Upload
         );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn merged_metadata_not_written_back_keeps_remote_changes_for_next_merge() {
+        use serde_json::json;
+        let root = crate::notes::temp_dir("webdav-upload-merged-meta");
+        let path = ".minipad.json";
+        let original = br#"{"order":["a","b"],"icon":"book"}"#;
+        let merged = br#"{"order":["a","b"],"icon":"star"}"#;
+        let newer = br#"{"order":["a","b","c"],"icon":"book"}"#;
+        fs::write(root.join(path), newer).unwrap();
+        let (record, rescan, replaced) = finish_upload(
+            &root,
+            path,
+            &content_hash(path, original),
+            original,
+            merged,
+            Some("merged-etag".into()),
+        )
+        .unwrap();
+        assert!(rescan);
+        assert!(!replaced);
+        assert_eq!(fs::read(root.join(path)).unwrap(), newer);
+        assert_eq!(record.hash, content_hash(path, original));
+        assert_eq!(record.etag, None);
+        let entry = RemoteEntry {
+            href: "/notes/.minipad.json".into(),
+            etag: Some("merged-etag".into()),
+            size: Some(merged.len() as u64),
+            modified: None,
+            directory: false,
+        };
+        assert!(!unchanged_remote(&entry, &record));
+        assert_eq!(
+            decide(
+                Some(&record.hash),
+                Some(&content_hash(path, newer)),
+                Some(&content_hash(path, merged)),
+            ),
+            Action::Conflict
+        );
+        let ours: serde_json::Value = serde_json::from_slice(newer).unwrap();
+        let theirs: serde_json::Value = serde_json::from_slice(merged).unwrap();
+        let (result, conflicts) =
+            merge_metadata(record.base_metadata.as_ref(), &ours, &theirs).unwrap();
+        assert!(conflicts.is_empty());
+        assert_eq!(result, json!({"order":["a","b","c"],"icon":"star"}));
         fs::remove_dir_all(root).unwrap();
     }
 

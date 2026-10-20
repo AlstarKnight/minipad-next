@@ -97,7 +97,7 @@ function render() {
       const metadataBackup = it.kind === "file" &&
         (it.name === ".minipad.json" || it.name.endsWith("/.minipad.json"));
       if (metadataBackup) {
-        meta.textContent = "笔记本设置冲突时网盘那边的版本 · 仅保留备份";
+        meta.textContent = `笔记本设置备份 · ${when(it.deleted)} 留下`;
       } else {
         acts.append(restore);
       }

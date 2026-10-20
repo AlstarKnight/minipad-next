@@ -86,7 +86,7 @@ const localPathDecorations = (doc, from = 0, to = doc.content.size) => {
       if (!child.isText) return;
       for (const match of findLocalPaths(child.text)) {
         decorations.push(Decoration.inline(pos + 1 + offset + match.from, pos + 1 + offset + match.to, {
-          class: missingLocalPaths.get(match.path) ? "local-file-path missing" : "local-file-path",
+          class: pathSettings.local_path_missing !== false && missingLocalPaths.get(match.path) ? "local-file-path missing" : "local-file-path",
           "data-local-path": match.path,
         }));
       }
