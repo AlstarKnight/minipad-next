@@ -95,6 +95,12 @@ export function refreshSharedColors() {
   }
 }
 let presetQueue = Promise.resolve();
+// 电脑版存进设置文件；Android 没有 save_settings，由 mobile.js 换成存在手机上。
+let saveColorSettings = async (next) => {
+  const { saveSettings } = await import("./settings.js");
+  await saveSettings(next);
+};
+export const setColorLibrarySaver = (save) => { saveColorSettings = save; };
 // change(所有颜色, 这一类的快捷色, 材质集合) 返回：
 //   library  新的所有颜色（纯色、渐变、材质混在一起，按 materials 分开保存）
 //   materials 新的材质集合（不给就沿用）
@@ -113,8 +119,7 @@ function updateLibrary(change, kind = "solid", limit = 0) {
       ? [...base.filter((color) => kindOf(color, [...oldMaterials]) !== kind), ...next.quick] : base);
     // 快捷色按 纯色、渐变、材质 分组存
     const quick = KINDS.flatMap((k) => raw.filter((color) => kindOf(color, [...materials]) === k));
-    const { saveSettings } = await import("./settings.js");
-    await saveSettings({
+    await saveColorSettings({
       ...state.settings,
       color_library: all.filter((color) => !materials.has(color)),
       material_library: all.filter((color) => materials.has(color)),
