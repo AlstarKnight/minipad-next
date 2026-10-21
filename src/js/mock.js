@@ -137,6 +137,26 @@ const DEFAULT_SETTINGS = {
   mini_max: 0,
   mini_tab_button: true,
   mini_windows: [],
+  capture_enabled: true,
+  capture_hotkey: "Ctrl+Alt+M",
+  capture_target: "page",
+  capture_book: "",
+  capture_page: "收集箱",
+  capture_name: "快速记录 {{日期}} {{时间:HH.mm}}",
+  capture_where: "end",
+  capture_format: "paragraph",
+  capture_stamp: true,
+  capture_position: "remember",
+  template_book: "模板",
+  snippets: [
+    { trigger: ";rq", text: "{{日期}}" },
+    { trigger: ";sj", text: "{{时间}}" },
+    { trigger: ";xq", text: "{{星期}}" },
+  ],
+  snippet_key: "tab",
+  calc_key: "tab",
+  calc_decimals: "auto",
+  calc_thousands: false,
 };
 
 const has = (obj, key) => Object.prototype.hasOwnProperty.call(obj, key);
@@ -220,6 +240,15 @@ const normPath = (p) => p.toLowerCase().replace(/\//g, "\\").replace(/\\+$/, "")
 
 // 只能是几个选项之一的设置:不认识的值换成第一个(和后端的 pick_one 一样)
 const pickOne = (value, options) => (options.includes(value) ? value : options[0]);
+// 和后端的 tidy_name、tidy_snippets 一样
+const tidyName = (value, fallback) => [...String(value ?? "").trim()].slice(0, 80).join("").trimEnd() || fallback;
+const tidySnippets = (list) => {
+  const seen = new Set();
+  return (Array.isArray(list) ? list : [])
+    .map((x) => ({ trigger: String(x?.trigger ?? "").trim(), text: [...String(x?.text ?? "")].slice(0, 10000).join("") }))
+    .filter((x) => x.trigger && [...x.trigger].length <= 32 && !/\s/.test(x.trigger) && !seen.has(x.trigger) && seen.add(x.trigger))
+    .slice(0, 200);
+};
 // 和 lib.rs 一样：整理、去重，纯色和渐变各自最多 128 个
 const perKind = (list) => {
   const count = { solid: 0, gradient: 0 };
@@ -368,6 +397,8 @@ export function mockApi() {
         books: readBooks({ only }),
         book: bookNames().includes(db.book) ? db.book : "",
         hotkey_error: null,
+        // 测试用 __mockControl.captureError 模拟快速记录的热键注册失败
+        capture_error: window.__mockControl?.captureError ?? null,
         settings_error: null,
         // 测试用 __mockControl.settingsNotice 模拟后端的提示(比如设置文件损坏、已改名留底)
         settings_notice: window.__mockControl?.settingsNotice ?? null,
@@ -417,6 +448,12 @@ export function mockApi() {
       delete b.files[old];
       b.files[n] = content;
       return n;
+    },
+    // 快速记录新建的页面没写东西:直接删掉,不进回收站(只删空的)
+    delete_if_empty: ({ book, name }) => {
+      if (!has(db.books, book) || !has(db.books[book].files, name) || db.books[book].files[name].trim()) return false;
+      delete db.books[book].files[name];
+      return true;
     },
     delete_note: ({ book, name }) => {
       backup();
@@ -590,7 +627,22 @@ export function mockApi() {
         mini_opacity: Math.min(100, Math.max(40, Math.round(Number(settings.mini_opacity)) || 100)),
         mini_max: Math.min(20, Math.max(0, Math.round(Number(settings.mini_max)) || 0)),
         mini_windows: db.settings.mini_windows || [],
+        capture_hotkey: [...String(settings.capture_hotkey ?? "").trim()].slice(0, 40).join(""),
+        capture_target: pickOne(settings.capture_target, ["page", "new"]),
+        capture_page: tidyName(settings.capture_page, "收集箱"),
+        capture_name: tidyName(settings.capture_name, DEFAULT_SETTINGS.capture_name),
+        capture_where: pickOne(settings.capture_where, ["end", "start"]),
+        capture_format: pickOne(settings.capture_format, ["paragraph", "list", "task"]),
+        capture_position: pickOne(settings.capture_position, ["remember", "center", "cursor"]),
+        template_book: tidyName(settings.template_book, "模板"),
+        snippets: tidySnippets(settings.snippets),
+        snippet_key: pickOne(settings.snippet_key, ["tab", "space", "off"]),
+        calc_key: pickOne(settings.calc_key, ["tab", "equals", "off"]),
+        calc_decimals: pickOne(String(settings.calc_decimals), ["auto", "0", "1", "2", "3", "4", "5", "6"]),
       };
+      if (s.capture_enabled !== false && s.capture_hotkey && s.capture_hotkey.toLowerCase() === s.hotkey.toLowerCase()) {
+        throw "快速记录的热键和呼出热键一样,换一个吧";
+      }
       const notes = normPath(s.notes_dir);
       const dest = normPath(s.backup_dir);
       if (s.backup_enabled && notes && dest && (dest === notes || dest.startsWith(notes + "\\"))) {
@@ -697,12 +749,13 @@ export function mockApi() {
     quit_app: () => {},
     // 小窗:预览里不真的开窗口,只记下来并像后端一样发 mini-changed;
     // 小窗那边用 index.html?mini=1&book=&page= 打开(mini_self 从网址里读)
-    mini_open: ({ book, name, x, y }) => {
+    // capture:快速记录,不受小窗开关和个数的限制
+    mini_open: ({ book, name, x, y, capture }) => {
       const s = db.settings;
-      if (!s.mini_enabled) throw "小窗已经关掉了,可以在 设置 → 窗口 里打开";
-      if (s.mini_max && minis.length >= s.mini_max) throw `最多同时开 ${s.mini_max} 个小窗,先关掉一个吧(设置 → 窗口 可以改)`;
+      if (!capture && !s.mini_enabled) throw "小窗已经关掉了,可以在 设置 → 窗口 里打开";
+      if (!capture && s.mini_max && minis.length >= s.mini_max) throw `最多同时开 ${s.mini_max} 个小窗,先关掉一个吧(设置 → 窗口 可以改)`;
       if (!has(db.books, book) || !has(db.books[book].files, name)) throw `找不到页面「${name}」`;
-      if (window.__mockControl) (window.__mockControl.miniOpened ||= []).push({ book, name, x, y });
+      if (window.__mockControl) (window.__mockControl.miniOpened ||= []).push(capture ? { book, name, x, y, capture } : { book, name, x, y });
       if (!minis.some((m) => m.book === book && m.name === name)) minis.push({ book, name });
       emitMinis();
     },
@@ -710,7 +763,7 @@ export function mockApi() {
       const q = new URLSearchParams(location.search);
       if (!q.has("mini")) return null;
       const s = db.settings;
-      return { book: q.get("book") || "", name: q.get("page") || "", top: s.mini_on_top, opacity: s.mini_opacity };
+      return { book: q.get("book") || "", name: q.get("page") || "", top: s.mini_on_top, opacity: s.mini_opacity, capture: q.has("capture") };
     },
     mini_list: () => minis.map((m) => ({ ...m })),
     mini_focus: ({ book, name }) => {

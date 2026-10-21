@@ -852,7 +852,7 @@ html[data-find-pos="bottom"] #status { order: 2; }
 }
 .form input:focus, .form select:focus { border-color: var(--accent); }
 #set-hotkey { cursor: pointer; text-align: center; font-family: var(--mono); }
-#set-hotkey.recording, #set-quick-key.recording { border-color: var(--accent); background: var(--accent-soft); }
+#set-hotkey.recording, #set-quick-key.recording, #set-capture-key.recording { border-color: var(--accent); background: var(--accent-soft); }
 .form .link { color: var(--accent); padding: 0; font-size: 12.5px; }
 .form .error { color: var(--danger); font-size: 12.5px; margin: 8px 0 0; }
 .form .inline { display: flex; gap: 6px; }
@@ -2062,3 +2062,26 @@ html[data-side="rail"] .side-list { align-items: center; gap: 6px; padding: 10px
 .webdav-state-icon.spinning { display: inline-block; animation: webdav-rotate 1.3s linear infinite; }
 @keyframes webdav-rotate { to { transform: rotate(360deg); } }
 #st-webdav { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+
+/* ---------- 快速记录、片段(见 js/capture.js、js/expand.js) ---------- */
+.capture-option.off { opacity: .5; }
+.snippet-list { display: flex; flex-direction: column; gap: 6px; }
+.snippet-row { display: flex; align-items: flex-start; gap: 6px; }
+.form .snippet-row .snippet-trigger { flex: 0 0 7.5em; font-family: var(--mono); }
+.snippet-row .snippet-text {
+  flex: 1;
+  min-width: 0;
+  resize: vertical;
+  padding: 5px 8px;
+  border: 1px solid var(--bar-border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-family: var(--mono);
+  line-height: 1.45;
+  outline: none;
+}
+.snippet-row .snippet-text:focus { border-color: var(--accent); }
+.snippet-row .snippet-del { flex-shrink: 0; width: 26px; height: 28px; padding: 0; border: none; border-radius: 6px; background: transparent; color: var(--muted); font-size: 16px; line-height: 1; }
+.snippet-row .snippet-del:hover { background: var(--accent-soft); color: var(--text); }

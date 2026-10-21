@@ -10,6 +10,7 @@ import { makeSharedColorTools, setColorLibrarySaver } from "./sharedcolors.js";
 import { ask, askText, closeDialog, dialogOpen } from "./ui.js";
 import { setPageLinkHost, pageNamesChanged, applyPageLinkSettings, linkIndex } from "./pagelinkview.js";
 import { resolveTarget } from "./pagelinks.js";
+import { applyExpandSettings, setExpandHost } from "./expand.js";
 
 const invoke = window.__TAURI__?.core?.invoke;
 const el = (id) => document.getElementById(id);
@@ -920,6 +921,8 @@ function loadLook() {
     page_link_cn_brackets: saved.page_link_cn_brackets !== false,
     page_link_color: tidyAccent(typeof saved.page_link_color === "string" ? saved.page_link_color : ""),
     page_link_broken_color: tidyAccent(typeof saved.page_link_broken_color === "string" ? saved.page_link_broken_color : ""),
+    // 行内计算:手机上只有「打 = 就算」,默认不开
+    calc_key: saved.calc_key === "equals" ? "equals" : "off",
   };
 }
 
@@ -959,6 +962,8 @@ function applyLook() {
   el("look-page-link-cn").checked = look.page_link_cn_brackets;
   for (const c of pageLinkColors) c.show();
   applyPageLinkSettings(look, { mobile: true, tapEdit: look.link_tap_edit });
+  el("look-calc").checked = look.calc_key === "equals";
+  applyExpandSettings({ calc_key: look.calc_key });
   el("viewport-debug").hidden = !look.debug;
   if (look.debug) requestAnimationFrame(fitViewport);
   renderDrawer();
@@ -987,6 +992,9 @@ el("look-link-tap-edit").addEventListener("change", (e) => setLook({ link_tap_ed
 el("look-page-links").addEventListener("change", (e) => setLook({ page_links: e.target.checked }));
 for (const b of el("look-page-link-suggest").children) b.addEventListener("click", () => setLook({ page_link_suggest: b.dataset.suggest }));
 el("look-page-link-cn").addEventListener("change", (e) => setLook({ page_link_cn_brackets: e.target.checked }));
+el("look-calc").addEventListener("change", (e) => setLook({ calc_key: e.target.checked ? "equals" : "off" }));
+// 算不出来时在状态栏说一句
+setExpandHost({ notify });
 systemDark.addEventListener("change", applyLook);
 // 格式栏「自定义」改了就记下来,重启后照旧
 el("format-bar").addEventListener("format-bar-items", (e) => setLook(e.detail));

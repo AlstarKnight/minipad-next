@@ -1139,6 +1139,20 @@ pub fn move_to_trash(root: &Path, book: &str, name: &str) -> Result<(), String> 
     fs::rename(&src, dst).map_err(|e| e.to_string())
 }
 
+/// 删掉空页面(只有空白也算空),不进回收站;不是空的、或者已经没有了就不动。删了返回 true
+#[cfg(any(desktop, test))]
+pub fn delete_if_empty(root: &Path, book: &str, name: &str) -> Result<bool, String> {
+    let path = page_path(root, book, name)?;
+    match fs::read_to_string(&path) {
+        Ok(text) if text.trim().is_empty() => fs::remove_file(&path)
+            .map(|()| true)
+            .map_err(|e| e.to_string()),
+        Ok(_) => Ok(false),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
 // ---------- 回收站 ----------
 // 删掉的页面在 .trash/<笔记本>/<名字>.<秒数>.md(「默认」的直接在 .trash 里),
 // 删掉的笔记本是 .trash/<名字>.<秒数> 文件夹;同一秒删了同名的,后面还会多个 " (2)"
@@ -2050,6 +2064,24 @@ mod tests {
         assert!(in_book[0].starts_with("周报.") && in_book[0].ends_with(".md"));
         // 不存在的页面直接忽略
         move_to_trash(&root, "", "没有这个").unwrap();
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn only_empty_pages_are_deleted_without_the_trash() {
+        let root = temp_dir("delete-empty");
+        fs::write(note_path(&root, "空的"), " \n\n").unwrap();
+        fs::write(note_path(&root, "有字"), "写了").unwrap();
+        assert_eq!(delete_if_empty(&root, "", "空的"), Ok(true));
+        assert!(!note_path(&root, "空的").exists());
+        assert!(!root.join(TRASH_DIR).exists());
+        assert_eq!(delete_if_empty(&root, "", "有字"), Ok(false));
+        assert_eq!(
+            fs::read_to_string(note_path(&root, "有字")).unwrap(),
+            "写了"
+        );
+        assert_eq!(delete_if_empty(&root, "", "没有这个"), Ok(false));
+        assert!(delete_if_empty(&root, "", "../外面").is_err());
         fs::remove_dir_all(&root).unwrap();
     }
 

@@ -23,7 +23,7 @@ use tauri::{
 };
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
-use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 
 /// 0.1.x 用的应用标识符。0.2.0 换了标识符,启动时把旧位置的设置和笔记搬过来。
 const OLD_IDENTIFIER: &str = "com.minipadnext.app";
@@ -50,6 +50,31 @@ impl Default for Geom {
         }
     }
 }
+
+/// 片段(0.5.1):打 trigger 再按 Tab(或空格)换成 text
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+#[serde(default)]
+pub struct Snippet {
+    trigger: String,
+    text: String,
+}
+
+fn default_snippets() -> Vec<Snippet> {
+    [
+        (";rq", "{{日期}}"),
+        (";sj", "{{时间}}"),
+        (";xq", "{{星期}}"),
+    ]
+    .map(|(trigger, text)| Snippet {
+        trigger: trigger.into(),
+        text: text.into(),
+    })
+    .to_vec()
+}
+
+const DEFAULT_CAPTURE_PAGE: &str = "收集箱";
+const DEFAULT_CAPTURE_NAME: &str = "快速记录 {{日期}} {{时间:HH.mm}}";
+const DEFAULT_TEMPLATE_BOOK: &str = "模板";
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(default)]
@@ -291,8 +316,42 @@ pub struct Settings {
     image_paste: bool,
     /// 图片显示多大:full 最宽铺满 / medium 最宽一半多 / small 小图
     image_size: String,
+    /// 0.5.1 快速记录:全局热键弹出小窗,写进一个页面(或者新建一页)
+    capture_enabled: bool,
+    /// 快速记录的全局热键(写法同 hotkey),空着就只能从托盘菜单打开
+    capture_hotkey: String,
+    /// 写到:page 追加到一个页面 / new 每次新建一页
+    capture_target: String,
+    /// 写到哪个笔记本(「默认」是空字符串;不在了就用默认笔记本)
+    capture_book: String,
+    /// 追加到哪一页,没有就新建
+    capture_page: String,
+    /// 每次新建一页时的名字,可以用 {{日期}} 这些变量
+    capture_name: String,
+    /// 新的一条加在 end 末尾 / start 开头(页面以标题开头时放在标题下面)
+    capture_where: String,
+    /// 每一条是 paragraph 段落 / list 列表项 / task 待办
+    capture_format: String,
+    /// 每一条前面写上时间(格式同 F5)
+    capture_stamp: bool,
+    /// 小窗出现在 remember 上次的位置 / center 屏幕中间 / cursor 鼠标旁边
+    capture_position: String,
+    /// 0.5.1 模板放在哪个笔记本里:每一页就是一个模板
+    template_book: String,
+    /// 片段:打触发词再按 Tab(或空格)换成内容
+    snippets: Vec<Snippet>,
+    /// 片段怎么展开:tab / space / off
+    snippet_key: String,
+    /// 行内计算:tab 打完 = 再按 Tab / equals 打 = 就算 / off 不算
+    calc_key: String,
+    /// 结果的小数位:auto 最多 10 位、去掉末尾的 0 / "0".."6" 固定几位
+    calc_decimals: String,
+    /// 结果加千分位逗号
+    calc_thousands: bool,
     /// 每页小窗的位置、大小、置顶和不透明度(程序自己记,保存设置时沿用这里的)
     mini_windows: Vec<mini::MiniWin>,
+    /// 快速记录小窗的位置和大小(程序自己记,保存设置时沿用这里的)
+    capture_window: Option<Geom>,
     window: Option<Geom>,
 }
 
@@ -433,7 +492,24 @@ impl Default for Settings {
             mini_tab_button: true,
             image_paste: true,
             image_size: "full".into(),
+            capture_enabled: true,
+            capture_hotkey: "Ctrl+Alt+M".into(),
+            capture_target: "page".into(),
+            capture_book: String::new(),
+            capture_page: DEFAULT_CAPTURE_PAGE.into(),
+            capture_name: DEFAULT_CAPTURE_NAME.into(),
+            capture_where: "end".into(),
+            capture_format: "paragraph".into(),
+            capture_stamp: true,
+            capture_position: "remember".into(),
+            template_book: DEFAULT_TEMPLATE_BOOK.into(),
+            snippets: default_snippets(),
+            snippet_key: "tab".into(),
+            calc_key: "tab".into(),
+            calc_decimals: "auto".into(),
+            calc_thousands: false,
             mini_windows: Vec::new(),
+            capture_window: None,
             window: None,
         }
     }
@@ -452,6 +528,8 @@ struct LoadedState {
     book: String,
     /// 启动时热键注册失败的原因(比如被别的软件占用了)
     hotkey_error: Option<String>,
+    /// 快速记录的热键注册失败的原因
+    capture_error: Option<String>,
     version: String,
     debug: bool,
 }
@@ -491,6 +569,11 @@ struct AppState {
     edge: Mutex<EdgeState>,
     geom: Mutex<Option<Geom>>,
     hotkey_error: Mutex<Option<String>>,
+    /// 快速记录的热键(0.5.1):注册上的那个的 id(按下的是它就快速记录),注册不上的原因
+    capture_key: Mutex<Option<u32>>,
+    capture_error: Mutex<Option<String>>,
+    /// 托盘菜单里的「快速记录」,跟着设置里的开关变灰
+    capture_item: Mutex<Option<MenuItem<tauri::Wry>>>,
     /// 设置里正在录新热键,全局热键暂时停用
     hotkey_paused: AtomicBool,
     /// 窗口出来以后用户打过字:只要窗口还有焦点,就不自动缩回去
@@ -515,6 +598,8 @@ struct OpenMini {
     label: String,
     book: String,
     name: String,
+    /// 快速记录的小窗(0.5.1):Esc 或者再按一次热键收起,单独记位置,重启后不恢复
+    capture: bool,
 }
 
 #[derive(Serialize)]
@@ -854,6 +939,29 @@ fn pick_one(value: &mut String, options: &[&str]) {
     }
 }
 
+/// 名字类的设置:去掉首尾空格,最多 80 个字,空着用默认的
+fn tidy_name(value: &mut String, default: &str) {
+    let v: String = value.trim().chars().take(80).collect();
+    *value = match v.trim_end() {
+        "" => default.into(),
+        v => v.into(),
+    };
+}
+
+/// 片段:触发词不能空、不能有空白、最多 32 个字;内容最多 10000 个字;同一个触发词只留第一条;最多 200 条
+fn tidy_snippets(list: &mut Vec<Snippet>) {
+    let mut seen = std::collections::HashSet::new();
+    list.retain_mut(|s| {
+        s.trigger = s.trigger.trim().to_string();
+        s.text = s.text.chars().take(10_000).collect();
+        !s.trigger.is_empty()
+            && s.trigger.chars().count() <= 32
+            && !s.trigger.chars().any(char::is_whitespace)
+            && seen.insert(s.trigger.clone())
+    });
+    list.truncate(200);
+}
+
 /// 启动读取后和保存前整理设置:去掉首尾空格,数字限制在合理范围
 fn tidy_settings(s: &mut Settings) {
     s.hotkey = s.hotkey.trim().to_string();
@@ -967,6 +1075,21 @@ fn tidy_settings(s: &mut Settings) {
     s.mini_opacity = mini::clamp_opacity(s.mini_opacity);
     s.mini_max = s.mini_max.min(20);
     mini::tidy(&mut s.mini_windows);
+    s.capture_hotkey = s.capture_hotkey.trim().chars().take(40).collect();
+    pick_one(&mut s.capture_target, &["page", "new"]);
+    tidy_name(&mut s.capture_page, DEFAULT_CAPTURE_PAGE);
+    tidy_name(&mut s.capture_name, DEFAULT_CAPTURE_NAME);
+    pick_one(&mut s.capture_where, &["end", "start"]);
+    pick_one(&mut s.capture_format, &["paragraph", "list", "task"]);
+    pick_one(&mut s.capture_position, &["remember", "center", "cursor"]);
+    tidy_name(&mut s.template_book, DEFAULT_TEMPLATE_BOOK);
+    tidy_snippets(&mut s.snippets);
+    pick_one(&mut s.snippet_key, &["tab", "space", "off"]);
+    pick_one(&mut s.calc_key, &["tab", "equals", "off"]);
+    pick_one(
+        &mut s.calc_decimals,
+        &["auto", "0", "1", "2", "3", "4", "5", "6"],
+    );
     let mut seen = std::collections::HashSet::new();
     s.sel_bar_items
         .retain(|id| !id.is_empty() && id.len() <= 32 && seen.insert(id.clone()));
@@ -1020,10 +1143,45 @@ fn migrate_old_data(app: &AppHandle) {
     }
 }
 
-fn register_hotkey(app: &AppHandle, hotkey: &str) -> Result<(), String> {
+/// 注册全局热键:呼出主窗口的,和快速记录的(关着就没有)。返回呼出热键的结果;
+/// 快速记录的热键注册不上不算失败,原因记在 capture_error
+fn register_hotkey(app: &AppHandle, hotkey: &str, capture: Option<&str>) -> Result<(), String> {
     let gs = app.global_shortcut();
     let _ = gs.unregister_all();
-    gs.register(hotkey).map_err(|e| e.to_string())
+    let result = gs.register(hotkey).map_err(|e| e.to_string());
+    let (mut id, mut error) = (None, None);
+    if let Some(c) = capture {
+        match gs.register(c) {
+            Ok(()) => id = c.parse::<Shortcut>().ok().map(|k| k.id()),
+            Err(e) => error = Some(format!("{c}:{e}")),
+        }
+    }
+    let st = app.state::<AppState>();
+    *st.capture_key.lock().unwrap() = id;
+    *st.capture_error.lock().unwrap() = error;
+    result
+}
+
+/// 快速记录要注册的热键:关着或者空着就没有
+fn capture_of(s: &Settings) -> Option<&str> {
+    (s.capture_enabled && !s.capture_hotkey.is_empty()).then_some(s.capture_hotkey.as_str())
+}
+
+/// 快速记录的热键不能和呼出热键一样(写法不同、按键一样也算)
+fn check_capture_hotkey(s: &Settings) -> Result<(), String> {
+    let Some(c) = capture_of(s) else {
+        return Ok(());
+    };
+    let id = |k: &str| k.parse::<Shortcut>().ok().map(|h| h.id());
+    let same = match (id(c), id(&s.hotkey)) {
+        (Some(a), Some(b)) => a == b,
+        _ => c.eq_ignore_ascii_case(&s.hotkey),
+    };
+    if same {
+        Err("快速记录的热键和呼出热键一样,换一个吧".into())
+    } else {
+        Ok(())
+    }
 }
 
 /// 重新启用全局热键(录热键时暂停过的话)
@@ -1032,9 +1190,9 @@ fn resume_hotkey_if_paused(app: &AppHandle) {
     if !st.hotkey_paused.swap(false, Ordering::SeqCst) {
         return;
     }
-    let hotkey = st.settings.lock().unwrap().hotkey.clone();
-    let result = register_hotkey(app, &hotkey);
-    *st.hotkey_error.lock().unwrap() = result.err().map(|e| format!("{hotkey}:{e}"));
+    let s = st.settings.lock().unwrap().clone();
+    let result = register_hotkey(app, &s.hotkey, capture_of(&s));
+    *st.hotkey_error.lock().unwrap() = result.err().map(|e| format!("{}:{e}", s.hotkey));
 }
 
 const WELCOME: &str = r#"# 欢迎使用 Minipad Next
@@ -1103,6 +1261,7 @@ fn load_state(app: AppHandle, only: Option<notes::OnlyPage>) -> Result<LoadedSta
         String::new()
     };
     let hotkey_error = st.hotkey_error.lock().unwrap().clone();
+    let capture_error = st.capture_error.lock().unwrap().clone();
     let settings_error = st.settings_read_error.lock().unwrap().clone();
     let settings_notice = st.settings_notice.lock().unwrap().take();
     Ok(LoadedState {
@@ -1113,6 +1272,7 @@ fn load_state(app: AppHandle, only: Option<notes::OnlyPage>) -> Result<LoadedSta
         books,
         book,
         hotkey_error,
+        capture_error,
         version: app.package_info().version.to_string(),
         debug: cfg!(debug_assertions),
     })
@@ -1204,6 +1364,12 @@ fn rename_note(app: AppHandle, book: String, old: String, new: String) -> Result
 fn delete_note(app: AppHandle, book: String, name: String) -> Result<(), String> {
     maybe_backup(&app);
     notes::move_to_trash(&current_notes_dir(&app), &book, &name)
+}
+
+/// 快速记录新建的页面没写东西:直接删掉,不进回收站(只删空的),删了返回 true
+#[tauri::command]
+fn delete_if_empty(app: AppHandle, book: String, name: String) -> Result<bool, String> {
+    notes::delete_if_empty(&current_notes_dir(&app), &book, &name)
 }
 
 /// 把页面移到另一个笔记本,返回它在那边的名字(重名时会加编号)
@@ -1523,7 +1689,9 @@ fn save_settings(
     new.window = old.window.clone();
     new.ball_pos = old.ball_pos;
     new.mini_windows = old.mini_windows.clone();
+    new.capture_window = old.capture_window.clone();
     tidy_settings(&mut new);
+    check_capture_hotkey(&new)?;
 
     let old_notes = notes_dir(&app, &old);
     let new_notes = notes_dir(&app, &new);
@@ -1541,8 +1709,10 @@ fn save_settings(
     // 先验证并更新全局热键和开机启动，最后才复制目录。
     // 后续失败时回滚系统设置，避免产生“设置未切换、目标已有副本”的半途状态。
     let hotkey_changed = new.hotkey != old.hotkey;
-    let retry_hotkey = state.hotkey_error.lock().unwrap().is_some();
-    let update_hotkey = hotkey_changed || retry_hotkey;
+    let capture_changed = capture_of(&new) != capture_of(&old);
+    let retry_hotkey = state.hotkey_error.lock().unwrap().is_some()
+        || state.capture_error.lock().unwrap().is_some();
+    let update_hotkey = hotkey_changed || capture_changed || retry_hotkey;
     let update_autostart = new.autostart != old.autostart;
     let autolaunch = app.autolaunch();
     apply_settings_side_effects(
@@ -1551,11 +1721,19 @@ fn save_settings(
         new.autostart,
         |use_new| {
             state.hotkey_paused.store(false, Ordering::SeqCst);
-            let target = if use_new { &new.hotkey } else { &old.hotkey };
-            let result = register_hotkey(&app, target);
+            let target = if use_new { &new } else { &old };
+            let hotkey = &target.hotkey;
+            let result = register_hotkey(&app, hotkey, capture_of(target));
             *state.hotkey_error.lock().unwrap() =
-                result.as_ref().err().map(|e| format!("{target}:{e}"));
-            result.map_err(|e| format!("热键 {target} 无法使用:{e}"))
+                result.as_ref().err().map(|e| format!("{hotkey}:{e}"));
+            result.map_err(|e| format!("热键 {hotkey} 无法使用:{e}"))?;
+            // 刚改的快速记录热键注册不上:和呼出热键一样,不保存
+            match state.capture_error.lock().unwrap().clone() {
+                Some(e) if use_new && capture_changed => {
+                    Err(format!("快速记录的热键无法使用({e}),换一个吧"))
+                }
+                _ => Ok(()),
+            }
         },
         |enable| {
             let result = if enable {
@@ -1579,6 +1757,9 @@ fn save_settings(
     }
     for w in mini_windows(&app) {
         let _ = w.set_skip_taskbar(!new.show_in_taskbar);
+    }
+    if let Some(item) = state.capture_item.lock().unwrap().as_ref() {
+        let _ = item.set_enabled(new.capture_enabled);
     }
     // 关掉贴边隐藏或者换了样式(露出的宽度不同),先把窗口放出来
     if !new.edge_hide
@@ -2143,12 +2324,14 @@ fn update_entry(app: &AppHandle, book: &str, name: &str, change: impl FnOnce(&mu
     mini::remember(&mut st.settings.lock().unwrap().mini_windows, entry);
 }
 
+/// capture:快速记录(0.5.1),不受小窗开关和个数的限制,位置单独记,重启后不恢复
 fn open_mini(
     app: &AppHandle,
     book: &str,
     name: &str,
     at: Option<(f64, f64)>,
     focus: bool,
+    capture: bool,
 ) -> Result<(), String> {
     if let Some(m) = open_minis(app)
         .into_iter()
@@ -2158,14 +2341,28 @@ fn open_mini(
             let _ = w.show();
             let _ = w.set_focus();
         }
+        // 这一页已经开在小窗里时按了快速记录:让那个小窗加一条新的
+        if capture {
+            let st = app.state::<AppState>();
+            if let Some(o) = st
+                .minis
+                .lock()
+                .unwrap()
+                .iter_mut()
+                .find(|o| o.label == m.label)
+            {
+                o.capture = true;
+            }
+            let _ = app.emit_to(m.label.as_str(), "mini-capture", ());
+        }
         return Ok(());
     }
     let s = app.state::<AppState>().settings.lock().unwrap().clone();
-    if !s.mini_enabled {
+    if !capture && !s.mini_enabled {
         return Err("小窗已经关掉了,可以在 设置 → 窗口 里打开".into());
     }
     let count = open_minis(app).len();
-    if s.mini_max > 0 && count >= s.mini_max as usize {
+    if !capture && s.mini_max > 0 && count >= s.mini_max as usize {
         return Err(format!(
             "最多同时开 {} 个小窗,先关掉一个吧(设置 → 窗口 可以改)",
             s.mini_max
@@ -2177,9 +2374,14 @@ fn open_mini(
     let st = app.state::<AppState>();
     let label = format!("mini-{}", st.mini_seq.fetch_add(1, Ordering::SeqCst) + 1);
     let entry = mini_entry(app, book, name);
+    let (w, h) = if capture {
+        (420.0, 300.0)
+    } else {
+        (340.0, 400.0)
+    };
     let win = WebviewWindowBuilder::new(app, &label, WebviewUrl::App("index.html".into()))
         .title(name)
-        .inner_size(340.0, 400.0)
+        .inner_size(w, h)
         .min_inner_size(220.0, 140.0)
         .decorations(false)
         .transparent(true)
@@ -2190,7 +2392,9 @@ fn open_mini(
         .visible(false)
         .build()
         .map_err(|e| e.to_string())?;
-    if entry.w > 0 {
+    if capture {
+        place_capture(app, &win, &s);
+    } else if entry.w > 0 {
         apply_saved_geometry(
             &win,
             &Geom {
@@ -2211,8 +2415,11 @@ fn open_mini(
         label,
         book: book.into(),
         name: name.into(),
+        capture,
     });
-    update_entry(app, book, name, |m| m.open = true);
+    if !capture {
+        update_entry(app, book, name, |m| m.open = true);
+    }
     // 开机自启时主窗口藏在托盘里:恢复的小窗也先藏着,按热键时跟主窗口一起出来
     let hidden_main = !main_window(app).is_some_and(|m| m.is_visible().unwrap_or(false));
     if focus || s.mini_hotkey != "follow" || !hidden_main {
@@ -2226,8 +2433,66 @@ fn open_mini(
     Ok(())
 }
 
-/// 把一页放进小窗(主窗口已经先把这页存好了);x、y 是拖出标签时松手的屏幕位置。
-/// 建窗口的命令要用 async,在 Windows 上同步命令里建窗口会卡死
+/// 快速记录的小窗放在哪:上次的位置(没有就和 center 一样)/ 鼠标所在屏幕的中间 / 鼠标旁边。
+/// 不是 remember 时大小也用上次的
+fn place_capture(app: &AppHandle, win: &WebviewWindow, s: &Settings) {
+    if let Some(g) = s.capture_window.as_ref().filter(|g| g.w > 0) {
+        if s.capture_position == "remember" {
+            return apply_saved_geometry(win, g);
+        }
+        if g.w >= 200 && g.h >= 150 {
+            let _ = win.set_size(PhysicalSize::new(g.w, g.h));
+        }
+    }
+    let Ok(cursor) = app.cursor_position() else {
+        let _ = win.center();
+        return;
+    };
+    let monitor = app
+        .monitor_from_point(cursor.x, cursor.y)
+        .ok()
+        .flatten()
+        .or_else(|| app.primary_monitor().ok().flatten());
+    let (Some(m), Ok(size)) = (monitor, win.outer_size()) else {
+        let _ = win.center();
+        return;
+    };
+    let a = m.work_area();
+    let (x, y) = mini::capture_at(
+        &s.capture_position,
+        (
+            a.position.x,
+            a.position.y,
+            a.size.width as i32,
+            a.size.height as i32,
+        ),
+        (size.width as i32, size.height as i32),
+        (cursor.x as i32, cursor.y as i32),
+    );
+    let _ = win.set_position(PhysicalPosition::new(x, y));
+}
+
+/// 快速记录(0.5.1):快速记录的小窗开着、又在最前面,就收起它(小窗先存好);
+/// 不然让主窗口找好要写的页面,用快速记录的方式打开小窗
+fn quick_capture(app: &AppHandle) {
+    let focused = open_minis(app).into_iter().find(|m| {
+        m.capture
+            && app
+                .get_webview_window(&m.label)
+                .is_some_and(|w| w.is_focused().unwrap_or(false))
+    });
+    match focused {
+        Some(m) => {
+            let _ = app.emit_to(m.label.as_str(), "mini-close-request", ());
+        }
+        None => {
+            let _ = app.emit_to("main", "quick-capture", ());
+        }
+    }
+}
+
+/// 把一页放进小窗(主窗口已经先把这页存好了);x、y 是拖出标签时松手的屏幕位置;
+/// capture 是快速记录。建窗口的命令要用 async,在 Windows 上同步命令里建窗口会卡死
 #[tauri::command]
 async fn mini_open(
     app: AppHandle,
@@ -2235,8 +2500,9 @@ async fn mini_open(
     name: String,
     x: Option<f64>,
     y: Option<f64>,
+    capture: Option<bool>,
 ) -> Result<(), String> {
-    open_mini(&app, &book, &name, x.zip(y), true)
+    open_mini(&app, &book, &name, x.zip(y), true, capture == Some(true))
 }
 
 #[derive(Serialize)]
@@ -2245,6 +2511,7 @@ struct MiniSelf {
     name: String,
     top: bool,
     opacity: u32,
+    capture: bool,
 }
 
 /// 小窗启动时问自己放的是哪一页
@@ -2257,6 +2524,7 @@ fn mini_self(app: AppHandle, window: WebviewWindow) -> Option<MiniSelf> {
         name: m.name,
         top: e.top,
         opacity: e.opacity,
+        capture: m.capture,
     })
 }
 
@@ -2353,7 +2621,7 @@ fn mini_set(app: AppHandle, window: WebviewWindow, top: Option<bool>, opacity: O
 async fn mini_restore(app: AppHandle) {
     let pending = std::mem::take(&mut *app.state::<AppState>().mini_restore.lock().unwrap());
     for (book, name) in pending {
-        if let Err(e) = open_mini(&app, &book, &name, None, false) {
+        if let Err(e) = open_mini(&app, &book, &name, None, false, false) {
             eprintln!("没能恢复小窗「{name}」:{e}");
         }
     }
@@ -2418,6 +2686,19 @@ fn remember_mini_geometry(app: &AppHandle, window: &tauri::Window) {
         return;
     };
     if window.is_minimized().unwrap_or(false) || s.width == 0 {
+        return;
+    }
+    if m.capture {
+        app.state::<AppState>()
+            .settings
+            .lock()
+            .unwrap()
+            .capture_window = Some(Geom {
+            x: p.x,
+            y: p.y,
+            w: s.width,
+            h: s.height,
+        });
         return;
     }
     update_entry(app, &m.book, &m.name, |e| {
@@ -2916,8 +3197,14 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
-                .with_handler(|app, _shortcut, event| {
-                    if event.state() == ShortcutState::Pressed {
+                .with_handler(|app, shortcut, event| {
+                    if event.state() != ShortcutState::Pressed {
+                        return;
+                    }
+                    let capture = *app.state::<AppState>().capture_key.lock().unwrap();
+                    if capture == Some(shortcut.id()) {
+                        quick_capture(app);
+                    } else {
                         toggle_main(app);
                     }
                 })
@@ -2935,6 +3222,7 @@ pub fn run() {
             create_note,
             rename_note,
             delete_note,
+            delete_if_empty,
             move_note,
             save_meta,
             create_book,
@@ -3035,9 +3323,13 @@ pub fn run() {
                     }
                 }
                 *st.settings_notice.lock().unwrap() = settings_notice;
-                if let Err(e) = register_hotkey(&handle, &settings.hotkey) {
+                if let Err(e) = register_hotkey(&handle, &settings.hotkey, capture_of(&settings)) {
                     eprintln!("热键注册失败: {e}");
                     *st.hotkey_error.lock().unwrap() = Some(format!("{}:{e}", settings.hotkey));
+                }
+                let capture_error = st.capture_error.lock().unwrap().clone();
+                if let Some(e) = capture_error {
+                    eprintln!("快速记录的热键注册失败: {e}");
                 }
             }
 
@@ -3055,11 +3347,19 @@ pub fn run() {
 
             // 托盘
             let toggle = MenuItem::with_id(app, "toggle", "显示 / 隐藏", true, None::<&str>)?;
+            let capture = MenuItem::with_id(
+                app,
+                "capture",
+                "快速记录",
+                settings.capture_enabled,
+                None::<&str>,
+            )?;
+            *handle.state::<AppState>().capture_item.lock().unwrap() = Some(capture.clone());
             let open_dir =
                 MenuItem::with_id(app, "open_dir", "打开笔记文件夹", true, None::<&str>)?;
             let sep = PredefinedMenuItem::separator(app)?;
             let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&toggle, &open_dir, &sep, &quit])?;
+            let menu = Menu::with_items(app, &[&toggle, &capture, &open_dir, &sep, &quit])?;
             TrayIconBuilder::with_id("main")
                 .icon(app.default_window_icon().unwrap().clone())
                 .tooltip("Minipad Next")
@@ -3067,6 +3367,7 @@ pub fn run() {
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "toggle" => toggle_main(app),
+                    "capture" => quick_capture(app),
                     "open_dir" => {
                         let _ = open_notes_dir(app.clone());
                     }
@@ -3697,6 +3998,116 @@ mod tests {
         let old: Settings = serde_json::from_str(r#"{"hotkey":"Ctrl+M"}"#).unwrap();
         assert!(old.page_links && old.pinyin_match);
         assert_eq!(old.page_link_rename, "ask");
+    }
+
+    #[test]
+    fn tidy_settings_keeps_capture_template_snippet_and_calc_options_known() {
+        let mut s = Settings::default();
+        let options = |s: &Settings| {
+            [
+                s.capture_target.clone(),
+                s.capture_where.clone(),
+                s.capture_format.clone(),
+                s.capture_position.clone(),
+                s.snippet_key.clone(),
+                s.calc_key.clone(),
+                s.calc_decimals.clone(),
+            ]
+        };
+        assert_eq!(
+            options(&s),
+            ["page", "end", "paragraph", "remember", "tab", "tab", "auto"]
+        );
+        assert!(s.capture_enabled && s.capture_stamp && !s.calc_thousands);
+        assert_eq!(s.capture_hotkey, "Ctrl+Alt+M");
+        assert_eq!(
+            (s.capture_page.as_str(), s.template_book.as_str()),
+            ("收集箱", "模板")
+        );
+        s.capture_target = "new".into();
+        s.capture_where = "start".into();
+        s.capture_format = "task".into();
+        s.capture_position = "cursor".into();
+        s.snippet_key = "space".into();
+        s.calc_key = "equals".into();
+        s.calc_decimals = "2".into();
+        tidy_settings(&mut s);
+        assert_eq!(
+            options(&s),
+            ["new", "start", "task", "cursor", "space", "equals", "2"]
+        );
+        s.capture_target = "both".into();
+        s.capture_where = "middle".into();
+        s.capture_format = "heading".into();
+        s.capture_position = "top".into();
+        s.snippet_key = "enter".into();
+        s.calc_key = "always".into();
+        s.calc_decimals = "7".into();
+        tidy_settings(&mut s);
+        assert_eq!(
+            options(&s),
+            ["page", "end", "paragraph", "remember", "tab", "tab", "auto"]
+        );
+        // 名字:去掉首尾空格,空着用默认的
+        s.capture_hotkey = "  Ctrl+Shift+K ".into();
+        s.capture_page = "  ".into();
+        s.capture_name = " 灵感 {{日期}} ".into();
+        s.template_book = "".into();
+        tidy_settings(&mut s);
+        assert_eq!(s.capture_hotkey, "Ctrl+Shift+K");
+        assert_eq!(s.capture_page, "收集箱");
+        assert_eq!(s.capture_name, "灵感 {{日期}}");
+        assert_eq!(s.template_book, "模板");
+        // 0.5.0 的设置文件里没有这几项,读出来是默认值(三个默认片段)
+        let old: Settings = serde_json::from_str(r#"{"hotkey":"Ctrl+M"}"#).unwrap();
+        assert!(old.capture_enabled);
+        assert_eq!(
+            old.snippets
+                .iter()
+                .map(|s| s.trigger.as_str())
+                .collect::<Vec<_>>(),
+            [";rq", ";sj", ";xq"]
+        );
+    }
+
+    #[test]
+    fn snippets_need_a_trigger_without_spaces_and_keep_the_first_of_each() {
+        let snip = |trigger: &str, text: &str| Snippet {
+            trigger: trigger.into(),
+            text: text.into(),
+        };
+        let mut list = vec![
+            snip(" ;dz ", "地址"),
+            snip("", "没有触发词"),
+            snip("a b", "有空格"),
+            snip(";dz", "重复的"),
+            snip(&"x".repeat(33), "太长"),
+            snip(";long", &"字".repeat(10_005)),
+        ];
+        list.extend((0..300).map(|i| snip(&format!(";s{i}"), "")));
+        tidy_snippets(&mut list);
+        assert_eq!(list.len(), 200);
+        assert_eq!(list[0], snip(";dz", "地址"));
+        assert_eq!(list[1].trigger, ";long");
+        assert_eq!(list[1].text.chars().count(), 10_000);
+        assert_eq!(list[2].trigger, ";s0");
+    }
+
+    #[test]
+    fn capture_hotkey_cannot_be_the_main_hotkey() {
+        let mut s = Settings::default();
+        assert!(check_capture_hotkey(&s).is_ok());
+        s.capture_hotkey = "ctrl+m".into();
+        assert!(check_capture_hotkey(&s).is_err());
+        s.capture_hotkey = "Control+M".into();
+        assert!(check_capture_hotkey(&s).is_err());
+        // 关掉了或者空着就不用比
+        s.capture_enabled = false;
+        assert!(check_capture_hotkey(&s).is_ok());
+        s.capture_enabled = true;
+        s.capture_hotkey = String::new();
+        assert!(check_capture_hotkey(&s).is_ok());
+        assert_eq!(capture_of(&s), None);
     }
 
     #[test]

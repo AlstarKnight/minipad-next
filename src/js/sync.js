@@ -48,6 +48,7 @@ export function reload() {
       showNote();
       const notices = [
         st.hotkey_error && "热键注册失败(" + st.hotkey_error + "),请在设置里换一个",
+        st.capture_error && "快速记录的热键注册失败(" + st.capture_error + "),可以在 设置 → 常规 里换一个",
         st.settings_error && "原设置文件读取失败，已禁用设置写入；请检查 settings.json 后重启：" + st.settings_error,
         st.settings_notice,
       ].filter(Boolean);

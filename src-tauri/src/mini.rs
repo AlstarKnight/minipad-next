@@ -65,9 +65,51 @@ pub fn tidy(list: &mut Vec<MiniWin>) {
     *list = kept;
 }
 
+/// 快速记录的小窗(0.5.1)放在哪:cursor 放在鼠标右下方一点,其余放在屏幕(area = x, y, 宽, 高,
+/// 不算任务栏)中间;超出屏幕就往回挪,比屏幕还大时靠左上。都是物理像素
+pub fn capture_at(
+    how: &str,
+    area: (i32, i32, i32, i32),
+    size: (i32, i32),
+    cursor: (i32, i32),
+) -> (i32, i32) {
+    let (ax, ay, aw, ah) = area;
+    let (w, h) = size;
+    let (x, y) = if how == "cursor" {
+        (cursor.0 + 12, cursor.1 + 12)
+    } else {
+        (ax + (aw - w) / 2, ay + (ah - h) / 2)
+    };
+    (x.min(ax + aw - w).max(ax), y.min(ay + ah - h).max(ay))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn capture_window_sits_in_the_middle_or_by_the_mouse_and_stays_on_screen() {
+        let area = (1920, 0, 1920, 1040);
+        assert_eq!(capture_at("center", area, (420, 300), (0, 0)), (2670, 370));
+        assert_eq!(
+            capture_at("remember", area, (420, 300), (0, 0)),
+            (2670, 370)
+        );
+        assert_eq!(
+            capture_at("cursor", area, (420, 300), (2000, 100)),
+            (2012, 112)
+        );
+        // 鼠标在右下角:往回挪到屏幕里
+        assert_eq!(
+            capture_at("cursor", area, (420, 300), (3830, 1030)),
+            (3420, 740)
+        );
+        // 窗口比屏幕还大:靠左上
+        assert_eq!(
+            capture_at("cursor", area, (2000, 1200), (2000, 100)),
+            (1920, 0)
+        );
+    }
 
     fn page(name: &str, open: bool) -> MiniWin {
         MiniWin {
