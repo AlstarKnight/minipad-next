@@ -148,6 +148,40 @@ pub fn query_value(query: &str, key: &str) -> Option<String> {
     })
 }
 
+/// note 协议(电脑和手机共用):…/img?book=…&path=assets/… 读这个笔记本 assets 里的图片。
+/// 图片由 WebView 按地址直接读,不经 IPC;路径按 resolve 的规则检查,读不到就 404
+pub fn protocol_response(root: &Path, uri: &tauri::http::Uri) -> tauri::http::Response<Vec<u8>> {
+    let not_found = || {
+        tauri::http::Response::builder()
+            .status(404)
+            .body(Vec::new())
+            .unwrap()
+    };
+    let query = uri.query().unwrap_or_default();
+    let (Some(book), Some(rel)) = (query_value(query, "book"), query_value(query, "path")) else {
+        return not_found();
+    };
+    let Some(path) = crate::notes::book_dir(root, &book)
+        .ok()
+        .and_then(|dir| resolve(&dir, &rel))
+    else {
+        return not_found();
+    };
+    let mime = path
+        .extension()
+        .and_then(|x| x.to_str())
+        .and_then(mime_for)
+        .unwrap_or("application/octet-stream");
+    match fs::read(&path) {
+        Ok(bytes) => tauri::http::Response::builder()
+            .header("Content-Type", mime)
+            .header("Cache-Control", "no-cache")
+            .body(bytes)
+            .unwrap_or_else(|_| not_found()),
+        Err(_) => not_found(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -212,6 +246,40 @@ mod tests {
         assert!(from.join(&a).is_file(), "the original stays");
         let _ = fs::remove_dir_all(&from);
         let _ = fs::remove_dir_all(&to);
+    }
+
+    #[test]
+    fn the_note_protocol_serves_only_images_inside_assets() {
+        let root = temp("protocol");
+        let book = root.join("笔记");
+        let rel = save(&book, b"\x89PNG\r\n\x1a\nimage", "png", "1").unwrap();
+        fs::write(book.join("页面.md"), "# 页面").unwrap();
+        let get = |query: &str| {
+            let uri: tauri::http::Uri = format!("http://note.localhost/img?{query}")
+                .parse()
+                .unwrap();
+            protocol_response(&root, &uri)
+        };
+        let ok = get(&format!(
+            "book=%E7%AC%94%E8%AE%B0&path={}",
+            rel.replace('/', "%2F")
+        ));
+        assert_eq!(ok.status(), 200);
+        assert_eq!(ok.headers()["Content-Type"], "image/png");
+        assert_eq!(ok.body(), b"\x89PNG\r\n\x1a\nimage");
+        for bad in [
+            "book=%E7%AC%94%E8%AE%B0&path=%E9%A1%B5%E9%9D%A2.md",
+            "book=%E7%AC%94%E8%AE%B0&path=assets%2F..%2F%E9%A1%B5%E9%9D%A2.md",
+            "book=%E7%AC%94%E8%AE%B0&path=assets%2Fmissing.png",
+            "book=..&path=assets%2Fimg-1.png",
+            "book=.trash&path=assets%2Fimg-1.png",
+            "book=%E7%AC%94%E8%AE%B0",
+            "path=assets%2Fimg-1.png",
+            "",
+        ] {
+            assert_eq!(get(bad).status(), 404, "{bad}");
+        }
+        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]

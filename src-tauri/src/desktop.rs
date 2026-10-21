@@ -23,7 +23,7 @@ use tauri::{
 };
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
-use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 
 /// 0.1.x 用的应用标识符。0.2.0 换了标识符,启动时把旧位置的设置和笔记搬过来。
 const OLD_IDENTIFIER: &str = "com.minipadnext.app";
@@ -50,6 +50,31 @@ impl Default for Geom {
         }
     }
 }
+
+/// 片段(0.5.1):打 trigger 再按 Tab(或空格)换成 text
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+#[serde(default)]
+pub struct Snippet {
+    trigger: String,
+    text: String,
+}
+
+fn default_snippets() -> Vec<Snippet> {
+    [
+        (";rq", "{{日期}}"),
+        (";sj", "{{时间}}"),
+        (";xq", "{{星期}}"),
+    ]
+    .map(|(trigger, text)| Snippet {
+        trigger: trigger.into(),
+        text: text.into(),
+    })
+    .to_vec()
+}
+
+const DEFAULT_CAPTURE_PAGE: &str = "收集箱";
+const DEFAULT_CAPTURE_NAME: &str = "快速记录 {{日期}} {{时间:HH.mm}}";
+const DEFAULT_TEMPLATE_BOOK: &str = "模板";
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(default)]
@@ -174,6 +199,55 @@ pub struct Settings {
     find_color: String,
     /// 同一页在这里和别处(网盘同步)都改过:copy 把那边的版本另存为冲突副本 / overwrite 用这边的覆盖
     conflict_mode: String,
+    /// WebDAV 同步默认关闭，只有用户完成账号设置后才可运行。
+    webdav_enabled: bool,
+    webdav_server: String,
+    webdav_user: String,
+    webdav_folder: String,
+    webdav_allow_http: bool,
+    webdav_first_mode: String,
+    webdav_images: bool,
+    webdav_on_start: bool,
+    webdav_after_save: bool,
+    webdav_delay_seconds: u32,
+    webdav_interval_minutes: u32,
+    webdav_on_hide: bool,
+    webdav_status_style: String,
+    webdav_status_color: String,
+    webdav_delete_limit: usize,
+    webdav_delete_divisor: usize,
+    /// 正文中识别 Windows 本地文件路径。
+    local_path_enabled: bool,
+    /// ctrl 按 Ctrl 点击 / click 单击。
+    local_path_click: String,
+    /// 路径文字颜色；空着跟随链接颜色。
+    local_path_color: String,
+    /// solid / dashed / none。
+    local_path_underline: String,
+    /// 对不存在的路径显示灰色删除线。
+    local_path_missing: bool,
+    /// 运行可执行文件或脚本之前进行确认。
+    local_path_confirm: bool,
+    /// 用户逐个允许跳过确认的本地路径。
+    local_path_trusted: Vec<String>,
+    /// 0.5.0 页面链接 [[页面名]]:显示成链接,点了打开那一页
+    page_links: bool,
+    /// ctrl 按 Ctrl 点击打开 / click 单击就打开
+    page_link_click: String,
+    /// 补全:brackets 打 [[ 就列出页面 / typing 打了 [[ 再打字才列 / off 不列
+    page_link_suggest: String,
+    /// 中文输入法打的 【【 换成 [[,链接里的 】】 换成 ]]
+    page_link_cn_brackets: bool,
+    /// 页面改名、移动以后别的页面里指向它的链接:ask 改 2 个以上页面时先问 / auto 直接改 / off 不改
+    page_link_rename: String,
+    /// 链接的颜色,写法同 accent;空着跟随强调色
+    page_link_color: String,
+    /// 还没有的页面的链接颜色,写法同 accent;空着是灰色
+    page_link_broken_color: String,
+    /// 两边的方括号:faint 淡一点 / show 照常显示 / hide 光标在链接上才显示
+    page_link_brackets: String,
+    /// 下划线:hover 鼠标移上去才有 / solid 实线 / dashed 虚线 / none 不要
+    page_link_underline: String,
     /// 设置页面的分类放在哪:left 左边一列 / top 上面一排
     settings_nav: String,
     /// 悬浮目录:列出这一页的标题,点了跳过去
@@ -216,6 +290,8 @@ pub struct Settings {
     quick_switch_key: String,
     /// 快速切换找哪些页面:all 全部笔记本 / book 当前笔记本
     quick_switch_scope: String,
+    /// 找页面(快速切换、[[ 补全)时也能打拼音或拼音首字母
+    pinyin_match: bool,
     /// 选中文字时的悬浮工具栏:always 总是出现 / nobar 只在格式栏收起时 / off 不出现
     sel_bar: String,
     /// 悬浮工具栏上的按钮(按顺序,id 同格式栏)
@@ -240,8 +316,42 @@ pub struct Settings {
     image_paste: bool,
     /// 图片显示多大:full 最宽铺满 / medium 最宽一半多 / small 小图
     image_size: String,
+    /// 0.5.1 快速记录:全局热键弹出小窗,写进一个页面(或者新建一页)
+    capture_enabled: bool,
+    /// 快速记录的全局热键(写法同 hotkey),空着就只能从托盘菜单打开
+    capture_hotkey: String,
+    /// 写到:page 追加到一个页面 / new 每次新建一页
+    capture_target: String,
+    /// 写到哪个笔记本(「默认」是空字符串;不在了就用默认笔记本)
+    capture_book: String,
+    /// 追加到哪一页,没有就新建
+    capture_page: String,
+    /// 每次新建一页时的名字,可以用 {{日期}} 这些变量
+    capture_name: String,
+    /// 新的一条加在 end 末尾 / start 开头(页面以标题开头时放在标题下面)
+    capture_where: String,
+    /// 每一条是 paragraph 段落 / list 列表项 / task 待办
+    capture_format: String,
+    /// 每一条前面写上时间(格式同 F5)
+    capture_stamp: bool,
+    /// 小窗出现在 remember 上次的位置 / center 屏幕中间 / cursor 鼠标旁边
+    capture_position: String,
+    /// 0.5.1 模板放在哪个笔记本里:每一页就是一个模板
+    template_book: String,
+    /// 片段:打触发词再按 Tab(或空格)换成内容
+    snippets: Vec<Snippet>,
+    /// 片段怎么展开:tab / space / off
+    snippet_key: String,
+    /// 行内计算:tab 打完 = 再按 Tab / equals 打 = 就算 / off 不算
+    calc_key: String,
+    /// 结果的小数位:auto 最多 10 位、去掉末尾的 0 / "0".."6" 固定几位
+    calc_decimals: String,
+    /// 结果加千分位逗号
+    calc_thousands: bool,
     /// 每页小窗的位置、大小、置顶和不透明度(程序自己记,保存设置时沿用这里的)
     mini_windows: Vec<mini::MiniWin>,
+    /// 快速记录小窗的位置和大小(程序自己记,保存设置时沿用这里的)
+    capture_window: Option<Geom>,
     window: Option<Geom>,
 }
 
@@ -312,6 +422,38 @@ impl Default for Settings {
             find_bar_pos: "top".into(),
             find_color: String::new(),
             conflict_mode: "copy".into(),
+            webdav_enabled: false,
+            webdav_server: String::new(),
+            webdav_user: String::new(),
+            webdav_folder: "/MinipadNext/".into(),
+            webdav_allow_http: false,
+            webdav_first_mode: "merge".into(),
+            webdav_images: true,
+            webdav_on_start: true,
+            webdav_after_save: true,
+            webdav_delay_seconds: 30,
+            webdav_interval_minutes: 5,
+            webdav_on_hide: true,
+            webdav_status_style: "icon".into(),
+            webdav_status_color: String::new(),
+            webdav_delete_limit: 20,
+            webdav_delete_divisor: 3,
+            local_path_enabled: true,
+            local_path_click: "ctrl".into(),
+            local_path_color: String::new(),
+            local_path_underline: "dashed".into(),
+            local_path_missing: true,
+            local_path_confirm: true,
+            local_path_trusted: Vec::new(),
+            page_links: true,
+            page_link_click: "ctrl".into(),
+            page_link_suggest: "brackets".into(),
+            page_link_cn_brackets: true,
+            page_link_rename: "ask".into(),
+            page_link_color: String::new(),
+            page_link_broken_color: String::new(),
+            page_link_brackets: "faint".into(),
+            page_link_underline: "hover".into(),
             settings_nav: "left".into(),
             outline_enabled: false,
             outline_mode: "hover".into(),
@@ -333,6 +475,7 @@ impl Default for Settings {
             pin_style: "icon".into(),
             quick_switch_key: "Ctrl+P".into(),
             quick_switch_scope: "all".into(),
+            pinyin_match: true,
             sel_bar: "always".into(),
             sel_bar_items: [
                 "block", "strong", "em", "strike", "code", "link", "sep3", "color", "bg",
@@ -349,7 +492,24 @@ impl Default for Settings {
             mini_tab_button: true,
             image_paste: true,
             image_size: "full".into(),
+            capture_enabled: true,
+            capture_hotkey: "Ctrl+Alt+M".into(),
+            capture_target: "page".into(),
+            capture_book: String::new(),
+            capture_page: DEFAULT_CAPTURE_PAGE.into(),
+            capture_name: DEFAULT_CAPTURE_NAME.into(),
+            capture_where: "end".into(),
+            capture_format: "paragraph".into(),
+            capture_stamp: true,
+            capture_position: "remember".into(),
+            template_book: DEFAULT_TEMPLATE_BOOK.into(),
+            snippets: default_snippets(),
+            snippet_key: "tab".into(),
+            calc_key: "tab".into(),
+            calc_decimals: "auto".into(),
+            calc_thousands: false,
             mini_windows: Vec::new(),
+            capture_window: None,
             window: None,
         }
     }
@@ -368,6 +528,8 @@ struct LoadedState {
     book: String,
     /// 启动时热键注册失败的原因(比如被别的软件占用了)
     hotkey_error: Option<String>,
+    /// 快速记录的热键注册失败的原因
+    capture_error: Option<String>,
     version: String,
     debug: bool,
 }
@@ -391,6 +553,8 @@ struct QuitState {
 #[derive(Default)]
 struct AppState {
     settings: Mutex<Settings>,
+    /// 自定义悬浮图片缓存，避免重复读磁盘和 base64 编码。
+    ball_image_cache: Mutex<ball::ImageCache>,
     /// 配置文件不存在、成功读取或损坏的原文件已改名留底时才可以写回。读不出来时保持原文件。
     settings_write_allowed: AtomicBool,
     settings_read_error: Mutex<Option<String>>,
@@ -405,6 +569,11 @@ struct AppState {
     edge: Mutex<EdgeState>,
     geom: Mutex<Option<Geom>>,
     hotkey_error: Mutex<Option<String>>,
+    /// 快速记录的热键(0.5.1):注册上的那个的 id(按下的是它就快速记录),注册不上的原因
+    capture_key: Mutex<Option<u32>>,
+    capture_error: Mutex<Option<String>>,
+    /// 托盘菜单里的「快速记录」,跟着设置里的开关变灰
+    capture_item: Mutex<Option<MenuItem<tauri::Wry>>>,
     /// 设置里正在录新热键,全局热键暂时停用
     hotkey_paused: AtomicBool,
     /// 窗口出来以后用户打过字:只要窗口还有焦点,就不自动缩回去
@@ -429,6 +598,8 @@ struct OpenMini {
     label: String,
     book: String,
     name: String,
+    /// 快速记录的小窗(0.5.1):Esc 或者再按一次热键收起,单独记位置,重启后不恢复
+    capture: bool,
 }
 
 #[derive(Serialize)]
@@ -768,6 +939,29 @@ fn pick_one(value: &mut String, options: &[&str]) {
     }
 }
 
+/// 名字类的设置:去掉首尾空格,最多 80 个字,空着用默认的
+fn tidy_name(value: &mut String, default: &str) {
+    let v: String = value.trim().chars().take(80).collect();
+    *value = match v.trim_end() {
+        "" => default.into(),
+        v => v.into(),
+    };
+}
+
+/// 片段:触发词不能空、不能有空白、最多 32 个字;内容最多 10000 个字;同一个触发词只留第一条;最多 200 条
+fn tidy_snippets(list: &mut Vec<Snippet>) {
+    let mut seen = std::collections::HashSet::new();
+    list.retain_mut(|s| {
+        s.trigger = s.trigger.trim().to_string();
+        s.text = s.text.chars().take(10_000).collect();
+        !s.trigger.is_empty()
+            && s.trigger.chars().count() <= 32
+            && !s.trigger.chars().any(char::is_whitespace)
+            && seen.insert(s.trigger.clone())
+    });
+    list.truncate(200);
+}
+
 /// 启动读取后和保存前整理设置:去掉首尾空格,数字限制在合理范围
 fn tidy_settings(s: &mut Settings) {
     s.hotkey = s.hotkey.trim().to_string();
@@ -829,6 +1023,18 @@ fn tidy_settings(s: &mut Settings) {
     tidy_color(&mut s.ball_color);
     tidy_color(&mut s.find_color);
     tidy_color(&mut s.outline_color);
+    tidy_color(&mut s.local_path_color);
+    tidy_color(&mut s.page_link_color);
+    tidy_color(&mut s.page_link_broken_color);
+    tidy_color(&mut s.webdav_status_color);
+    s.webdav_delay_seconds = s.webdav_delay_seconds.clamp(10, 300);
+    s.webdav_delete_limit = s.webdav_delete_limit.clamp(1, 1000);
+    s.webdav_delete_divisor = s.webdav_delete_divisor.clamp(1, 10);
+    if ![0, 1, 5, 15, 30].contains(&s.webdav_interval_minutes) {
+        s.webdav_interval_minutes = 5;
+    }
+    pick_one(&mut s.webdav_first_mode, &["merge", "remote", "local"]);
+    pick_one(&mut s.webdav_status_style, &["icon", "text", "none"]);
     pick_one(&mut s.ctrl_f, &["page", "all"]);
     pick_one(&mut s.color_layout, &["tabs", "rows"]);
     pick_one(
@@ -840,6 +1046,16 @@ fn tidy_settings(s: &mut Settings) {
     pick_one(&mut s.block_context_menu, &["system", "block"]);
     pick_one(&mut s.code_exit_mode, &["blank3", "blank2", "ctrl"]);
     pick_one(&mut s.conflict_mode, &["copy", "overwrite"]);
+    pick_one(&mut s.local_path_click, &["ctrl", "click"]);
+    pick_one(&mut s.local_path_underline, &["solid", "dashed", "none"]);
+    s.local_path_trusted.retain(|p| !p.trim().is_empty());
+    s.local_path_trusted.sort();
+    s.local_path_trusted.dedup();
+    pick_one(&mut s.page_link_click, &["ctrl", "click"]);
+    pick_one(&mut s.page_link_suggest, &["brackets", "typing", "off"]);
+    pick_one(&mut s.page_link_rename, &["ask", "auto", "off"]);
+    pick_one(&mut s.page_link_brackets, &["faint", "show", "hide"]);
+    pick_one(&mut s.page_link_underline, &["hover", "solid", "dashed", "none"]);
     pick_one(&mut s.settings_nav, &["left", "top"]);
     pick_one(&mut s.outline_mode, &["hover", "pinned"]);
     pick_one(&mut s.outline_side, &["right", "left"]);
@@ -859,6 +1075,21 @@ fn tidy_settings(s: &mut Settings) {
     s.mini_opacity = mini::clamp_opacity(s.mini_opacity);
     s.mini_max = s.mini_max.min(20);
     mini::tidy(&mut s.mini_windows);
+    s.capture_hotkey = s.capture_hotkey.trim().chars().take(40).collect();
+    pick_one(&mut s.capture_target, &["page", "new"]);
+    tidy_name(&mut s.capture_page, DEFAULT_CAPTURE_PAGE);
+    tidy_name(&mut s.capture_name, DEFAULT_CAPTURE_NAME);
+    pick_one(&mut s.capture_where, &["end", "start"]);
+    pick_one(&mut s.capture_format, &["paragraph", "list", "task"]);
+    pick_one(&mut s.capture_position, &["remember", "center", "cursor"]);
+    tidy_name(&mut s.template_book, DEFAULT_TEMPLATE_BOOK);
+    tidy_snippets(&mut s.snippets);
+    pick_one(&mut s.snippet_key, &["tab", "space", "off"]);
+    pick_one(&mut s.calc_key, &["tab", "equals", "off"]);
+    pick_one(
+        &mut s.calc_decimals,
+        &["auto", "0", "1", "2", "3", "4", "5", "6"],
+    );
     let mut seen = std::collections::HashSet::new();
     s.sel_bar_items
         .retain(|id| !id.is_empty() && id.len() <= 32 && seen.insert(id.clone()));
@@ -912,10 +1143,45 @@ fn migrate_old_data(app: &AppHandle) {
     }
 }
 
-fn register_hotkey(app: &AppHandle, hotkey: &str) -> Result<(), String> {
+/// 注册全局热键:呼出主窗口的,和快速记录的(关着就没有)。返回呼出热键的结果;
+/// 快速记录的热键注册不上不算失败,原因记在 capture_error
+fn register_hotkey(app: &AppHandle, hotkey: &str, capture: Option<&str>) -> Result<(), String> {
     let gs = app.global_shortcut();
     let _ = gs.unregister_all();
-    gs.register(hotkey).map_err(|e| e.to_string())
+    let result = gs.register(hotkey).map_err(|e| e.to_string());
+    let (mut id, mut error) = (None, None);
+    if let Some(c) = capture {
+        match gs.register(c) {
+            Ok(()) => id = c.parse::<Shortcut>().ok().map(|k| k.id()),
+            Err(e) => error = Some(format!("{c}:{e}")),
+        }
+    }
+    let st = app.state::<AppState>();
+    *st.capture_key.lock().unwrap() = id;
+    *st.capture_error.lock().unwrap() = error;
+    result
+}
+
+/// 快速记录要注册的热键:关着或者空着就没有
+fn capture_of(s: &Settings) -> Option<&str> {
+    (s.capture_enabled && !s.capture_hotkey.is_empty()).then_some(s.capture_hotkey.as_str())
+}
+
+/// 快速记录的热键不能和呼出热键一样(写法不同、按键一样也算)
+fn check_capture_hotkey(s: &Settings) -> Result<(), String> {
+    let Some(c) = capture_of(s) else {
+        return Ok(());
+    };
+    let id = |k: &str| k.parse::<Shortcut>().ok().map(|h| h.id());
+    let same = match (id(c), id(&s.hotkey)) {
+        (Some(a), Some(b)) => a == b,
+        _ => c.eq_ignore_ascii_case(&s.hotkey),
+    };
+    if same {
+        Err("快速记录的热键和呼出热键一样,换一个吧".into())
+    } else {
+        Ok(())
+    }
 }
 
 /// 重新启用全局热键(录热键时暂停过的话)
@@ -924,9 +1190,9 @@ fn resume_hotkey_if_paused(app: &AppHandle) {
     if !st.hotkey_paused.swap(false, Ordering::SeqCst) {
         return;
     }
-    let hotkey = st.settings.lock().unwrap().hotkey.clone();
-    let result = register_hotkey(app, &hotkey);
-    *st.hotkey_error.lock().unwrap() = result.err().map(|e| format!("{hotkey}:{e}"));
+    let s = st.settings.lock().unwrap().clone();
+    let result = register_hotkey(app, &s.hotkey, capture_of(&s));
+    *st.hotkey_error.lock().unwrap() = result.err().map(|e| format!("{}:{e}", s.hotkey));
 }
 
 const WELCOME: &str = r#"# 欢迎使用 Minipad Next
@@ -975,8 +1241,9 @@ print("点右上角的复制按钮试试")
 
 // ---------- 命令 ----------
 
+/// only:小窗只要自己那一页(其他笔记本和页面不读)
 #[tauri::command]
-fn load_state(app: AppHandle) -> Result<LoadedState, String> {
+fn load_state(app: AppHandle, only: Option<notes::OnlyPage>) -> Result<LoadedState, String> {
     let st = app.state::<AppState>();
     let settings = st.settings.lock().unwrap().clone();
     let dir = notes_dir(&app, &settings);
@@ -986,7 +1253,7 @@ fn load_state(app: AppHandle) -> Result<LoadedState, String> {
     if notes::list_names(&dir)?.is_empty() && notes::list_books(&dir)?.is_empty() {
         notes::write_atomic(&notes::note_path(&dir, "欢迎"), WELCOME)?;
     }
-    let books = notes::load_books(&dir)?;
+    let books = notes::load_books_with(&dir, None, only.as_ref())?;
     let saved = notes::read_meta(&dir).book;
     let book = if books.iter().any(|b| b.name == saved) {
         saved
@@ -994,6 +1261,7 @@ fn load_state(app: AppHandle) -> Result<LoadedState, String> {
         String::new()
     };
     let hotkey_error = st.hotkey_error.lock().unwrap().clone();
+    let capture_error = st.capture_error.lock().unwrap().clone();
     let settings_error = st.settings_read_error.lock().unwrap().clone();
     let settings_notice = st.settings_notice.lock().unwrap().take();
     Ok(LoadedState {
@@ -1004,15 +1272,21 @@ fn load_state(app: AppHandle) -> Result<LoadedState, String> {
         books,
         book,
         hotkey_error,
+        capture_error,
         version: app.package_info().version.to_string(),
         debug: cfg!(debug_assertions),
     })
 }
 
-/// 重新读一遍笔记文件夹,用来发现在别处(网盘同步、其他编辑器)改过的内容
+/// 重新读一遍笔记文件夹,用来发现在别处(网盘同步、其他编辑器)改过的内容。
+/// known 是前端已有页面的指纹,没改过的页面不读内容;小窗用 only 只读自己那一页
 #[tauri::command]
-fn read_notes(app: AppHandle) -> Result<Vec<Book>, String> {
-    notes::load_books(&current_notes_dir(&app))
+fn read_notes(
+    app: AppHandle,
+    known: Option<notes::Known>,
+    only: Option<notes::OnlyPage>,
+) -> Result<Vec<Book>, String> {
+    notes::load_books_with(&current_notes_dir(&app), known.as_ref(), only.as_ref())
 }
 
 #[tauri::command]
@@ -1056,6 +1330,9 @@ fn save_note(
         .conflict_mode
         == "copy";
     let stamp = chrono::Local::now().format("%Y-%m-%d %H.%M").to_string();
+    let _write = crate::syncer::WRITE_LOCK
+        .lock()
+        .map_err(|e| e.to_string())?;
     let conflict = notes::save_page(
         &current_notes_dir(&app),
         &book,
@@ -1087,6 +1364,12 @@ fn rename_note(app: AppHandle, book: String, old: String, new: String) -> Result
 fn delete_note(app: AppHandle, book: String, name: String) -> Result<(), String> {
     maybe_backup(&app);
     notes::move_to_trash(&current_notes_dir(&app), &book, &name)
+}
+
+/// 快速记录新建的页面没写东西:直接删掉,不进回收站(只删空的),删了返回 true
+#[tauri::command]
+fn delete_if_empty(app: AppHandle, book: String, name: String) -> Result<bool, String> {
+    notes::delete_if_empty(&current_notes_dir(&app), &book, &name)
 }
 
 /// 把页面移到另一个笔记本,返回它在那边的名字(重名时会加编号)
@@ -1143,71 +1426,40 @@ fn save_image(app: AppHandle, request: tauri::ipc::Request<'_>) -> Result<String
     images::save(&dir, bytes, &meta.ext, &stamp)
 }
 
-/// 编辑器里显示图片:http://note.localhost/img?book=…&path=assets/…(Windows 上的写法)
+/// 编辑器里显示图片:https://note.localhost/img?book=…&path=assets/…(Windows 上的写法,小窗是 http)
 fn note_image(app: &AppHandle, uri: &tauri::http::Uri) -> tauri::http::Response<Vec<u8>> {
-    let not_found = || {
-        tauri::http::Response::builder()
-            .status(404)
-            .body(Vec::new())
-            .unwrap()
-    };
-    let query = uri.query().unwrap_or_default();
-    let (Some(book), Some(rel)) = (
-        images::query_value(query, "book"),
-        images::query_value(query, "path"),
-    ) else {
-        return not_found();
-    };
-    let root = current_notes_dir(app);
-    let Some(path) = notes::book_dir(&root, &book)
-        .ok()
-        .and_then(|dir| images::resolve(&dir, &rel))
-    else {
-        return not_found();
-    };
-    let mime = path
-        .extension()
-        .and_then(|x| x.to_str())
-        .and_then(images::mime_for)
-        .unwrap_or("application/octet-stream");
-    match fs::read(&path) {
-        Ok(bytes) => tauri::http::Response::builder()
-            .header("Content-Type", mime)
-            .header("Cache-Control", "no-cache")
-            .body(bytes)
-            .unwrap_or_else(|_| not_found()),
-        Err(_) => not_found(),
-    }
+    images::protocol_response(&current_notes_dir(app), uri)
 }
 
-/// 参数和前端发来的字段一一对应
+/// 参数和前端发来的字段一一对应;base 是前端上次从磁盘读到(或写进去)的页面顺序、固定和分组
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 fn save_meta(
     app: AppHandle,
     book: String,
-    order: Vec<String>,
+    mut order: Vec<String>,
     active: String,
     modes: HashMap<String, String>,
     groups: Option<Vec<notes::TabGroup>>,
     note_groups: Option<HashMap<String, String>>,
-    pinned: Option<Vec<String>>,
+    mut pinned: Option<Vec<String>>,
+    base: Option<notes::SharedMeta>,
 ) -> Result<(), String> {
-    let groups = groups.map(|groups| notes::Groups {
+    let mut groups = groups.map(|groups| notes::Groups {
         groups,
         note_groups: note_groups.unwrap_or_default(),
     });
     let st = app.state::<AppState>();
     let _guard = st.meta_io.lock().unwrap();
-    notes::save_book_meta(
-        &current_notes_dir(&app),
-        &book,
-        order,
-        active,
-        modes,
-        groups,
-        pinned,
-    )
+    // WebDAV 同步写 .minipad.json 时等着,比较磁盘上的样子和写回去之间不会被它插进来
+    let _write = crate::syncer::WRITE_LOCK
+        .lock()
+        .map_err(|e| e.to_string())?;
+    let root = current_notes_dir(&app);
+    if let Some(base) = &base {
+        notes::keep_disk_changes(&root, &book, base, &mut order, &mut pinned, &mut groups)?;
+    }
+    notes::save_book_meta(&root, &book, order, active, modes, groups, pinned)
 }
 
 #[tauri::command]
@@ -1278,6 +1530,10 @@ fn set_book_appearance(
     maybe_backup(&app);
     let st = app.state::<AppState>();
     let _guard = st.meta_io.lock().unwrap();
+    // 和 WebDAV 同步写 .minipad.json 排队
+    let _write = crate::syncer::WRITE_LOCK
+        .lock()
+        .map_err(|e| e.to_string())?;
     notes::set_book_appearance(&current_notes_dir(&app), &book, &icon, &color)
 }
 
@@ -1286,6 +1542,10 @@ fn set_book_appearance(
 fn set_current_book(app: AppHandle, book: String) -> Result<(), String> {
     let st = app.state::<AppState>();
     let _guard = st.meta_io.lock().unwrap();
+    // 和 WebDAV 同步写 .minipad.json 排队
+    let _write = crate::syncer::WRITE_LOCK
+        .lock()
+        .map_err(|e| e.to_string())?;
     notes::set_current_book(&current_notes_dir(&app), &book)
 }
 
@@ -1429,7 +1689,9 @@ fn save_settings(
     new.window = old.window.clone();
     new.ball_pos = old.ball_pos;
     new.mini_windows = old.mini_windows.clone();
+    new.capture_window = old.capture_window.clone();
     tidy_settings(&mut new);
+    check_capture_hotkey(&new)?;
 
     let old_notes = notes_dir(&app, &old);
     let new_notes = notes_dir(&app, &new);
@@ -1447,8 +1709,10 @@ fn save_settings(
     // 先验证并更新全局热键和开机启动，最后才复制目录。
     // 后续失败时回滚系统设置，避免产生“设置未切换、目标已有副本”的半途状态。
     let hotkey_changed = new.hotkey != old.hotkey;
-    let retry_hotkey = state.hotkey_error.lock().unwrap().is_some();
-    let update_hotkey = hotkey_changed || retry_hotkey;
+    let capture_changed = capture_of(&new) != capture_of(&old);
+    let retry_hotkey = state.hotkey_error.lock().unwrap().is_some()
+        || state.capture_error.lock().unwrap().is_some();
+    let update_hotkey = hotkey_changed || capture_changed || retry_hotkey;
     let update_autostart = new.autostart != old.autostart;
     let autolaunch = app.autolaunch();
     apply_settings_side_effects(
@@ -1457,11 +1721,19 @@ fn save_settings(
         new.autostart,
         |use_new| {
             state.hotkey_paused.store(false, Ordering::SeqCst);
-            let target = if use_new { &new.hotkey } else { &old.hotkey };
-            let result = register_hotkey(&app, target);
+            let target = if use_new { &new } else { &old };
+            let hotkey = &target.hotkey;
+            let result = register_hotkey(&app, hotkey, capture_of(target));
             *state.hotkey_error.lock().unwrap() =
-                result.as_ref().err().map(|e| format!("{target}:{e}"));
-            result.map_err(|e| format!("热键 {target} 无法使用:{e}"))
+                result.as_ref().err().map(|e| format!("{hotkey}:{e}"));
+            result.map_err(|e| format!("热键 {hotkey} 无法使用:{e}"))?;
+            // 刚改的快速记录热键注册不上:和呼出热键一样,不保存
+            match state.capture_error.lock().unwrap().clone() {
+                Some(e) if use_new && capture_changed => {
+                    Err(format!("快速记录的热键无法使用({e}),换一个吧"))
+                }
+                _ => Ok(()),
+            }
         },
         |enable| {
             let result = if enable {
@@ -1485,6 +1757,9 @@ fn save_settings(
     }
     for w in mini_windows(&app) {
         let _ = w.set_skip_taskbar(!new.show_in_taskbar);
+    }
+    if let Some(item) = state.capture_item.lock().unwrap().as_ref() {
+        let _ = item.set_enabled(new.capture_enabled);
     }
     // 关掉贴边隐藏或者换了样式(露出的宽度不同),先把窗口放出来
     if !new.edge_hide
@@ -1564,6 +1839,23 @@ fn hide_window(app: AppHandle) {
     hide_main(&app);
 }
 
+/// 0.5.0 小窗里补全 [[页面名]]、判断链接在不在用的页面名单(只列名字,不读内容)
+#[tauri::command]
+fn page_index(app: AppHandle) -> Result<Vec<notes::BookIndex>, String> {
+    notes::index_books(&current_notes_dir(&app))
+}
+
+/// 小窗里点了页面链接:主窗口出来,打开(或新建)那一页。book 是小窗那一页所在的笔记本
+#[tauri::command]
+fn open_page_in_main(app: AppHandle, book: String, target: String) {
+    let _ = app.emit_to(
+        "main",
+        "open-page",
+        serde_json::json!({ "book": book, "target": target }),
+    );
+    show_main(&app);
+}
+
 #[tauri::command]
 fn show_window(app: AppHandle) {
     show_main(&app);
@@ -1590,6 +1882,310 @@ fn open_link(url: String) -> Result<(), String> {
         return Err("只能打开网页链接".into());
     }
     tauri_plugin_opener::open_url(url, None::<&str>).map_err(|e| e.to_string())
+}
+
+/// 只接受绝对路径；file URI 由 URL 解析器统一还原百分号编码。
+fn parse_local_path(raw: &str) -> Result<PathBuf, String> {
+    let path = if raw.to_ascii_lowercase().starts_with("file:") {
+        tauri::Url::parse(raw)
+            .map_err(|_| "本地文件链接格式不正确".to_string())?
+            .to_file_path()
+            .map_err(|_| "无法解析本地文件链接".to_string())?
+    } else {
+        PathBuf::from(raw)
+    };
+    if !path.is_absolute() {
+        return Err("只能打开绝对路径".into());
+    }
+    Ok(path)
+}
+
+fn is_executable_path(path: &Path) -> bool {
+    matches!(
+        path.extension()
+            .and_then(|ext| ext.to_str())
+            .unwrap_or("")
+            .to_ascii_lowercase()
+            .as_str(),
+        "exe"
+            | "bat"
+            | "cmd"
+            | "ps1"
+            | "vbs"
+            | "js"
+            | "msi"
+            | "lnk"
+            | "scr"
+            | "com"
+            | "pif"
+            | "cpl"
+            | "hta"
+            | "wsf"
+            | "wsh"
+            | "jse"
+            | "vbe"
+            | "reg"
+            | "msc"
+            | "url"
+            | "appref-ms"
+    )
+}
+
+#[tauri::command]
+async fn local_path_exists(path: String) -> bool {
+    tauri::async_runtime::spawn_blocking(move || parse_local_path(&path).is_ok_and(|p| p.exists()))
+        .await
+        .unwrap_or(false)
+}
+
+#[tauri::command]
+async fn open_path(
+    path: String,
+    reveal: bool,
+    confirmed: bool,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    let (needs_confirmation, trusted) = {
+        let settings = state.settings.lock().unwrap();
+        (
+            settings.local_path_confirm,
+            settings.local_path_trusted.contains(&path),
+        )
+    };
+    tauri::async_runtime::spawn_blocking(move || {
+        let target = parse_local_path(&path)?;
+        if !target.exists() {
+            return Err("找不到这个文件".into());
+        }
+        if !reveal && is_executable_path(&target) && needs_confirmation && !confirmed && !trusted {
+            return Err("打开此文件前需要确认".into());
+        }
+        if reveal && target.is_file() {
+            tauri_plugin_opener::reveal_item_in_dir(&target).map_err(|e| e.to_string())
+        } else {
+            tauri_plugin_opener::open_path(target, None::<&str>).map_err(|e| e.to_string())
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+fn webdav_credential(settings: &Settings) -> Result<keyring::Entry, String> {
+    let identity = crate::syncer::journal_path(
+        Path::new(""),
+        &settings.webdav_server,
+        &settings.webdav_user,
+        "",
+    );
+    let name = identity
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .ok_or("无效的 WebDAV 账号")?;
+    keyring::Entry::new("Minipad Next WebDAV", name)
+        .map_err(|e| format!("无法打开 Windows 凭据管理器：{e}"))
+}
+
+/// 旧版本按服务器、用户名和远程文件夹存的那份凭据
+fn legacy_webdav_credential(settings: &Settings) -> Result<keyring::Entry, String> {
+    let old_id = crate::syncer::journal_path(
+        Path::new(""),
+        &settings.webdav_server,
+        &settings.webdav_user,
+        &settings.webdav_folder,
+    );
+    let name = old_id
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .ok_or("账号标识无效")?;
+    keyring::Entry::new("Minipad Next WebDAV", name).map_err(|e| e.to_string())
+}
+
+// 从旧版按远程文件夹区分的凭据迁移，避免升级后要求重复输入应用密码。
+fn webdav_password(settings: &Settings) -> Result<String, String> {
+    if let Ok(password) = webdav_credential(settings)?.get_password() {
+        return Ok(password);
+    }
+    let legacy = legacy_webdav_credential(settings)?;
+    let password = legacy
+        .get_password()
+        .map_err(|_| "请先填写并保存 WebDAV 应用密码")?;
+    webdav_credential(settings)?
+        .set_password(&password)
+        .map_err(|_| "迁移 WebDAV 密码失败")?;
+    let _ = legacy.delete_credential();
+    Ok(password)
+}
+
+#[tauri::command]
+fn webdav_set_password(app: AppHandle, password: String) -> Result<(), String> {
+    let settings = app.state::<AppState>().settings.lock().unwrap().clone();
+    if settings.webdav_server.trim().is_empty() || settings.webdav_user.trim().is_empty() {
+        return Err("请先保存服务器地址和用户名".into());
+    }
+    webdav_credential(&settings)?
+        .set_password(&password)
+        .map_err(|e| format!("保存 WebDAV 密码到 Windows 凭据管理器失败：{e}"))
+}
+
+#[tauri::command]
+async fn webdav_test(
+    app: AppHandle,
+    server: Option<String>,
+    username: Option<String>,
+    folder: Option<String>,
+    allow_http: Option<bool>,
+    password: Option<String>,
+) -> Result<String, String> {
+    let mut s = app.state::<AppState>().settings.lock().unwrap().clone();
+    if let Some(value) = server {
+        s.webdav_server = value;
+    }
+    if let Some(value) = username {
+        s.webdav_user = value;
+    }
+    if let Some(value) = folder {
+        s.webdav_folder = value;
+    }
+    if let Some(value) = allow_http {
+        s.webdav_allow_http = value;
+    }
+    let secret = match password.filter(|value| !value.is_empty()) {
+        Some(value) => value,
+        None => webdav_password(&s)?,
+    };
+    tauri::async_runtime::spawn_blocking(move || {
+        let client = crate::webdav::WebdavClient::new(
+            &s.webdav_server,
+            &s.webdav_user,
+            &secret,
+            &s.webdav_folder,
+            s.webdav_allow_http,
+        )?;
+        client.test_connection()?;
+        Ok::<_, String>("连接成功，目录读取与写入测试通过".to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+fn webdav_status() -> crate::syncer::WebdavStatus {
+    crate::syncer::status()
+}
+
+#[tauri::command]
+fn webdav_forget(app: AppHandle) -> Result<(), String> {
+    let s = app.state::<AppState>().settings.lock().unwrap().clone();
+    let folder = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let file = crate::syncer::journal_path_for_root(
+        &folder,
+        &notes_dir(&app, &s),
+        &s.webdav_server,
+        &s.webdav_user,
+        &s.webdav_folder,
+    );
+    // 旧版本存的那份也删掉，不然下次同步又会把它迁移回来
+    for credential in [webdav_credential(&s)?, legacy_webdav_credential(&s)?] {
+        match credential.delete_credential() {
+            Ok(()) | Err(keyring::Error::NoEntry) => {}
+            Err(e) => return Err(format!("无法清除系统凭据中的 WebDAV 密码：{e}")),
+        }
+    }
+    match fs::remove_file(file) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(format!("无法清除同步记录：{e}")),
+    }
+    app.state::<AppState>()
+        .settings
+        .lock()
+        .unwrap()
+        .webdav_enabled = false;
+    persist_settings(&app);
+    crate::syncer::update_status("off", "已断开，笔记没有被删除");
+    Ok(())
+}
+
+#[tauri::command]
+async fn webdav_sync_now(
+    app: AppHandle,
+    confirm_deletes: bool,
+) -> Result<crate::syncer::SyncReport, String> {
+    let s = app.state::<AppState>().settings.lock().unwrap().clone();
+    if !s.webdav_enabled {
+        return Err("请先在设置中开启 WebDAV 同步".into());
+    }
+    let password =
+        webdav_password(&s).map_err(|_| "WebDAV 密码尚未保存在 Windows 凭据管理器".to_string())?;
+    let root = notes_dir(&app, &s);
+    let data = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let backup_dest = backup_dir(&app, &s);
+    let journal = crate::syncer::journal_path_for_root(
+        &data,
+        &root,
+        &s.webdav_server,
+        &s.webdav_user,
+        &s.webdav_folder,
+    );
+    let first_mode = match s.webdav_first_mode.as_str() {
+        "remote" => crate::syncer::FirstSync::Remote,
+        "local" => crate::syncer::FirstSync::Local,
+        _ => crate::syncer::FirstSync::Merge,
+    };
+    let options = crate::syncer::SyncOptions {
+        images: s.webdav_images,
+        first_mode,
+        conflict_copy: s.conflict_mode != "overwrite",
+        confirm_deletes,
+        delete_limit: s.webdav_delete_limit,
+        delete_divisor: s.webdav_delete_divisor,
+    };
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let _run = crate::syncer::RUN_LOCK.lock().map_err(|e| e.to_string())?;
+        crate::syncer::update_status("syncing", "正在同步笔记");
+        let client = crate::webdav::WebdavClient::new(
+            &s.webdav_server,
+            &s.webdav_user,
+            &password,
+            &s.webdav_folder,
+            s.webdav_allow_http,
+        )?;
+        crate::syncer::sync_once(&client, &root, &journal, &options, || {
+            backup::before_sync(&root, &backup_dest)?;
+            Ok(())
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+    match &result {
+        Ok(report) => {
+            let mode = if report.conflicts > 0 {
+                "conflict"
+            } else {
+                "synced"
+            };
+            let message = format!(
+                "同步完成：上传 {}，下载 {}，冲突 {}，回收站 {}",
+                report.uploaded, report.downloaded, report.conflicts, report.deleted,
+            );
+            crate::syncer::update_status(mode, &message);
+            if !report.changed.is_empty() {
+                let _ = app.emit("webdav-changed", &report.changed);
+            }
+        }
+        Err(e) if e.starts_with("WEB_DAV_CONFIRM_DELETE:") => {
+            crate::syncer::update_status("confirm", "删除量超过保护阈值，需要确认");
+        }
+        Err(e) => {
+            let state = if e.contains("离线") || e.contains("超时") {
+                "offline"
+            } else {
+                "error"
+            };
+            crate::syncer::update_status(state, e);
+        }
+    }
+    result
 }
 
 #[tauri::command]
@@ -1728,12 +2324,14 @@ fn update_entry(app: &AppHandle, book: &str, name: &str, change: impl FnOnce(&mu
     mini::remember(&mut st.settings.lock().unwrap().mini_windows, entry);
 }
 
+/// capture:快速记录(0.5.1),不受小窗开关和个数的限制,位置单独记,重启后不恢复
 fn open_mini(
     app: &AppHandle,
     book: &str,
     name: &str,
     at: Option<(f64, f64)>,
     focus: bool,
+    capture: bool,
 ) -> Result<(), String> {
     if let Some(m) = open_minis(app)
         .into_iter()
@@ -1743,14 +2341,28 @@ fn open_mini(
             let _ = w.show();
             let _ = w.set_focus();
         }
+        // 这一页已经开在小窗里时按了快速记录:让那个小窗加一条新的
+        if capture {
+            let st = app.state::<AppState>();
+            if let Some(o) = st
+                .minis
+                .lock()
+                .unwrap()
+                .iter_mut()
+                .find(|o| o.label == m.label)
+            {
+                o.capture = true;
+            }
+            let _ = app.emit_to(m.label.as_str(), "mini-capture", ());
+        }
         return Ok(());
     }
     let s = app.state::<AppState>().settings.lock().unwrap().clone();
-    if !s.mini_enabled {
+    if !capture && !s.mini_enabled {
         return Err("小窗已经关掉了,可以在 设置 → 窗口 里打开".into());
     }
     let count = open_minis(app).len();
-    if s.mini_max > 0 && count >= s.mini_max as usize {
+    if !capture && s.mini_max > 0 && count >= s.mini_max as usize {
         return Err(format!(
             "最多同时开 {} 个小窗,先关掉一个吧(设置 → 窗口 可以改)",
             s.mini_max
@@ -1762,9 +2374,14 @@ fn open_mini(
     let st = app.state::<AppState>();
     let label = format!("mini-{}", st.mini_seq.fetch_add(1, Ordering::SeqCst) + 1);
     let entry = mini_entry(app, book, name);
+    let (w, h) = if capture {
+        (420.0, 300.0)
+    } else {
+        (340.0, 400.0)
+    };
     let win = WebviewWindowBuilder::new(app, &label, WebviewUrl::App("index.html".into()))
         .title(name)
-        .inner_size(340.0, 400.0)
+        .inner_size(w, h)
         .min_inner_size(220.0, 140.0)
         .decorations(false)
         .transparent(true)
@@ -1775,7 +2392,9 @@ fn open_mini(
         .visible(false)
         .build()
         .map_err(|e| e.to_string())?;
-    if entry.w > 0 {
+    if capture {
+        place_capture(app, &win, &s);
+    } else if entry.w > 0 {
         apply_saved_geometry(
             &win,
             &Geom {
@@ -1796,8 +2415,11 @@ fn open_mini(
         label,
         book: book.into(),
         name: name.into(),
+        capture,
     });
-    update_entry(app, book, name, |m| m.open = true);
+    if !capture {
+        update_entry(app, book, name, |m| m.open = true);
+    }
     // 开机自启时主窗口藏在托盘里:恢复的小窗也先藏着,按热键时跟主窗口一起出来
     let hidden_main = !main_window(app).is_some_and(|m| m.is_visible().unwrap_or(false));
     if focus || s.mini_hotkey != "follow" || !hidden_main {
@@ -1811,8 +2433,66 @@ fn open_mini(
     Ok(())
 }
 
-/// 把一页放进小窗(主窗口已经先把这页存好了);x、y 是拖出标签时松手的屏幕位置。
-/// 建窗口的命令要用 async,在 Windows 上同步命令里建窗口会卡死
+/// 快速记录的小窗放在哪:上次的位置(没有就和 center 一样)/ 鼠标所在屏幕的中间 / 鼠标旁边。
+/// 不是 remember 时大小也用上次的
+fn place_capture(app: &AppHandle, win: &WebviewWindow, s: &Settings) {
+    if let Some(g) = s.capture_window.as_ref().filter(|g| g.w > 0) {
+        if s.capture_position == "remember" {
+            return apply_saved_geometry(win, g);
+        }
+        if g.w >= 200 && g.h >= 150 {
+            let _ = win.set_size(PhysicalSize::new(g.w, g.h));
+        }
+    }
+    let Ok(cursor) = app.cursor_position() else {
+        let _ = win.center();
+        return;
+    };
+    let monitor = app
+        .monitor_from_point(cursor.x, cursor.y)
+        .ok()
+        .flatten()
+        .or_else(|| app.primary_monitor().ok().flatten());
+    let (Some(m), Ok(size)) = (monitor, win.outer_size()) else {
+        let _ = win.center();
+        return;
+    };
+    let a = m.work_area();
+    let (x, y) = mini::capture_at(
+        &s.capture_position,
+        (
+            a.position.x,
+            a.position.y,
+            a.size.width as i32,
+            a.size.height as i32,
+        ),
+        (size.width as i32, size.height as i32),
+        (cursor.x as i32, cursor.y as i32),
+    );
+    let _ = win.set_position(PhysicalPosition::new(x, y));
+}
+
+/// 快速记录(0.5.1):快速记录的小窗开着、又在最前面,就收起它(小窗先存好);
+/// 不然让主窗口找好要写的页面,用快速记录的方式打开小窗
+fn quick_capture(app: &AppHandle) {
+    let focused = open_minis(app).into_iter().find(|m| {
+        m.capture
+            && app
+                .get_webview_window(&m.label)
+                .is_some_and(|w| w.is_focused().unwrap_or(false))
+    });
+    match focused {
+        Some(m) => {
+            let _ = app.emit_to(m.label.as_str(), "mini-close-request", ());
+        }
+        None => {
+            let _ = app.emit_to("main", "quick-capture", ());
+        }
+    }
+}
+
+/// 把一页放进小窗(主窗口已经先把这页存好了);x、y 是拖出标签时松手的屏幕位置;
+/// capture 是快速记录。建窗口的命令要用 async,在 Windows 上同步命令里建窗口会卡死
 #[tauri::command]
 async fn mini_open(
     app: AppHandle,
@@ -1820,8 +2500,9 @@ async fn mini_open(
     name: String,
     x: Option<f64>,
     y: Option<f64>,
+    capture: Option<bool>,
 ) -> Result<(), String> {
-    open_mini(&app, &book, &name, x.zip(y), true)
+    open_mini(&app, &book, &name, x.zip(y), true, capture == Some(true))
 }
 
 #[derive(Serialize)]
@@ -1830,6 +2511,7 @@ struct MiniSelf {
     name: String,
     top: bool,
     opacity: u32,
+    capture: bool,
 }
 
 /// 小窗启动时问自己放的是哪一页
@@ -1842,6 +2524,7 @@ fn mini_self(app: AppHandle, window: WebviewWindow) -> Option<MiniSelf> {
         name: m.name,
         top: e.top,
         opacity: e.opacity,
+        capture: m.capture,
     })
 }
 
@@ -1938,7 +2621,7 @@ fn mini_set(app: AppHandle, window: WebviewWindow, top: Option<bool>, opacity: O
 async fn mini_restore(app: AppHandle) {
     let pending = std::mem::take(&mut *app.state::<AppState>().mini_restore.lock().unwrap());
     for (book, name) in pending {
-        if let Err(e) = open_mini(&app, &book, &name, None, false) {
+        if let Err(e) = open_mini(&app, &book, &name, None, false, false) {
             eprintln!("没能恢复小窗「{name}」:{e}");
         }
     }
@@ -2005,6 +2688,19 @@ fn remember_mini_geometry(app: &AppHandle, window: &tauri::Window) {
     if window.is_minimized().unwrap_or(false) || s.width == 0 {
         return;
     }
+    if m.capture {
+        app.state::<AppState>()
+            .settings
+            .lock()
+            .unwrap()
+            .capture_window = Some(Geom {
+            x: p.x,
+            y: p.y,
+            w: s.width,
+            h: s.height,
+        });
+        return;
+    }
     update_entry(app, &m.book, &m.name, |e| {
         e.x = p.x;
         e.y = p.y;
@@ -2030,10 +2726,35 @@ fn ball_image_path(app: &AppHandle) -> Option<PathBuf> {
 }
 
 fn ball_image_data(app: &AppHandle) -> Option<String> {
-    let path = ball_image_path(app)?;
+    let st = app.state::<AppState>();
+    let Some(path) = ball_image_path(app) else {
+        st.ball_image_cache.lock().unwrap().clear();
+        return None;
+    };
     let mime = ball::mime_for(path.extension()?.to_str()?)?;
-    let bytes = fs::read(&path).ok()?;
-    Some(ball::data_url(mime, &bytes))
+    let meta = fs::metadata(&path).ok()?;
+    let modified = meta.modified().ok()?;
+    let result =
+        st.ball_image_cache
+            .lock()
+            .unwrap()
+            .get_or_load(&path, meta.len(), modified, || {
+                let bytes = fs::read(&path).ok()?;
+                Some(ball::data_url(mime, &bytes))
+            });
+    result
+}
+
+#[tauri::command]
+fn refresh_ball_icon(app: AppHandle) -> Option<String> {
+    app.state::<AppState>()
+        .ball_image_cache
+        .lock()
+        .unwrap()
+        .clear();
+    let image = ball_image_data(&app);
+    let _ = app.emit_to("ball", "ball-update", ());
+    image
 }
 
 #[derive(Serialize)]
@@ -2096,6 +2817,11 @@ async fn pick_ball_icon(app: AppHandle) -> Result<Option<String>, String> {
     for other in ball::IMAGE_EXTS.iter().filter(|e| **e != ext) {
         let _ = fs::remove_file(dir.join(format!("ball-icon.{other}")));
     }
+    app.state::<AppState>()
+        .ball_image_cache
+        .lock()
+        .unwrap()
+        .clear();
     let _ = app.emit_to("ball", "ball-update", ());
     Ok(Some(ball::data_url(
         ball::mime_for(&ext).unwrap_or("image/png"),
@@ -2471,8 +3197,14 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
-                .with_handler(|app, _shortcut, event| {
-                    if event.state() == ShortcutState::Pressed {
+                .with_handler(|app, shortcut, event| {
+                    if event.state() != ShortcutState::Pressed {
+                        return;
+                    }
+                    let capture = *app.state::<AppState>().capture_key.lock().unwrap();
+                    if capture == Some(shortcut.id()) {
+                        quick_capture(app);
+                    } else {
                         toggle_main(app);
                     }
                 })
@@ -2490,6 +3222,7 @@ pub fn run() {
             create_note,
             rename_note,
             delete_note,
+            delete_if_empty,
             move_note,
             save_meta,
             create_book,
@@ -2514,13 +3247,23 @@ pub fn run() {
             minipad2_import,
             hide_window,
             show_window,
+            page_index,
+            open_page_in_main,
             expand_edge,
             ball_info,
             pick_ball_icon,
+            refresh_ball_icon,
             collapse_to_ball,
             expand_from_ball,
             open_notes_dir,
             open_link,
+            webdav_set_password,
+            webdav_test,
+            webdav_status,
+            webdav_sync_now,
+            webdav_forget,
+            local_path_exists,
+            open_path,
             save_image,
             mini_open,
             mini_self,
@@ -2580,9 +3323,13 @@ pub fn run() {
                     }
                 }
                 *st.settings_notice.lock().unwrap() = settings_notice;
-                if let Err(e) = register_hotkey(&handle, &settings.hotkey) {
+                if let Err(e) = register_hotkey(&handle, &settings.hotkey, capture_of(&settings)) {
                     eprintln!("热键注册失败: {e}");
                     *st.hotkey_error.lock().unwrap() = Some(format!("{}:{e}", settings.hotkey));
+                }
+                let capture_error = st.capture_error.lock().unwrap().clone();
+                if let Some(e) = capture_error {
+                    eprintln!("快速记录的热键注册失败: {e}");
                 }
             }
 
@@ -2600,11 +3347,19 @@ pub fn run() {
 
             // 托盘
             let toggle = MenuItem::with_id(app, "toggle", "显示 / 隐藏", true, None::<&str>)?;
+            let capture = MenuItem::with_id(
+                app,
+                "capture",
+                "快速记录",
+                settings.capture_enabled,
+                None::<&str>,
+            )?;
+            *handle.state::<AppState>().capture_item.lock().unwrap() = Some(capture.clone());
             let open_dir =
                 MenuItem::with_id(app, "open_dir", "打开笔记文件夹", true, None::<&str>)?;
             let sep = PredefinedMenuItem::separator(app)?;
             let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&toggle, &open_dir, &sep, &quit])?;
+            let menu = Menu::with_items(app, &[&toggle, &capture, &open_dir, &sep, &quit])?;
             TrayIconBuilder::with_id("main")
                 .icon(app.default_window_icon().unwrap().clone())
                 .tooltip("Minipad Next")
@@ -2612,6 +3367,7 @@ pub fn run() {
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "toggle" => toggle_main(app),
+                    "capture" => quick_capture(app),
                     "open_dir" => {
                         let _ = open_notes_dir(app.clone());
                     }
@@ -3188,6 +3944,173 @@ mod tests {
     }
 
     #[test]
+    fn tidy_settings_keeps_page_link_options_known() {
+        let mut s = Settings::default();
+        let options = |s: &Settings| {
+            [
+                s.page_link_click.clone(),
+                s.page_link_suggest.clone(),
+                s.page_link_rename.clone(),
+                s.page_link_brackets.clone(),
+                s.page_link_underline.clone(),
+                s.page_link_color.clone(),
+                s.page_link_broken_color.clone(),
+            ]
+        };
+        assert_eq!(
+            options(&s),
+            ["ctrl", "brackets", "ask", "faint", "hover", "", ""]
+        );
+        assert!(s.page_links && s.page_link_cn_brackets && s.pinyin_match);
+        s.page_link_click = "click".into();
+        s.page_link_suggest = "typing".into();
+        s.page_link_rename = "auto".into();
+        s.page_link_brackets = "hide".into();
+        s.page_link_underline = "dashed".into();
+        s.page_link_color = " #16A34A ".into();
+        s.page_link_broken_color = "linear-gradient(90deg, #112233, #445566)".into();
+        tidy_settings(&mut s);
+        assert_eq!(
+            options(&s),
+            [
+                "click",
+                "typing",
+                "auto",
+                "hide",
+                "dashed",
+                "#16a34a",
+                "linear-gradient(90deg, #112233, #445566)"
+            ]
+        );
+        s.page_link_click = "double".into();
+        s.page_link_suggest = "always".into();
+        s.page_link_rename = "never".into();
+        s.page_link_brackets = "bold".into();
+        s.page_link_underline = "wavy".into();
+        s.page_link_color = "red".into();
+        s.page_link_broken_color = "url(javascript:x)".into();
+        tidy_settings(&mut s);
+        assert_eq!(
+            options(&s),
+            ["ctrl", "brackets", "ask", "faint", "hover", "", ""]
+        );
+        // 0.4.7 的设置文件里没有这几项,读出来是默认值
+        let old: Settings = serde_json::from_str(r#"{"hotkey":"Ctrl+M"}"#).unwrap();
+        assert!(old.page_links && old.pinyin_match);
+        assert_eq!(old.page_link_rename, "ask");
+    }
+
+    #[test]
+    fn tidy_settings_keeps_capture_template_snippet_and_calc_options_known() {
+        let mut s = Settings::default();
+        let options = |s: &Settings| {
+            [
+                s.capture_target.clone(),
+                s.capture_where.clone(),
+                s.capture_format.clone(),
+                s.capture_position.clone(),
+                s.snippet_key.clone(),
+                s.calc_key.clone(),
+                s.calc_decimals.clone(),
+            ]
+        };
+        assert_eq!(
+            options(&s),
+            ["page", "end", "paragraph", "remember", "tab", "tab", "auto"]
+        );
+        assert!(s.capture_enabled && s.capture_stamp && !s.calc_thousands);
+        assert_eq!(s.capture_hotkey, "Ctrl+Alt+M");
+        assert_eq!(
+            (s.capture_page.as_str(), s.template_book.as_str()),
+            ("收集箱", "模板")
+        );
+        s.capture_target = "new".into();
+        s.capture_where = "start".into();
+        s.capture_format = "task".into();
+        s.capture_position = "cursor".into();
+        s.snippet_key = "space".into();
+        s.calc_key = "equals".into();
+        s.calc_decimals = "2".into();
+        tidy_settings(&mut s);
+        assert_eq!(
+            options(&s),
+            ["new", "start", "task", "cursor", "space", "equals", "2"]
+        );
+        s.capture_target = "both".into();
+        s.capture_where = "middle".into();
+        s.capture_format = "heading".into();
+        s.capture_position = "top".into();
+        s.snippet_key = "enter".into();
+        s.calc_key = "always".into();
+        s.calc_decimals = "7".into();
+        tidy_settings(&mut s);
+        assert_eq!(
+            options(&s),
+            ["page", "end", "paragraph", "remember", "tab", "tab", "auto"]
+        );
+        // 名字:去掉首尾空格,空着用默认的
+        s.capture_hotkey = "  Ctrl+Shift+K ".into();
+        s.capture_page = "  ".into();
+        s.capture_name = " 灵感 {{日期}} ".into();
+        s.template_book = "".into();
+        tidy_settings(&mut s);
+        assert_eq!(s.capture_hotkey, "Ctrl+Shift+K");
+        assert_eq!(s.capture_page, "收集箱");
+        assert_eq!(s.capture_name, "灵感 {{日期}}");
+        assert_eq!(s.template_book, "模板");
+        // 0.5.0 的设置文件里没有这几项,读出来是默认值(三个默认片段)
+        let old: Settings = serde_json::from_str(r#"{"hotkey":"Ctrl+M"}"#).unwrap();
+        assert!(old.capture_enabled);
+        assert_eq!(
+            old.snippets
+                .iter()
+                .map(|s| s.trigger.as_str())
+                .collect::<Vec<_>>(),
+            [";rq", ";sj", ";xq"]
+        );
+    }
+
+    #[test]
+    fn snippets_need_a_trigger_without_spaces_and_keep_the_first_of_each() {
+        let snip = |trigger: &str, text: &str| Snippet {
+            trigger: trigger.into(),
+            text: text.into(),
+        };
+        let mut list = vec![
+            snip(" ;dz ", "地址"),
+            snip("", "没有触发词"),
+            snip("a b", "有空格"),
+            snip(";dz", "重复的"),
+            snip(&"x".repeat(33), "太长"),
+            snip(";long", &"字".repeat(10_005)),
+        ];
+        list.extend((0..300).map(|i| snip(&format!(";s{i}"), "")));
+        tidy_snippets(&mut list);
+        assert_eq!(list.len(), 200);
+        assert_eq!(list[0], snip(";dz", "地址"));
+        assert_eq!(list[1].trigger, ";long");
+        assert_eq!(list[1].text.chars().count(), 10_000);
+        assert_eq!(list[2].trigger, ";s0");
+    }
+
+    #[test]
+    fn capture_hotkey_cannot_be_the_main_hotkey() {
+        let mut s = Settings::default();
+        assert!(check_capture_hotkey(&s).is_ok());
+        s.capture_hotkey = "ctrl+m".into();
+        assert!(check_capture_hotkey(&s).is_err());
+        s.capture_hotkey = "Control+M".into();
+        assert!(check_capture_hotkey(&s).is_err());
+        // 关掉了或者空着就不用比
+        s.capture_enabled = false;
+        assert!(check_capture_hotkey(&s).is_ok());
+        s.capture_enabled = true;
+        s.capture_hotkey = String::new();
+        assert!(check_capture_hotkey(&s).is_ok());
+        assert_eq!(capture_of(&s), None);
+    }
+
+    #[test]
     fn tidy_settings_keeps_settings_nav_known() {
         let mut s = Settings::default();
         assert_eq!(s.settings_nav, "left");
@@ -3713,6 +4636,26 @@ mod tests {
             );
         }
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn executable_extensions_are_checked_case_insensitively() {
+        for path in [
+            "C:/tools/start.EXE",
+            "C:/tools/run.Ps1",
+            "C:/tools/link.LNK",
+        ] {
+            assert!(is_executable_path(Path::new(path)), "{path}");
+        }
+        for path in ["C:/notes/report.md", "C:/notes/fake.exe.txt"] {
+            assert!(!is_executable_path(Path::new(path)), "{path}");
+        }
+    }
+
+    #[test]
+    fn path_command_rejects_relative_paths() {
+        assert!(parse_local_path("readme.md").is_err());
+        assert!(parse_local_path("https://example.com/file").is_err());
     }
 
     #[test]

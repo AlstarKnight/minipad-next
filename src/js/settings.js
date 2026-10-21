@@ -1,7 +1,7 @@
 // ---------- 设置 ----------
 import { api } from "./api.js";
 import { $ } from "./dom.js";
-import { state } from "./state.js";
+import { state, bookLabel } from "./state.js";
 import { toast, closeOverlays } from "./ui.js";
 import { flushAll, saveMeta } from "./save.js";
 import { reload } from "./sync.js";
@@ -23,6 +23,10 @@ import { ALL_ITEMS, DEFAULT_SEL_ITEMS, itemChecklist, orderedItems } from "./for
 import { renderTabs } from "./tabs.js";
 import { comboOf } from "./quickswitch.js";
 import { makeSharedColorTools, refreshSharedColors, quickLimit, askResetColors } from "./sharedcolors.js";
+import { webdavStatus, webdavSavePassword, webdavTest, webdavRun, webdavForget, resetWebdavTimers } from "./webdav.js";
+import { DEFAULT_CAPTURE_PAGE, DEFAULT_CAPTURE_NAME } from "./capture.js";
+import { DEFAULT_TEMPLATE_BOOK } from "./templates.js";
+import { DEFAULT_SNIPPETS } from "./expand.js";
 
 const REPO_URL = "https://github.com/AlstarKnight/minipad-next";
 
@@ -153,6 +157,18 @@ export function openSettings() {
   $("#set-edge-button").checked = s.edge_button !== false;
   $("#set-quick-key").value = s.quick_switch_key || "";
   $("#set-quick-scope").value = s.quick_switch_scope === "book" ? "book" : "all";
+  $("#set-pinyin").checked = s.pinyin_match !== false;
+  $("#set-capture").checked = s.capture_enabled !== false;
+  $("#set-capture-key").value = s.capture_hotkey || "";
+  $("#set-capture-target").value = s.capture_target === "new" ? "new" : "page";
+  fillCaptureBooks(s.capture_book || "");
+  $("#set-capture-page").value = s.capture_page || DEFAULT_CAPTURE_PAGE;
+  $("#set-capture-name").value = s.capture_name || DEFAULT_CAPTURE_NAME;
+  $("#set-capture-where").value = s.capture_where === "start" ? "start" : "end";
+  $("#set-capture-format").value = ["list", "task"].includes(s.capture_format) ? s.capture_format : "paragraph";
+  $("#set-capture-stamp").checked = s.capture_stamp !== false;
+  $("#set-capture-position").value = ["center", "cursor"].includes(s.capture_position) ? s.capture_position : "remember";
+  updateCaptureOptions();
   $("#set-pin-style").value = ["icon", "tint", "none"].includes(s.pin_style) ? s.pin_style : "icon";
   $("#set-edge-style").value = EDGE_STYLES.includes(s.edge_style) ? s.edge_style : "arrow";
   $("#set-edge-line-width").value = edgeWidth(s);
@@ -211,6 +227,27 @@ export function openSettings() {
   $("#set-code-lang-menu").checked = s.code_lang_menu !== false;
   $("#set-code-title-color").checked = s.code_title_color !== false;
   $("#set-email-links").checked = s.email_auto_link === true;
+  $("#set-local-path").checked = s.local_path_enabled !== false;
+  $("#set-local-path-click").value = s.local_path_click === "click" ? "click" : "ctrl";
+  $("#set-local-path-underline").value = ["solid", "none"].includes(s.local_path_underline) ? s.local_path_underline : "dashed";
+  $("#set-local-path-missing").checked = s.local_path_missing !== false;
+  $("#set-local-path-confirm").checked = s.local_path_confirm !== false;
+  localPathColor.show(s.local_path_color || "");
+  $("#set-page-links").checked = s.page_links !== false;
+  $("#set-page-link-click").value = s.page_link_click === "click" ? "click" : "ctrl";
+  $("#set-page-link-suggest").value = ["typing", "off"].includes(s.page_link_suggest) ? s.page_link_suggest : "brackets";
+  $("#set-page-link-cn").checked = s.page_link_cn_brackets !== false;
+  $("#set-page-link-rename").value = ["auto", "off"].includes(s.page_link_rename) ? s.page_link_rename : "ask";
+  $("#set-page-link-brackets").value = ["show", "hide"].includes(s.page_link_brackets) ? s.page_link_brackets : "faint";
+  $("#set-page-link-underline").value = ["solid", "dashed", "none"].includes(s.page_link_underline) ? s.page_link_underline : "hover";
+  pageLinkColor.show(s.page_link_color || "");
+  pageLinkBrokenColor.show(s.page_link_broken_color || "");
+  $("#set-template-book").value = s.template_book || DEFAULT_TEMPLATE_BOOK;
+  $("#set-snippet-key").value = ["space", "off"].includes(s.snippet_key) ? s.snippet_key : "tab";
+  showSnippets(Array.isArray(s.snippets) ? s.snippets : DEFAULT_SNIPPETS);
+  $("#set-calc-key").value = ["equals", "off"].includes(s.calc_key) ? s.calc_key : "tab";
+  $("#set-calc-decimals").value = /^[0-6]$/.test(String(s.calc_decimals)) ? String(s.calc_decimals) : "auto";
+  $("#set-calc-thousands").checked = s.calc_thousands === true;
   $("#set-block-enabled").checked = s.block_enabled !== false;
   $("#set-block-context").value = s.block_context_menu === "block" ? "block" : "system";
   $("#set-code-exit").value = ["blank2", "blank3", "ctrl"].includes(s.code_exit_mode) ? s.code_exit_mode : "blank3";
@@ -230,6 +267,24 @@ export function openSettings() {
   $("#set-find-pos").value = s.find_bar_pos === "bottom" ? "bottom" : "top";
   findColor.show(s.find_color || "");
   $("#set-conflict").value = s.conflict_mode === "overwrite" ? "overwrite" : "copy";
+  $("#set-webdav-enabled").checked = s.webdav_enabled === true;
+  $("#set-webdav-server").value = s.webdav_server || "";
+  $("#set-webdav-user").value = s.webdav_user || "";
+  $("#set-webdav-password").value = "";
+  $("#set-webdav-folder").value = s.webdav_folder || "/MinipadNext/";
+  $("#set-webdav-http").checked = s.webdav_allow_http === true;
+  $("#set-webdav-first").value = ["remote", "local"].includes(s.webdav_first_mode) ? s.webdav_first_mode : "merge";
+  $("#set-webdav-images").checked = s.webdav_images !== false;
+  $("#set-webdav-start").checked = s.webdav_on_start !== false;
+  $("#set-webdav-save").checked = s.webdav_after_save !== false;
+  $("#set-webdav-delay").value = s.webdav_delay_seconds ?? 30;
+  $("#set-webdav-interval").value = String(s.webdav_interval_minutes ?? 5);
+  $("#set-webdav-hide").checked = s.webdav_on_hide !== false;
+  $("#set-webdav-display").value = s.webdav_status_style || "icon";
+  $("#set-webdav-delete-limit").value = s.webdav_delete_limit ?? 20;
+  $("#set-webdav-delete-divisor").value = s.webdav_delete_divisor ?? 3;
+  webdavColor.show(s.webdav_status_color || "");
+  void webdavStatus().catch(() => {});
   $("#set-backup").checked = s.backup_enabled;
   $("#set-backup-keep").value = s.backup_keep;
   $("#set-backup-dir").value = s.backup_dir;
@@ -257,7 +312,7 @@ export function openSettings() {
   backupInfo = null;
   updateBackup();
   $("#settings").hidden = false;
-  for (const picker of [accentColor, edgeColor, findColor, outlineColor, ballColor]) picker.reopen();
+  for (const picker of [accentColor, edgeColor, localPathColor, pageLinkColor, pageLinkBrokenColor, webdavColor, findColor, outlineColor, ballColor]) picker.reopen();
   showSettingsPage(page, { focus: true });
   api
     .invoke("backup_info")
@@ -327,6 +382,34 @@ const edgeColor = colorPicker(
   [{ name: "跟随强调色", value: "" }, ...ACCENTS.filter((a) => a.value)],
   "var(--accent-grad)",
   () => updateEdgeLinePreview(),
+);
+
+const webdavColor = colorPicker(
+  "webdav",
+  "#set-webdav-color",
+  [{ name: "跟随强调色", value: "" }, ...ACCENTS.filter((a) => a.value)],
+  "var(--accent-grad)",
+);
+
+const localPathColor = colorPicker(
+  "local-path",
+  "#set-local-path-color",
+  [{ name: "跟随链接", value: "" }, ...ACCENTS.filter((a) => a.value)],
+  "var(--accent-grad)",
+);
+
+// 页面链接 [[页面名]] 的颜色;还没有的页面默认灰色
+const pageLinkColor = colorPicker(
+  "page-link",
+  "#set-page-link-color",
+  [{ name: "跟随强调色", value: "" }, ...ACCENTS.filter((a) => a.value)],
+  "var(--accent-grad)",
+);
+const pageLinkBrokenColor = colorPicker(
+  "page-link-broken",
+  "#set-page-link-broken-color",
+  [{ name: "灰色", value: "" }, ...ACCENTS.filter((a) => a.value)],
+  "var(--muted)",
 );
 
 // 查找高亮的颜色,上面那句话是预览
@@ -451,6 +534,64 @@ async function pickBallIcon() {
     toast(String(e), 5000);
   }
 }
+
+// 快速记录关掉时其他选项变灰;「写到」只显示选中的那一种的选项
+function updateCaptureOptions() {
+  const off = !$("#set-capture").checked;
+  const target = $("#set-capture-target").value;
+  for (const el of document.querySelectorAll(".capture-option")) {
+    el.classList.toggle("off", off);
+    if (el.dataset.captureTarget) el.hidden = el.dataset.captureTarget !== target;
+  }
+  for (const el of document.querySelectorAll(".capture-option input, .capture-option select")) el.disabled = off;
+}
+// 快速记录写到哪个笔记本:列出现有的笔记本,设的那个不在了就选默认笔记本
+function fillCaptureBooks(value) {
+  const select = $("#set-capture-book");
+  select.replaceChildren(...state.books.map((b) => new Option(bookLabel(b), b.name)));
+  select.value = state.books.some((b) => b.name === value) ? value : "";
+}
+
+// ---- 片段:每一行是触发词、内容(可以多行)和删除按钮 ----
+function snippetRow({ trigger = "", text = "" } = {}) {
+  const row = document.createElement("div");
+  row.className = "snippet-row";
+  const key = document.createElement("input");
+  key.type = "text";
+  key.className = "snippet-trigger";
+  key.maxLength = 32;
+  key.spellcheck = false;
+  key.placeholder = "触发词";
+  key.value = trigger;
+  // 触发词里不能有空格
+  key.addEventListener("input", () => {
+    if (/\s/.test(key.value)) key.value = key.value.replace(/\s+/g, "");
+  });
+  const body = document.createElement("textarea");
+  body.className = "snippet-text";
+  body.spellcheck = false;
+  body.placeholder = "展开成什么";
+  body.value = text;
+  // 有几行就显示几行(最多 6 行,再多就滚动)
+  const fit = () => (body.rows = Math.min(6, Math.max(1, body.value.split("\n").length)));
+  body.addEventListener("input", fit);
+  fit();
+  const del = document.createElement("button");
+  del.type = "button";
+  del.className = "snippet-del";
+  del.title = "删除这个片段";
+  del.textContent = "×";
+  del.addEventListener("click", () => row.remove());
+  row.append(key, body, del);
+  return row;
+}
+function showSnippets(list) {
+  $("#set-snippets").replaceChildren(...list.map((x) => snippetRow(x)));
+}
+const collectSnippets = () =>
+  [...document.querySelectorAll("#set-snippets .snippet-row")]
+    .map((row) => ({ trigger: row.querySelector(".snippet-trigger").value.trim(), text: row.querySelector(".snippet-text").value }))
+    .filter((x) => x.trigger);
 
 // 箭头独立模式不显示细线控制；其余三种模式都能调细线长度、粗细。
 function updateMiniOptions() {
@@ -616,6 +757,38 @@ async function submitSettings() {
     code_lang_menu: $("#set-code-lang-menu").checked,
     code_title_color: $("#set-code-title-color").checked,
     email_auto_link: $("#set-email-links").checked,
+    local_path_enabled: $("#set-local-path").checked,
+    local_path_click: $("#set-local-path-click").value,
+    local_path_color: localPathColor.value,
+    local_path_underline: $("#set-local-path-underline").value,
+    local_path_missing: $("#set-local-path-missing").checked,
+    local_path_confirm: $("#set-local-path-confirm").checked,
+    page_links: $("#set-page-links").checked,
+    page_link_click: $("#set-page-link-click").value,
+    page_link_suggest: $("#set-page-link-suggest").value,
+    page_link_cn_brackets: $("#set-page-link-cn").checked,
+    page_link_rename: $("#set-page-link-rename").value,
+    page_link_color: pageLinkColor.value,
+    page_link_broken_color: pageLinkBrokenColor.value,
+    page_link_brackets: $("#set-page-link-brackets").value,
+    page_link_underline: $("#set-page-link-underline").value,
+    pinyin_match: $("#set-pinyin").checked,
+    capture_enabled: $("#set-capture").checked,
+    capture_hotkey: $("#set-capture-key").value,
+    capture_target: $("#set-capture-target").value,
+    capture_book: $("#set-capture-book").value,
+    capture_page: $("#set-capture-page").value.trim(),
+    capture_name: $("#set-capture-name").value.trim(),
+    capture_where: $("#set-capture-where").value,
+    capture_format: $("#set-capture-format").value,
+    capture_stamp: $("#set-capture-stamp").checked,
+    capture_position: $("#set-capture-position").value,
+    template_book: $("#set-template-book").value.trim(),
+    snippets: collectSnippets(),
+    snippet_key: $("#set-snippet-key").value,
+    calc_key: $("#set-calc-key").value,
+    calc_decimals: $("#set-calc-decimals").value,
+    calc_thousands: $("#set-calc-thousands").checked,
     block_enabled: $("#set-block-enabled").checked,
     block_context_menu: $("#set-block-context").value,
     code_exit_mode: $("#set-code-exit").value,
@@ -634,6 +807,22 @@ async function submitSettings() {
     find_bar_pos: $("#set-find-pos").value,
     find_color: findColor.value,
     conflict_mode: $("#set-conflict").value,
+    webdav_enabled: $("#set-webdav-enabled").checked,
+    webdav_server: $("#set-webdav-server").value.trim(),
+    webdav_user: $("#set-webdav-user").value.trim(),
+    webdav_folder: $("#set-webdav-folder").value.trim() || "/MinipadNext/",
+    webdav_allow_http: $("#set-webdav-http").checked,
+    webdav_first_mode: $("#set-webdav-first").value,
+    webdav_images: $("#set-webdav-images").checked,
+    webdav_on_start: $("#set-webdav-start").checked,
+    webdav_after_save: $("#set-webdav-save").checked,
+    webdav_delay_seconds: Math.min(300, Math.max(10, Number($("#set-webdav-delay").value) || 30)),
+    webdav_interval_minutes: Number($("#set-webdav-interval").value),
+    webdav_on_hide: $("#set-webdav-hide").checked,
+    webdav_status_style: $("#set-webdav-display").value,
+    webdav_delete_limit: Math.max(1, Math.min(1000, Math.round(Number($("#set-webdav-delete-limit").value) || 20))),
+    webdav_delete_divisor: Math.max(1, Math.min(10, Math.round(Number($("#set-webdav-delete-divisor").value) || 3))),
+    webdav_status_color: webdavColor.value,
     settings_nav: $("#set-nav-pos").value,
     tab_overflow: $("#set-tab-overflow").value,
     tab_fade: $("#set-tab-fade").checked,
@@ -654,6 +843,11 @@ async function submitSettings() {
   };
   try {
     await saveSettings(next, { migrateNotes: $("#set-migrate-notes").checked });
+    if ($("#set-webdav-password").value) {
+      await webdavSavePassword($("#set-webdav-password").value);
+      $("#set-webdav-password").value = "";
+    }
+    resetWebdavTimers();
     closeOverlays();
     toast("设置已保存");
   } catch (e) {
@@ -683,7 +877,7 @@ function updateMigration() {
 }
 
 export function bindSettings() {
-  for (const picker of [accentColor, edgeColor, findColor, outlineColor, ballColor]) picker.install();
+  for (const picker of [accentColor, edgeColor, localPathColor, pageLinkColor, pageLinkBrokenColor, webdavColor, findColor, outlineColor, ballColor]) picker.install();
   // 录热键时先停用全局热键,不然按下现在的热键会把窗口藏起来
   const hk = $("#set-hotkey");
   hk.addEventListener("focus", () => {
@@ -702,25 +896,33 @@ export function bindSettings() {
     const combo = comboOf(e);
     if (combo) hk.value = combo;
   });
-  // 快速切换页面的快捷键(窗口里的):按组合键换成它,Backspace / Delete 清空就不用
-  const qk = $("#set-quick-key");
-  qk.addEventListener("focus", () => {
-    qk.classList.add("recording");
-    api.invoke("pause_hotkey").catch(() => {});
+  // 快速切换页面的快捷键(窗口里的)和快速记录的热键:按组合键换成它,Backspace / Delete 清空就不用
+  for (const qk of [$("#set-quick-key"), $("#set-capture-key")]) {
+    qk.addEventListener("focus", () => {
+      qk.classList.add("recording");
+      api.invoke("pause_hotkey").catch(() => {});
+    });
+    qk.addEventListener("blur", () => {
+      qk.classList.remove("recording");
+      api.invoke("resume_hotkey").catch(() => {});
+    });
+    qk.addEventListener("keydown", (e) => {
+      if (e.key === "Tab") return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.key === "Escape") return qk.blur();
+      if (!e.ctrlKey && !e.altKey && !e.metaKey && (e.key === "Backspace" || e.key === "Delete")) return void (qk.value = "");
+      const combo = comboOf(e);
+      if (combo) qk.value = combo;
+    });
+  }
+  for (const id of ["#set-capture", "#set-capture-target"]) $(id).addEventListener("input", updateCaptureOptions);
+  $("#set-snippet-add").addEventListener("click", () => {
+    const row = snippetRow();
+    $("#set-snippets").append(row);
+    row.querySelector("input").focus();
   });
-  qk.addEventListener("blur", () => {
-    qk.classList.remove("recording");
-    api.invoke("resume_hotkey").catch(() => {});
-  });
-  qk.addEventListener("keydown", (e) => {
-    if (e.key === "Tab") return;
-    e.preventDefault();
-    e.stopPropagation();
-    if (e.key === "Escape") return qk.blur();
-    if (!e.ctrlKey && !e.altKey && !e.metaKey && (e.key === "Backspace" || e.key === "Delete")) return void (qk.value = "");
-    const combo = comboOf(e);
-    if (combo) qk.value = combo;
-  });
+  $("#set-snippet-reset").addEventListener("click", () => showSnippets(DEFAULT_SNIPPETS));
   $("#set-save").addEventListener("click", submitSettings);
   $("#set-block-enabled").addEventListener("change", () => { $("#set-block-context").disabled = !$("#set-block-enabled").checked; });
   for (const id of ["#set-quick-limit", "#set-quick-gradient-limit", "#set-quick-material-limit", "#set-color-layout", "#set-gradient-shape", "#set-gradient-names"]) {
@@ -780,11 +982,47 @@ export function bindSettings() {
   for (const id of ["#set-mini", "#set-mini-opacity"]) $(id).addEventListener("input", updateMiniOptions);
   for (const r of document.querySelectorAll('input[name="set-ball-icon"]')) r.addEventListener("change", updateBall);
   $("#set-ball-pick").addEventListener("click", pickBallIcon);
+  $("#set-ball-refresh").addEventListener("click", async () => {
+    try {
+      ballImage = await api.invoke("refresh_ball_icon");
+      updateBall();
+    } catch (e) { toast(String(e)); }
+  });
   $("#set-pick-dir").addEventListener("click", () => pickFolder("#set-dir", "选择笔记文件夹"));
   $("#set-open-dir").addEventListener("click", () => api.invoke("open_notes_dir").catch((e) => toast(String(e))));
   $("#set-date-format").placeholder = DEFAULT_DATE_FORMAT;
   $("#set-date-format").addEventListener("input", updateDatePreview);
   $("#set-backup").addEventListener("change", updateBackup);
+  $("#set-webdav-preset").addEventListener("change", () => {
+    const preset = $("#set-webdav-preset").value;
+    if (preset === "jianguoyun") $("#set-webdav-server").value = "https://dav.jianguoyun.com/dav/";
+    else if (preset === "infinicloud") $("#set-webdav-server").value = "https://webdav.teracloud.jp/";
+    else if (preset === "nextcloud") $("#set-webdav-server").placeholder = "https://域名/remote.php/dav/files/用户名/";
+  });
+  $("#set-webdav-enabled").addEventListener("change", () => {
+    const dir = $("#set-dir").value || state.settings?.notes_dir || "";
+    if ($("#set-webdav-enabled").checked &&
+        /(?:onedrive|百度网盘|baidunetdisk|dropbox|坚果云)/i.test(dir)) {
+      toast("当前笔记文件夹位于同步盘，同时开启 WebDAV 可能产生冲突。", 6000);
+    }
+  });
+  $("#set-webdav-test").addEventListener("click", async () => {
+    try {
+      await webdavTest({
+        server: $("#set-webdav-server").value.trim(),
+        username: $("#set-webdav-user").value.trim(),
+        folder: $("#set-webdav-folder").value.trim(),
+        allowHttp: $("#set-webdav-http").checked,
+        password: $("#set-webdav-password").value,
+      });
+    } catch (e) { toast(String(e), 6000); }
+  });
+  $("#set-webdav-sync").addEventListener("click", () => void webdavRun());
+  $("#set-webdav-forget").addEventListener("click", async () => {
+    try {
+      if (await webdavForget()) $("#set-webdav-enabled").checked = false;
+    } catch (e) { toast(String(e)); }
+  });
   $("#set-pick-backup").addEventListener("click", () => pickFolder("#set-backup-dir", "选择备份位置"));
   $("#set-open-backup").addEventListener("click", () => api.invoke("open_backup_dir").catch((e) => toast(String(e))));
   $("#set-repo").addEventListener("click", () => api.invoke("open_link", { url: REPO_URL }).catch((e) => toast(String(e))));
