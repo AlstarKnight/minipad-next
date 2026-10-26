@@ -2508,6 +2508,28 @@ describe("code blocks", () => {
     assert.equal(await blocks.locator("pre:visible").count(), 2, "expanded state survives restart too");
   });
 
+  ui("Ctrl+A inside a code block selects only that block; pressing it again selects the whole page", {
+    seed: seed({ "": { 页: "前面一段\n\n```js\nconst a = 1;\nconst b = 2;\n```\n\n后面一段" } }),
+  }, async (h) => {
+    const { p } = h;
+    await p.click("#editor .ProseMirror code");
+    await p.keyboard.press("Control+a");
+    assert.equal(await h.selection(), "const a = 1;\nconst b = 2;", "only the code is selected");
+    await p.keyboard.press("Control+a");
+    const all = await h.selection();
+    assert.ok(all.includes("前面一段") && all.includes("const b = 2;") && all.includes("后面一段"), "the second press selects the page");
+    // 打字会替换选中的代码,页面其余部分不动
+    await p.click("#editor .ProseMirror code");
+    await p.keyboard.press("Control+a");
+    await p.keyboard.type("x");
+    assert.equal(await h.editor(), "前面一段\n\n```js\nx\n```\n\n后面一段", "typing replaces only the code");
+    // 代码块外面照旧:选中整页
+    await p.locator("#editor .ProseMirror > p").first().click();
+    await p.keyboard.press("Control+a");
+    const page = await h.selection();
+    assert.ok(page.includes("前面一段") && page.includes("后面一段"), "outside code it still selects the page");
+  });
+
   ui("a collapsed copy-text block turns into an expanded code block", {
     seed: seed({ "": { 页: "```copy [minipad-folded]\n复制这段\n```" } }),
   }, async (h) => {
