@@ -320,6 +320,35 @@ describe("0.2.0 checks", () => {
     },
   );
 
+  ui("WebDAV change event refreshes an unchanged open page", {
+    seed: seed({ "": { 待办: "旧内容" } }),
+  }, async (h) => {
+    const { p } = h;
+    await p.evaluate(() => {
+      window.__mockFiles["待办"] = "网盘下载的新内容";
+      window.__mockEmit("webdav-changed", ["待办"]);
+    });
+    await until(h.editor, "网盘下载的新内容", "download event refreshes the open page");
+  });
+
+  ui("WebDAV change event preserves unsaved edits and backs up the downloaded version", {
+    seed: seed({ "": { 待办: "初稿" } }),
+  }, async (h) => {
+    const { p } = h;
+    await p.click("#editor");
+    await p.keyboard.press("Control+End");
+    await p.keyboard.type("本机改动");
+    await p.evaluate(() => {
+      window.__mockFiles["待办"] = "网盘也改了";
+      window.__mockEmit("webdav-changed", ["待办"]);
+    });
+    assert.equal(await h.editor(), "初稿本机改动", "in-progress edit is not replaced");
+    await until(() => h.mockFile("", "待办"), "初稿本机改动", "local edit persists");
+    await p.waitForFunction(() => Object.entries(window.__mockFiles).some(
+      ([name, content]) => name.includes("冲突") && content === "网盘也改了"
+    ));
+  });
+
   ui(
     "delete page: the custom dialog names the page, Esc cancels, OK deletes",
     { seed: seed({ "": { 待办: "外部改过的内容!", 同步来的: "来自网盘" } }) },
@@ -3958,6 +3987,9 @@ describe("theme and accent", () => {
     await p.click("#set-ball-pick");
     assert.equal(await p.isChecked('input[name="set-ball-icon"][value="custom"]'), true, "picking an image selects it");
     assert.equal(await p.getAttribute("#set-ball-preview img", "src"), "data:image/png;base64,iVBORw0KGgo=");
+    await p.evaluate(() => (window.__mockControl.ballImage = "data:image/png;base64,cmVmcmVzaGVk"));
+    await p.click("#set-ball-refresh");
+    assert.equal(await p.getAttribute("#set-ball-preview img", "src"), "data:image/png;base64,cmVmcmVzaGVk", "manual reload updates preview");
     await p.click("#set-save");
     await until(() => h.stored().then((s) => [s.settings.ball_enabled, s.settings.ball_size, s.settings.ball_icon, s.settings.ball_color, s.settings.ball_opacity, s.settings.ball_open]), [true, 64, "custom", "linear-gradient(135deg, #5fb4ff, #d66cf0)", 80, "dblclick"]);
     assert.equal(await p.isVisible("#btn-ball"), true, "the top bar now has the collapse button");
@@ -4657,7 +4689,7 @@ describe("0.3.2: settings in five categories", () => {
     assert.ok(await p.isHidden("#set-hotkey"));
     assert.deepEqual(
       await p.$$eval('.set-page[data-page="edit"] h3', (els) => els.map((e) => e.textContent)),
-      ["编辑器", "块管理", "悬浮工具栏", "悬浮目录", "查找替换"],
+      ["编辑器", "链接", "块管理", "悬浮工具栏", "悬浮目录", "查找替换"],
       "with a small heading for each part",
     );
     await p.keyboard.press("ArrowDown");
@@ -6731,5 +6763,325 @@ describe("0.4.4: interface styles", () => {
     assert.equal(await root(p, "data-ui"), "starry", "the small window follows the style");
     assert.equal(await root(p, "data-side"), null);
     assert.ok(await p.locator("#side").isHidden());
+  });
+});
+
+suite("0.4.5: WebDAV settings", { concurrency: 1 }, () => {
+  ui("rescan request is debounced even if save-triggered syncing is disabled", {
+    seed: { ...seed({ "": { "笔记": "内容" } }), settings: {
+      ...SETTINGS, webdav_enabled: true, webdav_on_start: false,
+      webdav_after_save: false, webdav_interval_minutes: 0,
+    } },
+    mockControl: { webdavRescanNeeded: true, webdavSyncCalls: 0 },
+  }, async ({ p }) => {
+    await p.click("#st-webdav");
+    await p.waitForFunction(() => window.__mockControl.webdavSyncCalls === 1);
+    await p.waitForTimeout(500);
+    assert.equal(await p.evaluate(() => window.__mockControl.webdavSyncCalls), 1,
+      "rescan should not immediately start another network scan");
+  });
+
+  for (const afterSave of [false, true]) {
+    ui(`saving a page ${afterSave ? "schedules" : "does not schedule"} a sync when save-triggered syncing is ${afterSave ? "on" : "off"}`, {
+      seed: { ...seed({ "": { "笔记": "内容" } }), settings: {
+        ...SETTINGS, webdav_enabled: true, webdav_on_start: false, webdav_on_hide: false,
+        webdav_after_save: afterSave, webdav_interval_minutes: 0,
+      } },
+      mockControl: { webdavSyncCalls: 0 },
+    }, async ({ p }) => {
+      await p.clock.install();
+      await p.click("#editor");
+      await p.keyboard.press("Control+End");
+      await p.keyboard.type("改动");
+      await p.waitForFunction(() => window.__mockFiles["笔记"]?.includes("改动"));
+      await p.clock.fastForward(60_000);
+      await p.waitForTimeout(300);
+      assert.equal(await p.evaluate(() => window.__mockControl.webdavSyncCalls), afterSave ? 1 : 0);
+    });
+  }
+
+  ui("WebDAV status distinguishes syncing, conflicts and offline states", {
+    seed: { ...seed({ "": { "笔记": "内容" } }), settings: {
+      ...SETTINGS, webdav_enabled: true, webdav_on_start: false, webdav_interval_minutes: 0,
+      webdav_status_style: "text",
+    } },
+    mockControl: { webdavStatus: { state: "synced", message: "已同步", last_time: "", history: [] } },
+  }, async ({ p }) => {
+    for (const [state, message] of [
+      ["syncing", "同步中"], ["conflict", "有冲突"], ["offline", "离线"], ["error", "出错"],
+    ]) {
+      await p.evaluate(([kind, text]) => {
+        window.__mockControl.webdavStatus = { state: kind, message: text, last_time: "", history: [] };
+        window.__mockEmit("webdav-changed", []);
+      }, [state, message]);
+      await until(() => p.locator("#st-webdav").textContent(), state === "syncing"
+        ? "⟳ 同步中" : (state === "offline" ? "○ 离线" : "! " + message), "WebDAV state " + state);
+    }
+  });
+
+  ui("WebDAV connection failure stays in Chinese and does not save draft", {
+    seed: seed({ "": { "笔记": "内容" } }),
+    mockControl: { webdavTestError: "账号或应用密码错误" },
+  }, async (h) => {
+    const { p } = h;
+    await p.click("#btn-settings");
+    await settingsPage(p, "data");
+    await p.fill("#set-webdav-server", "https://dav.example.com/");
+    await p.fill("#set-webdav-user", "someone");
+    await p.click("#set-webdav-test");
+    await until(h.toast, "账号或应用密码错误", "connection failure is translated");
+    assert.equal((await h.stored()).settings.webdav_server || "", "");
+    assert.equal((await h.stored()).settings.webdav_user || "", "");
+  });
+
+  ui("test connection uses form draft without persisting it", {
+    seed: seed({ "": { "笔记": "内容" } }),
+  }, async (h) => {
+    const { p } = h;
+    await p.click("#btn-settings");
+    await settingsPage(p, "data");
+    await p.fill("#set-webdav-server", "https://dav.example.com/");
+    await p.fill("#set-webdav-user", "example");
+    await p.click("#set-webdav-test");
+    await until(h.toast, "连接成功，目录读取和写入测试通过（预览模拟）", "test connection succeeds");
+    assert.equal((await h.stored()).settings.webdav_server || "", "", "testing did not save the draft");
+  });
+});
+
+suite("0.4.5: WebDAV downloads", { concurrency: 1 }, () => {
+  const webdavOn = { ...SETTINGS, webdav_enabled: true, webdav_on_start: false, webdav_on_hide: false, webdav_interval_minutes: 0 };
+
+  ui("page order, pins and groups synced from another device are adopted and not written back", {
+    seed: { ...seed({ "": { "甲": "1", "乙": "2", "丙": "3" } }), settings: webdavOn },
+  }, async (h) => {
+    const { p } = h;
+    await until(h.tabs, ["甲", "乙", "丙"], "initial order");
+    // 另一台设备改了顺序、固定和分组,WebDAV 把合并后的 .minipad.json 写到了本机
+    await p.evaluate(() => {
+      Object.assign(window.__mockBooks[""].meta, {
+        order: ["丙", "甲", "乙"], pinned: ["丙"],
+        groups: [{ id: "g1", name: "工作", color: "#3b82f6", collapsed: false }], note_groups: { "乙": "g1" },
+      });
+      window.__mockEmit("webdav-changed", [".minipad.json"]);
+    });
+    await until(h.tabs, ["丙", "甲", "乙"], "the downloaded order is shown");
+    await h.tab("甲").click();
+    await p.evaluate(() => window.__minipad.flush());
+    const meta = (await h.mock())[""].meta;
+    assert.deepEqual(meta.order, ["丙", "甲", "乙"], "switching pages does not write the old order back");
+    assert.deepEqual(meta.pinned, ["丙"]);
+    assert.deepEqual(meta.note_groups, { "乙": "g1" });
+    assert.equal(meta.groups[0]?.name, "工作");
+  });
+
+  ui("switching pages while a sync is still running does not write the old order over the downloaded one", {
+    seed: { ...seed({ "": { "甲": "1", "乙": "2", "丙": "3" } }), settings: webdavOn },
+  }, async (h) => {
+    const { p } = h;
+    await until(h.tabs, ["甲", "乙", "丙"], "initial order");
+    // WebDAV 已经把另一台设备改的 .minipad.json 写到本机,同步还没结束,这里还没读到
+    await p.evaluate(() => {
+      Object.assign(window.__mockBooks[""].meta, {
+        order: ["丙", "甲", "乙"], pinned: ["丙"],
+        groups: [{ id: "g1", name: "工作", color: "#3b82f6", collapsed: false }], note_groups: { "乙": "g1" },
+      });
+    });
+    await h.tab("乙").click();
+    await p.evaluate(() => window.__minipad.flush());
+    const meta = (await h.mock())[""].meta;
+    assert.equal(meta.active, "乙", "the page switch is saved");
+    assert.deepEqual(meta.order, ["丙", "甲", "乙"], "the downloaded order is kept");
+    assert.deepEqual(meta.pinned, ["丙"]);
+    assert.deepEqual(meta.note_groups, { "乙": "g1" });
+    assert.equal(meta.groups[0]?.name, "工作");
+    // 同步结束读到以后,标签栏也换成新的样子
+    await p.evaluate(() => window.__mockEmit("webdav-changed", [".minipad.json"]));
+    await until(h.tabs, ["丙", "甲", "乙"], "the downloaded order is shown");
+  });
+
+  ui("downloaded changes are applied once the editor is free again", {
+    seed: { ...seed({ "": { "笔记": "旧内容" } }), settings: webdavOn },
+  }, async (h) => {
+    const { p } = h;
+    await h.tab("笔记").dblclick();
+    await p.locator("#tabs .tab input").waitFor();
+    await p.evaluate(() => {
+      window.__mockFiles["笔记"] = "网盘下来的内容";
+      window.__mockEmit("webdav-changed", ["笔记.md"]);
+    });
+    await p.waitForTimeout(300);
+    assert.equal(await h.editor(), "旧内容", "nothing is read while the page is being renamed");
+    await p.keyboard.press("Escape");
+    await until(h.editor, "网盘下来的内容", "read again after the rename box closed");
+  });
+});
+
+suite("0.4.5: local file paths", { concurrency: 1 }, () => {
+  ui("executable path requires confirmation and offers a trust checkbox", {
+    seed: seed({ "": { "程序": "C:\\files\\setup.exe" } }),
+    mockControl: { openedPaths: [] },
+  }, async ({ p }) => {
+    const link = p.locator("#editor .local-file-path").first();
+    await link.waitFor();
+    assert.equal(await link.getAttribute("data-local-path"), "C:\\files\\setup.exe");
+    await link.click({ modifiers: ["Control"] });
+    await p.locator("#dialog").waitFor();
+    assert.equal(await p.locator("#dialog-msg + label input[type=checkbox]").count(), 1);
+    await p.click("#dialog-ok");
+    await until(() => p.evaluate(() => window.__mockControl.openedPaths.length), 1, "confirmed opening");
+    assert.equal((await p.evaluate(() => window.__mockControl.openedPaths[0])).confirmed, true);
+  });
+
+  ui("slow local file existence checks do not block editing", {
+    seed: seed({ "": { "路径": "C:\\docs\\slow.pdf" } }),
+    mockControl: { slowLocalPathMs: 8000 },
+  }, async (h) => {
+    const { p } = h;
+    await p.locator("#editor .local-file-path").waitFor();
+    const start = Date.now();
+    await p.click("#editor");
+    await p.keyboard.press("Control+End");
+    await p.keyboard.type("仍然可以编辑");
+    await p.waitForFunction(() => window.__mockFiles["路径"]?.includes("仍然可以编辑"));
+    assert.ok(Date.now() - start < 3500, "editing should not wait for the 8-second existence check");
+  });
+
+  ui("local path missing state can be simulated", {
+    seed: seed({ "": { "路径": "打开 C:\\docs\\note.pdf" } }),
+  }, async ({ p }) => {
+    await p.locator("#editor .local-file-path.missing").waitFor();
+    assert.equal(await p.locator("#editor .local-file-path.missing").count(), 1);
+    // 关掉「不存在的文件显示为灰色」马上生效,不用重开
+    await p.click("#btn-settings");
+    await settingsPage(p, "edit");
+    await p.uncheck("#set-local-path-missing");
+    await p.click("#set-save");
+    await until(() => p.locator("#editor .local-file-path.missing").count(), 0, "missing style removed right away");
+    assert.equal(await p.locator("#editor .local-file-path").count(), 1, "the path is still decorated");
+  });
+
+
+  ui("local file links are decorated and settings survive reopening", {
+    seed: seed({ "": { "路径": "打开 C:\\docs\\note.pdf 并查看。" } }),
+  }, async (h) => {
+    const { p } = h;
+    await p.locator("#editor .local-file-path").waitFor();
+    assert.equal(await p.locator("#editor .local-file-path").first().getAttribute("data-local-path"), "C:\\docs\\note.pdf");
+    await p.click("#btn-settings");
+    await settingsPage(p, "edit");
+    assert.equal(await p.locator("#set-local-path").isChecked(), true);
+    await p.uncheck("#set-local-path");
+    await p.selectOption("#set-local-path-click", "click");
+    await p.click("#set-save");
+    await until(() => p.locator("#editor .local-file-path").count(), 0, "path decoration is disabled");
+    await p.click("#btn-settings");
+    await settingsPage(p, "edit");
+    assert.equal(await p.locator("#set-local-path").isChecked(), false);
+    assert.equal(await p.locator("#set-local-path-click").inputValue(), "click");
+  });
+
+});
+
+describe("0.4.5: many pages", () => {
+  const PAGES = ["甲", "乙", "丙", "丁", "戊"];
+  const many = (settings = {}, meta = null) => {
+    const db = seed({ "": Object.fromEntries(PAGES.map((n) => [n, `${n}的内容`])), 工作: { 周报: "本周" } });
+    Object.assign(db.settings, settings);
+    if (meta) Object.assign(db.books[""].meta, meta);
+    return db;
+  };
+  // 给现在的标签做个记号:换页以后记号还在,说明标签没有重画
+  const markTabs = (p) => p.$$eval("#tabs .tab", (ts) => ts.forEach((t, i) => (t.__mark = i)));
+  const unchanged = (p) => p.$$eval("#tabs .tab", (ts) => ts.every((t, i) => t.__mark === i));
+
+  ui("switching pages moves the highlight and leaves the other tabs alone", { seed: many() }, async (h) => {
+    const { p } = h;
+    await markTabs(p);
+    await p.keyboard.press("Control+Tab");
+    await until(h.activeTab, "乙", "Ctrl+Tab");
+    assert.equal(await h.editor(), "乙的内容");
+    await h.tab("丁").click();
+    await until(h.activeTab, "丁", "a click");
+    await p.keyboard.press("Control+1");
+    await until(h.activeTab, "甲", "Ctrl+1");
+    await p.keyboard.press("Control+p");
+    await p.keyboard.type("戊");
+    await p.keyboard.press("Enter");
+    await until(h.activeTab, "戊", "Ctrl+P");
+    assert.equal(await h.editor(), "戊的内容");
+    assert.ok(await unchanged(p), "the tabs were not redrawn");
+    assert.equal(await p.locator("#tabs .tab.active").count(), 1);
+    // 换笔记本照旧整排重画
+    await h.switchBook("工作");
+    assert.deepEqual(await h.tabs(), ["周报"]);
+    assert.equal(await h.editor(), "本周");
+  });
+
+  ui("leaving a page in a folded group folds its tab", {
+    seed: many({ tab_groups: true }, { active: "乙", groups: [{ id: "g1", name: "组", color: "#4c8bf5", collapsed: true }], note_groups: { 乙: "g1", 丙: "g1" } }),
+  }, async (h) => {
+    const { p } = h;
+    const strip = () => p.$$eval("#tabs > *", (els) => els.map((e) => (e.classList.contains("tab-group") ? "[组]" : e.classList.contains("folded") ? `(${e.textContent})` : e.textContent)));
+    assert.deepEqual(await strip(), ["甲", "[组]", "乙", "(丙)", "丁", "戊"]);
+    await markTabs(p);
+    await h.tab("丁").click();
+    await until(strip, ["甲", "[组]", "(乙)", "(丙)", "丁", "戊"], "the page left behind folds away");
+    assert.ok(await unchanged(p), "without redrawing the tabs");
+    // 换回折叠的组里的页面:组展开
+    await p.keyboard.press("Control+2");
+    await until(strip, ["甲", "[组]", "乙", "丙", "丁", "戊"], "going back unfolds the group");
+  });
+
+  ui("paper: the outline tree follows the current page without being redrawn", { seed: many({ ui_style: "paper" }) }, async (h) => {
+    const { p } = h;
+    await p.setViewportSize({ width: 900, height: 600 });
+    await until(() => p.locator("#side .side-page").count(), 5, "the tree shows");
+    const current = () => p.$$eval("#side .side-page.current", (rs) => rs.map((r) => [r.textContent, r.getAttribute("aria-current")]));
+    assert.deepEqual(await current(), [["甲", "page"]]);
+    await p.$$eval("#side .side-page", (rs) => rs.forEach((r) => (r.__mark = true)));
+    await p.keyboard.press("Control+Tab");
+    await until(current, [["乙", "page"]], "Ctrl+Tab moves the highlight");
+    await p.locator("#side .side-page").filter({ hasText: "丁" }).click();
+    await until(current, [["丁", "page"]], "so does a click in the tree");
+    assert.equal(await h.activeTab(), "丁");
+    assert.ok(await p.$$eval("#side .side-page", (rs) => rs.every((r) => r.__mark)), "the tree was not redrawn");
+  });
+
+  // 每次 sync 前清掉记录,sync 正忙没读时下一轮再试
+  const readAgain = (h, expected, message) => syncUntil(h, async () => {
+    const read = await mockCtl(h.p, "lastRead");
+    await h.p.evaluate(() => (window.__mockControl.lastRead = null));
+    return read;
+  }, expected, message);
+
+  ui("switching back to the window reads only the pages changed elsewhere", { seed: many(), mockControl: {} }, async (h) => {
+    const { p } = h;
+    await p.evaluate(() => (window.__mockControl.lastRead = null));
+    await readAgain(h, [], "nothing changed: no page is read again");
+    await p.evaluate(() => (window.__mockFiles["丙"] = "别处改的"));
+    await readAgain(h, ["/丙"], "only the changed page is read");
+    await h.tab("丙").click();
+    await until(h.editor, "别处改的", "and the change shows up");
+    await readAgain(h, [], "it is not read again");
+    // 这里改了存下的页面再读一次内容,对上了以后就不再读
+    await p.click("#editor .ProseMirror");
+    await p.keyboard.press("Control+End");
+    await p.keyboard.type("!");
+    await until(() => h.mockFile("", "丙"), "别处改的!", "saved");
+    await readAgain(h, ["/丙"], "a page saved here is read once more");
+    await readAgain(h, [], "and then left alone");
+    assert.equal(await h.editor(), "别处改的!");
+  });
+
+  ui("a small window reads only its own page", { seed: many(), url: miniUrl("", "丙"), mockControl: {} }, async (h) => {
+    const { p } = h;
+    await until(h.editor, "丙的内容");
+    assert.deepEqual(await mockCtl(p, "lastRead"), ["/丙"], "opening it reads one page");
+    await p.evaluate(() => (window.__mockControl.lastRead = null));
+    await readAgain(h, [], "nothing changed");
+    await p.evaluate(() => (window.__mockFiles["丙"] = "别处改的"));
+    await syncUntil(h, h.editor, "别处改的", "a change elsewhere still shows up");
+    await p.evaluate(() => (window.__mockFiles["甲"] = "别的页面改了"));
+    await readAgain(h, [], "other pages are never read");
   });
 });

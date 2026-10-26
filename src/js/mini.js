@@ -6,7 +6,7 @@ import { $ } from "./dom.js";
 import { state, book, current, inMini, bookFromDisk } from "./state.js";
 import { toast, ask } from "./ui.js";
 import { flushAll } from "./save.js";
-import { mutate, syncFromDisk } from "./sync.js";
+import { mutate, syncFromDisk, readNotes } from "./sync.js";
 import { rememberView, showNote, refreshCurrent } from "./page.js";
 import { renderTabs, switchTo, goTo } from "./tabs.js";
 import { applySettings } from "./settings.js";
@@ -88,13 +88,15 @@ function nearestFree(b) {
 // 从小窗回来的页面:读一下磁盘上的最新内容(小窗刚存过)
 async function reread(pairs) {
   try {
-    const disk = await api.invoke("read_notes");
+    const disk = await readNotes();
     let changed = false;
     for (const [b, n] of pairs) {
       const d = disk.find((x) => x.name === b.name)?.notes.find((x) => x.name === n.name);
-      if (!d || d.unreadable || n.dirty || n.content !== n.disk) continue;
+      // same:小窗没改过这一页,磁盘上还是上次读到的
+      if (!d || d.same || d.unreadable || n.dirty || n.content !== n.disk) continue;
       n.content = d.content;
       n.disk = d.content;
+      n.stamp = d.stamp || "";
       if (n === current()) changed = true;
     }
     if (changed) refreshCurrent();
@@ -134,7 +136,8 @@ export async function initMini() {
     self = await api.invoke("mini_self");
     if (!self) return void api.invoke("mini_close", { back: false });
     await mutate(async () => {
-      const st = await api.invoke("load_state");
+      // 小窗只读自己这一页
+      const st = await api.invoke("load_state", { only: { book: self.book, name: self.name } });
       state.settings = st.settings;
       state.notesDir = st.notes_dir;
       state.version = st.version || "";
