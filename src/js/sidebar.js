@@ -12,6 +12,8 @@ const RAIL_MIN = 400;
 let treeOpen = true;
 // 目录树里展开着的笔记本(按名字记);当前笔记本总是展开
 const expanded = new Set();
+// 目录树里每个页面的那一行(只换当前页面时用来挪高亮)
+const pageRows = new Map();
 let actions = null;
 
 // 现在该显示哪种侧栏:"tree"、"rail" 或 ""
@@ -59,6 +61,7 @@ function text(cls, value) {
 
 function renderTree(el) {
   const current = book();
+  pageRows.clear();
   for (const b of state.books) {
     const open = b === current || expanded.has(b.name);
     const row = item("side-book" + (b === current ? " current" : ""), bookLabel(b), () => {
@@ -83,6 +86,7 @@ function renderTree(el) {
       const page = item("side-page" + (active ? " current" : ""), n.name, () => actions.goTo(b, n));
       if (active) page.setAttribute("aria-current", "page");
       page.append(text("side-name", n.name));
+      pageRows.set(n, page);
       el.append(page);
     });
   }
@@ -122,6 +126,22 @@ export function renderSidebar() {
   el.replaceChildren(list);
   el.setAttribute("aria-label", m === "tree" ? "目录" : "笔记本");
   el.querySelector(".current")?.scrollIntoView({ block: "nearest" });
+}
+
+// 只换了当前页面时只挪目录树里的高亮,不重画几千行;找不到那一行时(防万一)照旧重画
+export function markCurrentPage() {
+  if ($("#side")?.hidden !== false || mode() !== "tree") return;
+  const b = book();
+  const row = pageRows.get(b?.notes[b.active]);
+  if (!row?.isConnected) return renderSidebar();
+  const old = $("#side .side-page.current");
+  if (old !== row) {
+    old?.classList.remove("current");
+    old?.removeAttribute("aria-current");
+    row.classList.add("current");
+    row.setAttribute("aria-current", "page");
+  }
+  row.scrollIntoView({ block: "nearest" });
 }
 
 // switchBook / goTo / createBook / openBooks 由 main.js 传进来,免得这里和 notebooks.js、tabs.js 互相引用

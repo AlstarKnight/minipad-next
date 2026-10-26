@@ -320,6 +320,35 @@ describe("0.2.0 checks", () => {
     },
   );
 
+  ui("WebDAV change event refreshes an unchanged open page", {
+    seed: seed({ "": { 待办: "旧内容" } }),
+  }, async (h) => {
+    const { p } = h;
+    await p.evaluate(() => {
+      window.__mockFiles["待办"] = "网盘下载的新内容";
+      window.__mockEmit("webdav-changed", ["待办"]);
+    });
+    await until(h.editor, "网盘下载的新内容", "download event refreshes the open page");
+  });
+
+  ui("WebDAV change event preserves unsaved edits and backs up the downloaded version", {
+    seed: seed({ "": { 待办: "初稿" } }),
+  }, async (h) => {
+    const { p } = h;
+    await p.click("#editor");
+    await p.keyboard.press("Control+End");
+    await p.keyboard.type("本机改动");
+    await p.evaluate(() => {
+      window.__mockFiles["待办"] = "网盘也改了";
+      window.__mockEmit("webdav-changed", ["待办"]);
+    });
+    assert.equal(await h.editor(), "初稿本机改动", "in-progress edit is not replaced");
+    await until(() => h.mockFile("", "待办"), "初稿本机改动", "local edit persists");
+    await p.waitForFunction(() => Object.entries(window.__mockFiles).some(
+      ([name, content]) => name.includes("冲突") && content === "网盘也改了"
+    ));
+  });
+
   ui(
     "delete page: the custom dialog names the page, Esc cancels, OK deletes",
     { seed: seed({ "": { 待办: "外部改过的内容!", 同步来的: "来自网盘" } }) },
@@ -3958,6 +3987,9 @@ describe("theme and accent", () => {
     await p.click("#set-ball-pick");
     assert.equal(await p.isChecked('input[name="set-ball-icon"][value="custom"]'), true, "picking an image selects it");
     assert.equal(await p.getAttribute("#set-ball-preview img", "src"), "data:image/png;base64,iVBORw0KGgo=");
+    await p.evaluate(() => (window.__mockControl.ballImage = "data:image/png;base64,cmVmcmVzaGVk"));
+    await p.click("#set-ball-refresh");
+    assert.equal(await p.getAttribute("#set-ball-preview img", "src"), "data:image/png;base64,cmVmcmVzaGVk", "manual reload updates preview");
     await p.click("#set-save");
     await until(() => h.stored().then((s) => [s.settings.ball_enabled, s.settings.ball_size, s.settings.ball_icon, s.settings.ball_color, s.settings.ball_opacity, s.settings.ball_open]), [true, 64, "custom", "linear-gradient(135deg, #5fb4ff, #d66cf0)", 80, "dblclick"]);
     assert.equal(await p.isVisible("#btn-ball"), true, "the top bar now has the collapse button");
@@ -4657,7 +4689,7 @@ describe("0.3.2: settings in five categories", () => {
     assert.ok(await p.isHidden("#set-hotkey"));
     assert.deepEqual(
       await p.$$eval('.set-page[data-page="edit"] h3', (els) => els.map((e) => e.textContent)),
-      ["编辑器", "块管理", "悬浮工具栏", "悬浮目录", "查找替换"],
+      ["编辑器", "链接", "页面链接", "模板和片段", "行内计算", "块管理", "悬浮工具栏", "悬浮目录", "查找替换"],
       "with a small heading for each part",
     );
     await p.keyboard.press("ArrowDown");
@@ -6731,5 +6763,954 @@ describe("0.4.4: interface styles", () => {
     assert.equal(await root(p, "data-ui"), "starry", "the small window follows the style");
     assert.equal(await root(p, "data-side"), null);
     assert.ok(await p.locator("#side").isHidden());
+  });
+});
+
+suite("0.4.5: WebDAV settings", { concurrency: 1 }, () => {
+  ui("rescan request is debounced even if save-triggered syncing is disabled", {
+    seed: { ...seed({ "": { "笔记": "内容" } }), settings: {
+      ...SETTINGS, webdav_enabled: true, webdav_on_start: false,
+      webdav_after_save: false, webdav_interval_minutes: 0,
+    } },
+    mockControl: { webdavRescanNeeded: true, webdavSyncCalls: 0 },
+  }, async ({ p }) => {
+    await p.click("#st-webdav");
+    await p.waitForFunction(() => window.__mockControl.webdavSyncCalls === 1);
+    await p.waitForTimeout(500);
+    assert.equal(await p.evaluate(() => window.__mockControl.webdavSyncCalls), 1,
+      "rescan should not immediately start another network scan");
+  });
+
+  for (const afterSave of [false, true]) {
+    ui(`saving a page ${afterSave ? "schedules" : "does not schedule"} a sync when save-triggered syncing is ${afterSave ? "on" : "off"}`, {
+      seed: { ...seed({ "": { "笔记": "内容" } }), settings: {
+        ...SETTINGS, webdav_enabled: true, webdav_on_start: false, webdav_on_hide: false,
+        webdav_after_save: afterSave, webdav_interval_minutes: 0,
+      } },
+      mockControl: { webdavSyncCalls: 0 },
+    }, async ({ p }) => {
+      await p.clock.install();
+      await p.click("#editor");
+      await p.keyboard.press("Control+End");
+      await p.keyboard.type("改动");
+      await p.waitForFunction(() => window.__mockFiles["笔记"]?.includes("改动"));
+      await p.clock.fastForward(60_000);
+      await p.waitForTimeout(300);
+      assert.equal(await p.evaluate(() => window.__mockControl.webdavSyncCalls), afterSave ? 1 : 0);
+    });
+  }
+
+  ui("WebDAV status distinguishes syncing, conflicts and offline states", {
+    seed: { ...seed({ "": { "笔记": "内容" } }), settings: {
+      ...SETTINGS, webdav_enabled: true, webdav_on_start: false, webdav_interval_minutes: 0,
+      webdav_status_style: "text",
+    } },
+    mockControl: { webdavStatus: { state: "synced", message: "已同步", last_time: "", history: [] } },
+  }, async ({ p }) => {
+    for (const [state, message] of [
+      ["syncing", "同步中"], ["conflict", "有冲突"], ["offline", "离线"], ["error", "出错"],
+    ]) {
+      await p.evaluate(([kind, text]) => {
+        window.__mockControl.webdavStatus = { state: kind, message: text, last_time: "", history: [] };
+        window.__mockEmit("webdav-changed", []);
+      }, [state, message]);
+      await until(() => p.locator("#st-webdav").textContent(), state === "syncing"
+        ? "⟳ 同步中" : (state === "offline" ? "○ 离线" : "! " + message), "WebDAV state " + state);
+    }
+  });
+
+  ui("WebDAV connection failure stays in Chinese and does not save draft", {
+    seed: seed({ "": { "笔记": "内容" } }),
+    mockControl: { webdavTestError: "账号或应用密码错误" },
+  }, async (h) => {
+    const { p } = h;
+    await p.click("#btn-settings");
+    await settingsPage(p, "data");
+    await p.fill("#set-webdav-server", "https://dav.example.com/");
+    await p.fill("#set-webdav-user", "someone");
+    await p.click("#set-webdav-test");
+    await until(h.toast, "账号或应用密码错误", "connection failure is translated");
+    assert.equal((await h.stored()).settings.webdav_server || "", "");
+    assert.equal((await h.stored()).settings.webdav_user || "", "");
+  });
+
+  ui("test connection uses form draft without persisting it", {
+    seed: seed({ "": { "笔记": "内容" } }),
+  }, async (h) => {
+    const { p } = h;
+    await p.click("#btn-settings");
+    await settingsPage(p, "data");
+    await p.fill("#set-webdav-server", "https://dav.example.com/");
+    await p.fill("#set-webdav-user", "example");
+    await p.click("#set-webdav-test");
+    await until(h.toast, "连接成功，目录读取和写入测试通过（预览模拟）", "test connection succeeds");
+    assert.equal((await h.stored()).settings.webdav_server || "", "", "testing did not save the draft");
+  });
+});
+
+suite("0.4.5: WebDAV downloads", { concurrency: 1 }, () => {
+  const webdavOn = { ...SETTINGS, webdav_enabled: true, webdav_on_start: false, webdav_on_hide: false, webdav_interval_minutes: 0 };
+
+  ui("page order, pins and groups synced from another device are adopted and not written back", {
+    seed: { ...seed({ "": { "甲": "1", "乙": "2", "丙": "3" } }), settings: webdavOn },
+  }, async (h) => {
+    const { p } = h;
+    await until(h.tabs, ["甲", "乙", "丙"], "initial order");
+    // 另一台设备改了顺序、固定和分组,WebDAV 把合并后的 .minipad.json 写到了本机
+    await p.evaluate(() => {
+      Object.assign(window.__mockBooks[""].meta, {
+        order: ["丙", "甲", "乙"], pinned: ["丙"],
+        groups: [{ id: "g1", name: "工作", color: "#3b82f6", collapsed: false }], note_groups: { "乙": "g1" },
+      });
+      window.__mockEmit("webdav-changed", [".minipad.json"]);
+    });
+    await until(h.tabs, ["丙", "甲", "乙"], "the downloaded order is shown");
+    await h.tab("甲").click();
+    await p.evaluate(() => window.__minipad.flush());
+    const meta = (await h.mock())[""].meta;
+    assert.deepEqual(meta.order, ["丙", "甲", "乙"], "switching pages does not write the old order back");
+    assert.deepEqual(meta.pinned, ["丙"]);
+    assert.deepEqual(meta.note_groups, { "乙": "g1" });
+    assert.equal(meta.groups[0]?.name, "工作");
+  });
+
+  ui("switching pages while a sync is still running does not write the old order over the downloaded one", {
+    seed: { ...seed({ "": { "甲": "1", "乙": "2", "丙": "3" } }), settings: webdavOn },
+  }, async (h) => {
+    const { p } = h;
+    await until(h.tabs, ["甲", "乙", "丙"], "initial order");
+    // WebDAV 已经把另一台设备改的 .minipad.json 写到本机,同步还没结束,这里还没读到
+    await p.evaluate(() => {
+      Object.assign(window.__mockBooks[""].meta, {
+        order: ["丙", "甲", "乙"], pinned: ["丙"],
+        groups: [{ id: "g1", name: "工作", color: "#3b82f6", collapsed: false }], note_groups: { "乙": "g1" },
+      });
+    });
+    await h.tab("乙").click();
+    await p.evaluate(() => window.__minipad.flush());
+    const meta = (await h.mock())[""].meta;
+    assert.equal(meta.active, "乙", "the page switch is saved");
+    assert.deepEqual(meta.order, ["丙", "甲", "乙"], "the downloaded order is kept");
+    assert.deepEqual(meta.pinned, ["丙"]);
+    assert.deepEqual(meta.note_groups, { "乙": "g1" });
+    assert.equal(meta.groups[0]?.name, "工作");
+    // 同步结束读到以后,标签栏也换成新的样子
+    await p.evaluate(() => window.__mockEmit("webdav-changed", [".minipad.json"]));
+    await until(h.tabs, ["丙", "甲", "乙"], "the downloaded order is shown");
+  });
+
+  ui("downloaded changes are applied once the editor is free again", {
+    seed: { ...seed({ "": { "笔记": "旧内容" } }), settings: webdavOn },
+  }, async (h) => {
+    const { p } = h;
+    await h.tab("笔记").dblclick();
+    await p.locator("#tabs .tab input").waitFor();
+    await p.evaluate(() => {
+      window.__mockFiles["笔记"] = "网盘下来的内容";
+      window.__mockEmit("webdav-changed", ["笔记.md"]);
+    });
+    await p.waitForTimeout(300);
+    assert.equal(await h.editor(), "旧内容", "nothing is read while the page is being renamed");
+    await p.keyboard.press("Escape");
+    await until(h.editor, "网盘下来的内容", "read again after the rename box closed");
+  });
+});
+
+suite("0.4.5: local file paths", { concurrency: 1 }, () => {
+  ui("executable path requires confirmation and offers a trust checkbox", {
+    seed: seed({ "": { "程序": "C:\\files\\setup.exe" } }),
+    mockControl: { openedPaths: [] },
+  }, async ({ p }) => {
+    const link = p.locator("#editor .local-file-path").first();
+    await link.waitFor();
+    assert.equal(await link.getAttribute("data-local-path"), "C:\\files\\setup.exe");
+    await link.click({ modifiers: ["Control"] });
+    await p.locator("#dialog").waitFor();
+    assert.equal(await p.locator("#dialog-msg + label input[type=checkbox]").count(), 1);
+    await p.click("#dialog-ok");
+    await until(() => p.evaluate(() => window.__mockControl.openedPaths.length), 1, "confirmed opening");
+    assert.equal((await p.evaluate(() => window.__mockControl.openedPaths[0])).confirmed, true);
+  });
+
+  ui("slow local file existence checks do not block editing", {
+    seed: seed({ "": { "路径": "C:\\docs\\slow.pdf" } }),
+    mockControl: { slowLocalPathMs: 8000 },
+  }, async (h) => {
+    const { p } = h;
+    await p.locator("#editor .local-file-path").waitFor();
+    const start = Date.now();
+    await p.click("#editor");
+    await p.keyboard.press("Control+End");
+    await p.keyboard.type("仍然可以编辑");
+    await p.waitForFunction(() => window.__mockFiles["路径"]?.includes("仍然可以编辑"));
+    assert.ok(Date.now() - start < 3500, "editing should not wait for the 8-second existence check");
+  });
+
+  ui("local path missing state can be simulated", {
+    seed: seed({ "": { "路径": "打开 C:\\docs\\note.pdf" } }),
+  }, async ({ p }) => {
+    await p.locator("#editor .local-file-path.missing").waitFor();
+    assert.equal(await p.locator("#editor .local-file-path.missing").count(), 1);
+    // 关掉「不存在的文件显示为灰色」马上生效,不用重开
+    await p.click("#btn-settings");
+    await settingsPage(p, "edit");
+    await p.uncheck("#set-local-path-missing");
+    await p.click("#set-save");
+    await until(() => p.locator("#editor .local-file-path.missing").count(), 0, "missing style removed right away");
+    assert.equal(await p.locator("#editor .local-file-path").count(), 1, "the path is still decorated");
+  });
+
+
+  ui("local file links are decorated and settings survive reopening", {
+    seed: seed({ "": { "路径": "打开 C:\\docs\\note.pdf 并查看。" } }),
+  }, async (h) => {
+    const { p } = h;
+    await p.locator("#editor .local-file-path").waitFor();
+    assert.equal(await p.locator("#editor .local-file-path").first().getAttribute("data-local-path"), "C:\\docs\\note.pdf");
+    await p.click("#btn-settings");
+    await settingsPage(p, "edit");
+    assert.equal(await p.locator("#set-local-path").isChecked(), true);
+    await p.uncheck("#set-local-path");
+    await p.selectOption("#set-local-path-click", "click");
+    await p.click("#set-save");
+    await until(() => p.locator("#editor .local-file-path").count(), 0, "path decoration is disabled");
+    await p.click("#btn-settings");
+    await settingsPage(p, "edit");
+    assert.equal(await p.locator("#set-local-path").isChecked(), false);
+    assert.equal(await p.locator("#set-local-path-click").inputValue(), "click");
+  });
+
+});
+
+describe("0.4.5: many pages", () => {
+  const PAGES = ["甲", "乙", "丙", "丁", "戊"];
+  const many = (settings = {}, meta = null) => {
+    const db = seed({ "": Object.fromEntries(PAGES.map((n) => [n, `${n}的内容`])), 工作: { 周报: "本周" } });
+    Object.assign(db.settings, settings);
+    if (meta) Object.assign(db.books[""].meta, meta);
+    return db;
+  };
+  // 给现在的标签做个记号:换页以后记号还在,说明标签没有重画
+  const markTabs = (p) => p.$$eval("#tabs .tab", (ts) => ts.forEach((t, i) => (t.__mark = i)));
+  const unchanged = (p) => p.$$eval("#tabs .tab", (ts) => ts.every((t, i) => t.__mark === i));
+
+  ui("switching pages moves the highlight and leaves the other tabs alone", { seed: many() }, async (h) => {
+    const { p } = h;
+    await markTabs(p);
+    await p.keyboard.press("Control+Tab");
+    await until(h.activeTab, "乙", "Ctrl+Tab");
+    assert.equal(await h.editor(), "乙的内容");
+    await h.tab("丁").click();
+    await until(h.activeTab, "丁", "a click");
+    await p.keyboard.press("Control+1");
+    await until(h.activeTab, "甲", "Ctrl+1");
+    await p.keyboard.press("Control+p");
+    await p.keyboard.type("戊");
+    await p.keyboard.press("Enter");
+    await until(h.activeTab, "戊", "Ctrl+P");
+    assert.equal(await h.editor(), "戊的内容");
+    assert.ok(await unchanged(p), "the tabs were not redrawn");
+    assert.equal(await p.locator("#tabs .tab.active").count(), 1);
+    // 换笔记本照旧整排重画
+    await h.switchBook("工作");
+    assert.deepEqual(await h.tabs(), ["周报"]);
+    assert.equal(await h.editor(), "本周");
+  });
+
+  ui("leaving a page in a folded group folds its tab", {
+    seed: many({ tab_groups: true }, { active: "乙", groups: [{ id: "g1", name: "组", color: "#4c8bf5", collapsed: true }], note_groups: { 乙: "g1", 丙: "g1" } }),
+  }, async (h) => {
+    const { p } = h;
+    const strip = () => p.$$eval("#tabs > *", (els) => els.map((e) => (e.classList.contains("tab-group") ? "[组]" : e.classList.contains("folded") ? `(${e.textContent})` : e.textContent)));
+    assert.deepEqual(await strip(), ["甲", "[组]", "乙", "(丙)", "丁", "戊"]);
+    await markTabs(p);
+    await h.tab("丁").click();
+    await until(strip, ["甲", "[组]", "(乙)", "(丙)", "丁", "戊"], "the page left behind folds away");
+    assert.ok(await unchanged(p), "without redrawing the tabs");
+    // 换回折叠的组里的页面:组展开
+    await p.keyboard.press("Control+2");
+    await until(strip, ["甲", "[组]", "乙", "丙", "丁", "戊"], "going back unfolds the group");
+  });
+
+  ui("paper: the outline tree follows the current page without being redrawn", { seed: many({ ui_style: "paper" }) }, async (h) => {
+    const { p } = h;
+    await p.setViewportSize({ width: 900, height: 600 });
+    await until(() => p.locator("#side .side-page").count(), 5, "the tree shows");
+    const current = () => p.$$eval("#side .side-page.current", (rs) => rs.map((r) => [r.textContent, r.getAttribute("aria-current")]));
+    assert.deepEqual(await current(), [["甲", "page"]]);
+    await p.$$eval("#side .side-page", (rs) => rs.forEach((r) => (r.__mark = true)));
+    await p.keyboard.press("Control+Tab");
+    await until(current, [["乙", "page"]], "Ctrl+Tab moves the highlight");
+    await p.locator("#side .side-page").filter({ hasText: "丁" }).click();
+    await until(current, [["丁", "page"]], "so does a click in the tree");
+    assert.equal(await h.activeTab(), "丁");
+    assert.ok(await p.$$eval("#side .side-page", (rs) => rs.every((r) => r.__mark)), "the tree was not redrawn");
+  });
+
+  // 每次 sync 前清掉记录,sync 正忙没读时下一轮再试
+  const readAgain = (h, expected, message) => syncUntil(h, async () => {
+    const read = await mockCtl(h.p, "lastRead");
+    await h.p.evaluate(() => (window.__mockControl.lastRead = null));
+    return read;
+  }, expected, message);
+
+  ui("switching back to the window reads only the pages changed elsewhere", { seed: many(), mockControl: {} }, async (h) => {
+    const { p } = h;
+    await p.evaluate(() => (window.__mockControl.lastRead = null));
+    await readAgain(h, [], "nothing changed: no page is read again");
+    await p.evaluate(() => (window.__mockFiles["丙"] = "别处改的"));
+    await readAgain(h, ["/丙"], "only the changed page is read");
+    await h.tab("丙").click();
+    await until(h.editor, "别处改的", "and the change shows up");
+    await readAgain(h, [], "it is not read again");
+    // 这里改了存下的页面再读一次内容,对上了以后就不再读
+    await p.click("#editor .ProseMirror");
+    await p.keyboard.press("Control+End");
+    await p.keyboard.type("!");
+    await until(() => h.mockFile("", "丙"), "别处改的!", "saved");
+    await readAgain(h, ["/丙"], "a page saved here is read once more");
+    await readAgain(h, [], "and then left alone");
+    assert.equal(await h.editor(), "别处改的!");
+  });
+
+  ui("a small window reads only its own page", { seed: many(), url: miniUrl("", "丙"), mockControl: {} }, async (h) => {
+    const { p } = h;
+    await until(h.editor, "丙的内容");
+    assert.deepEqual(await mockCtl(p, "lastRead"), ["/丙"], "opening it reads one page");
+    await p.evaluate(() => (window.__mockControl.lastRead = null));
+    await readAgain(h, [], "nothing changed");
+    await p.evaluate(() => (window.__mockFiles["丙"] = "别处改的"));
+    await syncUntil(h, h.editor, "别处改的", "a change elsewhere still shows up");
+    await p.evaluate(() => (window.__mockFiles["甲"] = "别的页面改了"));
+    await readAgain(h, [], "other pages are never read");
+  });
+});
+
+describe("0.5.0: page links", () => {
+  const links = (pages = {}, settings = {}, more = {}) => {
+    const db = seed({ "": { 首页: "看 [[周报]] 和 [[工作/计划]]", 周报: "本周", 开发计划: "", ...pages }, 工作: { 计划: "工作计划", 周报: "工作周报" }, ...more });
+    Object.assign(db.settings, settings);
+    return db;
+  };
+  // 编辑区里的链接(不含两边的方括号),不存在的页面前面加 ?
+  const shown = (p) => p.$$eval("#editor .page-link:not(.page-link-mark)", (els) => els.map((e) => (e.classList.contains("broken") ? "?" : "") + e.textContent));
+  const link = (p, text) => p.locator("#editor .page-link:not(.page-link-mark)").filter({ hasText: new RegExp(`^${escapeRe(text)}$`) }).first();
+  // 补全列表:页面名,别的笔记本的后面写 @笔记本
+  const menu = (p) => p.$$eval(".page-link-menu:not([hidden]) button", (bs) => bs.map((b) => b.querySelector("span").textContent + (b.querySelector("small") ? "@" + b.querySelector("small").textContent : "")));
+  const picked = (p) => p.$$eval(".page-link-menu:not([hidden]) button.active", (bs) => bs.map((b) => b.querySelector("span").textContent));
+  // 光标放到这一段里 text 前面
+  const cursorAt = (p, text) => p.evaluate((t) => {
+    const { view } = window.__minipad.editor();
+    const pos = 1 + view.state.doc.textContent.indexOf(t);
+    view.dispatch(view.state.tr.setSelection(view.state.selection.constructor.near(view.state.doc.resolve(pos))));
+  }, text);
+  const typeAtEnd = async (p, text) => {
+    await p.click("#editor .ProseMirror");
+    await p.keyboard.press("Control+End");
+    await p.keyboard.type(text);
+  };
+  // 从标签的右键菜单改名,当前页面不变
+  const renameTab = async (h, from, to) => {
+    await h.tabMenu(from);
+    await h.p.click('#ctx button[data-act="rename"]');
+    await h.p.locator("#tabs .tab input").waitFor();
+    await h.p.fill("#tabs .tab input", to);
+    await h.p.keyboard.press("Enter");
+  };
+
+  ui("links are saved as typed, and links older versions saved with backslashes are cleaned up", {
+    seed: links({ 旧: "\\[\\[周报]] 和 \\[\\[工作/计划]]" }),
+  }, async (h) => {
+    const { p } = h;
+    await h.tab("旧").click();
+    await until(() => shown(p), ["周报", "工作/计划"], "old escaped links show as links");
+    await typeAtEnd(p, " [[开发计划]]。");
+    await until(() => h.mockFile("", "旧"), "[[周报]] 和 [[工作/计划]] [[开发计划]]。", "saved without backslashes");
+    await until(() => shown(p), ["周报", "工作/计划", "开发计划"]);
+    // 读回来还是一样
+    await p.reload();
+    await h.tab("旧").click();
+    await until(h.editor, "[[周报]] 和 [[工作/计划]] [[开发计划]]。", "read back the same");
+  });
+
+  ui("pages that exist and pages that do not look different; Ctrl+click opens, a plain click only places the cursor", {
+    seed: links({ 首页: "看 [[周报]] 和 [[工作/计划]],[[没有]] `[[代码]]`" }),
+  }, async (h) => {
+    const { p } = h;
+    await until(() => shown(p), ["周报", "工作/计划", "?没有"], "code is not a link");
+    assert.equal(await link(p, "周报").getAttribute("title"), "Ctrl+点击打开「周报」");
+    assert.equal(await link(p, "没有").getAttribute("title"), "还没有「没有」这一页,Ctrl+点击新建");
+    // 方括号淡一点
+    assert.equal(await p.locator("#editor .page-link-mark").first().evaluate((e) => getComputedStyle(e).opacity), "0.45");
+    await link(p, "周报").click();
+    await sleep(200);
+    assert.equal(await h.activeTab(), "首页", "a plain click stays");
+    await link(p, "周报").click({ modifiers: ["Control"] });
+    await until(h.activeTab, "周报", "Ctrl+click opens the page");
+    await h.tab("首页").click();
+    await link(p, "工作/计划").click({ modifiers: ["Control"] });
+    await until(h.bookName, "工作", "a link to another notebook goes there");
+    assert.equal(await h.activeTab(), "计划");
+    assert.equal(await h.editor(), "工作计划");
+  });
+
+  ui("a single click can open links; brackets, underline and colors follow the settings", {
+    seed: links({}, { page_link_click: "click", page_link_brackets: "hide", page_link_underline: "dashed", page_link_color: "#16a34a" }),
+  }, async (h) => {
+    const { p } = h;
+    await until(() => shown(p), ["周报", "工作/计划"]);
+    assert.equal(await link(p, "周报").getAttribute("title"), "点击打开「周报」");
+    const style = await link(p, "周报").evaluate((e) => [getComputedStyle(e).color, getComputedStyle(e).textDecorationStyle]);
+    assert.deepEqual(style, ["rgb(22, 163, 74)", "dashed"]);
+    // 隐藏的方括号:光标进到链接里才显示
+    const marks = () => p.$$eval("#editor .page-link-mark", (els) => els.map((e) => getComputedStyle(e).display === "none"));
+    await cursorAt(p, "看");
+    await until(marks, [true, true, true, true], "hidden");
+    await cursorAt(p, "报");
+    await until(marks, [false, false, true, true], "the link with the cursor shows its brackets");
+    await link(p, "周报").click();
+    await until(h.activeTab, "周报", "a single click opens it");
+  });
+
+  ui("clicking a link to a missing page creates it; a cleaned-up name keeps working; a missing notebook is only reported", {
+    seed: links({ 首页: "[[新页]] [[工作/新计划]] [[a?b]] [[没有的本/x]]" }),
+  }, async (h) => {
+    const { p } = h;
+    await until(() => shown(p), ["?新页", "?工作/新计划", "?a?b", "?没有的本/x"]);
+    assert.equal(await link(p, "没有的本/x").getAttribute("title"), "没有「没有的本」这个笔记本");
+    await link(p, "新页").click({ modifiers: ["Control"] });
+    await until(h.activeTab, "新页", "the page is created and opened");
+    assert.deepEqual(await h.tabs(), ["首页", "周报", "开发计划", "新页"]);
+    assert.equal(await h.mockFile("", "新页"), "");
+    await h.tab("首页").click();
+    await until(() => shown(p), ["新页", "?工作/新计划", "?a?b", "?没有的本/x"], "the link is no longer missing");
+    await link(p, "工作/新计划").click({ modifiers: ["Control"] });
+    await until(h.bookName, "工作", "created in the notebook the link names");
+    assert.equal(await h.activeTab(), "新计划");
+    assert.equal(await h.mockFile("工作", "新计划"), "");
+    await h.switchBook("");
+    await h.tab("首页").click();
+    // 系统不允许的 ? 换成了 _,链接照样指向它,再点不会再建一页
+    await link(p, "a?b").click({ modifiers: ["Control"] });
+    await until(h.activeTab, "a_b", "the backend cleaned the name");
+    await h.tab("首页").click();
+    await until(() => shown(p), ["新页", "工作/新计划", "a?b", "?没有的本/x"]);
+    await link(p, "a?b").click({ modifiers: ["Control"] });
+    await until(h.activeTab, "a_b");
+    assert.deepEqual(await h.tabs(), ["首页", "周报", "开发计划", "新页", "a_b"], "no second page");
+    await h.tab("首页").click();
+    await link(p, "没有的本/x").click({ modifiers: ["Control"] });
+    await until(h.toast, "没有「没有的本」这个笔记本");
+    assert.ok(!("没有的本" in (await h.mock())), "no notebook is created");
+    assert.equal(await h.activeTab(), "首页");
+  });
+
+  ui("typing [[ lists pages; typing filters by name and pinyin; arrows, Enter, Tab and Esc work", {
+    seed: links({ 首页: "", "React 笔记": "" }),
+  }, async (h) => {
+    const { p } = h;
+    await typeAtEnd(p, "[[");
+    await until(() => menu(p), ["周报", "开发计划", "React 笔记", "计划@工作", "周报@工作"], "this notebook first, the current page left out");
+    await p.keyboard.type("kf");
+    await until(() => menu(p), ["开发计划"], "pinyin initials");
+    await p.keyboard.press("Backspace");
+    await p.keyboard.press("Backspace");
+    await p.keyboard.type("jh");
+    await until(() => menu(p), ["计划@工作", "开发计划"], "a name that starts with it comes first");
+    await p.keyboard.press("ArrowDown");
+    assert.deepEqual(await picked(p), ["开发计划"]);
+    await p.keyboard.press("Enter");
+    await until(h.editor, "[[开发计划]]", "Enter fills in the name and the closing brackets");
+    assert.deepEqual(await menu(p), [], "the list closes");
+    // 笔记本/页面:先按笔记本筛
+    await p.keyboard.type(" [[gz/zb");
+    await until(() => menu(p), ["周报@工作"]);
+    await p.keyboard.press("Tab");
+    await until(h.editor, "[[开发计划]] [[工作/周报]]", "Tab fills it in with the notebook name");
+    // Esc 关掉以后接着打字也不再弹出,下一个 [[ 照常弹出
+    await p.keyboard.type(" [[周");
+    await until(() => menu(p), ["周报", "周报@工作"]);
+    await p.keyboard.press("Escape");
+    assert.deepEqual(await menu(p), []);
+    await p.keyboard.type("报");
+    await sleep(100);
+    assert.deepEqual(await menu(p), [], "stays closed for this [[");
+    assert.equal(await p.isVisible("#editor"), true, "Esc did not hide the window");
+    await p.keyboard.type("]] [[React");
+    await until(() => menu(p), ["React 笔记"]);
+    await p.keyboard.press("Enter");
+    await until(h.editor, "[[开发计划]] [[工作/周报]] [[周报]] [[React 笔记]]");
+    await until(() => h.mockFile("", "首页"), "[[开发计划]] [[工作/周报]] [[周报]] [[React 笔记]]");
+  });
+
+  ui("Chinese 【【 and 】】 become [[ and ]]; the completion settings are kept", {
+    seed: links({ 首页: "" }),
+  }, async (h) => {
+    const { p } = h;
+    await typeAtEnd(p, "【【周报】】");
+    await until(h.editor, "[[周报]]", "converted");
+    await until(() => shown(p), ["周报"]);
+    await p.click("#btn-settings");
+    await settingsPage(p, "edit");
+    assert.equal(await p.locator("#set-page-links").isChecked(), true);
+    assert.equal(await p.inputValue("#set-page-link-suggest"), "brackets");
+    await p.uncheck("#set-page-link-cn");
+    await p.selectOption("#set-page-link-suggest", "typing");
+    await p.click("#set-save");
+    await typeAtEnd(p, " 【【x");
+    await until(h.editor, "[[周报]] 【【x", "not converted when turned off");
+    // 打了字才弹出
+    await p.keyboard.type(" [[");
+    await sleep(100);
+    assert.deepEqual(await menu(p), []);
+    await p.keyboard.type("开");
+    await until(() => menu(p), ["开发计划"]);
+    await p.keyboard.press("Escape");
+    await p.click("#btn-settings");
+    await settingsPage(p, "edit");
+    assert.equal(await p.locator("#set-page-link-cn").isChecked(), false);
+    assert.equal(await p.inputValue("#set-page-link-suggest"), "typing");
+    // 总开关关掉:不显示、不弹出
+    await p.uncheck("#set-page-links");
+    await p.click("#set-save");
+    await until(() => shown(p), [], "no links when turned off");
+    await typeAtEnd(p, " [[周");
+    await sleep(100);
+    assert.deepEqual(await menu(p), []);
+  });
+
+  ui("renaming a page updates the links to it; one page is changed right away and can be undone", {
+    seed: links({ 首页: "看 [[周报]],[[默认/周报]]", 其他: "[[工作/周报]] 不是它" }),
+  }, async (h) => {
+    const { p } = h;
+    await renameTab(h, "周报", "每周");
+    await until(() => h.mockFile("", "首页"), "看 [[每周]],[[默认/每周]]", "the links follow");
+    assert.equal(await h.mockFile("", "其他"), "[[工作/周报]] 不是它", "a page with the same name elsewhere is left alone");
+    await until(h.toast, "已更新 1 个页面里的链接 撤销");
+    await p.click("#toast button");
+    await until(() => h.mockFile("", "首页"), "看 [[周报]],[[默认/周报]]", "undone");
+    await until(h.toast, "已撤销链接的修改");
+    assert.deepEqual(await h.tabs(), ["首页", "每周", "开发计划", "其他"], "the page keeps its new name");
+  });
+
+  ui("renaming a page linked from two pages asks first; undo leaves pages changed since", {
+    seed: links({ 首页: "[[周报]]", 第二页: "[[周报]] 也是" }),
+  }, async (h) => {
+    const { p } = h;
+    await renameTab(h, "周报", "周总结");
+    await p.locator("#dialog").waitFor();
+    assert.equal(await p.textContent("#dialog-msg"), "有 2 个页面里有指向它的链接:「首页」、「第二页」\n要同时更新这些链接吗?");
+    assert.equal(await p.textContent("#dialog-ok"), "更新链接");
+    await p.click("#dialog-cancel");
+    await sleep(200);
+    assert.equal(await h.mockFile("", "首页"), "[[周报]]", "cancel changes nothing");
+    await until(() => shown(p), ["?周报"], "the link now points to a missing page");
+    // 改回来,链接又对上了(这次没有要改的链接,不问)
+    await renameTab(h, "周总结", "周报");
+    await until(() => shown(p), ["周报"]);
+    assert.equal(await p.isVisible("#dialog"), false);
+    await renameTab(h, "周报", "周总结");
+    await p.locator("#dialog").waitFor();
+    await p.click("#dialog-ok");
+    await until(() => h.mockFile("", "第二页"), "[[周总结]] 也是");
+    assert.equal(await h.mockFile("", "首页"), "[[周总结]]");
+    await until(() => shown(p), ["周总结"], "the page on screen shows the new link");
+    // 第二页后来又改过:撤销时不动它
+    await h.tab("第二页").click();
+    await typeAtEnd(p, "!");
+    await until(() => h.mockFile("", "第二页"), "[[周总结]] 也是!");
+    await p.click("#toast button");
+    await until(h.toast, "已撤销;1 个页面后来又改过,没有动");
+    await until(() => h.mockFile("", "首页"), "[[周报]]");
+    assert.equal(await h.mockFile("", "第二页"), "[[周总结]] 也是!");
+    // 设成「不改」
+    await p.click("#btn-settings");
+    await settingsPage(p, "edit");
+    await p.selectOption("#set-page-link-rename", "off");
+    await p.click("#set-save");
+    await renameTab(h, "周总结", "周记");
+    await until(h.tabs, ["首页", "周记", "开发计划", "第二页"]);
+    await sleep(200);
+    assert.equal(await h.mockFile("", "第二页"), "[[周总结]] 也是!", "links are left alone");
+    assert.equal(await p.isVisible("#dialog"), false);
+  });
+
+  ui("renaming a notebook and moving a page update the links; pages open in a small window are skipped", {
+    seed: links({ 首页: "[[工作/计划]] [[开发计划]]", 小窗页: "[[工作/周报]]" }, { page_link_rename: "auto" }),
+  }, async (h) => {
+    const { p } = h;
+    await p.evaluate(() => window.__mockEmit("mini-changed", [{ book: "", name: "小窗页" }]));
+    await until(() => p.locator("#tabs .tab.in-mini").count(), 1);
+    await h.bookMenu("工作");
+    await p.click('#ctx button[data-act="rename"]');
+    await h.answer("项目");
+    await until(() => h.mockFile("", "首页"), "[[项目/计划]] [[开发计划]]", "a link naming the notebook follows");
+    await until(h.toast, "已更新 1 个页面里的链接;「小窗页」正在小窗里编辑,里面的链接没有更新 撤销");
+    assert.equal(await h.mockFile("", "小窗页"), "[[工作/周报]]");
+    assert.equal(await h.mockFile("项目", "计划"), "工作计划");
+    await h.closeBooks();
+    // 移到别的笔记本:指向它的短链接补上笔记本名
+    await h.tabMenu("开发计划");
+    await p.click('#ctx button[data-act="move"]');
+    await p.locator("#books").waitFor();
+    await h.item("项目").click();
+    await until(() => h.mockFile("", "首页"), "[[项目/计划]] [[项目/开发计划]]");
+    await until(() => shown(p), ["项目/计划", "项目/开发计划"]);
+  });
+
+  ui("quick switch finds pages by pinyin and puts an exact name first", {
+    seed: links({ 首页: "", 周报汇总: "" }),
+  }, async (h) => {
+    const { p } = h;
+    const results = () => p.$$eval("#quick-results .result .title", (els) => els.map((e) => e.textContent));
+    await p.keyboard.press("Control+p");
+    await p.keyboard.type("kfjh");
+    await until(results, ["开发计划"]);
+    await p.fill("#quick-input", "zb");
+    await until(results, ["周报", "周报汇总", "周报"], "both notebooks");
+    await p.fill("#quick-input", "周报");
+    await until(results, ["周报", "周报", "周报汇总"], "the exact name first");
+    await p.keyboard.press("Escape");
+    await p.click("#btn-settings");
+    await settingsPage(p, "general");
+    assert.equal(await p.locator("#set-pinyin").isChecked(), true);
+    await p.uncheck("#set-pinyin");
+    await p.click("#set-save");
+    await p.keyboard.press("Control+p");
+    await p.keyboard.type("kfjh");
+    await until(results, [], "pinyin turned off");
+  });
+
+  ui("a small window shows and completes links and opens them in the main window", {
+    seed: links({ 首页: "[[周报]] [[没有]]" }), url: miniUrl("", "首页"), mockControl: {},
+  }, async (h) => {
+    const { p } = h;
+    await until(() => shown(p), ["周报", "?没有"], "the small window knows the page names");
+    await typeAtEnd(p, " [[kf");
+    await until(() => menu(p), ["开发计划"]);
+    await p.keyboard.press("Enter");
+    await until(h.editor, "[[周报]] [[没有]] [[开发计划]]");
+    await link(p, "周报").click({ modifiers: ["Control"] });
+    await until(() => mockCtl(p, "openedInMain"), [{ book: "", target: "周报" }], "the main window opens it");
+    // 主窗口那边新建了页面:窗口回到前面时名单更新
+    await p.evaluate(() => (window.__mockBooks[""].files["没有"] = ""));
+    await p.evaluate(() => window.__mockEmit("window-focus", null));
+    await until(() => shown(p), ["周报", "没有", "开发计划"]);
+  });
+
+  ui("the main window opens a link clicked in a small window", { seed: links() }, async (h) => {
+    const { p } = h;
+    await p.evaluate(() => window.__mockEmit("open-page", { book: "工作", target: "周报" }));
+    await until(h.bookName, "工作", "a short link from a page in 工作 means 工作/周报");
+    assert.equal(await h.activeTab(), "周报");
+    await p.evaluate(() => window.__mockEmit("open-page", { book: "", target: "新建的" }));
+    await until(h.bookName, "默认");
+    await until(h.activeTab, "新建的", "a missing page is created");
+  });
+});
+
+describe("0.5.1: quick capture, templates, snippets and inline calc", () => {
+  const db = (pages = {}, settings = {}, more = {}) => {
+    const d = seed({ "": { 甲: "一", ...pages }, ...more });
+    Object.assign(d.settings, settings);
+    return d;
+  };
+  const captureUrl = (book, page) => miniUrl(book, page) + "&capture=1";
+  // 2026-10-21 星期三 09:05
+  const NOW = new Date(2026, 9, 21, 9, 5);
+  const menu = (p) => p.$$eval("#ctx button", (bs) => bs.map((b) => b.textContent));
+  const typeAtEnd = async (p, text) => {
+    await p.click("#editor .ProseMirror");
+    await p.keyboard.press("Control+End");
+    await p.keyboard.type(text);
+  };
+  const matches = (get, re) => async () => re.test((await get()) ?? "");
+
+  ui("the quick capture hotkey opens the inbox page in a small window, made the first time", { seed: db() }, async (h) => {
+    const { p } = h;
+    await control(p);
+    await p.evaluate(() => window.__mockEmit("quick-capture"));
+    await until(() => mockCtl(p, "miniOpened"), [{ book: "", name: "收集箱", x: null, y: null, capture: true }], "opened for quick capture");
+    assert.equal(await h.mockFile("", "收集箱"), "", "the inbox page is made");
+    await until(h.tabs, ["甲", "收集箱小窗"], "with a tab at the end, marked as in a small window");
+    assert.equal(await h.activeTab(), "甲", "the main window stays on its page");
+    await p.evaluate(() => window.__mockEmit("quick-capture"));
+    await until(() => mockCtl(p, "miniOpened").then((o) => o.map((m) => m.name)), ["收集箱", "收集箱"], "the second time it opens the same page");
+    assert.deepEqual(Object.keys((await h.mock())[""].files), ["甲", "收集箱"]);
+  });
+
+  ui("每次新建一页: each capture makes a page from the name pattern; one left empty is deleted when the window closes", {
+    seed: db({}, { capture_target: "new", capture_book: "工作" }, { 工作: { 计划: "工作计划" } }),
+  }, async (h) => {
+    const { p } = h;
+    const name = "快速记录 2026-10-21 09.05";
+    await control(p);
+    await p.clock.setFixedTime(NOW);
+    await p.evaluate(() => window.__mockEmit("quick-capture"));
+    await until(() => mockCtl(p, "miniOpened"), [{ book: "工作", name, x: null, y: null, capture: true }], "a new page in the chosen notebook");
+    assert.equal(await h.mockFile("工作", name), "");
+    await p.evaluate((n) => window.__mockMiniClosed("工作", n, false), name);
+    await until(() => h.mockFile("工作", name), null, "closed without writing: the page is deleted");
+    assert.deepEqual((await h.stored()).trash, [], "and not put in the trash");
+    await p.evaluate(() => window.__mockEmit("quick-capture"));
+    await until(() => mockCtl(p, "miniOpened").then((o) => o.length), 2);
+    await p.evaluate((n) => (window.__mockBooks["工作"].files[n] = "记下的事"), name);
+    await p.evaluate((n) => window.__mockMiniClosed("工作", n, false), name);
+    await sleep(300);
+    assert.equal(await h.mockFile("工作", name), "记下的事", "a page with something written stays");
+    await h.switchBook("工作");
+    await until(h.tabs, ["计划", name]);
+  });
+
+  ui("the capture window adds an entry with the time at the end; pressing the hotkey again adds one more, an empty one is never saved", {
+    seed: db({ 收集箱: "# 收集箱\n\n第一条" }, { date_format: "yyyy-MM-dd HH:mm" }), url: captureUrl("", "收集箱"), mockControl: {},
+  }, async (h) => {
+    const { p } = h;
+    await until(matches(h.editor, /^# 收集箱\n\n第一条\n\n\d{4}-\d\d-\d\d \d\d:\d\d $/), true, "a new entry with the time");
+    assert.equal(await h.editorFocused(), true, "the cursor is in the entry");
+    await sleep(700);
+    assert.equal(await h.mockFile("", "收集箱"), "# 收集箱\n\n第一条", "the empty entry is not saved");
+    await p.keyboard.type("买牛奶");
+    await until(matches(() => h.mockFile("", "收集箱"), /^# 收集箱\n\n第一条\n\n\d{4}-\d\d-\d\d \d\d:\d\d 买牛奶$/), true, "saved once something is written");
+    await p.evaluate(() => window.__mockEmit("mini-capture"));
+    await p.evaluate(() => window.__mockEmit("mini-capture"));
+    await until(async () => (await h.editor()).split("\n\n").length, 4, "one more entry, not two");
+    await p.keyboard.press("Escape");
+    await until(() => mockCtl(p, "miniClosed"), [false], "Esc closes the capture window");
+    assert.match(await h.mockFile("", "收集箱"), /买牛奶$/, "the second, empty entry is not saved");
+  });
+
+  ui("closing the capture window after typing and deleting again leaves the page as it was", {
+    seed: db({ 收集箱: "开头\n\n- 旧的" }, { capture_stamp: false, capture_format: "list" }), url: captureUrl("", "收集箱"), mockControl: {},
+  }, async (h) => {
+    const { p } = h;
+    await until(h.editorFocused, true);
+    await p.keyboard.type("新的");
+    await until(() => h.mockFile("", "收集箱"), "开头\n\n- 旧的\n- 新的", "a list entry joins the list at the end");
+    await p.keyboard.press("Backspace");
+    await p.keyboard.press("Backspace");
+    await p.keyboard.press("Escape");
+    await until(() => mockCtl(p, "miniClosed"), [false]);
+    await until(() => h.mockFile("", "收集箱"), "开头\n\n- 旧的", "the empty entry is taken out again");
+  });
+
+  ui("to-do entries at the start go under the page title, at the top of the list there", {
+    seed: db({ 收集箱: "# 收集箱\n\n- [ ] 旧的\n\n正文" }, { capture_stamp: false, capture_format: "task", capture_where: "start" }), url: captureUrl("", "收集箱"), mockControl: {},
+  }, async (h) => {
+    const { p } = h;
+    await until(h.editorFocused, true);
+    await p.keyboard.type("新的");
+    await until(() => h.mockFile("", "收集箱"), "# 收集箱\n\n- [ ] 新的\n- [ ] 旧的\n\n正文");
+  });
+
+  ui("a list entry on an empty page becomes the page's first line", {
+    seed: db({ 收集箱: "" }, { capture_stamp: false, capture_format: "list" }), url: captureUrl("", "收集箱"), mockControl: {},
+  }, async (h) => {
+    const { p } = h;
+    await until(h.editorFocused, true);
+    await p.keyboard.type("第一条");
+    await until(() => h.mockFile("", "收集箱"), "- 第一条");
+  });
+
+  ui("quick capture settings: saved, greyed out when off, showing the options of the chosen target, never the main hotkey", {
+    seed: db({}, {}, { 工作: { 计划: "" } }),
+  }, async (h) => {
+    const { p } = h;
+    await p.click("#btn-settings");
+    await settingsPage(p, "general");
+    assert.equal(await p.isChecked("#set-capture"), true);
+    assert.equal(await p.inputValue("#set-capture-key"), "Ctrl+Alt+M");
+    assert.deepEqual(await p.$$eval("#set-capture-book option", (os) => os.map((o) => o.textContent)), ["默认", "工作"]);
+    assert.equal(await p.inputValue("#set-capture-page"), "收集箱");
+    assert.equal(await p.isVisible("#set-capture-name"), false, "the page name pattern only shows for 每次新建一页");
+    await p.selectOption("#set-capture-target", "new");
+    assert.equal(await p.isVisible("#set-capture-name"), true);
+    assert.equal(await p.isVisible("#set-capture-page"), false);
+    assert.equal(await p.isVisible("#set-capture-where"), false);
+    await p.selectOption("#set-capture-book", "工作");
+    await p.fill("#set-capture-name", "灵感 {{日期}}");
+    await p.selectOption("#set-capture-format", "task");
+    await p.uncheck("#set-capture-stamp");
+    await p.selectOption("#set-capture-position", "cursor");
+    await p.click("#set-capture-key");
+    await p.keyboard.press("Control+m");
+    assert.equal(await p.inputValue("#set-capture-key"), "Ctrl+M");
+    await p.click("#set-save");
+    await until(() => p.textContent("#set-error"), "快速记录的热键和呼出热键一样,换一个吧");
+    assert.equal((await h.stored()).settings.capture_hotkey, "Ctrl+Alt+M");
+    await p.click("#set-capture-key");
+    await p.keyboard.press("Control+Shift+j");
+    await p.click("#set-save");
+    await until(() => p.isHidden("#settings"), true);
+    let s = (await h.stored()).settings;
+    assert.deepEqual(
+      [s.capture_hotkey, s.capture_target, s.capture_book, s.capture_name, s.capture_format, s.capture_stamp, s.capture_position],
+      ["Ctrl+Shift+J", "new", "工作", "灵感 {{日期}}", "task", false, "cursor"],
+    );
+    await p.click("#btn-settings");
+    await settingsPage(p, "general");
+    await p.click("#set-capture-key");
+    await p.keyboard.press("Backspace");
+    assert.equal(await p.inputValue("#set-capture-key"), "", "Backspace clears the hotkey");
+    await p.uncheck("#set-capture");
+    assert.equal(await p.isDisabled("#set-capture-target"), true, "the other options grey out");
+    assert.equal(await p.isDisabled("#set-capture-key"), true);
+    await p.click("#set-save");
+    await until(() => p.isHidden("#settings"), true);
+    s = (await h.stored()).settings;
+    assert.deepEqual([s.capture_enabled, s.capture_hotkey], [false, ""]);
+  });
+
+  ui("a quick capture hotkey that could not be registered is told at startup", { seed: db(), mockControl: { captureError: "Ctrl+Alt+M:被别的程序占用了" } }, async (h) => {
+    await until(h.toast, "快速记录的热键注册失败(Ctrl+Alt+M:被别的程序占用了),可以在 设置 → 常规 里换一个");
+  });
+
+  ui("templates: right-click + makes a template notebook with two examples; a template fills its variables and puts the cursor at {{光标}}", { seed: db() }, async (h) => {
+    const { p } = h;
+    await p.click("#btn-new", { button: "right" });
+    assert.deepEqual(await menu(p), ["新建模板笔记本", "空白页面"]);
+    await p.click('#ctx [data-act="create-templates"]');
+    await until(h.bookName, "模板", "the new notebook is opened");
+    assert.deepEqual(await h.tabs(), ["日记 {{日期}}", "会议记录"]);
+    assert.match(await h.toast(), /建好了「模板」笔记本/);
+    await h.switchBook("");
+    await p.clock.setFixedTime(NOW);
+    await p.keyboard.press("Control+Shift+N");
+    await p.locator("#ctx").waitFor();
+    assert.deepEqual(await menu(p), ["日记 {{日期}}", "会议记录", "空白页面", "编辑模板…"]);
+    assert.equal(await p.evaluate(() => document.activeElement.textContent), "日记 {{日期}}", "the first template has the focus");
+    await p.keyboard.press("ArrowDown");
+    await p.keyboard.press("Enter");
+    await until(h.activeTab, "会议记录");
+    await p.keyboard.type("讨论");
+    await until(() => h.mockFile("", "会议记录"), "# 会议记录\n\n- 时间:2026-10-21 09:05\n- 参加:\n\n## 内容\n\n讨论\n\n## 待办\n\n- [ ] 写下要做的事\n",
+      "{{标题}}, {{日期}} and {{时间}} are filled in and the cursor waits at {{光标}}");
+    await p.click("#btn-new", { button: "right" });
+    await p.click('#ctx [data-act="template"]:text-is("日记 {{日期}}")');
+    await until(h.activeTab, "日记 2026-10-21", "the page name takes variables too");
+    await p.keyboard.type("晴");
+    await until(() => h.mockFile("", "日记 2026-10-21"), "# 2026-10-21 星期三\n\n晴\n");
+    await p.click("#btn-new", { button: "right" });
+    await p.click('#ctx [data-act="edit-templates"]');
+    await until(h.bookName, "模板", "编辑模板… opens the template notebook");
+  });
+
+  ui("snippets: a trigger and Tab expands it with Markdown, {{光标}} and full-width punctuation; words and code are left alone; Ctrl+Z goes back", {
+    seed: db({ 代码: "```\n;rq\n```" }, { snippets: [
+      { trigger: ";rq", text: "{{日期}}" },
+      { trigger: "dz", text: "**地址**:{{光标}}号" },
+      { trigger: ";hy", text: "## 会议\n\n- {{光标}}" },
+    ] }),
+  }, async (h) => {
+    const { p } = h;
+    await p.clock.setFixedTime(NOW);
+    await typeAtEnd(p, " ;rq");
+    await p.keyboard.press("Tab");
+    await until(h.editor, "一 2026-10-21");
+    await p.keyboard.press("Control+z");
+    await until(h.editor, "一 ;rq", "Ctrl+Z gives the trigger back");
+    await p.keyboard.press("Tab");
+    await p.keyboard.type(" 全角；rq");
+    await p.keyboard.press("Tab");
+    await until(h.editor, "一 2026-10-21 全角2026-10-21", "；rq works like ;rq");
+    await p.keyboard.type(" xdz");
+    await p.keyboard.press("Tab");
+    await p.keyboard.type(" dz");
+    await p.keyboard.press("Tab");
+    await p.keyboard.type("1");
+    await until(h.editor, "一 2026-10-21 全角2026-10-21 xdz **地址**:1号", "xdz is a word, dz alone expands with the cursor at {{光标}}");
+    await p.keyboard.press("Control+z");
+    await until(h.editor, "一 2026-10-21 全角2026-10-21 xdz **地址**:号", "what was typed after is undone first");
+    await p.keyboard.press("Control+End");
+    await p.keyboard.press("Enter");
+    await p.keyboard.type(";hy");
+    await p.keyboard.press("Tab");
+    await p.keyboard.type("讨论");
+    await until(h.editor, "一 2026-10-21 全角2026-10-21 xdz **地址**:号\n\n## 会议\n\n- 讨论", "several blocks");
+    await h.tab("代码").click();
+    await p.click("#editor .ProseMirror pre code");
+    await p.keyboard.press("End");
+    await p.keyboard.press("Tab");
+    await until(h.editor, "```\n;rq\t\n```", "not in code");
+  });
+
+  ui("snippet settings: add, clean up and delete snippets, then expand them with space or not at all", { seed: db() }, async (h) => {
+    const { p } = h;
+    await p.click("#btn-settings");
+    await settingsPage(p, "edit");
+    const rows = () => p.$$eval("#set-snippets .snippet-row", (rs) => rs.map((r) => [r.querySelector("input").value, r.querySelector("textarea").value]));
+    assert.deepEqual(await rows(), [[";rq", "{{日期}}"], [";sj", "{{时间}}"], [";xq", "{{星期}}"]]);
+    assert.equal(await p.inputValue("#set-snippet-key"), "tab");
+    assert.equal(await p.inputValue("#set-template-book"), "模板");
+    await p.click("#set-snippet-add");
+    await p.keyboard.type("q m");
+    await p.locator("#set-snippets .snippet-row").last().locator("textarea").fill("签名\n第二行");
+    await p.locator("#set-snippets .snippet-row").nth(2).locator(".snippet-del").click();
+    assert.deepEqual(await rows(), [[";rq", "{{日期}}"], [";sj", "{{时间}}"], ["qm", "签名\n第二行"]], "no spaces in a trigger");
+    assert.equal(await p.locator("#set-snippets textarea").last().evaluate((t) => t.rows), 2, "two lines show as two lines");
+    await p.click("#set-snippet-add");
+    await p.selectOption("#set-snippet-key", "space");
+    await p.fill("#set-template-book", " 我的模板 ");
+    await p.click("#set-save");
+    await until(() => p.isHidden("#settings"), true);
+    let s = (await h.stored()).settings;
+    assert.deepEqual(s.snippets, [{ trigger: ";rq", text: "{{日期}}" }, { trigger: ";sj", text: "{{时间}}" }, { trigger: "qm", text: "签名\n第二行" }], "the empty row is dropped");
+    assert.deepEqual([s.snippet_key, s.template_book], ["space", "我的模板"]);
+    await typeAtEnd(p, " qm 完");
+    await until(h.editor, "一 签名\n第二行 完", "space expands and stays");
+    await p.click("#btn-settings");
+    await settingsPage(p, "edit");
+    await p.click("#set-snippet-reset");
+    assert.deepEqual(await rows(), [[";rq", "{{日期}}"], [";sj", "{{时间}}"], [";xq", "{{星期}}"]]);
+    await p.selectOption("#set-snippet-key", "off");
+    await p.click("#set-save");
+    await until(() => p.isHidden("#settings"), true);
+    s = (await h.stored()).settings;
+    assert.deepEqual([s.snippets.length, s.snippet_key], [3, "off"]);
+    await typeAtEnd(p, " ;rq");
+    await p.keyboard.press("Tab");
+    await p.keyboard.type(" ;rq ");
+    await until(h.editor, "一 签名\n第二行 完 ;rq ;rq ", "off: neither Tab nor space expands");
+  });
+
+  ui("inline calc: Tab after = writes the result; errors are told; decimals, thousands and 打 = 就算 come from the settings", {
+    seed: db({ 代码: "```\n2+3=\n```" }),
+  }, async (h) => {
+    const { p } = h;
+    await typeAtEnd(p, " 12*3.5=");
+    await p.keyboard.press("Tab");
+    await until(h.editor, "一 12\\*3.5=42");
+    await p.keyboard.type(" (1+2)×3^2÷4=");
+    await p.keyboard.press("Tab");
+    await until(h.editor, "一 12\\*3.5=42 (1+2)×3^2÷4=6.75");
+    await p.keyboard.press("Control+z");
+    await until(h.editor, "一 12\\*3.5=42 (1+2)×3^2÷4=", "Ctrl+Z takes the result away");
+    await p.keyboard.type(" 1/0=");
+    await p.keyboard.press("Tab");
+    await until(h.toast, "算不出来:1/0");
+    assert.equal(await h.editor(), "一 12\\*3.5=42 (1+2)×3^2÷4= 1/0=");
+    await p.click("#btn-settings");
+    await settingsPage(p, "edit");
+    assert.deepEqual([await p.inputValue("#set-calc-key"), await p.inputValue("#set-calc-decimals"), await p.isChecked("#set-calc-thousands")], ["tab", "auto", false]);
+    await p.selectOption("#set-calc-key", "equals");
+    await p.selectOption("#set-calc-decimals", "2");
+    await p.check("#set-calc-thousands");
+    await p.click("#set-save");
+    await until(() => p.isHidden("#settings"), true);
+    const s = (await h.stored()).settings;
+    assert.deepEqual([s.calc_key, s.calc_decimals, s.calc_thousands], ["equals", "2", true]);
+    await p.click("#editor .ProseMirror");
+    await p.keyboard.press("Control+End");
+    await p.keyboard.press("Enter");
+    await p.keyboard.type("1234.5*2= 好");
+    await until(h.editor, "一 12\\*3.5=42 (1+2)×3^2÷4= 1/0=\n\n1234.5\\*2=2,469.00 好", "typing = writes the result");
+    await p.keyboard.press("Control+z");
+    await p.keyboard.press("Control+z");
+    await until(h.editor, "一 12\\*3.5=42 (1+2)×3^2÷4= 1/0=\n\n1234.5\\*2=", "the = stays when the result is undone");
+    await h.tab("代码").click();
+    await p.click("#editor .ProseMirror pre code");
+    await p.keyboard.press("End");
+    await p.keyboard.type("=");
+    await until(h.editor, "```\n2+3==\n```", "not in code");
   });
 });

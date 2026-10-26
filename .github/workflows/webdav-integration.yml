@@ -1,0 +1,46 @@
+name: WebDAV integration
+on:
+  push:
+    branches: [main, feature/0.4.5-webdav]
+  pull_request:
+  workflow_dispatch:
+jobs:
+  webdav-server-test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Tauri dependencies and WebDAV test server
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf rclone
+      - name: Start local WebDAV
+        run: |
+          mkdir -p /tmp/minipad-webdav
+          rclone serve webdav /tmp/minipad-webdav --addr 127.0.0.1:18080 --user tester --pass test-password >/tmp/minipad-webdav.log 2>&1 &
+          for i in $(seq 1 30); do
+            if curl -fsS -u tester:test-password -X PROPFIND http://127.0.0.1:18080/ >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat /tmp/minipad-webdav.log
+          exit 1
+      - name: Start a self-signed HTTPS WebDAV test server
+        run: |
+          openssl req -x509 -newkey rsa:2048 -nodes -days 1             -subj "/CN=localhost"             -keyout /tmp/minipad-webdav.key -out /tmp/minipad-webdav.crt
+          rclone serve webdav /tmp/minipad-webdav --addr 127.0.0.1:18443             --user tester --pass test-password             --cert /tmp/minipad-webdav.crt --key /tmp/minipad-webdav.key             >/tmp/minipad-webdav-tls.log 2>&1 &
+          for i in $(seq 1 30); do
+            if curl -ksS -u tester:test-password -X PROPFIND               https://127.0.0.1:18443/ >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat /tmp/minipad-webdav-tls.log
+          exit 1
+      - name: Exercise two-device sync and deletion safety
+        env:
+          MINIPAD_TEST_WEBDAV_URL: http://127.0.0.1:18080/
+          MINIPAD_TEST_WEBDAV_TLS_URL: https://127.0.0.1:18443/
+        run: |
+          cargo test --locked --manifest-path src-tauri/Cargo.toml 'webdav::tests::' -- --nocapture

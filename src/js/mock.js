@@ -41,6 +41,23 @@ const DEFAULT_SETTINGS = {
   code_title_color: true,
   update_check: true,
   email_auto_link: false,
+  local_path_enabled: true,
+  local_path_click: "ctrl",
+  local_path_color: "",
+  local_path_underline: "dashed",
+  local_path_missing: true,
+  local_path_confirm: true,
+  local_path_trusted: [],
+  page_links: true,
+  page_link_click: "ctrl",
+  page_link_suggest: "brackets",
+  page_link_cn_brackets: true,
+  page_link_rename: "ask",
+  page_link_color: "",
+  page_link_broken_color: "",
+  page_link_brackets: "faint",
+  page_link_underline: "hover",
+  pinyin_match: true,
   block_enabled: true,
   block_context_menu: "system",
   code_exit_mode: "blank3",
@@ -71,6 +88,20 @@ const DEFAULT_SETTINGS = {
   find_bar_pos: "top",
   find_color: "",
   conflict_mode: "copy",
+  webdav_enabled: false,
+  webdav_server: "",
+  webdav_user: "",
+  webdav_folder: "/MinipadNext/",
+  webdav_allow_http: false,
+  webdav_first_mode: "merge",
+  webdav_images: true,
+  webdav_on_start: true,
+  webdav_after_save: true,
+  webdav_delay_seconds: 30,
+  webdav_interval_minutes: 5,
+  webdav_on_hide: true,
+  webdav_status_style: "icon",
+  webdav_status_color: "",
   settings_nav: "left",
   outline_enabled: false,
   outline_mode: "hover",
@@ -106,10 +137,57 @@ const DEFAULT_SETTINGS = {
   mini_max: 0,
   mini_tab_button: true,
   mini_windows: [],
+  capture_enabled: true,
+  capture_hotkey: "Ctrl+Alt+M",
+  capture_target: "page",
+  capture_book: "",
+  capture_page: "收集箱",
+  capture_name: "快速记录 {{日期}} {{时间:HH.mm}}",
+  capture_where: "end",
+  capture_format: "paragraph",
+  capture_stamp: true,
+  capture_position: "remember",
+  template_book: "模板",
+  snippets: [
+    { trigger: ";rq", text: "{{日期}}" },
+    { trigger: ";sj", text: "{{时间}}" },
+    { trigger: ";xq", text: "{{星期}}" },
+  ],
+  snippet_key: "tab",
+  calc_key: "tab",
+  calc_decimals: "auto",
+  calc_thousands: false,
 };
 
 const has = (obj, key) => Object.prototype.hasOwnProperty.call(obj, key);
 const emptyMeta = () => ({ order: [], active: "", modes: {} });
+
+// 和后端 keep_disk_changes 一样:页面顺序、固定、分组里,磁盘上(d,读出来的笔记本)在前端上次读到(base)
+// 以后被别处改了、前端这一项(mine)没改的,保留磁盘上的。固定和分组只看有哪些,不看先后
+function keepDiskChanges(d, base, mine) {
+  const byKey = ([a], [b]) => (a < b ? -1 : a > b ? 1 : 0);
+  const canon = (value) => JSON.stringify(value, (_, v) =>
+    v && typeof v === "object" && !Array.isArray(v) ? Object.fromEntries(Object.entries(v).sort(byKey)) : v);
+  const pins = (names) => canon([...names].sort());
+  const grouping = (groups, pages) => canon({ groups: Object.fromEntries(groups.map((g) => [g.id, g])), pages: Object.fromEntries(pages) });
+  const disk = {
+    order: d.notes.map((n) => n.name),
+    pinned: d.notes.filter((n) => n.pinned).map((n) => n.name),
+    note_groups: d.notes.filter((n) => n.group).map((n) => [n.name, n.group]),
+    groups: d.groups,
+  };
+  const out = { ...mine };
+  if (canon(disk.order) !== canon(base.order) && canon(mine.order) === canon(base.order)) out.order = disk.order;
+  if (mine.pinned && pins(disk.pinned) !== pins(base.pinned) && pins(mine.pinned) === pins(base.pinned)) out.pinned = disk.pinned;
+  if (mine.groups) {
+    const before = grouping(base.groups, base.note_groups);
+    if (grouping(disk.groups, disk.note_groups) !== before && grouping(mine.groups, Object.entries(mine.note_groups || {})) === before) {
+      out.groups = disk.groups;
+      out.note_groups = Object.fromEntries(disk.note_groups);
+    }
+  }
+  return out;
+}
 
 // 测试会直接往 __mockBooks 里放笔记本,缺的字段补上
 function fixBook(b) {
@@ -162,6 +240,15 @@ const normPath = (p) => p.toLowerCase().replace(/\//g, "\\").replace(/\\+$/, "")
 
 // 只能是几个选项之一的设置:不认识的值换成第一个(和后端的 pick_one 一样)
 const pickOne = (value, options) => (options.includes(value) ? value : options[0]);
+// 和后端的 tidy_name、tidy_snippets 一样
+const tidyName = (value, fallback) => [...String(value ?? "").trim()].slice(0, 80).join("").trimEnd() || fallback;
+const tidySnippets = (list) => {
+  const seen = new Set();
+  return (Array.isArray(list) ? list : [])
+    .map((x) => ({ trigger: String(x?.trigger ?? "").trim(), text: [...String(x?.text ?? "")].slice(0, 10000).join("") }))
+    .filter((x) => x.trigger && [...x.trigger].length <= 32 && !/\s/.test(x.trigger) && !seen.has(x.trigger) && seen.add(x.trigger))
+    .slice(0, 200);
+};
 // 和 lib.rs 一样：整理、去重，纯色和渐变各自最多 128 个
 const perKind = (list) => {
   const count = { solid: 0, gradient: 0 };
@@ -182,7 +269,15 @@ const tidyDateFormat = (f) => [...String(f ?? "").trim()].slice(0, 64).join("").
 
 export function mockApi() {
   const db = load();
+  // 性能测试用 __mockControl.books 直接给出几千页的笔记本(localStorage 放不下),这时不往 localStorage 存
+  const big = window.__mockControl?.books;
+  if (big) {
+    db.books = big;
+    for (const b of Object.values(db.books)) fixBook(b);
+    db.book = window.__mockControl.book ?? db.book;
+  }
   const persist = () => {
+    if (big) return;
     try {
       localStorage.setItem(KEY, JSON.stringify(db));
     } catch (_) {}
@@ -237,19 +332,37 @@ export function mockApi() {
     });
   };
 
-  // 按保存过的顺序读出一个笔记本,新出现的页面排在后面
-  const readBook = (name) => {
+  // 页面的指纹:后端用文件大小和修改时间,这里没有修改时间,用内容算(测试直接改 __mockBooks 也能认出来);
+  // 内容没换过的页面用上次算好的(后端看文件属性不花时间,这里几千页时每次都算太慢)
+  const stamps = new Map();
+  const stamp = (key, text) => {
+    const known = stamps.get(key);
+    if (known?.text === text) return known.stamp;
+    let h = 2166136261;
+    for (let i = 0; i < text.length; i++) h = Math.imul(h ^ text.charCodeAt(i), 16777619);
+    const st = `${text.length}-${(h >>> 0).toString(16)}`;
+    stamps.set(key, { text, stamp: st });
+    return st;
+  };
+  // 按保存过的顺序读出一个笔记本,新出现的页面排在后面(和后端一样,重复的名字只算一次);
+  // known 里指纹没变的页面不给内容(same),only 给了时只要这一页
+  const readBook = (name, known = null, only = null) => {
     const { files, meta } = fixBook(db.books[name]);
     const names = Object.keys(files).sort();
-    const order = meta.order.filter((n) => names.includes(n)).concat(names.filter((n) => !meta.order.includes(n)));
+    const exists = new Set(names);
+    const order = [...new Set(meta.order.filter((n) => exists.has(n)))];
+    const placed = new Set(order);
+    order.push(...names.filter((n) => !placed.has(n)));
     return {
       name,
-      notes: order.map((n) => {
+      notes: order.filter((n) => !only || n === only).map((n) => {
         const reason = window.__mockControl?.unreadable?.[name]?.[n] || null;
         const g = meta.note_groups?.[n];
         const group = g && (meta.groups || []).some((x) => x.id === g) ? g : "";
-        return { name: n, content: reason && !window.__mockControl?.keepUnreadableContent ? "" : files[n],
-          mode: meta.modes[n] || "edit", unreadable: !!reason, reason, group, pinned: (meta.pinned || []).includes(n) };
+        const st = reason ? "" : stamp(name + "\n" + n, files[n]);
+        const same = !!st && known?.[n] === st;
+        return { name: n, content: same || (reason && !window.__mockControl?.keepUnreadableContent) ? "" : files[n],
+          mode: meta.modes[n] || "edit", unreadable: !!reason, reason, group, pinned: (meta.pinned || []).includes(n), stamp: st, same };
       }),
       active: order.includes(meta.active) ? meta.active : (order[0] ?? ""),
       groups: (meta.groups || []).filter((x) => order.some((n) => meta.note_groups?.[n] === x.id)),
@@ -257,13 +370,21 @@ export function mockApi() {
       icon_color: meta.icon_color || "",
     };
   };
-  const readBooks = () => ["", ...bookNames()].filter((name) => !window.__mockControl?.unreadableBook?.includes(name)).map(readBook);
+  const readBooks = ({ known, only } = {}) => {
+    const books = only
+      ? (has(db.books, only.book) ? [readBook(only.book, known?.[only.book], only.name)] : [])
+      : ["", ...bookNames()].filter((name) => !window.__mockControl?.unreadableBook?.includes(name))
+        .map((name) => readBook(name, known?.[name]));
+    // 测试用:最近一次读出了哪些页面的内容("笔记本/页面",没变的页面不算)
+    if (window.__mockControl) window.__mockControl.lastRead = books.flatMap((b) => b.notes.filter((n) => !n.same).map((n) => `${b.name}/${n.name}`));
+    return books;
+  };
 
   // 开着的小窗 [{ book, name }]
   let minis = [];
   const emitMinis = () => window.__mockEmit?.("mini-changed", minis.map((m) => ({ ...m })));
   const cmds = {
-    load_state: () => {
+    load_state: ({ only } = {}) => {
       // 第一次用(既没有页面也没有笔记本)时放一页说明
       const root = bookOf("");
       if (!Object.keys(root.files).length && !bookNames().length) {
@@ -273,9 +394,11 @@ export function mockApi() {
       return {
         settings: db.settings,
         notes_dir: "(浏览器预览)",
-        books: readBooks(),
+        books: readBooks({ only }),
         book: bookNames().includes(db.book) ? db.book : "",
         hotkey_error: null,
+        // 测试用 __mockControl.captureError 模拟快速记录的热键注册失败
+        capture_error: window.__mockControl?.captureError ?? null,
         settings_error: null,
         // 测试用 __mockControl.settingsNotice 模拟后端的提示(比如设置文件损坏、已改名留底)
         settings_notice: window.__mockControl?.settingsNotice ?? null,
@@ -284,7 +407,14 @@ export function mockApi() {
         debug: true,
       };
     },
-    read_notes: () => readBooks(),
+    read_notes: (args) => readBooks(args),
+    // 只列笔记本和页面名(小窗判断链接存不存在、补全用)
+    page_index: () => ["", ...bookNames()].map((name) => ({ name, notes: readBook(name).notes.map((n) => n.name) })),
+    // 小窗里点的页面链接:让主窗口打开(预览里主窗口和小窗是两个网页,测试用 __mockControl.openedInMain 看)
+    open_page_in_main: ({ book, target }) => {
+      if (window.__mockControl) (window.__mockControl.openedInMain ||= []).push({ book, target });
+      window.__mockEmit?.("open-page", { book, target });
+    },
     book_exists: ({ book }) => has(db.books, book),
     // 和后端一样:文件在别处被改过(既不是上次读到的 expected,也不是要写的内容),
     // 先把别处的版本另存成冲突副本(设置里选了直接覆盖就不留)
@@ -319,6 +449,12 @@ export function mockApi() {
       b.files[n] = content;
       return n;
     },
+    // 快速记录新建的页面没写东西:直接删掉,不进回收站(只删空的)
+    delete_if_empty: ({ book, name }) => {
+      if (!has(db.books, book) || !has(db.books[book].files, name) || db.books[book].files[name].trim()) return false;
+      delete db.books[book].files[name];
+      return true;
+    },
     delete_note: ({ book, name }) => {
       backup();
       if (!has(db.books, book) || !has(db.books[book].files, name)) return;
@@ -344,8 +480,9 @@ export function mockApi() {
     },
     // 笔记本已经不在了就不写,免得把删掉的笔记本又建出来
     // 带了 groups 才改分组(和 Rust 一样只记还有页面的分组);带了 pinned 才改固定的页面
-    save_meta: ({ book, order, active, modes, groups, note_groups, pinned }) => {
+    save_meta: ({ book, order, active, modes, groups, note_groups, pinned, base }) => {
       if (!has(db.books, book)) return;
+      if (base) ({ order, groups, note_groups, pinned } = keepDiskChanges(readBook(book), base, { order, groups, note_groups, pinned }));
       const old = db.books[book].meta || {};
       const meta = { ...old, order, active, modes, groups: old.groups || [], note_groups: old.note_groups || {} };
       if (pinned) meta.pinned = pinned.filter((n, i, a) => order.includes(n) && a.indexOf(n) === i);
@@ -470,6 +607,13 @@ export function mockApi() {
         tab_group_style: pickOne(settings.tab_group_style, ["line", "tint"]),
         pin_style: pickOne(settings.pin_style, ["icon", "tint", "none"]),
         quick_switch_scope: pickOne(settings.quick_switch_scope, ["all", "book"]),
+        page_link_click: pickOne(settings.page_link_click, ["ctrl", "click"]),
+        page_link_suggest: pickOne(settings.page_link_suggest, ["brackets", "typing", "off"]),
+        page_link_rename: pickOne(settings.page_link_rename, ["ask", "auto", "off"]),
+        page_link_brackets: pickOne(settings.page_link_brackets, ["faint", "show", "hide"]),
+        page_link_underline: pickOne(settings.page_link_underline, ["hover", "solid", "dashed", "none"]),
+        page_link_color: tidyAccent(settings.page_link_color),
+        page_link_broken_color: tidyAccent(settings.page_link_broken_color),
         quick_switch_key: [...String(settings.quick_switch_key ?? "").trim()].slice(0, 40).join(""),
         sel_bar: pickOne(settings.sel_bar, ["always", "nobar", "off"]),
         sel_bar_pos: pickOne(settings.sel_bar_pos, ["above", "below"]),
@@ -483,7 +627,22 @@ export function mockApi() {
         mini_opacity: Math.min(100, Math.max(40, Math.round(Number(settings.mini_opacity)) || 100)),
         mini_max: Math.min(20, Math.max(0, Math.round(Number(settings.mini_max)) || 0)),
         mini_windows: db.settings.mini_windows || [],
+        capture_hotkey: [...String(settings.capture_hotkey ?? "").trim()].slice(0, 40).join(""),
+        capture_target: pickOne(settings.capture_target, ["page", "new"]),
+        capture_page: tidyName(settings.capture_page, "收集箱"),
+        capture_name: tidyName(settings.capture_name, DEFAULT_SETTINGS.capture_name),
+        capture_where: pickOne(settings.capture_where, ["end", "start"]),
+        capture_format: pickOne(settings.capture_format, ["paragraph", "list", "task"]),
+        capture_position: pickOne(settings.capture_position, ["remember", "center", "cursor"]),
+        template_book: tidyName(settings.template_book, "模板"),
+        snippets: tidySnippets(settings.snippets),
+        snippet_key: pickOne(settings.snippet_key, ["tab", "space", "off"]),
+        calc_key: pickOne(settings.calc_key, ["tab", "equals", "off"]),
+        calc_decimals: pickOne(String(settings.calc_decimals), ["auto", "0", "1", "2", "3", "4", "5", "6"]),
       };
+      if (s.capture_enabled !== false && s.capture_hotkey && s.capture_hotkey.toLowerCase() === s.hotkey.toLowerCase()) {
+        throw "快速记录的热键和呼出热键一样,换一个吧";
+      }
       const notes = normPath(s.notes_dir);
       const dest = normPath(s.backup_dir);
       if (s.backup_enabled && notes && dest && (dest === notes || dest.startsWith(notes + "\\"))) {
@@ -549,6 +708,7 @@ export function mockApi() {
       return { size: s.ball_size ?? 48, icon: s.ball_icon || "app", color: s.ball_color || "", opacity: s.ball_opacity ?? 100, open: s.ball_open || "click", image: window.__mockControl?.ballImage || null };
     },
     pick_ball_icon: () => window.__mockControl?.pickBallImage ?? null,
+    refresh_ball_icon: () => window.__mockControl?.ballImage || null,
     collapse_to_ball: () => {
       if (window.__mockControl) window.__mockControl.collapsed = (window.__mockControl.collapsed || 0) + 1;
       toast("(预览)窗口会缩成悬浮图标,点图标再放出来");
@@ -556,18 +716,46 @@ export function mockApi() {
     expand_from_ball: () => {},
     open_notes_dir: () => toast("(预览)会在资源管理器里打开笔记文件夹"),
     open_link: ({ url }) => void window.open(url, "_blank", "noopener"),
+    webdav_test: (draft = {}) => {
+      if (window.__mockControl?.webdavTestError) throw window.__mockControl.webdavTestError;
+      if (!draft.server && !db.settings?.webdav_server) throw "请先填写服务器地址";
+      return "连接成功，目录读取和写入测试通过（预览模拟）";
+    },
+    webdav_set_password: () => {},
+    webdav_status: () => window.__mockControl?.webdavStatus || ({
+      state: db.settings?.webdav_enabled ? "synced" : "off",
+      message: db.settings?.webdav_enabled ? "已同步（预览模拟）" : "WebDAV 尚未开启",
+      last_time: "", history: [],
+    }),
+    webdav_sync_now: () => {
+      const control = window.__mockControl;
+      if (control) control.webdavSyncCalls = (control.webdavSyncCalls || 0) + 1;
+      return { uploaded: 0, downloaded: 0, deleted: 0, conflicts: 0,
+        changed: [], rescan_needed: control?.webdavRescanNeeded || false };
+    },
+    webdav_forget: () => { db.settings.webdav_enabled = false; persist(); },
+    local_path_exists: async ({ path }) => {
+      const control = window.__mockControl;
+      if (control?.slowLocalPathMs) await new Promise(resolve => setTimeout(resolve, control.slowLocalPathMs));
+      return !!control?.existingLocalPaths?.includes(path);
+    },
+    open_path: ({ path, reveal, confirmed }) => {
+      if (window.__mockControl) (window.__mockControl.openedPaths ||= []).push({ path, reveal, confirmed });
+      toast("(预览)本地路径：" + path);
+    },
     quit_ack: () => true,
     quit_cancel: () => {},
     show_window: () => {},
     quit_app: () => {},
     // 小窗:预览里不真的开窗口,只记下来并像后端一样发 mini-changed;
     // 小窗那边用 index.html?mini=1&book=&page= 打开(mini_self 从网址里读)
-    mini_open: ({ book, name, x, y }) => {
+    // capture:快速记录,不受小窗开关和个数的限制
+    mini_open: ({ book, name, x, y, capture }) => {
       const s = db.settings;
-      if (!s.mini_enabled) throw "小窗已经关掉了,可以在 设置 → 窗口 里打开";
-      if (s.mini_max && minis.length >= s.mini_max) throw `最多同时开 ${s.mini_max} 个小窗,先关掉一个吧(设置 → 窗口 可以改)`;
+      if (!capture && !s.mini_enabled) throw "小窗已经关掉了,可以在 设置 → 窗口 里打开";
+      if (!capture && s.mini_max && minis.length >= s.mini_max) throw `最多同时开 ${s.mini_max} 个小窗,先关掉一个吧(设置 → 窗口 可以改)`;
       if (!has(db.books, book) || !has(db.books[book].files, name)) throw `找不到页面「${name}」`;
-      if (window.__mockControl) (window.__mockControl.miniOpened ||= []).push({ book, name, x, y });
+      if (window.__mockControl) (window.__mockControl.miniOpened ||= []).push(capture ? { book, name, x, y, capture } : { book, name, x, y });
       if (!minis.some((m) => m.book === book && m.name === name)) minis.push({ book, name });
       emitMinis();
     },
@@ -575,7 +763,7 @@ export function mockApi() {
       const q = new URLSearchParams(location.search);
       if (!q.has("mini")) return null;
       const s = db.settings;
-      return { book: q.get("book") || "", name: q.get("page") || "", top: s.mini_on_top, opacity: s.mini_opacity };
+      return { book: q.get("book") || "", name: q.get("page") || "", top: s.mini_on_top, opacity: s.mini_opacity, capture: q.has("capture") };
     },
     mini_list: () => minis.map((m) => ({ ...m })),
     mini_focus: ({ book, name }) => {

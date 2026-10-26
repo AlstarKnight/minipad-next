@@ -12,6 +12,8 @@ import { tidyAccent } from "./accent.js";
 import { refuseInMini } from "./mini.js";
 import { makeSharedColorTools } from "./sharedcolors.js";
 import { renderSidebar, toggleTree } from "./sidebar.js";
+import { pageNamesChanged } from "./pagelinkview.js";
+import { planLinks, updateLinks } from "./pagelinkapp.js";
 
 // 为了"移到笔记本…"打开列表时是要移动的页面,平时是 null
 let moving = null;
@@ -34,6 +36,7 @@ export function renderBook() {
   renderList();
   if (!$("#book-manager").hidden) renderManager();
   renderSidebar();
+  pageNamesChanged();
 }
 
 function renderList() {
@@ -168,11 +171,15 @@ export async function createBook() {
 export async function renameBook(b) {
   if (!b.name || refuseInMini(b, "给笔记本改名")) return;
   const name = await askText("笔记本的新名字:", b.name, "改名");
+  let links = null;
   if (name && name !== b.name) {
     try {
       await mutate(() => holdSaves(async () => {
         await saveMeta();
-        b.name = await api.invoke("rename_book", { old: b.name, new: name });
+        const renamed = await api.invoke("rename_book", { old: b.name, new: name });
+        // 别的页面里写了这个笔记本名的链接(用改名前的名单找)
+        links = planLinks({ book: [b.name, renamed] });
+        b.name = renamed;
         sortBooks();
       }));
     } catch (e) {
@@ -181,6 +188,7 @@ export async function renameBook(b) {
     renderBook();
   }
   refocus(b);
+  await updateLinks(links);
 }
 
 export async function deleteBook(b) {
@@ -218,10 +226,13 @@ export async function deleteBook(b) {
 export async function moveNoteTo(n, target) {
   const src = state.books.find((b) => b.notes.includes(n));
   if (!src || src === target || !state.books.includes(target) || refuseInMini(n, "移动")) return;
+  let links = null;
   try {
     await mutate(() => holdSaves(async () => {
       await saveMeta();
       const name = await api.invoke("move_note", { book: src.name, name: n.name, target: target.name });
+      // 指向它的链接、它自己里面的链接(用移动前的名单找)
+      links = planLinks({ move: [src.name, n.name, target.name, name] });
       rememberView();
       removeNote(src, n);
       n.name = name;
@@ -241,6 +252,7 @@ export async function moveNoteTo(n, target) {
     toast("移动失败:" + e);
   }
   renderBook();
+  await updateLinks(links);
 }
 
 // 单独的笔记本管理页。只更改图标元信息，不切换当前笔记或编辑状态。
