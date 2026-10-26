@@ -635,7 +635,7 @@ mod tests {
         let moved = [laptop.clone(), screen(-3840, 0, 3840, 2160, "DISPLAY3")];
         assert_eq!(find_home(external.rect, "DISPLAY2", &moved), Some(1));
         // 外接屏没回来
-        assert_eq!(find_home(external.rect, "DISPLAY2", &[laptop.clone()]), None);
+        assert_eq!(find_home(external.rect, "DISPLAY2", std::slice::from_ref(&laptop)), None);
         // 两块一样大:认名字
         let twins = [
             screen(0, 0, 1920, 1080, "A"),
