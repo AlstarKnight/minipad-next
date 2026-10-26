@@ -126,7 +126,7 @@ Android devices. In particular, file pickers and Chinese IMEs need on-device
 testing. Android-private app storage can be removed by uninstalling the APK,
 so treat this stage as a test build and avoid storing important notes.
 
-## Links, dialogs and the Back key (0.4.6)
+## Links, dialogs and the Back key (0.4.5)
 
 - **Links:** with the page not editable (reading mode or a read-only page), tapping
   a link opens it: web pages in the system browser, or in the in-app browser
@@ -184,7 +184,7 @@ to keep the Android work together, as requested. Future milestones:
 1. **Sync hardening:** validate deletion protection, conflicts, offline behavior,
    certificate errors and compatibility with different WebDAV providers.
 2. **Device validation:** Chinese input methods, keyboards, external file-picker
-   compatibility and image rendering on actual devices, plus the 0.4.6 links,
+   compatibility and image rendering on actual devices, plus the 0.4.5 links,
    in-app dialogs and Back key on a real phone.
 
 WebDAV work must not treat HTTP/network failure as a deletion or overwrite local

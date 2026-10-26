@@ -144,7 +144,7 @@ async function open({ colorScheme, keyboard, look = { ui: "classic" } } = {}) {
   const page = await context.newPage();
   const errors = [];
   page.on("pageerror", (error) => errors.push(String(error)));
-  // 0.4.6 起手机上只用应用内对话框:系统的 prompt / confirm / alert 一出现就算错
+  // 0.4.5 起手机上只用应用内对话框:系统的 prompt / confirm / alert 一出现就算错
   page.on("dialog", (dialog) => {
     errors.push(`system ${dialog.type()} dialog: ${dialog.message()}`);
     void dialog.dismiss();
@@ -1372,7 +1372,7 @@ test("the back button closes the top layer first and is left to the system when 
   } finally { await context.close(); }
 });
 
-// ---------- 0.4.7:几千页时换页不重建抽屉 ----------
+// ---------- 0.4.5:几千页时换页不重建抽屉 ----------
 // 抽屉里的行和页面选择框的选项打上记号:换页以后还带着记号,说明没有重建
 const markDrawer = (page) => page.evaluate(() => {
   for (const x of document.querySelectorAll("#notes-list button, #note option")) x.dataset.kept = "1";
