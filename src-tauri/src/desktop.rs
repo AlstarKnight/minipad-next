@@ -2286,6 +2286,55 @@ fn scaled_strip(
     (f64::from(edge::strip_for(style, peeking, line_width, glow)) * scale).round() as i32
 }
 
+/// 显示器断开又接上、分辨率或缩放改变后,Windows 会把窗口挪到别处。
+/// 藏起来的窗口不在该在的位置时,贴回原来那条边;返回 true 表示这一轮已经处理过。
+fn resnap_hidden(
+    app: &AppHandle,
+    win: &WebviewWindow,
+    edge: Edge,
+    rect: Rect,
+    mon: Rect,
+    peeking: bool,
+) -> bool {
+    let st = app.state::<AppState>();
+    let monitors: Vec<Rect> = win
+        .available_monitors()
+        .unwrap_or_default()
+        .iter()
+        .map(monitor_rect)
+        .collect();
+    // 显示器正在切换时可能一块都查不到,等下一轮
+    let target = if monitors.contains(&mon) {
+        mon
+    } else if let Some(m) = edge::nearest_monitor(rect, &monitors) {
+        m
+    } else {
+        return false;
+    };
+    // 先取出设置再问窗口缩放:后台线程查询窗口要等主线程,主线程上的命令又会锁设置
+    let (style, line_width, glow) = {
+        let settings = st.settings.lock().unwrap();
+        (
+            settings.edge_style.clone(),
+            settings.edge_line_width,
+            settings.edge_line_glow,
+        )
+    };
+    let strip = scaled_strip(win, &style, peeking, line_width, glow);
+    let (x, y) = edge::rehide_position(edge, rect, target, strip);
+    if target == mon && (rect.x - x).abs() <= 2 && (rect.y - y).abs() <= 2 {
+        return false;
+    }
+    st.edge.lock().unwrap().monitor = target;
+    if edge::edge_is_free(edge, Rect::new(x, y, rect.w, rect.h), target, &monitors) {
+        let _ = win.set_position(PhysicalPosition::new(x, y));
+    } else {
+        // 这条边外面现在接着另一块显示器,缩过去会露在那块屏幕上:放出来留在屏幕里
+        restore_from_edge(app, false);
+    }
+    true
+}
+
 fn edge_tick(app: &AppHandle) {
     let st = app.state::<AppState>();
     if !st.settings.lock().unwrap().edge_hide {
@@ -2309,6 +2358,9 @@ fn edge_tick(app: &AppHandle) {
         (e.hidden, e.peeking, e.monitor)
     };
     if let Some(edge) = hidden {
+        if resnap_hidden(app, &win, edge, rect, mon, peeking) {
+            return;
+        }
         let (style, length, unit, fixed_px) = {
             let settings = st.settings.lock().unwrap();
             (

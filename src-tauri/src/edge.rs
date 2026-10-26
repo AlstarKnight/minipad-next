@@ -106,19 +106,53 @@ impl Rect {
     }
 }
 
+/// `mon` 的 `edge` 那条边外面有没有接着另一块显示器。`win` 只用来取沿着边的那个坐标。
+/// 那条边外面如果还接着另一块显示器,窗口缩过去会露在那块屏幕上,所以不算。
+pub fn edge_is_free(edge: Edge, win: Rect, mon: Rect, monitors: &[Rect]) -> bool {
+    let free = |px: i32, py: i32| !monitors.iter().any(|m| m.contains(px, py));
+    match edge {
+        Edge::Top => free(win.x + win.w / 2, mon.y - 1),
+        Edge::Left => free(mon.x - 1, win.y + win.h / 2),
+        Edge::Right => free(mon.x + mon.w, win.y + win.h / 2),
+    }
+}
+
 /// 窗口贴着显示器 `mon` 的哪条边。只认外侧的边:那条边外面如果还接着另一块显示器,
 /// 窗口缩过去会露在那块屏幕上,所以不算。
 pub fn docked_edge(win: Rect, mon: Rect, monitors: &[Rect]) -> Option<Edge> {
-    let free = |px: i32, py: i32| !monitors.iter().any(|m| m.contains(px, py));
-    if win.y <= mon.y + SNAP && free(win.x + win.w / 2, mon.y - 1) {
+    if win.y <= mon.y + SNAP && edge_is_free(Edge::Top, win, mon, monitors) {
         Some(Edge::Top)
-    } else if win.x <= mon.x + SNAP && free(mon.x - 1, win.y + win.h / 2) {
+    } else if win.x <= mon.x + SNAP && edge_is_free(Edge::Left, win, mon, monitors) {
         Some(Edge::Left)
-    } else if win.x + win.w >= mon.x + mon.w - SNAP && free(mon.x + mon.w, win.y + win.h / 2) {
+    } else if win.x + win.w >= mon.x + mon.w - SNAP
+        && edge_is_free(Edge::Right, win, mon, monitors)
+    {
         Some(Edge::Right)
     } else {
         None
     }
+}
+
+/// 窗口和显示器重叠得最多的那块;一块都不重叠就取中心最近的。
+pub fn nearest_monitor(win: Rect, monitors: &[Rect]) -> Option<Rect> {
+    let overlap = |m: &Rect| {
+        let w = (win.x + win.w).min(m.x + m.w) - win.x.max(m.x);
+        let h = (win.y + win.h).min(m.y + m.h) - win.y.max(m.y);
+        if w > 0 && h > 0 {
+            i64::from(w) * i64::from(h)
+        } else {
+            0
+        }
+    };
+    let distance = |m: &Rect| {
+        let dx = i64::from(win.x + win.w / 2 - (m.x + m.w / 2));
+        let dy = i64::from(win.y + win.h / 2 - (m.y + m.h / 2));
+        dx * dx + dy * dy
+    };
+    monitors
+        .iter()
+        .copied()
+        .min_by_key(|m| (std::cmp::Reverse(overlap(m)), distance(m)))
 }
 
 /// 缩进去以后窗口的位置:只露出 LINE_STRIP 宽的一条(测试里用;程序里按样式选宽度)
@@ -132,6 +166,25 @@ pub fn hidden_position_with_strip(edge: Edge, win: Rect, mon: Rect, strip: i32) 
         Edge::Top => (win.x, mon.y - win.h + strip),
         Edge::Left => (mon.x - win.w + strip, win.y),
         Edge::Right => (mon.x + mon.w - strip, win.y),
+    }
+}
+
+/// 显示器变了(拔掉、重新接上、分辨率或缩放改变)以后,藏起来的窗口该在的位置:
+/// 还是贴着原来那条边,只有沿着边的方向跑出屏幕外时才拉回来。
+pub fn rehide_position(edge: Edge, win: Rect, mon: Rect, strip: i32) -> (i32, i32) {
+    let (x, y) = hidden_position_with_strip(edge, win, mon, strip);
+    let pull_back = |pos: i32, len: i32, start: i32, span: i32| {
+        if pos + len / 2 >= start && pos + len / 2 < start + span {
+            pos
+        } else if len >= span {
+            start
+        } else {
+            pos.clamp(start, start + span - len)
+        }
+    };
+    match edge {
+        Edge::Top => (pull_back(x, win.w, mon.x, mon.w), y),
+        Edge::Left | Edge::Right => (x, pull_back(y, win.h, mon.y, mon.h)),
     }
 }
 
@@ -432,6 +485,60 @@ mod tests {
             ..hover
         };
         assert!(resting.contains(0, 350));
+    }
+
+    #[test]
+    fn nearest_monitor_prefers_overlap_then_distance() {
+        let right = Rect::new(1920, 0, 1920, 1080);
+        let mons = [SCREEN, right];
+        assert_eq!(
+            nearest_monitor(Rect::new(1700, 100, 400, 500), &mons),
+            Some(SCREEN)
+        );
+        assert_eq!(
+            nearest_monitor(Rect::new(1900, 100, 400, 500), &mons),
+            Some(right)
+        );
+        // 完全在所有屏幕外面:取中心最近的
+        assert_eq!(
+            nearest_monitor(Rect::new(-1000, 100, 400, 500), &mons),
+            Some(SCREEN)
+        );
+        assert_eq!(nearest_monitor(SCREEN, &[]), None);
+    }
+
+    #[test]
+    fn edge_is_free_only_on_outer_sides() {
+        let right = Rect::new(1920, 0, 1920, 1080);
+        let mons = [SCREEN, right];
+        let win = Rect::new(300, 200, 400, 500);
+        assert!(edge_is_free(Edge::Top, win, SCREEN, &mons));
+        assert!(edge_is_free(Edge::Left, win, SCREEN, &mons));
+        assert!(!edge_is_free(Edge::Right, win, SCREEN, &mons));
+        assert!(edge_is_free(Edge::Right, win, SCREEN, &[SCREEN]));
+    }
+
+    #[test]
+    fn rehide_keeps_the_edge_and_pulls_back_only_when_off_screen() {
+        let win = Rect::new(300, 100, 400, 500);
+        // 位置本来就对:不动
+        assert_eq!(
+            rehide_position(Edge::Right, win, SCREEN, 2),
+            hidden_position_with_strip(Edge::Right, win, SCREEN, 2)
+        );
+        // 分辨率变小后窗口跑到屏幕下面:拉回来,仍然贴右边
+        let small = Rect::new(0, 0, 1280, 720);
+        let lost = Rect::new(900, 1000, 400, 500);
+        assert_eq!(rehide_position(Edge::Right, lost, small, 2), (1278, 220));
+        // 窗口比屏幕还高:顶着上沿
+        let tall = Rect::new(900, 1000, 400, 900);
+        assert_eq!(rehide_position(Edge::Left, tall, small, 2), (-398, 0));
+        // 贴上边时横向半个窗口还在屏幕内:保持原来的横向位置
+        let overhang = Rect::new(-100, -498, 400, 500);
+        assert_eq!(rehide_position(Edge::Top, overhang, SCREEN, 2), (-100, -498));
+        // 横向完全跑到屏幕外:拉回来
+        let gone = Rect::new(2500, -498, 400, 500);
+        assert_eq!(rehide_position(Edge::Top, gone, SCREEN, 2), (1520, -498));
     }
 
     #[test]
