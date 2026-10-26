@@ -357,6 +357,13 @@ html[data-find-pos="bottom"] #status { order: 2; }
   inset: 0;
   overflow: auto;
 }
+/* 很长的页面只排版看得见的那几屏(见 editor.js 的 markLongPage):先完整排版一次记下每段的真实高度(auto),再跳过看不见的。
+   只用在段落、标题和代码块上:列表、引用里面的上下边距会和外面的合在一起,用了会让间距变样 */
+#editor[data-long-page] .ProseMirror > :is(p, h1, h2, h3, h4, h5, h6, .codeblock) { contain-intrinsic-size: auto 3em; }
+#editor[data-long-page="lazy"] .ProseMirror > :is(p, h1, h2, h3, h4, h5, h6, .codeblock) {
+  content-visibility: auto;
+  overflow-clip-margin: 1em;
+}
 
 /* ---------- 悬浮目录(见 js/outline.js) ----------
    收起时是一列短线(每个标题一条,级别越低越短,正在看的那一节亮起来),鼠标移上去在原地展开成目录;

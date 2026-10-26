@@ -7714,3 +7714,75 @@ describe("0.5.1: quick capture, templates, snippets and inline calc", () => {
     await until(h.editor, "```\n2+3==\n```", "not in code");
   });
 });
+
+describe("0.5.3: long pages stay fast", () => {
+  const keywords = (block) => block.locator(".hljs-keyword").allTextContents();
+
+  ui("typing in one code block re-colors that block; the others keep their colors, also after a language change and undo", {
+    seed: seed({ "": { 代码: "```js\nconst a = 1;\n```\n\n```js\nlet b = 2;\n```\n\n```py\ndef c(): pass\n```" } }),
+  }, async (h) => {
+    const { p } = h;
+    const blocks = p.locator("#editor .codeblock");
+    await until(() => keywords(blocks.nth(1)), ["let"], "colored when the page opens");
+    await blocks.nth(1).locator("code").click();
+    await p.keyboard.press("End");
+    await p.keyboard.type(" return");
+    await until(() => keywords(blocks.nth(1)), ["let", "return"], "the edited block gets the new keyword");
+    assert.deepEqual(await keywords(blocks.nth(0)), ["const"], "the block above keeps its colors");
+    assert.deepEqual(await keywords(blocks.nth(2)), ["def", "pass"], "the block below keeps its colors");
+    // 段落里打字,代码块的高亮跟着挪位置
+    await p.keyboard.press("Control+Home");
+    await p.keyboard.type("前面加一段字");
+    await p.keyboard.press("Enter");
+    assert.deepEqual(await Promise.all([0, 1, 2].map((i) => keywords(blocks.nth(i)))), [["const"], ["let", "return"], ["def", "pass"]]);
+    await blocks.nth(0).locator(".cb-lang").fill("text");
+    await blocks.nth(0).locator(".cb-lang").press("Enter");
+    await until(() => keywords(blocks.nth(0)), [], "plain text has no colors");
+    await p.keyboard.press("Control+z");
+    await until(() => keywords(blocks.nth(0)), ["const"], "undo brings the colors back");
+  });
+
+  const SECTION = "今天整理了项目的进度和下一步计划，记录一下需要跟进的事情和遇到的问题。".repeat(3);
+  const LONG = ["# 长页面", ...Array.from({ length: 200 }, (_, i) => `## 第 ${i} 节\n\n${SECTION}\n\n- 列表 ${i}\n\n\`\`\`js\nconst x = ${i};\n\`\`\``)].join("\n\n");
+
+  ui("a long page only lays out what is on screen; coming back keeps the place; the setting turns it off", {
+    seed: seed({ "": { 长页面: LONG, 短页: "# 短页" } }),
+  }, async (h) => {
+    const { p } = h;
+    const mode = () => p.evaluate(() => document.querySelector("#editor").dataset.longPage ?? null);
+    await until(mode, "lazy", "a page over 20 000 characters");
+    // 滚到中间:哪一节在最上面、离顶多远,换页回来还是那里
+    const place = () => p.evaluate(() => {
+      const top = document.querySelector("#editor").getBoundingClientRect().top;
+      const first = [...document.querySelectorAll("#editor h2")].find((el) => el.getBoundingClientRect().bottom > top);
+      return [first.textContent, Math.round(first.getBoundingClientRect().top - top)];
+    });
+    await p.evaluate(() => {
+      const h = [...document.querySelectorAll("#editor h2")].find((el) => el.textContent === "第 137 节");
+      h.scrollIntoView({ block: "start" });
+    });
+    const before = await place();
+    assert.equal(before[0], "第 137 节");
+    await h.tab("短页").click();
+    await until(mode, null, "a short page is laid out as usual");
+    await h.tab("长页面").click();
+    await until(mode, "lazy");
+    assert.deepEqual(await place(), before, "back at the same section");
+    // 跳到最后一节:位置是准的
+    await p.keyboard.press("Control+End");
+    await until(async () => (await place())[0], "第 199 节", "Ctrl+End reaches the last section");
+    await p.click("#btn-settings");
+    await settingsPage(p, "edit");
+    assert.ok(await p.isChecked("#set-long-page"), "on by default");
+    await p.uncheck("#set-long-page");
+    await p.click("#set-save");
+    await until(mode, null, "turned off right away");
+    assert.equal((await h.stored()).settings.long_page_lazy, false);
+  });
+
+  ui("a page with many local paths greys out every missing one", {
+    seed: seed({ "": { 路径: Array.from({ length: 150 }, (_, i) => `文件 C:\\docs\\note${i}.pdf`).join("\n\n") } }),
+  }, async ({ p }) => {
+    await until(() => p.locator("#editor .local-file-path.missing").count(), 150, "all checked");
+  });
+});

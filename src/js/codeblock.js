@@ -560,10 +560,10 @@ class CodeBlockView {
     this.paintFolded(folded);
   }
 
-  paintFolded(folded) {
+  paintFolded(folded, measure = true) {
     this.dom.classList.toggle("folded", folded);
     this.toggle.setAttribute("aria-expanded", String(!folded));
-    if (!folded) this.layoutLines();
+    if (!folded && measure) this.layoutLines();
   }
 
   async copyCode() {
@@ -602,9 +602,14 @@ class CodeBlockView {
     const lines = lineCount(this.node);
     this.count.textContent = `${lines} 行`;
     this.dom.style.setProperty("--digits", String(String(lines).length));
-    this.paintFolded(this.foldOverride ?? this.node.attrs.folded);
-    // 内容放进页面以后再量行号的位置
-    requestAnimationFrame(() => this.layoutLines());
+    // 编辑器这时还没把新内容放进代码块,现在量是白量:等内容放进页面以后再量行号的位置,一帧只量一次
+    this.paintFolded(this.foldOverride ?? this.node.attrs.folded, false);
+    if (!this.lineFrame) {
+      this.lineFrame = requestAnimationFrame(() => {
+        this.lineFrame = 0;
+        this.layoutLines();
+      });
+    }
   }
 
   update(node) {
@@ -713,15 +718,42 @@ function shellCommands(text, ranges) {
   ranges.sort((a, b) => a[0] - b[0]);
 }
 
+// 一个代码块(从 pos 开始)的高亮装饰
+const blockDecos = (node, pos) =>
+  highlightRanges(node).map(([from, to, cls]) => Decoration.inline(pos + 1 + from, pos + 1 + to, { class: cls }));
+
 function decorate(doc) {
   const decos = [];
   doc.descendants((node, pos) => {
     if (node.type.name !== "code_block") return true;
-    const start = pos + 1;
-    for (const [from, to, cls] of highlightRanges(node)) decos.push(Decoration.inline(start + from, start + to, { class: cls }));
+    decos.push(...blockDecos(node, pos));
     return false;
   });
   return DecorationSet.create(doc, decos);
+}
+
+// 文档改了:别的代码块的高亮跟着挪位置,只重算改到的代码块。
+// 以前每按一个键都把整页的代码块重新装饰一遍,代码块多的长页面每个键要几十毫秒
+function redecorate(tr, old) {
+  let set = old.map(tr.mapping, tr.doc);
+  const touched = new Map();
+  tr.mapping.maps.forEach((stepMap, index) => {
+    stepMap.forEach((_, __, newStart, newEnd) => {
+      const rest = tr.mapping.slice(index + 1);
+      const from = Math.max(0, rest.map(newStart, -1));
+      const to = Math.min(tr.doc.content.size, rest.map(newEnd, 1));
+      tr.doc.nodesBetween(from, to, (node, pos) => {
+        if (node.type.name !== "code_block") return true;
+        touched.set(pos, node);
+        return false;
+      });
+    });
+  });
+  for (const [pos, node] of touched) {
+    set = set.remove(set.find(pos, pos + node.nodeSize));
+    set = set.add(tr.doc, blockDecos(node, pos));
+  }
+  return set;
 }
 
 const highlightKey = new PluginKey("minipad-code-highlight");
@@ -731,7 +763,7 @@ export const codeHighlight = $prose(
       key: highlightKey,
       state: {
         init: (_, state) => decorate(state.doc),
-        apply: (tr, old) => (tr.docChanged ? decorate(tr.doc) : old),
+        apply: (tr, old) => (tr.docChanged ? redecorate(tr, old) : old),
       },
       props: { decorations: (state) => highlightKey.getState(state) },
     }),

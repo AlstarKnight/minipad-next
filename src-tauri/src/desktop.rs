@@ -165,6 +165,8 @@ pub struct Settings {
     code_exit_mode: String,
     /// 是否将折叠状态写入 Markdown；关闭时只调整界面显示。
     fold_save_state: bool,
+    /// 很长的页面只排版看得见的部分(打字更快,见 editor.js 的 markLongPage)
+    long_page_lazy: bool,
     /// 标签下面显示格式栏
     format_bar: bool,
     /// 格式栏里不显示的按钮
@@ -405,6 +407,7 @@ impl Default for Settings {
             block_context_menu: "system".into(),
             code_exit_mode: "blank3".into(),
             fold_save_state: true,
+            long_page_lazy: true,
             format_bar: true,
             format_bar_hidden: Vec::new(),
             format_bar_order: Vec::new(),
@@ -1242,8 +1245,9 @@ print("点右上角的复制按钮试试")
 // ---------- 命令 ----------
 
 /// only:小窗只要自己那一页(其他笔记本和页面不读)
-#[tauri::command]
+#[tauri::command(async)]
 fn load_state(app: AppHandle, only: Option<notes::OnlyPage>) -> Result<LoadedState, String> {
+    let _order = notes::io_order();
     let st = app.state::<AppState>();
     let settings = st.settings.lock().unwrap().clone();
     let dir = notes_dir(&app, &settings);
@@ -1280,17 +1284,19 @@ fn load_state(app: AppHandle, only: Option<notes::OnlyPage>) -> Result<LoadedSta
 
 /// 重新读一遍笔记文件夹,用来发现在别处(网盘同步、其他编辑器)改过的内容。
 /// known 是前端已有页面的指纹,没改过的页面不读内容;小窗用 only 只读自己那一页
-#[tauri::command]
+#[tauri::command(async)]
 fn read_notes(
     app: AppHandle,
     known: Option<notes::Known>,
     only: Option<notes::OnlyPage>,
 ) -> Result<Vec<Book>, String> {
+    let _order = notes::io_order();
     notes::load_books_with(&current_notes_dir(&app), known.as_ref(), only.as_ref())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn book_exists(app: AppHandle, book: String) -> Result<bool, String> {
+    let _order = notes::io_order();
     let dir = notes::book_dir(&current_notes_dir(&app), &book)?;
     match fs::metadata(dir) {
         Ok(meta) => Ok(meta.is_dir()),
@@ -1313,7 +1319,7 @@ struct SavedNote {
 
 /// 保存页面。`expected` 是前端上次从磁盘读到(或写进去)的内容:
 /// 文件现在的内容和它不一样,说明在别处也改过,先把那边的版本另存成冲突副本再写(设置里可以改成直接覆盖)
-#[tauri::command]
+#[tauri::command(async)]
 fn save_note(
     app: AppHandle,
     book: String,
@@ -1321,6 +1327,7 @@ fn save_note(
     content: String,
     expected: Option<String>,
 ) -> Result<SavedNote, String> {
+    let _order = notes::io_order();
     maybe_backup(&app);
     let keep_both = app
         .state::<AppState>()
@@ -1347,34 +1354,39 @@ fn save_note(
     })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn create_note(app: AppHandle, book: String, name: String) -> Result<String, String> {
+    let _order = notes::io_order();
     let dir = notes::book_dir(&current_notes_dir(&app), &book)?;
     maybe_backup(&app);
     notes::create_note(&dir, &name)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn rename_note(app: AppHandle, book: String, old: String, new: String) -> Result<String, String> {
+    let _order = notes::io_order();
     maybe_backup(&app);
     notes::rename_note(&current_notes_dir(&app), &book, &old, &new)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn delete_note(app: AppHandle, book: String, name: String) -> Result<(), String> {
+    let _order = notes::io_order();
     maybe_backup(&app);
     notes::move_to_trash(&current_notes_dir(&app), &book, &name)
 }
 
 /// 快速记录新建的页面没写东西:直接删掉,不进回收站(只删空的),删了返回 true
-#[tauri::command]
+#[tauri::command(async)]
 fn delete_if_empty(app: AppHandle, book: String, name: String) -> Result<bool, String> {
+    let _order = notes::io_order();
     notes::delete_if_empty(&current_notes_dir(&app), &book, &name)
 }
 
 /// 把页面移到另一个笔记本,返回它在那边的名字(重名时会加编号)
-#[tauri::command]
+#[tauri::command(async)]
 fn move_note(app: AppHandle, book: String, name: String, target: String) -> Result<String, String> {
+    let _order = notes::io_order();
     maybe_backup(&app);
     let root = current_notes_dir(&app);
     let new = notes::move_note(&root, &book, &name, &target)?;
@@ -1402,8 +1414,9 @@ struct ImageMeta {
 
 /// 粘贴、拖进来的图片:存进这个笔记本的 assets 文件夹,返回页面里写的相对路径。
 /// 图片内容直接作为二进制传过来,笔记本名字和扩展名放在 x-image 头里(encodeURIComponent 过的 JSON)
-#[tauri::command]
+#[tauri::command(async)]
 fn save_image(app: AppHandle, request: tauri::ipc::Request<'_>) -> Result<String, String> {
+    let _order = notes::io_order();
     let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
         return Err("图片数据不对".into());
     };
@@ -1432,7 +1445,7 @@ fn note_image(app: &AppHandle, uri: &tauri::http::Uri) -> tauri::http::Response<
 }
 
 /// 参数和前端发来的字段一一对应;base 是前端上次从磁盘读到(或写进去)的页面顺序、固定和分组
-#[tauri::command]
+#[tauri::command(async)]
 #[allow(clippy::too_many_arguments)]
 fn save_meta(
     app: AppHandle,
@@ -1445,6 +1458,7 @@ fn save_meta(
     mut pinned: Option<Vec<String>>,
     base: Option<notes::SharedMeta>,
 ) -> Result<(), String> {
+    let _order = notes::io_order();
     let mut groups = groups.map(|groups| notes::Groups {
         groups,
         note_groups: note_groups.unwrap_or_default(),
@@ -1462,27 +1476,31 @@ fn save_meta(
     notes::save_book_meta(&root, &book, order, active, modes, groups, pinned)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn create_book(app: AppHandle, name: String) -> Result<String, String> {
+    let _order = notes::io_order();
     maybe_backup(&app);
     notes::create_book(&current_notes_dir(&app), &name)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn rename_book(app: AppHandle, old: String, new: String) -> Result<String, String> {
+    let _order = notes::io_order();
     maybe_backup(&app);
     notes::rename_book(&current_notes_dir(&app), &old, &new)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn delete_book(app: AppHandle, name: String) -> Result<(), String> {
+    let _order = notes::io_order();
     maybe_backup(&app);
     notes::delete_book(&current_notes_dir(&app), &name)
 }
 
 /// 回收站里删掉的页面和笔记本,最近删的在前
-#[tauri::command]
+#[tauri::command(async)]
 fn trash_list(app: AppHandle) -> Result<Vec<notes::TrashItem>, String> {
+    let _order = notes::io_order();
     notes::list_trash(&current_notes_dir(&app))
 }
 
@@ -1494,22 +1512,25 @@ struct Restored {
 }
 
 /// 恢复回收站里的一项,返回它现在的位置(重名时会加编号)
-#[tauri::command]
+#[tauri::command(async)]
 fn trash_restore(app: AppHandle, id: String) -> Result<Restored, String> {
+    let _order = notes::io_order();
     maybe_backup(&app);
     let (book, name) = notes::restore_trash(&current_notes_dir(&app), &id)?;
     Ok(Restored { book, name })
 }
 
 /// 彻底删除回收站里的一项(之前的每日备份里还有)
-#[tauri::command]
+#[tauri::command(async)]
 fn trash_purge(app: AppHandle, id: String) -> Result<(), String> {
+    let _order = notes::io_order();
     maybe_backup(&app);
     notes::purge_trash(&current_notes_dir(&app), &id)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn trash_empty(app: AppHandle) -> Result<usize, String> {
+    let _order = notes::io_order();
     maybe_backup(&app);
     notes::empty_trash(&current_notes_dir(&app))
 }
@@ -1520,13 +1541,14 @@ fn start_window_drag(window: WebviewWindow) -> Result<(), String> {
     window.start_dragging().map_err(|e| e.to_string())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn set_book_appearance(
     app: AppHandle,
     book: String,
     icon: String,
     color: String,
 ) -> Result<(), String> {
+    let _order = notes::io_order();
     maybe_backup(&app);
     let st = app.state::<AppState>();
     let _guard = st.meta_io.lock().unwrap();
@@ -1538,8 +1560,9 @@ fn set_book_appearance(
 }
 
 /// 记住当前打开的笔记本,下次启动还打开它
-#[tauri::command]
+#[tauri::command(async)]
 fn set_current_book(app: AppHandle, book: String) -> Result<(), String> {
+    let _order = notes::io_order();
     let st = app.state::<AppState>();
     let _guard = st.meta_io.lock().unwrap();
     // 和 WebDAV 同步写 .minipad.json 排队
@@ -1581,8 +1604,9 @@ async fn minipad2_import(
     )
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn backup_info(app: AppHandle) -> BackupInfo {
+    let _order = notes::io_order();
     let settings = app.state::<AppState>().settings.lock().unwrap().clone();
     let dir = backup_dir(&app, &settings);
     let all = backup::list(&dir);
@@ -1676,6 +1700,8 @@ fn save_settings(
     settings: Settings,
     migrate_notes: Option<bool>,
 ) -> Result<Settings, String> {
+    // 换笔记文件夹时要复制笔记:等后台正在读写笔记的命令做完,复制时也不让它们插进来
+    let _order = notes::io_order();
     let state = app.state::<AppState>();
     if !state.settings_write_allowed.load(Ordering::SeqCst) {
         let reason = state.settings_read_error.lock().unwrap().clone();
@@ -1840,8 +1866,9 @@ fn hide_window(app: AppHandle) {
 }
 
 /// 0.5.0 小窗里补全 [[页面名]]、判断链接在不在用的页面名单(只列名字,不读内容)
-#[tauri::command]
+#[tauri::command(async)]
 fn page_index(app: AppHandle) -> Result<Vec<notes::BookIndex>, String> {
+    let _order = notes::io_order();
     notes::index_books(&current_notes_dir(&app))
 }
 

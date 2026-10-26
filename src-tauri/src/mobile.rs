@@ -21,23 +21,28 @@ fn root(app: &AppHandle) -> Result<PathBuf, String> {
 
 // Notebook and page names only. Page text is read one page at a time by mobile_read_note,
 // so switching pages does not read every note in every notebook.
-#[tauri::command]
+// The file commands run off the Android UI thread, one at a time (see notes::io_order).
+#[tauri::command(async)]
 fn mobile_list_books(app: AppHandle) -> Result<Vec<notes::BookIndex>, String> {
+    let _order = notes::io_order();
     notes::index_books(&root(&app)?)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn mobile_read_note(app: AppHandle, book: String, name: String) -> Result<notes::PageBody, String> {
+    let _order = notes::io_order();
     notes::read_page_body(&root(&app)?, &book, &name)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn mobile_create_book(app: AppHandle, name: String) -> Result<String, String> {
+    let _order = notes::io_order();
     notes::create_book(&root(&app)?, &name)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn mobile_create_note(app: AppHandle, book: String, name: String) -> Result<String, String> {
+    let _order = notes::io_order();
     let dir = notes::book_dir(&root(&app)?, &book)?;
     if !dir.is_dir() {
         return Err("笔记本不存在".into());
@@ -50,7 +55,7 @@ struct SaveResult {
     conflict_name: Option<String>,
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn mobile_save_note(
     app: AppHandle,
     book: String,
@@ -58,6 +63,7 @@ fn mobile_save_note(
     content: String,
     expected: String,
 ) -> Result<SaveResult, String> {
+    let _order = notes::io_order();
     let stamp = chrono::Local::now().format("%Y-%m-%d %H.%M").to_string();
     let _write = crate::syncer::WRITE_LOCK
         .lock()
@@ -78,7 +84,7 @@ fn mobile_save_note(
 
 // Android file picker sends a data URL (a small image) through Tauri IPC.
 // The image is stored in the selected book's assets/ folder, as on desktop.
-#[tauri::command]
+#[tauri::command(async)]
 fn mobile_save_image(
     app: AppHandle,
     book: String,
@@ -86,6 +92,7 @@ fn mobile_save_image(
     data: String,
 ) -> Result<String, String> {
     use base64::Engine;
+    let _order = notes::io_order();
     let ext = match mime.as_str() {
         "image/jpeg" => "jpg",
         "image/png" => "png",
