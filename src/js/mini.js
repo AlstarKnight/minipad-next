@@ -10,6 +10,7 @@ import { mutate, syncFromDisk, readNotes } from "./sync.js";
 import { rememberView, showNote, refreshCurrent } from "./page.js";
 import { renderTabs, switchTo, goTo } from "./tabs.js";
 import { applySettings } from "./settings.js";
+import { addEntry, dropEmptyEntry } from "./capture.js";
 
 // ---- 主窗口 ----
 
@@ -129,6 +130,9 @@ export function bindMiniMain() {
 
 let self = null;
 
+// 这是快速记录的小窗(0.5.1):Esc 收起
+export const capturing = () => !!self?.capture;
+
 export async function initMini() {
   const root = document.documentElement;
   root.dataset.mini = "";
@@ -149,6 +153,7 @@ export async function initMini() {
       state.book = 0;
       applySettings();
       showNote();
+      if (self.capture) addEntry(state.settings);
     });
   } catch (e) {
     toast("小窗读取页面失败:" + e, 6000);
@@ -178,10 +183,16 @@ export async function initMini() {
   });
   api.listen("mini-close-request", () => void closeMini(false));
   api.listen("mini-recall", () => void closeMini(true));
+  // 页面已经开在这个小窗里时又按了快速记录:加一条新的
+  api.listen("mini-capture", () => {
+    if (self) self.capture = true;
+    addEntry(state.settings);
+  });
 }
 
 // 关小窗 / 放回主窗口:先存好,存不了就问一下
 export async function closeMini(back) {
+  dropEmptyEntry();
   rememberView();
   try {
     await flushAll();

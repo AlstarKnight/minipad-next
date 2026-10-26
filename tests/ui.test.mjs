@@ -4689,7 +4689,7 @@ describe("0.3.2: settings in five categories", () => {
     assert.ok(await p.isHidden("#set-hotkey"));
     assert.deepEqual(
       await p.$$eval('.set-page[data-page="edit"] h3', (els) => els.map((e) => e.textContent)),
-      ["编辑器", "链接", "页面链接", "块管理", "悬浮工具栏", "悬浮目录", "查找替换"],
+      ["编辑器", "链接", "页面链接", "模板和片段", "行内计算", "块管理", "悬浮工具栏", "悬浮目录", "查找替换"],
       "with a small heading for each part",
     );
     await p.keyboard.press("ArrowDown");
@@ -7406,5 +7406,311 @@ describe("0.5.0: page links", () => {
     await p.evaluate(() => window.__mockEmit("open-page", { book: "", target: "新建的" }));
     await until(h.bookName, "默认");
     await until(h.activeTab, "新建的", "a missing page is created");
+  });
+});
+
+describe("0.5.1: quick capture, templates, snippets and inline calc", () => {
+  const db = (pages = {}, settings = {}, more = {}) => {
+    const d = seed({ "": { 甲: "一", ...pages }, ...more });
+    Object.assign(d.settings, settings);
+    return d;
+  };
+  const captureUrl = (book, page) => miniUrl(book, page) + "&capture=1";
+  // 2026-10-21 星期三 09:05
+  const NOW = new Date(2026, 9, 21, 9, 5);
+  const menu = (p) => p.$$eval("#ctx button", (bs) => bs.map((b) => b.textContent));
+  const typeAtEnd = async (p, text) => {
+    await p.click("#editor .ProseMirror");
+    await p.keyboard.press("Control+End");
+    await p.keyboard.type(text);
+  };
+  const matches = (get, re) => async () => re.test((await get()) ?? "");
+
+  ui("the quick capture hotkey opens the inbox page in a small window, made the first time", { seed: db() }, async (h) => {
+    const { p } = h;
+    await control(p);
+    await p.evaluate(() => window.__mockEmit("quick-capture"));
+    await until(() => mockCtl(p, "miniOpened"), [{ book: "", name: "收集箱", x: null, y: null, capture: true }], "opened for quick capture");
+    assert.equal(await h.mockFile("", "收集箱"), "", "the inbox page is made");
+    await until(h.tabs, ["甲", "收集箱小窗"], "with a tab at the end, marked as in a small window");
+    assert.equal(await h.activeTab(), "甲", "the main window stays on its page");
+    await p.evaluate(() => window.__mockEmit("quick-capture"));
+    await until(() => mockCtl(p, "miniOpened").then((o) => o.map((m) => m.name)), ["收集箱", "收集箱"], "the second time it opens the same page");
+    assert.deepEqual(Object.keys((await h.mock())[""].files), ["甲", "收集箱"]);
+  });
+
+  ui("每次新建一页: each capture makes a page from the name pattern; one left empty is deleted when the window closes", {
+    seed: db({}, { capture_target: "new", capture_book: "工作" }, { 工作: { 计划: "工作计划" } }),
+  }, async (h) => {
+    const { p } = h;
+    const name = "快速记录 2026-10-21 09.05";
+    await control(p);
+    await p.clock.setFixedTime(NOW);
+    await p.evaluate(() => window.__mockEmit("quick-capture"));
+    await until(() => mockCtl(p, "miniOpened"), [{ book: "工作", name, x: null, y: null, capture: true }], "a new page in the chosen notebook");
+    assert.equal(await h.mockFile("工作", name), "");
+    await p.evaluate((n) => window.__mockMiniClosed("工作", n, false), name);
+    await until(() => h.mockFile("工作", name), null, "closed without writing: the page is deleted");
+    assert.deepEqual((await h.stored()).trash, [], "and not put in the trash");
+    await p.evaluate(() => window.__mockEmit("quick-capture"));
+    await until(() => mockCtl(p, "miniOpened").then((o) => o.length), 2);
+    await p.evaluate((n) => (window.__mockBooks["工作"].files[n] = "记下的事"), name);
+    await p.evaluate((n) => window.__mockMiniClosed("工作", n, false), name);
+    await sleep(300);
+    assert.equal(await h.mockFile("工作", name), "记下的事", "a page with something written stays");
+    await h.switchBook("工作");
+    await until(h.tabs, ["计划", name]);
+  });
+
+  ui("the capture window adds an entry with the time at the end; pressing the hotkey again adds one more, an empty one is never saved", {
+    seed: db({ 收集箱: "# 收集箱\n\n第一条" }, { date_format: "yyyy-MM-dd HH:mm" }), url: captureUrl("", "收集箱"), mockControl: {},
+  }, async (h) => {
+    const { p } = h;
+    await until(matches(h.editor, /^# 收集箱\n\n第一条\n\n\d{4}-\d\d-\d\d \d\d:\d\d $/), true, "a new entry with the time");
+    assert.equal(await h.editorFocused(), true, "the cursor is in the entry");
+    await sleep(700);
+    assert.equal(await h.mockFile("", "收集箱"), "# 收集箱\n\n第一条", "the empty entry is not saved");
+    await p.keyboard.type("买牛奶");
+    await until(matches(() => h.mockFile("", "收集箱"), /^# 收集箱\n\n第一条\n\n\d{4}-\d\d-\d\d \d\d:\d\d 买牛奶$/), true, "saved once something is written");
+    await p.evaluate(() => window.__mockEmit("mini-capture"));
+    await p.evaluate(() => window.__mockEmit("mini-capture"));
+    await until(async () => (await h.editor()).split("\n\n").length, 4, "one more entry, not two");
+    await p.keyboard.press("Escape");
+    await until(() => mockCtl(p, "miniClosed"), [false], "Esc closes the capture window");
+    assert.match(await h.mockFile("", "收集箱"), /买牛奶$/, "the second, empty entry is not saved");
+  });
+
+  ui("closing the capture window after typing and deleting again leaves the page as it was", {
+    seed: db({ 收集箱: "开头\n\n- 旧的" }, { capture_stamp: false, capture_format: "list" }), url: captureUrl("", "收集箱"), mockControl: {},
+  }, async (h) => {
+    const { p } = h;
+    await until(h.editorFocused, true);
+    await p.keyboard.type("新的");
+    await until(() => h.mockFile("", "收集箱"), "开头\n\n- 旧的\n- 新的", "a list entry joins the list at the end");
+    await p.keyboard.press("Backspace");
+    await p.keyboard.press("Backspace");
+    await p.keyboard.press("Escape");
+    await until(() => mockCtl(p, "miniClosed"), [false]);
+    await until(() => h.mockFile("", "收集箱"), "开头\n\n- 旧的", "the empty entry is taken out again");
+  });
+
+  ui("to-do entries at the start go under the page title, at the top of the list there", {
+    seed: db({ 收集箱: "# 收集箱\n\n- [ ] 旧的\n\n正文" }, { capture_stamp: false, capture_format: "task", capture_where: "start" }), url: captureUrl("", "收集箱"), mockControl: {},
+  }, async (h) => {
+    const { p } = h;
+    await until(h.editorFocused, true);
+    await p.keyboard.type("新的");
+    await until(() => h.mockFile("", "收集箱"), "# 收集箱\n\n- [ ] 新的\n- [ ] 旧的\n\n正文");
+  });
+
+  ui("a list entry on an empty page becomes the page's first line", {
+    seed: db({ 收集箱: "" }, { capture_stamp: false, capture_format: "list" }), url: captureUrl("", "收集箱"), mockControl: {},
+  }, async (h) => {
+    const { p } = h;
+    await until(h.editorFocused, true);
+    await p.keyboard.type("第一条");
+    await until(() => h.mockFile("", "收集箱"), "- 第一条");
+  });
+
+  ui("quick capture settings: saved, greyed out when off, showing the options of the chosen target, never the main hotkey", {
+    seed: db({}, {}, { 工作: { 计划: "" } }),
+  }, async (h) => {
+    const { p } = h;
+    await p.click("#btn-settings");
+    await settingsPage(p, "general");
+    assert.equal(await p.isChecked("#set-capture"), true);
+    assert.equal(await p.inputValue("#set-capture-key"), "Ctrl+Alt+M");
+    assert.deepEqual(await p.$$eval("#set-capture-book option", (os) => os.map((o) => o.textContent)), ["默认", "工作"]);
+    assert.equal(await p.inputValue("#set-capture-page"), "收集箱");
+    assert.equal(await p.isVisible("#set-capture-name"), false, "the page name pattern only shows for 每次新建一页");
+    await p.selectOption("#set-capture-target", "new");
+    assert.equal(await p.isVisible("#set-capture-name"), true);
+    assert.equal(await p.isVisible("#set-capture-page"), false);
+    assert.equal(await p.isVisible("#set-capture-where"), false);
+    await p.selectOption("#set-capture-book", "工作");
+    await p.fill("#set-capture-name", "灵感 {{日期}}");
+    await p.selectOption("#set-capture-format", "task");
+    await p.uncheck("#set-capture-stamp");
+    await p.selectOption("#set-capture-position", "cursor");
+    await p.click("#set-capture-key");
+    await p.keyboard.press("Control+m");
+    assert.equal(await p.inputValue("#set-capture-key"), "Ctrl+M");
+    await p.click("#set-save");
+    await until(() => p.textContent("#set-error"), "快速记录的热键和呼出热键一样,换一个吧");
+    assert.equal((await h.stored()).settings.capture_hotkey, "Ctrl+Alt+M");
+    await p.click("#set-capture-key");
+    await p.keyboard.press("Control+Shift+j");
+    await p.click("#set-save");
+    await until(() => p.isHidden("#settings"), true);
+    let s = (await h.stored()).settings;
+    assert.deepEqual(
+      [s.capture_hotkey, s.capture_target, s.capture_book, s.capture_name, s.capture_format, s.capture_stamp, s.capture_position],
+      ["Ctrl+Shift+J", "new", "工作", "灵感 {{日期}}", "task", false, "cursor"],
+    );
+    await p.click("#btn-settings");
+    await settingsPage(p, "general");
+    await p.click("#set-capture-key");
+    await p.keyboard.press("Backspace");
+    assert.equal(await p.inputValue("#set-capture-key"), "", "Backspace clears the hotkey");
+    await p.uncheck("#set-capture");
+    assert.equal(await p.isDisabled("#set-capture-target"), true, "the other options grey out");
+    assert.equal(await p.isDisabled("#set-capture-key"), true);
+    await p.click("#set-save");
+    await until(() => p.isHidden("#settings"), true);
+    s = (await h.stored()).settings;
+    assert.deepEqual([s.capture_enabled, s.capture_hotkey], [false, ""]);
+  });
+
+  ui("a quick capture hotkey that could not be registered is told at startup", { seed: db(), mockControl: { captureError: "Ctrl+Alt+M:被别的程序占用了" } }, async (h) => {
+    await until(h.toast, "快速记录的热键注册失败(Ctrl+Alt+M:被别的程序占用了),可以在 设置 → 常规 里换一个");
+  });
+
+  ui("templates: right-click + makes a template notebook with two examples; a template fills its variables and puts the cursor at {{光标}}", { seed: db() }, async (h) => {
+    const { p } = h;
+    await p.click("#btn-new", { button: "right" });
+    assert.deepEqual(await menu(p), ["新建模板笔记本", "空白页面"]);
+    await p.click('#ctx [data-act="create-templates"]');
+    await until(h.bookName, "模板", "the new notebook is opened");
+    assert.deepEqual(await h.tabs(), ["日记 {{日期}}", "会议记录"]);
+    assert.match(await h.toast(), /建好了「模板」笔记本/);
+    await h.switchBook("");
+    await p.clock.setFixedTime(NOW);
+    await p.keyboard.press("Control+Shift+N");
+    await p.locator("#ctx").waitFor();
+    assert.deepEqual(await menu(p), ["日记 {{日期}}", "会议记录", "空白页面", "编辑模板…"]);
+    assert.equal(await p.evaluate(() => document.activeElement.textContent), "日记 {{日期}}", "the first template has the focus");
+    await p.keyboard.press("ArrowDown");
+    await p.keyboard.press("Enter");
+    await until(h.activeTab, "会议记录");
+    await p.keyboard.type("讨论");
+    await until(() => h.mockFile("", "会议记录"), "# 会议记录\n\n- 时间:2026-10-21 09:05\n- 参加:\n\n## 内容\n\n讨论\n\n## 待办\n\n- [ ] 写下要做的事\n",
+      "{{标题}}, {{日期}} and {{时间}} are filled in and the cursor waits at {{光标}}");
+    await p.click("#btn-new", { button: "right" });
+    await p.click('#ctx [data-act="template"]:text-is("日记 {{日期}}")');
+    await until(h.activeTab, "日记 2026-10-21", "the page name takes variables too");
+    await p.keyboard.type("晴");
+    await until(() => h.mockFile("", "日记 2026-10-21"), "# 2026-10-21 星期三\n\n晴\n");
+    await p.click("#btn-new", { button: "right" });
+    await p.click('#ctx [data-act="edit-templates"]');
+    await until(h.bookName, "模板", "编辑模板… opens the template notebook");
+  });
+
+  ui("snippets: a trigger and Tab expands it with Markdown, {{光标}} and full-width punctuation; words and code are left alone; Ctrl+Z goes back", {
+    seed: db({ 代码: "```\n;rq\n```" }, { snippets: [
+      { trigger: ";rq", text: "{{日期}}" },
+      { trigger: "dz", text: "**地址**:{{光标}}号" },
+      { trigger: ";hy", text: "## 会议\n\n- {{光标}}" },
+    ] }),
+  }, async (h) => {
+    const { p } = h;
+    await p.clock.setFixedTime(NOW);
+    await typeAtEnd(p, " ;rq");
+    await p.keyboard.press("Tab");
+    await until(h.editor, "一 2026-10-21");
+    await p.keyboard.press("Control+z");
+    await until(h.editor, "一 ;rq", "Ctrl+Z gives the trigger back");
+    await p.keyboard.press("Tab");
+    await p.keyboard.type(" 全角；rq");
+    await p.keyboard.press("Tab");
+    await until(h.editor, "一 2026-10-21 全角2026-10-21", "；rq works like ;rq");
+    await p.keyboard.type(" xdz");
+    await p.keyboard.press("Tab");
+    await p.keyboard.type(" dz");
+    await p.keyboard.press("Tab");
+    await p.keyboard.type("1");
+    await until(h.editor, "一 2026-10-21 全角2026-10-21 xdz **地址**:1号", "xdz is a word, dz alone expands with the cursor at {{光标}}");
+    await p.keyboard.press("Control+z");
+    await until(h.editor, "一 2026-10-21 全角2026-10-21 xdz **地址**:号", "what was typed after is undone first");
+    await p.keyboard.press("Control+End");
+    await p.keyboard.press("Enter");
+    await p.keyboard.type(";hy");
+    await p.keyboard.press("Tab");
+    await p.keyboard.type("讨论");
+    await until(h.editor, "一 2026-10-21 全角2026-10-21 xdz **地址**:号\n\n## 会议\n\n- 讨论", "several blocks");
+    await h.tab("代码").click();
+    await p.click("#editor .ProseMirror pre code");
+    await p.keyboard.press("End");
+    await p.keyboard.press("Tab");
+    await until(h.editor, "```\n;rq\t\n```", "not in code");
+  });
+
+  ui("snippet settings: add, clean up and delete snippets, then expand them with space or not at all", { seed: db() }, async (h) => {
+    const { p } = h;
+    await p.click("#btn-settings");
+    await settingsPage(p, "edit");
+    const rows = () => p.$$eval("#set-snippets .snippet-row", (rs) => rs.map((r) => [r.querySelector("input").value, r.querySelector("textarea").value]));
+    assert.deepEqual(await rows(), [[";rq", "{{日期}}"], [";sj", "{{时间}}"], [";xq", "{{星期}}"]]);
+    assert.equal(await p.inputValue("#set-snippet-key"), "tab");
+    assert.equal(await p.inputValue("#set-template-book"), "模板");
+    await p.click("#set-snippet-add");
+    await p.keyboard.type("q m");
+    await p.locator("#set-snippets .snippet-row").last().locator("textarea").fill("签名\n第二行");
+    await p.locator("#set-snippets .snippet-row").nth(2).locator(".snippet-del").click();
+    assert.deepEqual(await rows(), [[";rq", "{{日期}}"], [";sj", "{{时间}}"], ["qm", "签名\n第二行"]], "no spaces in a trigger");
+    assert.equal(await p.locator("#set-snippets textarea").last().evaluate((t) => t.rows), 2, "two lines show as two lines");
+    await p.click("#set-snippet-add");
+    await p.selectOption("#set-snippet-key", "space");
+    await p.fill("#set-template-book", " 我的模板 ");
+    await p.click("#set-save");
+    await until(() => p.isHidden("#settings"), true);
+    let s = (await h.stored()).settings;
+    assert.deepEqual(s.snippets, [{ trigger: ";rq", text: "{{日期}}" }, { trigger: ";sj", text: "{{时间}}" }, { trigger: "qm", text: "签名\n第二行" }], "the empty row is dropped");
+    assert.deepEqual([s.snippet_key, s.template_book], ["space", "我的模板"]);
+    await typeAtEnd(p, " qm 完");
+    await until(h.editor, "一 签名\n第二行 完", "space expands and stays");
+    await p.click("#btn-settings");
+    await settingsPage(p, "edit");
+    await p.click("#set-snippet-reset");
+    assert.deepEqual(await rows(), [[";rq", "{{日期}}"], [";sj", "{{时间}}"], [";xq", "{{星期}}"]]);
+    await p.selectOption("#set-snippet-key", "off");
+    await p.click("#set-save");
+    await until(() => p.isHidden("#settings"), true);
+    s = (await h.stored()).settings;
+    assert.deepEqual([s.snippets.length, s.snippet_key], [3, "off"]);
+    await typeAtEnd(p, " ;rq");
+    await p.keyboard.press("Tab");
+    await p.keyboard.type(" ;rq ");
+    await until(h.editor, "一 签名\n第二行 完 ;rq ;rq ", "off: neither Tab nor space expands");
+  });
+
+  ui("inline calc: Tab after = writes the result; errors are told; decimals, thousands and 打 = 就算 come from the settings", {
+    seed: db({ 代码: "```\n2+3=\n```" }),
+  }, async (h) => {
+    const { p } = h;
+    await typeAtEnd(p, " 12*3.5=");
+    await p.keyboard.press("Tab");
+    await until(h.editor, "一 12\\*3.5=42");
+    await p.keyboard.type(" (1+2)×3^2÷4=");
+    await p.keyboard.press("Tab");
+    await until(h.editor, "一 12\\*3.5=42 (1+2)×3^2÷4=6.75");
+    await p.keyboard.press("Control+z");
+    await until(h.editor, "一 12\\*3.5=42 (1+2)×3^2÷4=", "Ctrl+Z takes the result away");
+    await p.keyboard.type(" 1/0=");
+    await p.keyboard.press("Tab");
+    await until(h.toast, "算不出来:1/0");
+    assert.equal(await h.editor(), "一 12\\*3.5=42 (1+2)×3^2÷4= 1/0=");
+    await p.click("#btn-settings");
+    await settingsPage(p, "edit");
+    assert.deepEqual([await p.inputValue("#set-calc-key"), await p.inputValue("#set-calc-decimals"), await p.isChecked("#set-calc-thousands")], ["tab", "auto", false]);
+    await p.selectOption("#set-calc-key", "equals");
+    await p.selectOption("#set-calc-decimals", "2");
+    await p.check("#set-calc-thousands");
+    await p.click("#set-save");
+    await until(() => p.isHidden("#settings"), true);
+    const s = (await h.stored()).settings;
+    assert.deepEqual([s.calc_key, s.calc_decimals, s.calc_thousands], ["equals", "2", true]);
+    await p.click("#editor .ProseMirror");
+    await p.keyboard.press("Control+End");
+    await p.keyboard.press("Enter");
+    await p.keyboard.type("1234.5*2= 好");
+    await until(h.editor, "一 12\\*3.5=42 (1+2)×3^2÷4= 1/0=\n\n1234.5\\*2=2,469.00 好", "typing = writes the result");
+    await p.keyboard.press("Control+z");
+    await p.keyboard.press("Control+z");
+    await until(h.editor, "一 12\\*3.5=42 (1+2)×3^2÷4= 1/0=\n\n1234.5\\*2=", "the = stays when the result is undone");
+    await h.tab("代码").click();
+    await p.click("#editor .ProseMirror pre code");
+    await p.keyboard.press("End");
+    await p.keyboard.type("=");
+    await until(h.editor, "```\n2+3==\n```", "not in code");
   });
 });

@@ -265,15 +265,17 @@ export function goTo(b, n) {
   afterSwitch();
 }
 
-// 新页面放在当前页面后面,和当前页面在同一个分组里;传了分组就放到那个分组的最后
-export async function newNote(group = null) {
+// 新页面放在当前页面后面,和当前页面在同一个分组里;传了分组就放到那个分组的最后。
+// tpl 是按模板新建(templates.js):{ name, content(实际的名字) → 内容, done(页面) },建好后不进改名
+export async function newNote(group = null, tpl = null) {
   await flushAll();
   try {
     await mutate(async () => {
       const b = book();
-      const name = await api.invoke("create_note", { book: b.name, name: "新页面" });
+      const name = await api.invoke("create_note", { book: b.name, name: tpl?.name || "新页面" });
       const g = groupsOn() ? (group?.id ? group : groupOf(b, current())) : null;
       const n = makeNote(name, "", "edit", false, null, g ? g.id : "");
+      if (tpl) n.content = tpl.content(name);
       rememberView();
       let at = Math.min(b.active + 1, b.notes.length);
       if (group?.id) b.notes.forEach((x, i) => x.group === group.id && (at = i + 1));
@@ -283,7 +285,8 @@ export async function newNote(group = null) {
       renderTabs();
       showNote();
       scheduleMeta(b);
-      startRename(n);
+      if (tpl) tpl.done(n);
+      else startRename(n);
     });
   } catch (e) {
     toast("新建失败:" + e);

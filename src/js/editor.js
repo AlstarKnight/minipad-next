@@ -44,6 +44,7 @@ import { imagePlugin, applyImageSettings } from "./images.js";
 import { findLocalPaths } from "./localpaths.js";
 import { parseAccent } from "./accent.js";
 import { pageLinkPlugin, applyPageLinkSettings } from "./pagelinkview.js";
+import { expandPlugin, applyExpandSettings } from "./expand.js";
 
 let editor = null;
 let view = null;
@@ -522,8 +523,10 @@ export async function createEditor(opts) {
       c.update(remarkStringifyOptionsCtx, (o) => ({ ...o, bullet: "-", rule: "-", handlers: { ...o.handlers, text: writeText, ...colorHandlers } }));
       c.set(linkAttr.key, () => ({ title: "Ctrl+点击打开链接" }));
     })
-    // 页面链接的补全列表开着时,上下键、回车、Tab、Esc 归它;然后是自己的按键,先于 Milkdown 自带的按键处理(Shift+Enter、Ctrl+B 等)
+    // 页面链接的补全列表开着时,上下键、回车、Tab、Esc 归它;片段和行内计算要先看 Tab;
+    // 然后是自己的按键,先于 Milkdown 自带的按键处理(Shift+Enter、Ctrl+B 等)
     .use(pageLinkPlugin)
+    .use(expandPlugin)
     .use(keys)
     .use(commonmark)
     .use(gfm)
@@ -730,6 +733,7 @@ export function applyEditorSettings(s) {
     }
   }
   applyPageLinkSettings(s);
+  applyExpandSettings(s);
   codeExitMode = ["blank2", "blank3", "ctrl"].includes(s.code_exit_mode) ? s.code_exit_mode : "blank3";
   setFoldPersistence(s.fold_save_state !== false);
   setCodeFoldPersistence(s.fold_save_state !== false);

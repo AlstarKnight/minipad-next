@@ -1488,3 +1488,26 @@ test("page links on the phone: shown, opened by a tap in reading mode, created w
     assert.deepEqual(errors, []);
   } finally { await context.close(); }
 });
+
+test("inline calc on the phone: off at first, then typing = writes the result", async () => {
+  const { context, page, errors } = await open();
+  try {
+    const content = () => page.evaluate(() => window.__mobileTest.disk[0].notes[0].content);
+    await page.locator(".ProseMirror p").first().click();
+    await page.keyboard.press("End");
+    await page.keyboard.type(" 2+3=");
+    await page.waitForFunction(() => window.__mobileTest.disk[0].notes[0].content.includes("第一段 2+3="));
+    assert.equal(await content(), "# 标题\n\n第一段 2+3=", "off by default");
+    await page.click("#open-drawer");
+    await page.click("#open-settings");
+    assert.equal(await page.locator("#look-calc").isChecked(), false);
+    await page.locator("#look-calc").check();
+    await page.click("#close-settings");
+    assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem("minipad-mobile-look")).calc_key), "equals");
+    await page.locator(".ProseMirror p").first().click();
+    await page.keyboard.press("End");
+    await page.keyboard.type(" 12*3.5=");
+    await page.waitForFunction(() => window.__mobileTest.disk[0].notes[0].content.endsWith("12\\*3.5=42"));
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});

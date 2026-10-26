@@ -1,7 +1,7 @@
 // Minipad Next 前端入口:启动、全局快捷键、按钮
 import { api, isMock, isMiniWindow } from "./api.js";
 import { $ } from "./dom.js";
-import { state, book, current } from "./state.js";
+import { state, book, current, bookLabel } from "./state.js";
 import { toast, dialogOpen, closeDialog, closeMenu, closeOverlays, focusEditor, ask, askText, askWithCheckbox, openMenu } from "./ui.js";
 import { markDirty, flushAll, saveMeta, pendingNoteCount, resetActivity } from "./save.js";
 import { reload, syncFromDisk, addConflictCopy, showPendingNotice } from "./sync.js";
@@ -21,11 +21,14 @@ import { upgradeColorLibrary } from "./sharedcolors.js";
 import { createEditor, editorDebug, insertText, toggleTask, markLocalPathMissing } from "./editor.js";
 import { setLinkPrompt, setTaskCommand } from "./toolbar.js";
 import { formatDate } from "./datetime.js";
-import { initMini, bindMiniMain } from "./mini.js";
+import { initMini, bindMiniMain, closeMini, capturing } from "./mini.js";
 import { bindUpdate } from "./update.js";
 import { bindSidebar } from "./sidebar.js";
 import { bindWebdav, resetWebdavTimers, webdavRun } from "./webdav.js";
 import { bindPageLinks } from "./pagelinkapp.js";
+import { setExpandHost } from "./expand.js";
+import { bindTemplates, openTemplateMenuAtButton } from "./templates.js";
+import { bindCapture } from "./capture.js";
 
 // ---------- 启动 ----------
 async function init() {
@@ -42,6 +45,7 @@ async function init() {
   });
   bindUi();
   bindPageLinks();
+  setExpandHost({ notify: (msg) => toast(msg, 3000), context: () => ({ title: current()?.name || "", book: book() ? bookLabel(book()) : "" }) });
   // 只检查当前可见的路径；节点重建时重新检查，失败时保留普通样式。
   const observedPaths = new WeakMap();
   const pathChecks = new Map();
@@ -109,6 +113,7 @@ async function init() {
     applySettings();
   });
   bindMiniMain();
+  bindCapture();
 }
 
 // 托盘退出确认后，给正常保存最多 10 秒。超时只弹确认，不直接退出。
@@ -275,6 +280,7 @@ function bindUi() {
   bindOutline();
   bindTabBar();
   bindGroups();
+  bindTemplates();
   // 保存时发现这一页在别处也改过:那边的版本已经另存成冲突副本,放到这一页后面
   document.addEventListener("conflict-copy", (e) => addConflictCopy(e.detail));
   // 格式栏上的查找按钮
@@ -339,7 +345,11 @@ function bindUi() {
       e.preventDefault();
       // 一次关一层:先关右键菜单,再关弹层,然后是查找栏,都没有才隐藏窗口
       if (!$("#ctx").hidden) closeMenu();
-      else if (!closeImport() && !closeTrash() && !closeOverlays() && !closeFind() && !isMiniWindow) hideWindow();
+      else if (!closeImport() && !closeTrash() && !closeOverlays() && !closeFind()) {
+        // 快速记录的小窗按 Esc 存好就收起;别的小窗不管
+        if (!isMiniWindow) hideWindow();
+        else if (capturing()) void closeMini(false);
+      }
       return;
     }
     // 编辑器自己处理过的快捷键(Ctrl+Z、Ctrl+B 加粗……)不再算窗口的
@@ -356,6 +366,8 @@ function bindUi() {
       return;
     }
     if (k === "b") (e.preventDefault(), toggleBooks());
+    // Ctrl+Shift+N:选模板新建页面
+    else if (k === "n" && e.shiftKey) (e.preventDefault(), openTemplateMenuAtButton());
     else if (k === "t" || k === "n") (e.preventDefault(), newNote());
     else if (k === "f") {
       // Ctrl+F 在当前页面里查找还是搜索全部页面,设置里选;Ctrl+Shift+F 是另一个

@@ -1,7 +1,7 @@
 // ---------- 设置 ----------
 import { api } from "./api.js";
 import { $ } from "./dom.js";
-import { state } from "./state.js";
+import { state, bookLabel } from "./state.js";
 import { toast, closeOverlays } from "./ui.js";
 import { flushAll, saveMeta } from "./save.js";
 import { reload } from "./sync.js";
@@ -24,6 +24,9 @@ import { renderTabs } from "./tabs.js";
 import { comboOf } from "./quickswitch.js";
 import { makeSharedColorTools, refreshSharedColors, quickLimit, askResetColors } from "./sharedcolors.js";
 import { webdavStatus, webdavSavePassword, webdavTest, webdavRun, webdavForget, resetWebdavTimers } from "./webdav.js";
+import { DEFAULT_CAPTURE_PAGE, DEFAULT_CAPTURE_NAME } from "./capture.js";
+import { DEFAULT_TEMPLATE_BOOK } from "./templates.js";
+import { DEFAULT_SNIPPETS } from "./expand.js";
 
 const REPO_URL = "https://github.com/AlstarKnight/minipad-next";
 
@@ -155,6 +158,17 @@ export function openSettings() {
   $("#set-quick-key").value = s.quick_switch_key || "";
   $("#set-quick-scope").value = s.quick_switch_scope === "book" ? "book" : "all";
   $("#set-pinyin").checked = s.pinyin_match !== false;
+  $("#set-capture").checked = s.capture_enabled !== false;
+  $("#set-capture-key").value = s.capture_hotkey || "";
+  $("#set-capture-target").value = s.capture_target === "new" ? "new" : "page";
+  fillCaptureBooks(s.capture_book || "");
+  $("#set-capture-page").value = s.capture_page || DEFAULT_CAPTURE_PAGE;
+  $("#set-capture-name").value = s.capture_name || DEFAULT_CAPTURE_NAME;
+  $("#set-capture-where").value = s.capture_where === "start" ? "start" : "end";
+  $("#set-capture-format").value = ["list", "task"].includes(s.capture_format) ? s.capture_format : "paragraph";
+  $("#set-capture-stamp").checked = s.capture_stamp !== false;
+  $("#set-capture-position").value = ["center", "cursor"].includes(s.capture_position) ? s.capture_position : "remember";
+  updateCaptureOptions();
   $("#set-pin-style").value = ["icon", "tint", "none"].includes(s.pin_style) ? s.pin_style : "icon";
   $("#set-edge-style").value = EDGE_STYLES.includes(s.edge_style) ? s.edge_style : "arrow";
   $("#set-edge-line-width").value = edgeWidth(s);
@@ -228,6 +242,12 @@ export function openSettings() {
   $("#set-page-link-underline").value = ["solid", "dashed", "none"].includes(s.page_link_underline) ? s.page_link_underline : "hover";
   pageLinkColor.show(s.page_link_color || "");
   pageLinkBrokenColor.show(s.page_link_broken_color || "");
+  $("#set-template-book").value = s.template_book || DEFAULT_TEMPLATE_BOOK;
+  $("#set-snippet-key").value = ["space", "off"].includes(s.snippet_key) ? s.snippet_key : "tab";
+  showSnippets(Array.isArray(s.snippets) ? s.snippets : DEFAULT_SNIPPETS);
+  $("#set-calc-key").value = ["equals", "off"].includes(s.calc_key) ? s.calc_key : "tab";
+  $("#set-calc-decimals").value = /^[0-6]$/.test(String(s.calc_decimals)) ? String(s.calc_decimals) : "auto";
+  $("#set-calc-thousands").checked = s.calc_thousands === true;
   $("#set-block-enabled").checked = s.block_enabled !== false;
   $("#set-block-context").value = s.block_context_menu === "block" ? "block" : "system";
   $("#set-code-exit").value = ["blank2", "blank3", "ctrl"].includes(s.code_exit_mode) ? s.code_exit_mode : "blank3";
@@ -515,6 +535,64 @@ async function pickBallIcon() {
   }
 }
 
+// 快速记录关掉时其他选项变灰;「写到」只显示选中的那一种的选项
+function updateCaptureOptions() {
+  const off = !$("#set-capture").checked;
+  const target = $("#set-capture-target").value;
+  for (const el of document.querySelectorAll(".capture-option")) {
+    el.classList.toggle("off", off);
+    if (el.dataset.captureTarget) el.hidden = el.dataset.captureTarget !== target;
+  }
+  for (const el of document.querySelectorAll(".capture-option input, .capture-option select")) el.disabled = off;
+}
+// 快速记录写到哪个笔记本:列出现有的笔记本,设的那个不在了就选默认笔记本
+function fillCaptureBooks(value) {
+  const select = $("#set-capture-book");
+  select.replaceChildren(...state.books.map((b) => new Option(bookLabel(b), b.name)));
+  select.value = state.books.some((b) => b.name === value) ? value : "";
+}
+
+// ---- 片段:每一行是触发词、内容(可以多行)和删除按钮 ----
+function snippetRow({ trigger = "", text = "" } = {}) {
+  const row = document.createElement("div");
+  row.className = "snippet-row";
+  const key = document.createElement("input");
+  key.type = "text";
+  key.className = "snippet-trigger";
+  key.maxLength = 32;
+  key.spellcheck = false;
+  key.placeholder = "触发词";
+  key.value = trigger;
+  // 触发词里不能有空格
+  key.addEventListener("input", () => {
+    if (/\s/.test(key.value)) key.value = key.value.replace(/\s+/g, "");
+  });
+  const body = document.createElement("textarea");
+  body.className = "snippet-text";
+  body.spellcheck = false;
+  body.placeholder = "展开成什么";
+  body.value = text;
+  // 有几行就显示几行(最多 6 行,再多就滚动)
+  const fit = () => (body.rows = Math.min(6, Math.max(1, body.value.split("\n").length)));
+  body.addEventListener("input", fit);
+  fit();
+  const del = document.createElement("button");
+  del.type = "button";
+  del.className = "snippet-del";
+  del.title = "删除这个片段";
+  del.textContent = "×";
+  del.addEventListener("click", () => row.remove());
+  row.append(key, body, del);
+  return row;
+}
+function showSnippets(list) {
+  $("#set-snippets").replaceChildren(...list.map((x) => snippetRow(x)));
+}
+const collectSnippets = () =>
+  [...document.querySelectorAll("#set-snippets .snippet-row")]
+    .map((row) => ({ trigger: row.querySelector(".snippet-trigger").value.trim(), text: row.querySelector(".snippet-text").value }))
+    .filter((x) => x.trigger);
+
 // 箭头独立模式不显示细线控制；其余三种模式都能调细线长度、粗细。
 function updateMiniOptions() {
   const off = !$("#set-mini").checked;
@@ -695,6 +773,22 @@ async function submitSettings() {
     page_link_brackets: $("#set-page-link-brackets").value,
     page_link_underline: $("#set-page-link-underline").value,
     pinyin_match: $("#set-pinyin").checked,
+    capture_enabled: $("#set-capture").checked,
+    capture_hotkey: $("#set-capture-key").value,
+    capture_target: $("#set-capture-target").value,
+    capture_book: $("#set-capture-book").value,
+    capture_page: $("#set-capture-page").value.trim(),
+    capture_name: $("#set-capture-name").value.trim(),
+    capture_where: $("#set-capture-where").value,
+    capture_format: $("#set-capture-format").value,
+    capture_stamp: $("#set-capture-stamp").checked,
+    capture_position: $("#set-capture-position").value,
+    template_book: $("#set-template-book").value.trim(),
+    snippets: collectSnippets(),
+    snippet_key: $("#set-snippet-key").value,
+    calc_key: $("#set-calc-key").value,
+    calc_decimals: $("#set-calc-decimals").value,
+    calc_thousands: $("#set-calc-thousands").checked,
     block_enabled: $("#set-block-enabled").checked,
     block_context_menu: $("#set-block-context").value,
     code_exit_mode: $("#set-code-exit").value,
@@ -802,25 +896,33 @@ export function bindSettings() {
     const combo = comboOf(e);
     if (combo) hk.value = combo;
   });
-  // 快速切换页面的快捷键(窗口里的):按组合键换成它,Backspace / Delete 清空就不用
-  const qk = $("#set-quick-key");
-  qk.addEventListener("focus", () => {
-    qk.classList.add("recording");
-    api.invoke("pause_hotkey").catch(() => {});
+  // 快速切换页面的快捷键(窗口里的)和快速记录的热键:按组合键换成它,Backspace / Delete 清空就不用
+  for (const qk of [$("#set-quick-key"), $("#set-capture-key")]) {
+    qk.addEventListener("focus", () => {
+      qk.classList.add("recording");
+      api.invoke("pause_hotkey").catch(() => {});
+    });
+    qk.addEventListener("blur", () => {
+      qk.classList.remove("recording");
+      api.invoke("resume_hotkey").catch(() => {});
+    });
+    qk.addEventListener("keydown", (e) => {
+      if (e.key === "Tab") return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.key === "Escape") return qk.blur();
+      if (!e.ctrlKey && !e.altKey && !e.metaKey && (e.key === "Backspace" || e.key === "Delete")) return void (qk.value = "");
+      const combo = comboOf(e);
+      if (combo) qk.value = combo;
+    });
+  }
+  for (const id of ["#set-capture", "#set-capture-target"]) $(id).addEventListener("input", updateCaptureOptions);
+  $("#set-snippet-add").addEventListener("click", () => {
+    const row = snippetRow();
+    $("#set-snippets").append(row);
+    row.querySelector("input").focus();
   });
-  qk.addEventListener("blur", () => {
-    qk.classList.remove("recording");
-    api.invoke("resume_hotkey").catch(() => {});
-  });
-  qk.addEventListener("keydown", (e) => {
-    if (e.key === "Tab") return;
-    e.preventDefault();
-    e.stopPropagation();
-    if (e.key === "Escape") return qk.blur();
-    if (!e.ctrlKey && !e.altKey && !e.metaKey && (e.key === "Backspace" || e.key === "Delete")) return void (qk.value = "");
-    const combo = comboOf(e);
-    if (combo) qk.value = combo;
-  });
+  $("#set-snippet-reset").addEventListener("click", () => showSnippets(DEFAULT_SNIPPETS));
   $("#set-save").addEventListener("click", submitSettings);
   $("#set-block-enabled").addEventListener("change", () => { $("#set-block-context").disabled = !$("#set-block-enabled").checked; });
   for (const id of ["#set-quick-limit", "#set-quick-gradient-limit", "#set-quick-material-limit", "#set-color-layout", "#set-gradient-shape", "#set-gradient-names"]) {

@@ -144,7 +144,7 @@ export function bindQuick() {
     "keydown",
     (e) => {
       const key = state.settings?.quick_switch_key;
-      if (!key || isMiniWindow || e.isComposing || e.keyCode === 229 || e.target.closest?.("#set-quick-key, #set-hotkey")) return;
+      if (!key || isMiniWindow || e.isComposing || e.keyCode === 229 || e.target.closest?.("#set-quick-key, #set-hotkey, #set-capture-key")) return;
       if (comboOf(e)?.toLowerCase() !== key.toLowerCase()) return;
       e.preventDefault();
       e.stopPropagation();
