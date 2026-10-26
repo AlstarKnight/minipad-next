@@ -395,9 +395,19 @@ impl WebdavClient {
         let xml = reply
             .text()
             .map_err(|e| format!("WebDAV 列目录读取失败：{e}"))?;
+        // 有的服务端给文件夹的 href 末尾不带 /:补上,免得把里面的文件当成“跨了层”
+        let folder = if folder.is_empty() || folder.ends_with('/') {
+            folder.to_string()
+        } else {
+            format!("{folder}/")
+        };
+        let folder = folder.as_str();
         let mut entries = Vec::new();
         for entry in parse_multistatus(&xml)? {
-            let path = self.relative_href(&entry.href)?;
+            let mut path = self.relative_href(&entry.href)?;
+            if entry.directory && !path.is_empty() && !path.ends_with('/') {
+                path.push('/');
+            }
             if !path.is_empty() && path.starts_with(folder) {
                 let rest = &path[folder.len()..];
                 // 服务端应当尊重 Depth:1；拒绝异常的跨层文件名。
@@ -674,6 +684,71 @@ mod tests {
             !error.contains("离线") && !error.contains("证书"),
             "{error}"
         );
+    }
+
+    /// 有的服务端列目录时,文件夹的 href 末尾不带 /(比如 /MinipadNext/默认):
+    /// 列这个文件夹里面的文件时不能被当成“超出 Depth:1”。
+    #[test]
+    fn folders_listed_without_a_trailing_slash_still_list_their_children() {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let multistatus = |entries: &str| {
+            format!(
+                r#"<?xml version="1.0"?><d:multistatus xmlns:d="DAV:">{entries}</d:multistatus>"#
+            )
+        };
+        let folder = |href: &str| {
+            format!(
+                "<d:response><d:href>{href}</d:href><d:propstat><d:prop><d:resourcetype><d:collection/></d:resourcetype></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>"
+            )
+        };
+        let file = |href: &str| {
+            format!(
+                "<d:response><d:href>{href}</d:href><d:propstat><d:prop><d:resourcetype/><d:getetag>\"1\"</d:getetag><d:getcontentlength>2</d:getcontentlength></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>"
+            )
+        };
+        let root_reply =
+            multistatus(&(folder("/MinipadNext") + &folder("/MinipadNext/%E9%BB%98%E8%AE%A4")));
+        let book_reply = multistatus(
+            &(folder("/MinipadNext/%E9%BB%98%E8%AE%A4")
+                + &file("/MinipadNext/%E9%BB%98%E8%AE%A4/a.md")
+                + &folder("/MinipadNext/%E9%BB%98%E8%AE%A4/assets")),
+        );
+        let server = std::thread::spawn(move || {
+            for reply in [root_reply, book_reply] {
+                let (mut stream, _) = listener.accept().unwrap();
+                let _ = stream.read(&mut [0u8; 4096]);
+                let _ = stream.write_all(
+                    format!(
+                        "HTTP/1.1 207 Multi-Status\r\nContent-Type: application/xml\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{reply}",
+                        reply.len()
+                    )
+                    .as_bytes(),
+                );
+            }
+        });
+        let client = WebdavClient::new(
+            &format!("http://127.0.0.1:{port}/"),
+            "tester",
+            "test-password",
+            "/MinipadNext/",
+            true,
+        )
+        .unwrap();
+        let roots = client.list("").unwrap();
+        // 没带 / 的文件夹 href 也按文件夹处理
+        let book = roots
+            .iter()
+            .map(|(path, _)| path.as_str())
+            .find(|path| path.starts_with('默'))
+            .unwrap();
+        assert_eq!(book, "默认/");
+        let children = client.list("默认").unwrap();
+        let mut paths: Vec<&str> = children.iter().map(|(path, _)| path.as_str()).collect();
+        paths.sort_unstable();
+        assert_eq!(paths, ["默认/", "默认/a.md", "默认/assets/"]);
+        server.join().unwrap();
     }
 
     #[test]
