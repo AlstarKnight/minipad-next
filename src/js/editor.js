@@ -43,6 +43,7 @@ import { codeToText } from "./toolbar.js";
 import { imagePlugin, applyImageSettings } from "./images.js";
 import { findLocalPaths } from "./localpaths.js";
 import { parseAccent } from "./accent.js";
+import { pageLinkPlugin, applyPageLinkSettings } from "./pagelinkview.js";
 
 let editor = null;
 let view = null;
@@ -488,6 +489,9 @@ function unescapePlainEmail(markdown) {
     markdown.replace(/([A-Za-z0-9._%+-]+)\\@([A-Za-z0-9.-]+\.[A-Za-z]{2,})/g, "$1@$2");
 }
 
+// 页面链接 [[名字]] 原样写回(0.5.0):Markdown 默认把 [ 都转义,会写成 \[\[名字]]。名字里别的转义(\_ 这些)照留
+const keepPageLinks = (markdown) => markdown.replace(/\\\[\\\[((?:\\[^\[\]\n]|[^\\\[\]\n])+)\]\]/g, "[[$1]]");
+
 function writeText(node, parent, state, info) {
   const v = node.value;
   // 只在引用块内的标记段保留 [!fold] 原文，避免触碰代码块中的反斜杠。
@@ -497,8 +501,8 @@ function writeText(node, parent, state, info) {
   }
   if (/^[ \t]+$/.test(v)) return /[\r\n]$/.test(info.before ?? "") ? (v[0] === "\t" ? "&#x9;" : "&#x20;") + v.slice(1) : v;
   const tail = /[ \t]+$/.exec(v);
-  if (!tail) return unescapePlainEmail(state.safe(v, { ...info, encode: [] }));
-  return unescapePlainEmail(state.safe(v.slice(0, tail.index), { ...info, after: tail[0][0], encode: [] })) + tail[0];
+  if (!tail) return keepPageLinks(unescapePlainEmail(state.safe(v, { ...info, encode: [] })));
+  return keepPageLinks(unescapePlainEmail(state.safe(v.slice(0, tail.index), { ...info, after: tail[0][0], encode: [] }))) + tail[0];
 }
 
 // ---------- 编辑器 ----------
@@ -518,7 +522,8 @@ export async function createEditor(opts) {
       c.update(remarkStringifyOptionsCtx, (o) => ({ ...o, bullet: "-", rule: "-", handlers: { ...o.handlers, text: writeText, ...colorHandlers } }));
       c.set(linkAttr.key, () => ({ title: "Ctrl+点击打开链接" }));
     })
-    // 自己的按键放在最前面,先于 Milkdown 自带的按键处理(Shift+Enter、Ctrl+B 等)
+    // 页面链接的补全列表开着时,上下键、回车、Tab、Esc 归它;然后是自己的按键,先于 Milkdown 自带的按键处理(Shift+Enter、Ctrl+B 等)
+    .use(pageLinkPlugin)
     .use(keys)
     .use(commonmark)
     .use(gfm)
@@ -724,6 +729,7 @@ export function applyEditorSettings(s) {
       shown.emailLinkVersion = emailLinkVersion;
     }
   }
+  applyPageLinkSettings(s);
   codeExitMode = ["blank2", "blank3", "ctrl"].includes(s.code_exit_mode) ? s.code_exit_mode : "blank3";
   setFoldPersistence(s.fold_save_state !== false);
   setCodeFoldPersistence(s.fold_save_state !== false);

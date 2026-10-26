@@ -205,6 +205,24 @@ pub struct Settings {
     local_path_confirm: bool,
     /// 用户逐个允许跳过确认的本地路径。
     local_path_trusted: Vec<String>,
+    /// 0.5.0 页面链接 [[页面名]]:显示成链接,点了打开那一页
+    page_links: bool,
+    /// ctrl 按 Ctrl 点击打开 / click 单击就打开
+    page_link_click: String,
+    /// 补全:brackets 打 [[ 就列出页面 / typing 打了 [[ 再打字才列 / off 不列
+    page_link_suggest: String,
+    /// 中文输入法打的 【【 换成 [[,链接里的 】】 换成 ]]
+    page_link_cn_brackets: bool,
+    /// 页面改名、移动以后别的页面里指向它的链接:ask 改 2 个以上页面时先问 / auto 直接改 / off 不改
+    page_link_rename: String,
+    /// 链接的颜色,写法同 accent;空着跟随强调色
+    page_link_color: String,
+    /// 还没有的页面的链接颜色,写法同 accent;空着是灰色
+    page_link_broken_color: String,
+    /// 两边的方括号:faint 淡一点 / show 照常显示 / hide 光标在链接上才显示
+    page_link_brackets: String,
+    /// 下划线:hover 鼠标移上去才有 / solid 实线 / dashed 虚线 / none 不要
+    page_link_underline: String,
     /// 设置页面的分类放在哪:left 左边一列 / top 上面一排
     settings_nav: String,
     /// 悬浮目录:列出这一页的标题,点了跳过去
@@ -247,6 +265,8 @@ pub struct Settings {
     quick_switch_key: String,
     /// 快速切换找哪些页面:all 全部笔记本 / book 当前笔记本
     quick_switch_scope: String,
+    /// 找页面(快速切换、[[ 补全)时也能打拼音或拼音首字母
+    pinyin_match: bool,
     /// 选中文字时的悬浮工具栏:always 总是出现 / nobar 只在格式栏收起时 / off 不出现
     sel_bar: String,
     /// 悬浮工具栏上的按钮(按顺序,id 同格式栏)
@@ -366,6 +386,15 @@ impl Default for Settings {
             local_path_missing: true,
             local_path_confirm: true,
             local_path_trusted: Vec::new(),
+            page_links: true,
+            page_link_click: "ctrl".into(),
+            page_link_suggest: "brackets".into(),
+            page_link_cn_brackets: true,
+            page_link_rename: "ask".into(),
+            page_link_color: String::new(),
+            page_link_broken_color: String::new(),
+            page_link_brackets: "faint".into(),
+            page_link_underline: "hover".into(),
             settings_nav: "left".into(),
             outline_enabled: false,
             outline_mode: "hover".into(),
@@ -387,6 +416,7 @@ impl Default for Settings {
             pin_style: "icon".into(),
             quick_switch_key: "Ctrl+P".into(),
             quick_switch_scope: "all".into(),
+            pinyin_match: true,
             sel_bar: "always".into(),
             sel_bar_items: [
                 "block", "strong", "em", "strike", "code", "link", "sep3", "color", "bg",
@@ -886,6 +916,8 @@ fn tidy_settings(s: &mut Settings) {
     tidy_color(&mut s.find_color);
     tidy_color(&mut s.outline_color);
     tidy_color(&mut s.local_path_color);
+    tidy_color(&mut s.page_link_color);
+    tidy_color(&mut s.page_link_broken_color);
     tidy_color(&mut s.webdav_status_color);
     s.webdav_delay_seconds = s.webdav_delay_seconds.clamp(10, 300);
     s.webdav_delete_limit = s.webdav_delete_limit.clamp(1, 1000);
@@ -911,6 +943,11 @@ fn tidy_settings(s: &mut Settings) {
     s.local_path_trusted.retain(|p| !p.trim().is_empty());
     s.local_path_trusted.sort();
     s.local_path_trusted.dedup();
+    pick_one(&mut s.page_link_click, &["ctrl", "click"]);
+    pick_one(&mut s.page_link_suggest, &["brackets", "typing", "off"]);
+    pick_one(&mut s.page_link_rename, &["ask", "auto", "off"]);
+    pick_one(&mut s.page_link_brackets, &["faint", "show", "hide"]);
+    pick_one(&mut s.page_link_underline, &["hover", "solid", "dashed", "none"]);
     pick_one(&mut s.settings_nav, &["left", "top"]);
     pick_one(&mut s.outline_mode, &["hover", "pinned"]);
     pick_one(&mut s.outline_side, &["right", "left"]);
@@ -1619,6 +1656,23 @@ async fn pick_folder(app: AppHandle, title: Option<String>) -> Option<String> {
 #[tauri::command]
 fn hide_window(app: AppHandle) {
     hide_main(&app);
+}
+
+/// 0.5.0 小窗里补全 [[页面名]]、判断链接在不在用的页面名单(只列名字,不读内容)
+#[tauri::command]
+fn page_index(app: AppHandle) -> Result<Vec<notes::BookIndex>, String> {
+    notes::index_books(&current_notes_dir(&app))
+}
+
+/// 小窗里点了页面链接:主窗口出来,打开(或新建)那一页。book 是小窗那一页所在的笔记本
+#[tauri::command]
+fn open_page_in_main(app: AppHandle, book: String, target: String) {
+    let _ = app.emit_to(
+        "main",
+        "open-page",
+        serde_json::json!({ "book": book, "target": target }),
+    );
+    show_main(&app);
 }
 
 #[tauri::command]
@@ -2905,6 +2959,8 @@ pub fn run() {
             minipad2_import,
             hide_window,
             show_window,
+            page_index,
+            open_page_in_main,
             expand_edge,
             ball_info,
             pick_ball_icon,
@@ -3584,6 +3640,63 @@ mod tests {
             (old.ctrl_f.as_str(), old.conflict_mode.as_str()),
             ("page", "copy")
         );
+    }
+
+    #[test]
+    fn tidy_settings_keeps_page_link_options_known() {
+        let mut s = Settings::default();
+        let options = |s: &Settings| {
+            [
+                s.page_link_click.clone(),
+                s.page_link_suggest.clone(),
+                s.page_link_rename.clone(),
+                s.page_link_brackets.clone(),
+                s.page_link_underline.clone(),
+                s.page_link_color.clone(),
+                s.page_link_broken_color.clone(),
+            ]
+        };
+        assert_eq!(
+            options(&s),
+            ["ctrl", "brackets", "ask", "faint", "hover", "", ""]
+        );
+        assert!(s.page_links && s.page_link_cn_brackets && s.pinyin_match);
+        s.page_link_click = "click".into();
+        s.page_link_suggest = "typing".into();
+        s.page_link_rename = "auto".into();
+        s.page_link_brackets = "hide".into();
+        s.page_link_underline = "dashed".into();
+        s.page_link_color = " #16A34A ".into();
+        s.page_link_broken_color = "linear-gradient(90deg, #112233, #445566)".into();
+        tidy_settings(&mut s);
+        assert_eq!(
+            options(&s),
+            [
+                "click",
+                "typing",
+                "auto",
+                "hide",
+                "dashed",
+                "#16a34a",
+                "linear-gradient(90deg, #112233, #445566)"
+            ]
+        );
+        s.page_link_click = "double".into();
+        s.page_link_suggest = "always".into();
+        s.page_link_rename = "never".into();
+        s.page_link_brackets = "bold".into();
+        s.page_link_underline = "wavy".into();
+        s.page_link_color = "red".into();
+        s.page_link_broken_color = "url(javascript:x)".into();
+        tidy_settings(&mut s);
+        assert_eq!(
+            options(&s),
+            ["ctrl", "brackets", "ask", "faint", "hover", "", ""]
+        );
+        // 0.4.5 的设置文件里没有这几项,读出来是默认值
+        let old: Settings = serde_json::from_str(r#"{"hotkey":"Ctrl+M"}"#).unwrap();
+        assert!(old.page_links && old.pinyin_match);
+        assert_eq!(old.page_link_rename, "ask");
     }
 
     #[test]

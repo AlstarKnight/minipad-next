@@ -48,6 +48,16 @@ const DEFAULT_SETTINGS = {
   local_path_missing: true,
   local_path_confirm: true,
   local_path_trusted: [],
+  page_links: true,
+  page_link_click: "ctrl",
+  page_link_suggest: "brackets",
+  page_link_cn_brackets: true,
+  page_link_rename: "ask",
+  page_link_color: "",
+  page_link_broken_color: "",
+  page_link_brackets: "faint",
+  page_link_underline: "hover",
+  pinyin_match: true,
   block_enabled: true,
   block_context_menu: "system",
   code_exit_mode: "blank3",
@@ -367,6 +377,13 @@ export function mockApi() {
       };
     },
     read_notes: (args) => readBooks(args),
+    // 只列笔记本和页面名(小窗判断链接存不存在、补全用)
+    page_index: () => ["", ...bookNames()].map((name) => ({ name, notes: readBook(name).notes.map((n) => n.name) })),
+    // 小窗里点的页面链接:让主窗口打开(预览里主窗口和小窗是两个网页,测试用 __mockControl.openedInMain 看)
+    open_page_in_main: ({ book, target }) => {
+      if (window.__mockControl) (window.__mockControl.openedInMain ||= []).push({ book, target });
+      window.__mockEmit?.("open-page", { book, target });
+    },
     book_exists: ({ book }) => has(db.books, book),
     // 和后端一样:文件在别处被改过(既不是上次读到的 expected,也不是要写的内容),
     // 先把别处的版本另存成冲突副本(设置里选了直接覆盖就不留)
@@ -553,6 +570,13 @@ export function mockApi() {
         tab_group_style: pickOne(settings.tab_group_style, ["line", "tint"]),
         pin_style: pickOne(settings.pin_style, ["icon", "tint", "none"]),
         quick_switch_scope: pickOne(settings.quick_switch_scope, ["all", "book"]),
+        page_link_click: pickOne(settings.page_link_click, ["ctrl", "click"]),
+        page_link_suggest: pickOne(settings.page_link_suggest, ["brackets", "typing", "off"]),
+        page_link_rename: pickOne(settings.page_link_rename, ["ask", "auto", "off"]),
+        page_link_brackets: pickOne(settings.page_link_brackets, ["faint", "show", "hide"]),
+        page_link_underline: pickOne(settings.page_link_underline, ["hover", "solid", "dashed", "none"]),
+        page_link_color: tidyAccent(settings.page_link_color),
+        page_link_broken_color: tidyAccent(settings.page_link_broken_color),
         quick_switch_key: [...String(settings.quick_switch_key ?? "").trim()].slice(0, 40).join(""),
         sel_bar: pickOne(settings.sel_bar, ["always", "nobar", "off"]),
         sel_bar_pos: pickOne(settings.sel_bar_pos, ["above", "below"]),

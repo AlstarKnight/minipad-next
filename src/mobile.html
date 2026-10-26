@@ -159,6 +159,16 @@
       <button type="button" data-link-open="inapp">应用内浏览器</button>
     </div>
     <label class="switch-row"><span>编辑时点链接也直接打开(关着时只把光标放进去,方便改字;阅读模式里点链接总是打开)</span><input id="look-link-tap-edit" type="checkbox"></label>
+    <h3>页面链接 [[页面名]]</h3>
+    <label class="switch-row"><span>识别页面链接:显示成链接,点了打开那一页(还没有就新建)</span><input id="look-page-links" type="checkbox"></label>
+    <div id="look-page-link-suggest" class="seg" role="group" aria-label="页面补全">
+      <button type="button" data-suggest="brackets">打 [[ 就列出页面</button>
+      <button type="button" data-suggest="typing">再打字才列</button>
+      <button type="button" data-suggest="off">不列</button>
+    </div>
+    <label class="switch-row"><span>中文的 【【 】】 当作 [[ ]]</span><input id="look-page-link-cn" type="checkbox"></label>
+    <div class="sync-field"><span>链接颜色</span><div id="look-page-link-color" class="accent-swatches" role="radiogroup" aria-label="页面链接颜色"></div></div>
+    <div class="sync-field"><span>还没有的页面的颜色</span><div id="look-page-link-broken-color" class="accent-swatches" role="radiogroup" aria-label="还没有的页面的颜色"></div></div>
     <p class="sheet-note">只保存在这台手机上,改了马上生效。</p>
   </section>
   <div id="sync-settings-backdrop" class="drawer-backdrop" hidden></div>

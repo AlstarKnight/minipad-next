@@ -154,6 +154,7 @@ export function openSettings() {
   $("#set-edge-button").checked = s.edge_button !== false;
   $("#set-quick-key").value = s.quick_switch_key || "";
   $("#set-quick-scope").value = s.quick_switch_scope === "book" ? "book" : "all";
+  $("#set-pinyin").checked = s.pinyin_match !== false;
   $("#set-pin-style").value = ["icon", "tint", "none"].includes(s.pin_style) ? s.pin_style : "icon";
   $("#set-edge-style").value = EDGE_STYLES.includes(s.edge_style) ? s.edge_style : "arrow";
   $("#set-edge-line-width").value = edgeWidth(s);
@@ -218,6 +219,15 @@ export function openSettings() {
   $("#set-local-path-missing").checked = s.local_path_missing !== false;
   $("#set-local-path-confirm").checked = s.local_path_confirm !== false;
   localPathColor.show(s.local_path_color || "");
+  $("#set-page-links").checked = s.page_links !== false;
+  $("#set-page-link-click").value = s.page_link_click === "click" ? "click" : "ctrl";
+  $("#set-page-link-suggest").value = ["typing", "off"].includes(s.page_link_suggest) ? s.page_link_suggest : "brackets";
+  $("#set-page-link-cn").checked = s.page_link_cn_brackets !== false;
+  $("#set-page-link-rename").value = ["auto", "off"].includes(s.page_link_rename) ? s.page_link_rename : "ask";
+  $("#set-page-link-brackets").value = ["show", "hide"].includes(s.page_link_brackets) ? s.page_link_brackets : "faint";
+  $("#set-page-link-underline").value = ["solid", "dashed", "none"].includes(s.page_link_underline) ? s.page_link_underline : "hover";
+  pageLinkColor.show(s.page_link_color || "");
+  pageLinkBrokenColor.show(s.page_link_broken_color || "");
   $("#set-block-enabled").checked = s.block_enabled !== false;
   $("#set-block-context").value = s.block_context_menu === "block" ? "block" : "system";
   $("#set-code-exit").value = ["blank2", "blank3", "ctrl"].includes(s.code_exit_mode) ? s.code_exit_mode : "blank3";
@@ -282,7 +292,7 @@ export function openSettings() {
   backupInfo = null;
   updateBackup();
   $("#settings").hidden = false;
-  for (const picker of [accentColor, edgeColor, localPathColor, webdavColor, findColor, outlineColor, ballColor]) picker.reopen();
+  for (const picker of [accentColor, edgeColor, localPathColor, pageLinkColor, pageLinkBrokenColor, webdavColor, findColor, outlineColor, ballColor]) picker.reopen();
   showSettingsPage(page, { focus: true });
   api
     .invoke("backup_info")
@@ -366,6 +376,20 @@ const localPathColor = colorPicker(
   "#set-local-path-color",
   [{ name: "跟随链接", value: "" }, ...ACCENTS.filter((a) => a.value)],
   "var(--accent-grad)",
+);
+
+// 页面链接 [[页面名]] 的颜色;还没有的页面默认灰色
+const pageLinkColor = colorPicker(
+  "page-link",
+  "#set-page-link-color",
+  [{ name: "跟随强调色", value: "" }, ...ACCENTS.filter((a) => a.value)],
+  "var(--accent-grad)",
+);
+const pageLinkBrokenColor = colorPicker(
+  "page-link-broken",
+  "#set-page-link-broken-color",
+  [{ name: "灰色", value: "" }, ...ACCENTS.filter((a) => a.value)],
+  "var(--muted)",
 );
 
 // 查找高亮的颜色,上面那句话是预览
@@ -661,6 +685,16 @@ async function submitSettings() {
     local_path_underline: $("#set-local-path-underline").value,
     local_path_missing: $("#set-local-path-missing").checked,
     local_path_confirm: $("#set-local-path-confirm").checked,
+    page_links: $("#set-page-links").checked,
+    page_link_click: $("#set-page-link-click").value,
+    page_link_suggest: $("#set-page-link-suggest").value,
+    page_link_cn_brackets: $("#set-page-link-cn").checked,
+    page_link_rename: $("#set-page-link-rename").value,
+    page_link_color: pageLinkColor.value,
+    page_link_broken_color: pageLinkBrokenColor.value,
+    page_link_brackets: $("#set-page-link-brackets").value,
+    page_link_underline: $("#set-page-link-underline").value,
+    pinyin_match: $("#set-pinyin").checked,
     block_enabled: $("#set-block-enabled").checked,
     block_context_menu: $("#set-block-context").value,
     code_exit_mode: $("#set-code-exit").value,
@@ -749,7 +783,7 @@ function updateMigration() {
 }
 
 export function bindSettings() {
-  for (const picker of [accentColor, edgeColor, localPathColor, webdavColor, findColor, outlineColor, ballColor]) picker.install();
+  for (const picker of [accentColor, edgeColor, localPathColor, pageLinkColor, pageLinkBrokenColor, webdavColor, findColor, outlineColor, ballColor]) picker.install();
   // 录热键时先停用全局热键,不然按下现在的热键会把窗口藏起来
   const hk = $("#set-hotkey");
   hk.addEventListener("focus", () => {

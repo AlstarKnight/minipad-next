@@ -1434,3 +1434,57 @@ test("paper: the outline tree keeps its rows while switching pages and is redraw
     await context.close();
   }
 });
+
+test("page links on the phone: shown, opened by a tap in reading mode, created when missing, completed while typing", async () => {
+  const { context, page, errors } = await open();
+  try {
+    await page.evaluate(() => {
+      window.__mobileTest.disk.push({ name: "工作", notes: [{ name: "计划", content: "工作计划", unreadable: false }] });
+      window.__mobileTest.disk[0].notes[1].content = "去 [[一]] 和 [[工作/计划]],还有 [[新页]]";
+    });
+    await page.click("#refresh");
+    await chooseNote(page, "二");
+    const shown = () => page.$$eval("#editor .page-link:not(.page-link-mark)", (els) => els.map((e) => (e.classList.contains("broken") ? "?" : "") + e.textContent));
+    const link = (text) => page.locator("#editor .page-link:not(.page-link-mark)").filter({ hasText: new RegExp(`^${text}$`) }).first();
+    await page.waitForFunction(() => document.querySelectorAll("#editor .page-link:not(.page-link-mark)").length === 3);
+    assert.deepEqual(await shown(), ["一", "工作/计划", "?新页"]);
+    // editing: a tap only places the caret
+    await link("一").click();
+    await page.waitForTimeout(150);
+    assert.equal(await page.locator("#page-title").textContent(), "二");
+    // reading: a tap opens the page; a missing page is created first
+    await page.click("#mode");
+    await link("新页").click();
+    await page.waitForFunction(() => document.querySelector("#page-title").textContent === "新页");
+    assert.ok(await page.evaluate(() => window.__mobileTest.disk[0].notes.some((n) => n.name === "新页")));
+    await chooseNote(page, "二");
+    await page.waitForFunction(() => !document.querySelector("#editor .page-link.broken"));
+    assert.deepEqual(await shown(), ["一", "工作/计划", "新页"]);
+    await link("工作/计划").click();
+    await page.waitForFunction(() => document.querySelector("#page-title").textContent === "计划");
+    assert.match(await page.locator("#book-title").textContent(), /^工作/);
+    // typing [[ lists the pages, this notebook's first; a tap fills one in
+    await page.click("#mode");
+    await page.locator("#editor .ProseMirror p").first().click();
+    await page.keyboard.press("End");
+    await page.keyboard.type(" [[");
+    const menu = () => page.$$eval(".page-link-menu:not([hidden]) button", (bs) => bs.map((b) => b.textContent));
+    await page.waitForFunction(() => document.querySelectorAll(".page-link-menu:not([hidden]) button").length === 3);
+    assert.deepEqual(await menu(), ["一默认", "二默认", "新页默认"]);
+    await page.keyboard.type("er");
+    await page.waitForFunction(() => document.querySelectorAll(".page-link-menu:not([hidden]) button").length === 1);
+    await page.locator(".page-link-menu button").first().click();
+    await page.waitForFunction(() => window.__mobileTest.disk[1].notes[0].content === "工作计划 [[默认/二]]");
+    // the appearance settings turn links off
+    await page.click("#open-drawer");
+    await page.click("#open-settings");
+    assert.equal(await page.locator("#look-page-links").isChecked(), true);
+    assert.equal(await page.locator('[data-suggest="brackets"]').getAttribute("aria-pressed"), "true");
+    assert.equal(await page.locator("#look-page-link-color button").first().getAttribute("aria-checked"), "true");
+    await page.locator("#look-page-links").uncheck();
+    await page.click("#close-settings");
+    await page.waitForFunction(() => !document.querySelector("#editor .page-link"));
+    assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem("minipad-mobile-look")).page_links), false);
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});

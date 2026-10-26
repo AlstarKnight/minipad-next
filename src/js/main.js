@@ -25,6 +25,7 @@ import { initMini, bindMiniMain } from "./mini.js";
 import { bindUpdate } from "./update.js";
 import { bindSidebar } from "./sidebar.js";
 import { bindWebdav, resetWebdavTimers, webdavRun } from "./webdav.js";
+import { bindPageLinks } from "./pagelinkapp.js";
 
 // ---------- 启动 ----------
 async function init() {
@@ -40,6 +41,7 @@ async function init() {
     ], x, y),
   });
   bindUi();
+  bindPageLinks();
   // 只检查当前可见的路径；节点重建时重新检查，失败时保留普通样式。
   const observedPaths = new WeakMap();
   const pathChecks = new Map();

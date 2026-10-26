@@ -11,9 +11,20 @@ export function focusEditor() {
 }
 
 let toastTimer;
-export function toast(msg, ms = 2600) {
+// action:{ label, act } 时提示后面带一个按钮(比如「撤销」),点了就做并收起提示
+export function toast(msg, ms = 2600, action = null) {
   const t = $("#toast");
   t.textContent = msg;
+  if (action) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.textContent = action.label;
+    b.addEventListener("click", () => {
+      t.hidden = true;
+      action.act();
+    });
+    t.append(" ", b);
+  }
   t.hidden = false;
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => (t.hidden = true), ms);

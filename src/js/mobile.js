@@ -8,6 +8,8 @@ import { setLinkPrompt, setTaskCommand } from "./toolbar.js";
 import { ACCENTS, applyAccent, tidyAccent, parseAccent } from "./accent.js";
 import { makeSharedColorTools, setColorLibrarySaver } from "./sharedcolors.js";
 import { ask, askText, closeDialog, dialogOpen } from "./ui.js";
+import { setPageLinkHost, pageNamesChanged, applyPageLinkSettings, linkIndex } from "./pagelinkview.js";
+import { resolveTarget } from "./pagelinks.js";
 
 const invoke = window.__TAURI__?.core?.invoke;
 const el = (id) => document.getElementById(id);
@@ -327,6 +329,7 @@ async function listBooks() {
 async function showNewPages() {
   try {
     books = await listBooks();
+    pageNamesChanged();
     render();
   } catch { /* the next page switch lists them again */ }
 }
@@ -353,6 +356,7 @@ async function refresh(bookName, noteName) {
     const note = noteInfo && await invoke("mobile_read_note", { book: book.name, name: noteInfo.name });
     books = loaded;
     currentBook = book?.name ?? "";
+    pageNamesChanged();
     selected = note ? {
       book: book.name, name: noteInfo.name, content: note.content, disk: note.content,
       unreadable: note.unreadable, sourceOnly: needsSource(note.content),
@@ -474,6 +478,24 @@ el("editor").addEventListener("click", (e) => {
   if (view?.editable && !look.link_tap_edit) return;
   void openLink(link.getAttribute("href"));
 }, true);
+// 页面链接 [[页面名]](0.5.0):名单就是抽屉里的页面名单;点了换到那一页,还没有的页面先新建
+setPageLinkHost({
+  home: () => (selected ? currentBook : null),
+  books: () => books.map((b) => ({ name: b.name, pages: b.notes.map((n) => n.name) })),
+  // 补全没打字时:当前笔记本的页面在前,当前页面不列
+  candidates: () => [...books.filter((b) => b.name === currentBook), ...books.filter((b) => b.name !== currentBook)]
+    .flatMap((b) => b.notes.filter((n) => b.name !== currentBook || n.name !== selected?.name).map((n) => ({ book: b.name, name: n.name }))),
+  open: (target) => void openPageLink(target),
+});
+async function openPageLink(target) {
+  const r = resolveTarget(linkIndex(), target, currentBook);
+  if (r.book == null) return notify(`没有「${r.bookLabel}」这个笔记本`);
+  if (r.exists) return refresh(r.book, r.page);
+  try {
+    await flush();
+    await refresh(r.book, await invoke("mobile_create_note", { book: r.book, name: r.page }));
+  } catch (error) { notify("新建页面失败：" + error); }
+}
 el("insert-image").addEventListener("click", () => {
   if (view?.editable && selected && !selected.sourceOnly) fileInput.click();
 });
@@ -845,6 +867,34 @@ const systemDark = window.matchMedia("(prefers-color-scheme: dark)");
 const settingsSheet = el("mobile-settings");
 const settingsBackdrop = el("settings-backdrop");
 let look = loadLook();
+// 页面链接的两种颜色:第一个色块是默认的(跟随强调色 / 灰色),别的颜色来自共用的颜色库,和电脑版一样
+const pageLinkColors = [
+  ["page_link_color", "look-page-link-color", "跟随强调色", "var(--accent)"],
+  ["page_link_broken_color", "look-page-link-broken-color", "灰色", "var(--muted)"],
+].map(([field, box, name, swatch]) => {
+  const first = document.createElement("button");
+  first.type = "button";
+  first.dataset.color = "";
+  first.title = name;
+  first.setAttribute("aria-label", name);
+  first.style.setProperty("--sw", swatch);
+  first.addEventListener("click", () => setLook({ [field]: "" }));
+  el(box).append(first);
+  const tool = makeSharedColorTools({
+    id: "mobile-" + box,
+    getValue: () => look[field] || getComputedStyle(document.documentElement).getPropertyValue("--accent").trim(),
+    onApply: (value) => setLook({ [field]: tidyAccent(value) }),
+    compact: true,
+  });
+  el(box).closest(".sync-field").after(tool.root);
+  return {
+    show() {
+      first.setAttribute("aria-checked", String(!look[field]));
+      tool.sync();
+    },
+    reopen: () => tool.reopen(),
+  };
+});
 
 function loadLook() {
   let saved = {};
@@ -864,6 +914,12 @@ function loadLook() {
     // 网页链接用系统浏览器(system)还是应用内浏览器(inapp)打开;编辑时点链接要不要也直接打开
     link_open: saved.link_open === "inapp" ? "inapp" : "system",
     link_tap_edit: saved.link_tap_edit === true,
+    // 页面链接(和电脑版设置里的同名字段一样)
+    page_links: saved.page_links !== false,
+    page_link_suggest: ["typing", "off"].includes(saved.page_link_suggest) ? saved.page_link_suggest : "brackets",
+    page_link_cn_brackets: saved.page_link_cn_brackets !== false,
+    page_link_color: tidyAccent(typeof saved.page_link_color === "string" ? saved.page_link_color : ""),
+    page_link_broken_color: tidyAccent(typeof saved.page_link_broken_color === "string" ? saved.page_link_broken_color : ""),
   };
 }
 
@@ -898,6 +954,11 @@ function applyLook() {
   el("look-local-path").checked = look.local_path_enabled;
   for (const b of el("look-link-open").children) b.setAttribute("aria-pressed", String(b.dataset.linkOpen === look.link_open));
   el("look-link-tap-edit").checked = look.link_tap_edit;
+  el("look-page-links").checked = look.page_links;
+  for (const b of el("look-page-link-suggest").children) b.setAttribute("aria-pressed", String(b.dataset.suggest === look.page_link_suggest));
+  el("look-page-link-cn").checked = look.page_link_cn_brackets;
+  for (const c of pageLinkColors) c.show();
+  applyPageLinkSettings(look, { mobile: true, tapEdit: look.link_tap_edit });
   el("viewport-debug").hidden = !look.debug;
   if (look.debug) requestAnimationFrame(fitViewport);
   renderDrawer();
@@ -923,6 +984,9 @@ el("look-debug").addEventListener("change", (e) => setLook({ debug: e.target.che
 el("look-local-path").addEventListener("change", (e) => setLook({ local_path_enabled: e.target.checked }));
 for (const b of el("look-link-open").children) b.addEventListener("click", () => setLook({ link_open: b.dataset.linkOpen }));
 el("look-link-tap-edit").addEventListener("change", (e) => setLook({ link_tap_edit: e.target.checked }));
+el("look-page-links").addEventListener("change", (e) => setLook({ page_links: e.target.checked }));
+for (const b of el("look-page-link-suggest").children) b.addEventListener("click", () => setLook({ page_link_suggest: b.dataset.suggest }));
+el("look-page-link-cn").addEventListener("change", (e) => setLook({ page_link_cn_brackets: e.target.checked }));
 systemDark.addEventListener("change", applyLook);
 // 格式栏「自定义」改了就记下来,重启后照旧
 el("format-bar").addEventListener("format-bar-items", (e) => setLook(e.detail));
@@ -931,6 +995,7 @@ function showSettings(open) {
   settingsSheet.hidden = !open;
   settingsBackdrop.hidden = !open;
   if (open) {
+    for (const c of pageLinkColors) c.reopen();
     if (!drawer.hidden) toggleDrawer(false);
     el("close-settings").focus();
   }
