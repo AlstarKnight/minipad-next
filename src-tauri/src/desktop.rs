@@ -338,6 +338,8 @@ pub struct Settings {
     capture_position: String,
     /// 0.5.1 模板放在哪个笔记本里:每一页就是一个模板
     template_book: String,
+    /// 0.5.2 新建笔记本时放一页「欢迎」
+    new_book_welcome: bool,
     /// 片段:打触发词再按 Tab(或空格)换成内容
     snippets: Vec<Snippet>,
     /// 片段怎么展开:tab / space / off
@@ -503,6 +505,7 @@ impl Default for Settings {
             capture_stamp: true,
             capture_position: "remember".into(),
             template_book: DEFAULT_TEMPLATE_BOOK.into(),
+            new_book_welcome: true,
             snippets: default_snippets(),
             snippet_key: "tab".into(),
             calc_key: "tab".into(),
@@ -4154,6 +4157,8 @@ mod tests {
         // 0.5.0 的设置文件里没有这几项,读出来是默认值(三个默认片段)
         let old: Settings = serde_json::from_str(r#"{"hotkey":"Ctrl+M"}"#).unwrap();
         assert!(old.capture_enabled);
+        // 0.5.1 及以前的设置里没有「新建笔记本放欢迎页」:默认开着
+        assert!(old.new_book_welcome);
         assert_eq!(
             old.snippets
                 .iter()

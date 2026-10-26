@@ -243,6 +243,7 @@ export function openSettings() {
   pageLinkColor.show(s.page_link_color || "");
   pageLinkBrokenColor.show(s.page_link_broken_color || "");
   $("#set-template-book").value = s.template_book || DEFAULT_TEMPLATE_BOOK;
+  $("#set-new-book-welcome").checked = s.new_book_welcome !== false;
   $("#set-snippet-key").value = ["space", "off"].includes(s.snippet_key) ? s.snippet_key : "tab";
   showSnippets(Array.isArray(s.snippets) ? s.snippets : DEFAULT_SNIPPETS);
   $("#set-calc-key").value = ["equals", "off"].includes(s.calc_key) ? s.calc_key : "tab";
@@ -784,6 +785,7 @@ async function submitSettings() {
     capture_stamp: $("#set-capture-stamp").checked,
     capture_position: $("#set-capture-position").value,
     template_book: $("#set-template-book").value.trim(),
+    new_book_welcome: $("#set-new-book-welcome").checked,
     snippets: collectSnippets(),
     snippet_key: $("#set-snippet-key").value,
     calc_key: $("#set-calc-key").value,

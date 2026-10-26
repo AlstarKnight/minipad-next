@@ -628,7 +628,7 @@ describe("notebooks", () => {
     },
   );
 
-  ui("a notebook created from the menu becomes current with its first page 新页面", async (h) => {
+  ui("a notebook created from the menu becomes current with its first page 欢迎", async (h) => {
     const { p } = h;
     await h.openBooks();
     await p.click("#books-new");
@@ -639,9 +639,42 @@ describe("notebooks", () => {
     await p.keyboard.type("工作");
     await p.keyboard.press("Enter");
     await until(h.bookName, "工作", "new notebook becomes current");
-    await until(h.tabs, ["新页面"], "tab bar shows only the new notebook's first page");
-    await until(async () => (await h.mock())?.["工作"]?.files, { 新页面: "" }, "the mock has the page in the notebook");
+    await until(h.tabs, ["欢迎"], "tab bar shows only the new notebook's first page");
+    await until(async () => Object.keys((await h.mock())?.["工作"]?.files ?? {}), ["欢迎"], "the mock has the page in the notebook");
+    assert.match(await h.editor(), /^# 欢迎来到这个笔记本/, "the page is the short welcome text");
+    await until(async () => (await h.mock())?.["工作"]?.files?.欢迎?.startsWith("# 欢迎来到这个笔记本"), true, "the welcome text is saved");
     await until(async () => (await h.stored())?.book, "工作", "current notebook is remembered");
+  });
+
+  ui("the welcome page for new notebooks can be turned off; moving a page into a new notebook never adds it", {
+    seed: seed({ "": { 甲: "a", 乙: "b" } }),
+  }, async (h) => {
+    const { p } = h;
+    await p.click("#btn-settings");
+    await settingsPage(p, "data");
+    assert.equal(await p.isChecked("#set-new-book-welcome"), true, "on by default");
+    await p.uncheck("#set-new-book-welcome");
+    await p.click("#set-save");
+    await until(() => p.isHidden("#settings"), true, "settings saved and closed");
+    await until(async () => (await h.stored())?.settings?.new_book_welcome, false, "the switch is saved");
+    await h.openBooks();
+    await p.click("#books-new");
+    await h.answer("空白");
+    await until(h.tabs, ["新页面"], "with the switch off the notebook starts with a blank page");
+    await until(async () => (await h.mock())?.["空白"]?.files, { 新页面: "" }, "no welcome file");
+
+    await p.click("#btn-settings");
+    await settingsPage(p, "data");
+    await p.check("#set-new-book-welcome");
+    await p.click("#set-save");
+    await until(() => p.isHidden("#settings"), true, "settings saved and closed");
+    await h.switchBook("");
+    await h.tabMenu("甲");
+    await p.click('#ctx button[data-act="move"]');
+    await p.locator("#books").waitFor();
+    await p.click("#books-new");
+    await h.answer("归档");
+    await until(async () => (await h.mock())?.["归档"]?.files, { 甲: "a" }, "only the moved page is in the new notebook");
   });
 
   ui("switching notebooks restores each one's tabs and active tab, also from the keyboard", { seed: TWO_BOOKS }, async (h) => {
@@ -1058,9 +1091,9 @@ describe("settings and dialogs", () => {
     }
     await p.keyboard.press("Enter");
     await until(h.bookName, "工作", "a plain Enter still confirms");
-    await until(h.tabs, ["新页面"]);
+    await until(h.tabs, ["欢迎"]);
 
-    await h.tab("新页面").dblclick();
+    await h.tab("欢迎").dblclick();
     await p.locator("#tabs .tab input").waitFor();
     await p.fill("#tabs .tab input", "计划");
     await composingEnter("#tabs .tab input", { isComposing: true });
@@ -1068,7 +1101,7 @@ describe("settings and dialogs", () => {
     assert.ok(await p.isVisible("#tabs .tab input"), "composing Enter leaves the tab rename open");
     await p.keyboard.press("Enter");
     await until(h.tabs, ["计划"], "a plain Enter renames the tab");
-    await until(async () => (await h.mock())?.["工作"]?.files, { 计划: "" });
+    await until(async () => Object.keys((await h.mock())?.["工作"]?.files ?? {}), ["计划"], "the renamed page is the only file");
   });
 });
 
