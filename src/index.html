@@ -662,11 +662,11 @@
             </div>
             <h3>同步</h3>
             <label class="row check"><input id="set-webdav-enabled" type="checkbox"> <span>开启 WebDAV 同步</span></label>
-            <label class="row"><span>常用网盘</span><select id="set-webdav-preset"><option value="custom">自定义</option><option value="jianguoyun">坚果云</option><option value="nextcloud">Nextcloud</option><option value="infinicloud">InfiniCLOUD</option></select></label>
+            <label class="row"><span>常用 WebDAV 服务</span><select id="set-webdav-preset"><option value="custom">自定义</option><option value="jianguoyun">坚果云</option><option value="nextcloud">Nextcloud</option><option value="infinicloud">InfiniCLOUD</option></select></label>
             <div class="row col"><span>服务器地址</span><input id="set-webdav-server" type="url" spellcheck="false" placeholder="https://dav.example.com/"></div>
             <label class="row"><span>用户名</span><input id="set-webdav-user" autocomplete="username" spellcheck="false"></label>
             <label class="row"><span>应用密码</span><input id="set-webdav-password" type="password" autocomplete="new-password" placeholder="留空则保持已保存的密码"></label>
-            <p class="muted">坚果云请使用第三方应用密码。密码单独保存在 Windows 凭据管理器，不写入设置或笔记。</p>
+            <p class="muted">选坚果云或 InfiniCLOUD 会自动填上服务器地址;选 Nextcloud 时地址要自己填,输入框里有格式提示;其他 WebDAV 服务选“自定义”。坚果云请使用第三方应用密码。密码单独保存在 Windows 凭据管理器，不写入设置或笔记。</p>
             <label class="row"><span>远程文件夹</span><input id="set-webdav-folder" spellcheck="false" value="/MinipadNext/"></label>
             <label class="row check"><input id="set-webdav-http" type="checkbox"><span>允许不加密 HTTP 连接（仅可信局域网；密码可能被截获）</span></label>
             <label class="row"><span>第一次同步</span><select id="set-webdav-first"><option value="merge">合并并保留冲突副本</option><option value="remote">以网盘为准（本地多余文件移入回收站）</option><option value="local">以本机为准（远端多余文件移入回收站）</option></select></label>
