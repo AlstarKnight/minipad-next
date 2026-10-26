@@ -379,7 +379,16 @@ struct EdgeState {
     peeking: bool,
     /// 隐藏时所在显示器的范围
     monitor: Rect,
+    /// 藏起来时的显示器和窗口沿边的位置,显示器断开又接回来后靠它贴回原处
+    home: Option<EdgeHome>,
     outside_ticks: u32,
+}
+
+/// 窗口藏起来时所在的显示器,和窗口沿着那条边离显示器起点多远(逻辑像素)
+struct EdgeHome {
+    rect: Rect,
+    name: String,
+    offset: f64,
 }
 
 #[derive(Default)]
@@ -2257,6 +2266,7 @@ fn restore_from_edge(app: &AppHandle, focus: bool) {
     {
         let mut e = st.edge.lock().unwrap();
         e.hidden = None;
+        e.home = None;
         e.peeking = false;
         e.outside_ticks = 0;
     }
@@ -2286,8 +2296,18 @@ fn scaled_strip(
     (f64::from(edge::strip_for(style, peeking, line_width, glow)) * scale).round() as i32
 }
 
-/// 显示器断开又接上、分辨率或缩放改变后,Windows 会把窗口挪到别处。
-/// 藏起来的窗口不在该在的位置时,贴回原来那条边;返回 true 表示这一轮已经处理过。
+fn screen_of(m: &Monitor) -> edge::Screen {
+    edge::Screen {
+        rect: monitor_rect(m),
+        scale: m.scale_factor(),
+        name: m.name().cloned().unwrap_or_default(),
+    }
+}
+
+/// 显示器断开又接上、分辨率或缩放改变后,Windows 会把窗口挪到别处(比如挪到笔记本屏上)。
+/// 藏起来的窗口不在该在的位置时,贴回原来那条边:原来的显示器回来了就回到它上面、
+/// 沿边的位置和藏起来时一样(按逻辑像素算);还没回来就先留在现在这块屏幕上。
+/// 返回 true 表示这一轮已经处理过。
 fn resnap_hidden(
     app: &AppHandle,
     win: &WebviewWindow,
@@ -2297,20 +2317,36 @@ fn resnap_hidden(
     peeking: bool,
 ) -> bool {
     let st = app.state::<AppState>();
-    let monitors: Vec<Rect> = win
+    let screens: Vec<edge::Screen> = win
         .available_monitors()
         .unwrap_or_default()
         .iter()
-        .map(monitor_rect)
+        .map(screen_of)
         .collect();
     // 显示器正在切换时可能一块都查不到,等下一轮
-    let target = if monitors.contains(&mon) {
-        mon
-    } else if let Some(m) = edge::nearest_monitor(rect, &monitors) {
-        m
-    } else {
+    let rects: Vec<Rect> = screens.iter().map(|s| s.rect).collect();
+    let home = st
+        .edge
+        .lock()
+        .unwrap()
+        .home
+        .as_ref()
+        .map(|h| (h.rect, h.name.clone(), h.offset));
+    let found = home
+        .as_ref()
+        .and_then(|(home_rect, name, _)| edge::find_home(*home_rect, name, &screens))
+        .or_else(|| screens.iter().position(|s| s.rect == mon))
+        .or_else(|| {
+            let near = edge::nearest_monitor(rect, &rects)?;
+            rects.iter().position(|r| *r == near)
+        });
+    let Some(target) = found.map(|i| &screens[i]) else {
         return false;
     };
+    // 没记下位置时保持窗口现在的位置
+    let offset = home
+        .map(|(_, _, offset)| offset)
+        .unwrap_or_else(|| edge::along_offset(edge, rect, target.rect, target.scale));
     // 先取出设置再问窗口缩放:后台线程查询窗口要等主线程,主线程上的命令又会锁设置
     let (style, line_width, glow) = {
         let settings = st.settings.lock().unwrap();
@@ -2321,12 +2357,12 @@ fn resnap_hidden(
         )
     };
     let strip = scaled_strip(win, &style, peeking, line_width, glow);
-    let (x, y) = edge::rehide_position(edge, rect, target, strip);
-    if target == mon && (rect.x - x).abs() <= 2 && (rect.y - y).abs() <= 2 {
+    let (x, y) = edge::rehide_position(edge, rect, target.rect, target.scale, strip, offset);
+    if target.rect == mon && (rect.x - x).abs() <= 2 && (rect.y - y).abs() <= 2 {
         return false;
     }
-    st.edge.lock().unwrap().monitor = target;
-    if edge::edge_is_free(edge, Rect::new(x, y, rect.w, rect.h), target, &monitors) {
+    st.edge.lock().unwrap().monitor = target.rect;
+    if edge::edge_is_free(edge, Rect::new(x, y, rect.w, rect.h), target.rect, &rects) {
         let _ = win.set_position(PhysicalPosition::new(x, y));
     } else {
         // 这条边外面现在接着另一块显示器,缩过去会露在那块屏幕上:放出来留在屏幕里
@@ -2432,14 +2468,14 @@ fn edge_tick(app: &AppHandle) {
         None
     } else {
         win.current_monitor().ok().flatten().and_then(|m| {
-            let mon = monitor_rect(&m);
+            let screen = screen_of(&m);
             let monitors: Vec<Rect> = win
                 .available_monitors()
                 .unwrap_or_default()
                 .iter()
                 .map(monitor_rect)
                 .collect();
-            edge::docked_edge(rect, mon, &monitors).map(|e| (e, mon))
+            edge::docked_edge(rect, screen.rect, &monitors).map(|e| (e, screen))
         })
     };
 
@@ -2451,13 +2487,18 @@ fn edge_tick(app: &AppHandle) {
                 e.outside_ticks = 0;
                 None
             }
-            Some((edge, mon)) => {
+            Some((edge, screen)) => {
                 e.outside_ticks += 1;
                 if e.outside_ticks >= 3 {
                     e.hidden = Some(edge);
-                    e.monitor = mon;
+                    e.monitor = screen.rect;
+                    e.home = Some(EdgeHome {
+                        rect: screen.rect,
+                        offset: edge::along_offset(edge, rect, screen.rect, screen.scale),
+                        name: screen.name,
+                    });
                     e.outside_ticks = 0;
-                    Some((edge, mon))
+                    Some((edge, screen.rect))
                 } else {
                     None
                 }

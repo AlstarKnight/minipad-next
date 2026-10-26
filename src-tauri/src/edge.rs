@@ -169,9 +169,43 @@ pub fn hidden_position_with_strip(edge: Edge, win: Rect, mon: Rect, strip: i32) 
     }
 }
 
+/// 一块显示器:物理范围、缩放比例和系统给它起的名字
+#[derive(Clone, Debug, PartialEq)]
+pub struct Screen {
+    pub rect: Rect,
+    pub scale: f64,
+    pub name: String,
+}
+
+/// 窗口沿着 `edge` 那条边的起点离显示器起点多远,换成逻辑像素,换了分辨率或缩放也能对上
+pub fn along_offset(edge: Edge, win: Rect, mon: Rect, scale: f64) -> f64 {
+    let (pos, origin) = match edge {
+        Edge::Top => (win.x, mon.x),
+        Edge::Left | Edge::Right => (win.y, mon.y),
+    };
+    f64::from(pos - origin) / scale
+}
+
+/// 找回藏起来时所在的那块显示器:范围完全一样的优先,其次是大小和名字都一样的,
+/// 再次是大小一样且只有一块的(重新接上后位置或名字可能变)。
+pub fn find_home(rect: Rect, name: &str, screens: &[Screen]) -> Option<usize> {
+    if let Some(i) = screens.iter().position(|s| s.rect == rect) {
+        return Some(i);
+    }
+    let same_size: Vec<usize> = (0..screens.len())
+        .filter(|&i| screens[i].rect.w == rect.w && screens[i].rect.h == rect.h)
+        .collect();
+    same_size
+        .iter()
+        .copied()
+        .find(|&i| screens[i].name == name)
+        .or_else(|| (same_size.len() == 1).then(|| same_size[0]))
+}
+
 /// 显示器变了(拔掉、重新接上、分辨率或缩放改变)以后,藏起来的窗口该在的位置:
-/// 还是贴着原来那条边,只有沿着边的方向跑出屏幕外时才拉回来。
-pub fn rehide_position(edge: Edge, win: Rect, mon: Rect, strip: i32) -> (i32, i32) {
+/// 还是贴着原来那条边;沿着边的起点是 `offset`(逻辑像素,离原显示器起点的距离)
+/// 按这块屏幕的缩放换算出来的,只有窗口中心跑出屏幕外时才拉回来。
+pub fn rehide_position(edge: Edge, win: Rect, mon: Rect, scale: f64, strip: i32, offset: f64) -> (i32, i32) {
     let (x, y) = hidden_position_with_strip(edge, win, mon, strip);
     let pull_back = |pos: i32, len: i32, start: i32, span: i32| {
         if pos + len / 2 >= start && pos + len / 2 < start + span {
@@ -182,9 +216,10 @@ pub fn rehide_position(edge: Edge, win: Rect, mon: Rect, strip: i32) -> (i32, i3
             pos.clamp(start, start + span - len)
         }
     };
+    let shift = (offset * scale).round() as i32;
     match edge {
-        Edge::Top => (pull_back(x, win.w, mon.x, mon.w), y),
-        Edge::Left | Edge::Right => (x, pull_back(y, win.h, mon.y, mon.h)),
+        Edge::Top => (pull_back(mon.x + shift, win.w, mon.x, mon.w), y),
+        Edge::Left | Edge::Right => (x, pull_back(mon.y + shift, win.h, mon.y, mon.h)),
     }
 }
 
@@ -523,22 +558,91 @@ mod tests {
         let win = Rect::new(300, 100, 400, 500);
         // 位置本来就对:不动
         assert_eq!(
-            rehide_position(Edge::Right, win, SCREEN, 2),
+            rehide_position(Edge::Right, win, SCREEN, 1.0, 2, 100.0),
             hidden_position_with_strip(Edge::Right, win, SCREEN, 2)
         );
         // 分辨率变小后窗口跑到屏幕下面:拉回来,仍然贴右边
         let small = Rect::new(0, 0, 1280, 720);
         let lost = Rect::new(900, 1000, 400, 500);
-        assert_eq!(rehide_position(Edge::Right, lost, small, 2), (1278, 220));
+        assert_eq!(
+            rehide_position(Edge::Right, lost, small, 1.0, 2, 1000.0),
+            (1278, 220)
+        );
         // 窗口比屏幕还高:顶着上沿
         let tall = Rect::new(900, 1000, 400, 900);
-        assert_eq!(rehide_position(Edge::Left, tall, small, 2), (-398, 0));
+        assert_eq!(
+            rehide_position(Edge::Left, tall, small, 1.0, 2, 1000.0),
+            (-398, 0)
+        );
         // 贴上边时横向半个窗口还在屏幕内:保持原来的横向位置
         let overhang = Rect::new(-100, -498, 400, 500);
-        assert_eq!(rehide_position(Edge::Top, overhang, SCREEN, 2), (-100, -498));
+        assert_eq!(
+            rehide_position(Edge::Top, overhang, SCREEN, 1.0, 2, -100.0),
+            (-100, -498)
+        );
         // 横向完全跑到屏幕外:拉回来
         let gone = Rect::new(2500, -498, 400, 500);
-        assert_eq!(rehide_position(Edge::Top, gone, SCREEN, 2), (1520, -498));
+        assert_eq!(
+            rehide_position(Edge::Top, gone, SCREEN, 1.0, 2, 2500.0),
+            (1520, -498)
+        );
+    }
+
+    #[test]
+    fn position_along_the_edge_follows_the_original_monitor_in_logical_units() {
+        // 4K 外接屏(缩放 2.0,逻辑 1920x1080)在右,2K 笔记本屏(缩放 1.5)在左
+        let laptop = Rect::new(0, 0, 2560, 1440);
+        let external = Rect::new(2560, 0, 3840, 2160);
+        // 窗口藏在外接屏右边,沿边起点在屏幕上方 600 物理像素处 = 逻辑 300
+        let win = Rect::new(2560 + 3840 - 2, 600, 800, 1000);
+        let offset = along_offset(Edge::Right, win, external, 2.0);
+        assert_eq!(offset, 300.0);
+        // 外接屏关掉后窗口停在笔记本屏右边,同样的逻辑偏移
+        let parked = Rect::new(2558, 0, 600, 750);
+        assert_eq!(
+            rehide_position(Edge::Right, parked, laptop, 1.5, 2, offset),
+            (2558, 450)
+        );
+        // 外接屏回来后回到原来的物理位置
+        let moved = Rect::new(2558, 450, 800, 1000);
+        assert_eq!(
+            rehide_position(Edge::Right, moved, external, 2.0, 4, offset),
+            (2560 + 3840 - 4, 600)
+        );
+        // 上边:横向偏移同样按逻辑像素
+        let top = Rect::new(2560 + 400, -998, 800, 1000);
+        let offset = along_offset(Edge::Top, top, external, 2.0);
+        assert_eq!(offset, 200.0);
+        assert_eq!(
+            rehide_position(Edge::Top, Rect::new(0, -748, 600, 750), laptop, 1.5, 3, offset),
+            (300, -747)
+        );
+    }
+
+    #[test]
+    fn find_home_matches_range_then_size_and_name() {
+        let screen = |x, y, w, h, name: &str| Screen {
+            rect: Rect::new(x, y, w, h),
+            scale: 1.0,
+            name: name.into(),
+        };
+        let laptop = screen(0, 0, 2560, 1440, "DISPLAY1");
+        let external = screen(2560, 0, 3840, 2160, "DISPLAY2");
+        let both = [laptop.clone(), external.clone()];
+        // 范围完全一样
+        assert_eq!(find_home(external.rect, "DISPLAY2", &both), Some(1));
+        // 接回来后位置变了,只有一块一样大
+        let moved = [laptop.clone(), screen(-3840, 0, 3840, 2160, "DISPLAY3")];
+        assert_eq!(find_home(external.rect, "DISPLAY2", &moved), Some(1));
+        // 外接屏没回来
+        assert_eq!(find_home(external.rect, "DISPLAY2", &[laptop.clone()]), None);
+        // 两块一样大:认名字
+        let twins = [
+            screen(0, 0, 1920, 1080, "A"),
+            screen(1920, 0, 1920, 1080, "B"),
+        ];
+        assert_eq!(find_home(Rect::new(5000, 0, 1920, 1080), "B", &twins), Some(1));
+        assert_eq!(find_home(Rect::new(5000, 0, 1920, 1080), "C", &twins), None);
     }
 
     #[test]
