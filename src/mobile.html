@@ -28,6 +28,7 @@
 
   <div class="context-strip">
     <span id="status" role="status" aria-live="polite">初始化中…</span>
+    <span id="sync-badge" role="img" hidden></span>
     <span class="strip-spacer"></span>
     <span id="mode-caption">Markdown · 本地保存</span>
   </div>
@@ -98,7 +99,7 @@
       <select id="book" aria-label="选择笔记本" class="test-select"></select>
     </section>
     <section class="drawer-section page-section">
-      <div class="section-heading"><h3 id="pages-heading">页面</h3><button id="add-note" type="button" aria-label="新建页面">＋ 新建</button></div>
+      <div class="section-heading"><h3 id="pages-heading">页面</h3><div class="heading-actions"><button id="delete-note" type="button" aria-label="删除当前页面" disabled>删除</button><button id="add-note" type="button" aria-label="新建页面">＋ 新建</button></div></div>
       <label class="search-wrap">
         <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10" cy="10" r="6"/><path d="m15 15 5 5"/></svg>
         <input id="note-filter" placeholder="搜索当前笔记本的页面" aria-label="筛选页面" autocomplete="off">

@@ -70,6 +70,9 @@ html[data-mobile] #status {
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 html[data-mobile] .strip-spacer { flex: 1; }
+html[data-mobile] #sync-badge { white-space: nowrap; font-size: 13px; font-weight: 700; }
+html[data-mobile] #sync-badge[data-state="syncing"] { opacity: .65; }
+html[data-mobile] .heading-actions { display: flex; gap: 6px; }
 html[data-mobile] #mode-caption { white-space: nowrap; }
 html[data-mobile] #page {
   display: block; flex: 1; width: 100%; min-height: 0; margin: 0; border: 0; padding: 8px 20px 30px;

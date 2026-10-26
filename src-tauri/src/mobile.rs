@@ -45,6 +45,13 @@ fn mobile_create_note(app: AppHandle, book: String, name: String) -> Result<Stri
     notes::create_note(&dir, &name)
 }
 
+/// Deleting a page moves it into the notes folder's .trash, the same as on the desktop; the next
+/// WebDAV sync then moves the cloud copy into the cloud's .trash.
+#[tauri::command]
+fn mobile_delete_note(app: AppHandle, book: String, name: String) -> Result<(), String> {
+    notes::move_to_trash(&root(&app)?, &book, &name)
+}
+
 #[derive(Serialize)]
 struct SaveResult {
     conflict_name: Option<String>,
@@ -425,6 +432,7 @@ pub fn run() {
             mobile_read_note,
             mobile_create_book,
             mobile_create_note,
+            mobile_delete_note,
             mobile_save_note,
             mobile_save_image,
             mobile_open_url,

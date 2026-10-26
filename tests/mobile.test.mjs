@@ -99,6 +99,11 @@ async function open({ colorScheme, keyboard, look = { ui: "classic" } } = {}) {
           book.notes.push({ name: args.name, content: "", unreadable: false });
           return args.name;
         }
+        if (command === "mobile_delete_note") {
+          book.notes.splice(book.notes.findIndex((n) => n.name === args.name), 1);
+          (window.__mobileTest.deleted ||= []).push(args.name);
+          return null;
+        }
         if (command === "mobile_save_image") {
           images["assets/test.png"] = { mime: args.mime, data: args.data };
           return "assets/test.png";
@@ -1098,6 +1103,80 @@ test("Android local path option stays optional and changing appearance keeps edi
     await page.keyboard.press("End");
     await page.keyboard.type("继续编辑");
     await page.waitForFunction(() => window.__mobileTest.disk[0].notes[0].content.includes("继续编辑"));
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test("a literal \\<a href> typed as text stays in the rich editor, an unescaped one still uses the source", async () => {
+  const { context, page, errors } = await open();
+  try {
+    const escaped = "\\<a href =\"某网页的链接地址\">你想要显示的文字\\</a>\n\n使用地址:https\\://dx.jihuo.plus";
+    await page.evaluate((content) => window.__mobileTest.disk[0].notes.push(
+      { name: "转义", content, unreadable: false },
+      { name: "标签", content: "\\\\<b>真的标签", unreadable: false },
+    ), escaped);
+    await page.click("#refresh");
+    await chooseNote(page, "转义");
+    await page.locator("#editor .ProseMirror").waitFor({ state: "visible" });
+    assert.equal(await page.locator("#source").isHidden(), true, "escaped < is text, not HTML");
+    await chooseNote(page, "标签");
+    await page.locator("#source").waitFor({ state: "visible" });
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test("a page can be deleted from the list: it asks first, moves to the next page and never touches other pages", async () => {
+  const { context, page, errors } = await open();
+  try {
+    const deleteButton = async () => {
+      if (await page.locator("#mobile-drawer").isHidden()) await page.click("#open-drawer");
+      await page.click("#delete-note");
+    };
+    await chooseNote(page, "一");
+    await deleteButton();
+    await page.locator("#dialog").waitFor({ state: "visible" });
+    assert.match(await page.locator("#dialog-msg").textContent(), /删除页面「一」/);
+    await page.click("#dialog-cancel");
+    assert.equal(await page.evaluate(() => window.__mobileTest.deleted || null), null, "cancel deletes nothing");
+    await deleteButton();
+    await page.click("#dialog-ok");
+    await page.waitForFunction(() => document.getElementById("page-title").textContent === "二");
+    assert.deepEqual(await page.evaluate(() => window.__mobileTest.deleted), ["一"]);
+    assert.equal(await page.evaluate(() => window.__mobileTest.disk[0].notes.map((n) => n.name).join()), "二");
+    await deleteButton();
+    await page.click("#dialog-ok");
+    await page.waitForFunction(() => document.getElementById("page-title").textContent === "空笔记本");
+    assert.equal(await page.locator("#delete-note").isDisabled(), true, "nothing left to delete");
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test("the sync state shows in the strip under the title and follows the display setting", async () => {
+  const { context, page, errors } = await open();
+  try {
+    assert.equal(await page.locator("#sync-badge").isHidden(), true, "hidden while sync is off");
+    await page.click("#open-drawer");
+    await page.click("#open-sync-settings");
+    await page.locator("#ms-enable").check();
+    await page.fill("#ms-server", "https://dav.example.com/");
+    await page.fill("#ms-user", "tester");
+    await page.selectOption("#ms-display", "icon");
+    await page.click("#ms-save-config");
+    await page.click("#close-sync-settings");
+    await page.locator("#sync-badge").waitFor({ state: "visible" });
+    assert.equal((await page.locator("#sync-badge").textContent()).trim(), "✓");
+    await page.evaluate(() => { window.__mobileTest.syncDelay = 400; });
+    await page.click("#refresh");
+    await page.waitForFunction(() => document.getElementById("sync-badge").dataset.state === "syncing");
+    await page.waitForFunction(() => document.getElementById("sync-badge").dataset.state === "synced");
+    await page.click("#open-drawer");
+    await page.click("#open-sync-settings");
+    await page.selectOption("#ms-display", "text");
+    await page.click("#ms-save-config");
+    assert.equal((await page.locator("#sync-badge").textContent()).trim(), "✓ 已同步");
+    await page.selectOption("#ms-display", "none");
+    await page.click("#ms-save-config");
+    assert.equal(await page.locator("#sync-badge").isHidden(), true);
     assert.deepEqual(errors, []);
   } finally { await context.close(); }
 });

@@ -43,7 +43,10 @@ const allowedImage = { "image/jpeg": true, "image/png": true, "image/gif": true,
 const CODE = /^(`{3,}|~{3,})[^\n]*(?:\n[\s\S]*?^\1[^\n]*$|[\s\S]*)|`[^`\n]+`/gm;
 // <https://example.com> and <me@example.com> are Markdown autolinks, not HTML.
 const AUTOLINK = /<(?:[A-Za-z][A-Za-z0-9+.-]{1,31}:[^\s<>]*|[^\s<>@]+@[^\s<>]+)>/g;
-const needsSource = (md) => /<(?!\/?span\b)[A-Za-z][^>]*>/i.test(md.replace(CODE, "").replace(AUTOLINK, ""));
+// A backslash-escaped \< (what the editor writes for a literal <) is text too; an even run of
+// backslashes before < escapes only itself, so that < still starts a tag.
+const ESCAPED_LT = /(?<!\\)((?:\\\\)*)\\</g;
+const needsSource = (md) => /<(?!\/?span\b)[A-Za-z][^>]*>/i.test(md.replace(CODE, "").replace(AUTOLINK, "").replace(ESCAPED_LT, "$1"));
 
 // A failed save keeps the note dirty; flush() retries a few times, from whichever path called it,
 // so a brief storage error heals itself.
@@ -281,6 +284,7 @@ function render() {
   toolbar.inert = switching;
   el("add-note").disabled = !book || switching;
   fab.disabled = el("add-note").disabled;
+  el("delete-note").disabled = !selected || switching;
   el("insert-image").disabled = !canEdit || raw;
   el("find-open").disabled = !selected || raw;
   el("block-actions").disabled = !canEdit || raw;
@@ -597,6 +601,22 @@ el("add-note").addEventListener("click", async () => {
   } catch (error) { notify("新建页面失败：" + error); }
 });
 
+el("delete-note").addEventListener("click", async () => {
+  if (!selected || switching || busy) return;
+  const { book, name } = selected;
+  if (!(await ask("删除页面「" + name + "」？它会移到回收站（笔记文件夹的 .trash），同步开着时网盘上的那份也会移进网盘的 .trash。", "删除", true))) return;
+  try {
+    await flush();
+    const pages = books.find((b) => b.name === book)?.notes || [];
+    const at = pages.findIndex((n) => n.name === name);
+    const next = pages[at + 1] ?? pages[at - 1];
+    await invoke("mobile_delete_note", { book, name });
+    await refresh(book, next?.name ?? null);
+    notify("已删除页面「" + name + "」");
+    scheduleMobileSync();
+  } catch (error) { notify("删除失败：" + error); }
+});
+
 async function toggleMode() {
   if (!reading) {
     try { await flush(); } catch { return; }
@@ -711,13 +731,33 @@ async function saveSyncForm() {
   await showSyncStatus();
   el("ms-result").textContent = "同步设置已保存";
 }
+const SYNC_LABELS = { synced: "已同步", syncing: "同步中", conflict: "有冲突", offline: "离线", error: "出错", confirm: "需要确认", off: "未同步" };
+const SYNC_SYMBOLS = { synced: "✓", syncing: "⟳", conflict: "!", offline: "○", error: "!", confirm: "?", off: "○" };
+// The small mark in the strip under the title, so the sync state is visible without opening the
+// list; it follows 同步设置 → 显示方式 and the status colour like the sheet's own state line.
+function showSyncBadge(kind) {
+  const badge = el("sync-badge");
+  badge.hidden = !syncSettings.enabled || syncSettings.display === "none";
+  if (badge.hidden) return;
+  const k = SYNC_LABELS[kind] ? kind : "off";
+  badge.textContent = SYNC_SYMBOLS[k] + (syncSettings.display === "text" ? " " + SYNC_LABELS[k] : "");
+  badge.title = "同步：" + SYNC_LABELS[k];
+  badge.dataset.state = k;
+  const color = parseAccent(syncSettings.status_color);
+  badge.style.color = color?.from || "var(--accent)";
+  badge.style.backgroundImage = color?.to ? syncSettings.status_color : "";
+  badge.style.backgroundClip = color?.to ? "text" : "";
+  badge.style.webkitBackgroundClip = color?.to ? "text" : "";
+  badge.style.webkitTextFillColor = color?.to ? "transparent" : "";
+}
 async function showSyncStatus() {
   if (!invoke) return;
   try {
     const result = await invoke("mobile_webdav_status");
-    const labels = { synced: "已同步", syncing: "同步中", conflict: "有冲突", offline: "离线", error: "出错", confirm: "需要确认", off: "未同步" };
-    const symbols = { synced: "✓", syncing: "⟳", conflict: "!", offline: "○", error: "!", confirm: "?", off: "○" };
+    const labels = SYNC_LABELS;
+    const symbols = SYNC_SYMBOLS;
     const kind = result.state || "off";
+    showSyncBadge(kind);
     const icon = symbols[kind] || "○";
     el("mobile-sync-state").textContent = syncSettings.enabled
       ? icon + (syncSettings.display === "text" ? " " + (labels[kind] || "未同步") : "")
@@ -738,6 +778,7 @@ async function showSyncStatus() {
 async function performMobileSync(confirmed) {
   try {
     await flush();
+    showSyncBadge("syncing");
     const result = await invoke("mobile_webdav_sync_now", { config: syncSettings, confirmDeletes: confirmed });
     if (result?.rescan_needed) scheduleMobileSync(true);
     await showSyncStatus();
@@ -1151,6 +1192,7 @@ async function start() {
         await showSyncStatus();
       });
     }
+    if (syncSettings.enabled) void showSyncStatus();
     if (syncSettings.enabled && syncSettings.on_start) void mobileSync();
   } catch (error) {
     notify("编辑器初始化失败：" + error);
