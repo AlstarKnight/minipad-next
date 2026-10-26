@@ -411,7 +411,7 @@ html[data-mobile] .sync-actions button {
 html[data-mobile] #ms-history { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 140px; overflow-y: auto; font-size: 12px; color: var(--subtle); }
 html[data-mobile] #mobile-sync-message { margin: 4px 0 0; overflow-wrap: anywhere; }
 
-/* 0.4.6 应用内对话框(代替系统的 prompt / confirm):盖住可见区域,键盘弹出时整个在键盘上面;
+/* 0.4.5 应用内对话框(代替系统的 prompt / confirm):盖住可见区域,键盘弹出时整个在键盘上面;
    颜色、圆角和电脑版一样跟着界面风格(desktop-editor.css 的 .panel、.actions),这里只放大到手指好点的尺寸 */
 html[data-mobile] #dialog { z-index: 55; top: var(--app-top, 0px); bottom: auto; height: var(--app-height, 100dvh); padding: 16px; }
 html[data-mobile] .dialog { max-width: 360px; padding: 20px 20px 16px; border-radius: var(--r-lg); }
