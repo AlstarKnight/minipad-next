@@ -6982,7 +6982,7 @@ suite("0.4.5: local file paths", { concurrency: 1 }, () => {
 
 });
 
-describe("0.4.7: many pages", () => {
+describe("0.4.5: many pages", () => {
   const PAGES = ["甲", "乙", "丙", "丁", "戊"];
   const many = (settings = {}, meta = null) => {
     const db = seed({ "": Object.fromEntries(PAGES.map((n) => [n, `${n}的内容`])), 工作: { 周报: "本周" } });

@@ -3693,7 +3693,7 @@ mod tests {
             options(&s),
             ["ctrl", "brackets", "ask", "faint", "hover", "", ""]
         );
-        // 0.4.7 的设置文件里没有这几项,读出来是默认值
+        // 0.4.5 的设置文件里没有这几项,读出来是默认值
         let old: Settings = serde_json::from_str(r#"{"hotkey":"Ctrl+M"}"#).unwrap();
         assert!(old.page_links && old.pinyin_match);
         assert_eq!(old.page_link_rename, "ask");

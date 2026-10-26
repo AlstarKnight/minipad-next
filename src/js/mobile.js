@@ -1005,7 +1005,7 @@ el("close-settings").addEventListener("click", () => showSettings(false));
 settingsBackdrop.addEventListener("click", () => showSettings(false));
 applyLook();
 
-// ---- 返回键(0.4.6):按一次关掉最上面开着的一层,顺序是 对话框 → 菜单和弹窗 → 查找栏 → 同步设置 → 外观设置 → 抽屉。
+// ---- 返回键(0.4.5):按一次关掉最上面开着的一层,顺序是 对话框 → 菜单和弹窗 → 查找栏 → 同步设置 → 外观设置 → 抽屉。
 // 只在有东西开着时才接管返回键(Tauri 的 onBackButtonPress),全关了就交还,返回键照常让应用退到后台。
 const syncSheet = el("mobile-webdav-settings");
 const openMenus = () => [...document.querySelectorAll(".menu:not([hidden])")];
