@@ -31,8 +31,10 @@ async function chooseNote(page, name) {
 }
 
 // look: the saved appearance (0.4.4). Older tests were written for the original look, so they get "classic".
-async function open({ colorScheme, keyboard, look = { ui: "classic" } } = {}) {
+// sharedColors: the color library file already in the notes folder (synced from the desktop).
+async function open({ colorScheme, keyboard, look = { ui: "classic" }, sharedColors = null } = {}) {
   const context = await browser.newContext({ viewport: { width: 390, height: 740 }, colorScheme });
+  if (sharedColors) await context.addInitScript((c) => { window.__sharedColors = c; }, sharedColors);
   if (look) await context.addInitScript((v) => { if (!localStorage.getItem("minipad-mobile-look")) localStorage.setItem("minipad-mobile-look", v); }, JSON.stringify(look));
   if (keyboard) {
     // Android WebViews can shrink only the visual viewport when the soft keyboard opens.
@@ -55,6 +57,7 @@ async function open({ colorScheme, keyboard, look = { ui: "classic" } } = {}) {
     // Android 返回键(Tauri 的 onBackButtonPress):登记了才由页面处理,back() 模拟按一次
     const backHandlers = [];
     window.__mobileTest = { disk, writes, images, calls, failSaves: 0, readDelay: 0, conflictNext: false,
+      colors: window.__sharedColors ?? null, colorWrites: [],
       emit: (name, payload) => listeners[name]?.({ payload }),
       backListeners: () => backHandlers.length,
       back: () => { for (const handler of [...backHandlers]) handler({ canGoBack: false }); } };
@@ -118,6 +121,13 @@ async function open({ colorScheme, keyboard, look = { ui: "classic" } } = {}) {
         }
         if (command === "mobile_link_pages") {
           return disk.flatMap((b) => b.notes.filter((n) => n.content.includes("[[")).map((n) => [b.name, n.name]));
+        }
+        if (command === "mobile_read_colors") return window.__mobileTest.colors;
+        if (command === "mobile_write_colors") {
+          const changed = JSON.stringify(window.__mobileTest.colors) !== JSON.stringify(args.colors);
+          window.__mobileTest.colors = args.colors;
+          window.__mobileTest.colorWrites.push(args.colors);
+          return changed;
         }
         if (command === "mobile_delete_note") {
           book.notes.splice(book.notes.findIndex((n) => n.name === args.name), 1);
@@ -1047,6 +1057,8 @@ test("Android sync status color uses the shared solid, gradient and material lib
     await page.waitForFunction(() => JSON.parse(localStorage.getItem("minipad-mobile-webdav")).status_color === "");
     await page.reload();
     await page.locator("#editor .ProseMirror").waitFor();
+    // 笔记文件夹里还没有颜色库：手机改过的颜色库写进去，同步给电脑
+    await page.waitForFunction(() => window.__mobileTest.colors?.color_library?.includes("#123456"));
     await page.click("#open-drawer");
     await page.click("#open-sync-settings");
     await tool.locator('.uc-kind[data-kind="solid"]').click();
@@ -1056,6 +1068,37 @@ test("Android sync status color uses the shared solid, gradient and material lib
     await tool.locator(".uc-reset").click();
     await answerDialog(page);
     await page.waitForFunction(() => !JSON.parse(localStorage.getItem("minipad-mobile-colors")).color_library.includes("#123456"));
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test("the color library comes from the notes folder, so the phone and the desktop share it", async () => {
+  const desktop = { color_library: ["#abcdef", "#222222"], material_library: null, quick_colors: ["#abcdef"], color_library_rev: 1 };
+  const { context, page, errors } = await open({ sharedColors: desktop });
+  try {
+    await page.waitForFunction(() => JSON.parse(localStorage.getItem("minipad-mobile-colors") || "{}").color_library?.[0] === "#abcdef");
+    await page.click("#open-drawer");
+    await page.click("#open-sync-settings");
+    const tool = page.locator("#mobile-webdav-settings .shared-colors");
+    await tool.locator('.uc-kind[data-kind="solid"]').click();
+    await tool.locator(".uc-more").click();
+    const shown = () => tool.locator(".uc-swatch").evaluateAll((nodes) => [...new Set(nodes.map((n) => n.dataset.color))].sort());
+    assert.deepEqual(await shown(), ["#222222", "#abcdef"]);
+    // 电脑上加的颜色同步下来，打开着的颜色库马上换上
+    await page.evaluate(() => {
+      window.__mobileTest.colors = { ...window.__mobileTest.colors, color_library: ["#abcdef", "#222222", "#fedcba"] };
+      return window.__mobileTest.emit("webdav-changed", [".minipad-colors.json"]);
+    });
+    await tool.locator('.uc-swatch[data-color="#fedcba"]').waitFor();
+    // 手机上改的写回笔记文件夹
+    await tool.locator(".uc-actions button", { hasText: "自定义" }).click();
+    await tool.locator(".uc-editor select").selectOption("solid");
+    await tool.locator('.uc-stop input[type="color"]').fill("#123456");
+    await tool.locator(".uc-actions button", { hasText: /^保存$/ }).click();
+    await page.waitForFunction(() => window.__mobileTest.colors.color_library.includes("#123456"));
+    const saved = await page.evaluate(() => window.__mobileTest.colors);
+    assert.deepEqual(saved.color_library.filter((c) => c !== "#123456"), ["#abcdef", "#222222", "#fedcba"]);
+    assert.equal(saved.color_library_rev, 1);
     assert.deepEqual(errors, []);
   } finally { await context.close(); }
 });

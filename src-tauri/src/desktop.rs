@@ -1681,6 +1681,63 @@ fn append_rollback_error(original: String, rollback: Vec<String>) -> String {
     }
 }
 
+fn shared_colors_of(s: &Settings) -> notes::SharedColors {
+    notes::SharedColors {
+        color_library: s.color_library.clone(),
+        material_library: s.material_library.clone(),
+        quick_colors: s.quick_colors.clone(),
+        color_library_rev: s.color_library_rev,
+    }
+}
+
+fn use_shared_colors(s: &mut Settings, shared: notes::SharedColors) {
+    s.color_library = shared.color_library;
+    s.material_library = shared.material_library;
+    s.quick_colors = shared.quick_colors;
+    s.color_library_rev = shared.color_library_rev;
+    tidy_settings(s);
+}
+
+/// 改过的颜色库写进笔记文件夹，跟着 WebDAV 同步到手机和别的电脑
+fn write_shared_colors(root: &Path, s: &Settings) {
+    let colors = shared_colors_of(s);
+    if !colors.customized() {
+        return;
+    }
+    let Ok(_lock) = crate::syncer::WRITE_LOCK.lock() else {
+        return;
+    };
+    if let Err(e) = notes::write_colors(root, &colors) {
+        eprintln!("颜色库没能存进笔记文件夹:{e}");
+    }
+}
+
+/// 颜色库放在笔记文件夹的 .minipad-colors.json 里，手机和电脑共用一份：
+/// 文件在就换成文件里的，并告诉各个窗口；不在就把这台电脑改过的颜色库写进去。
+fn adopt_shared_colors(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    let current = state.settings.lock().unwrap().clone();
+    let root = notes_dir(app, &current);
+    let Some(shared) = notes::read_colors(&root) else {
+        write_shared_colors(&root, &current);
+        return;
+    };
+    if shared == shared_colors_of(&current) {
+        return;
+    }
+    let new = {
+        let mut s = state.settings.lock().unwrap();
+        use_shared_colors(&mut s, shared);
+        s.clone()
+    };
+    persist_settings(app);
+    for label in
+        std::iter::once("main".to_string()).chain(open_minis(app).into_iter().map(|m| m.label))
+    {
+        let _ = app.emit_to(label.as_str(), "settings-changed", &new);
+    }
+}
+
 #[tauri::command]
 fn save_settings(
     app: AppHandle,
@@ -1788,8 +1845,17 @@ fn save_settings(
     {
         state.backup_day.lock().unwrap().clear();
     }
+    // 换到的笔记文件夹里已经有颜色库(比如同步过来的):用那一份
+    if new_notes != old_notes {
+        if let Some(shared) = notes::read_colors(&new_notes) {
+            use_shared_colors(&mut new, shared);
+        }
+    }
     *state.settings.lock().unwrap() = new.clone();
     persist_settings(&app);
+    if new_notes != old_notes || shared_colors_of(&new) != shared_colors_of(&old) {
+        write_shared_colors(&new_notes, &new);
+    }
     // 别的窗口(主窗口和小窗)换上新设置
     for label in
         std::iter::once("main".to_string()).chain(open_minis(&app).into_iter().map(|m| m.label))
@@ -2181,6 +2247,9 @@ async fn webdav_sync_now(
                 report.uploaded, report.downloaded, report.conflicts, report.deleted,
             );
             crate::syncer::update_status(mode, &message);
+            if report.changed.iter().any(|p| p == notes::COLORS_FILE) {
+                adopt_shared_colors(&app);
+            }
             if !report.changed.is_empty() {
                 let _ = app.emit("webdav-changed", &report.changed);
             }
@@ -3428,6 +3497,8 @@ pub fn run() {
                     eprintln!("快速记录的热键注册失败: {e}");
                 }
             }
+
+            adopt_shared_colors(&handle);
 
             let win = main_window(&handle).expect("main window");
             let _ = win.set_always_on_top(settings.always_on_top);

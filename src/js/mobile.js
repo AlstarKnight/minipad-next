@@ -6,7 +6,7 @@ import { state as desktopState } from "./state.js";
 import { setSelectionBar, setFormatBarItems } from "./formatbar.js";
 import { setLinkPrompt, setTaskCommand } from "./toolbar.js";
 import { ACCENTS, applyAccent, tidyAccent, parseAccent } from "./accent.js";
-import { makeSharedColorTools, setColorLibrarySaver } from "./sharedcolors.js";
+import { makeSharedColorTools, setColorLibrarySaver, refreshSharedColors } from "./sharedcolors.js";
 import { ask, askText, closeDialog, dialogOpen, openMenu } from "./ui.js";
 import { setPageLinkHost, pageNamesChanged, applyPageLinkSettings, linkIndex } from "./pagelinkview.js";
 import { resolveTarget, retarget } from "./pagelinks.js";
@@ -990,21 +990,51 @@ document.addEventListener("visibilitychange", () => {
   if (document.hidden) void flush().catch(() => {});
 });
 
-// 颜色库（纯色、渐变、材质和快捷色）和电脑版是同一套界面，只存在这台手机上。
+// 颜色库（纯色、渐变、材质和快捷色）和电脑版是同一套界面。存在笔记文件夹的 .minipad-colors.json 里，
+// 通过 WebDAV 和电脑共用一份；手机上另存一份，读不到那个文件时用。
 const COLOR_KEY = "minipad-mobile-colors";
+const COLORS_FILE = ".minipad-colors.json";
 const COLOR_FIELDS = ["color_library", "material_library", "quick_colors", "color_library_rev"];
+const colorsOf = (source) => ({
+  ...Object.fromEntries(COLOR_FIELDS.map((key) => [key, source?.[key] ?? null])),
+  color_library_rev: Number(source?.color_library_rev) || 0,
+});
 function loadColors() {
   try {
     const saved = JSON.parse(localStorage.getItem(COLOR_KEY) || "{}") || {};
     return Object.fromEntries(COLOR_FIELDS.filter((key) => key in saved).map((key) => [key, saved[key]]));
   } catch { return {}; }
 }
+function keepColors(colors) {
+  try { localStorage.setItem(COLOR_KEY, JSON.stringify(colors)); } catch { /* 存不了就只在这次运行里用 */ }
+  desktopState.settings = { ...desktopState.settings, ...colors };
+}
+async function writeSharedColors(colors) {
+  try {
+    if (await invoke("mobile_write_colors", { colors })) scheduleMobileSync();
+  } catch (error) {
+    notify("颜色库没能存进笔记文件夹：" + error);
+  }
+}
 desktopState.settings = loadColors();
 setColorLibrarySaver(async (next) => {
-  const colors = Object.fromEntries(COLOR_FIELDS.map((key) => [key, next[key]]));
-  localStorage.setItem(COLOR_KEY, JSON.stringify(colors));
-  desktopState.settings = { ...desktopState.settings, ...colors };
+  const colors = colorsOf(next);
+  keepColors(colors);
+  await writeSharedColors(colors);
 });
+// 笔记文件夹里有颜色库（电脑上改的、同步下来的）就换上；没有而这台手机改过颜色库，就把自己的写进去。
+async function adoptSharedColors() {
+  let shared;
+  try { shared = await invoke("mobile_read_colors"); } catch { return; }
+  const mine = colorsOf(desktopState.settings);
+  if (!shared) {
+    if (["color_library", "material_library", "quick_colors"].some((key) => Array.isArray(mine[key]))) await writeSharedColors(mine);
+    return;
+  }
+  if (JSON.stringify(colorsOf(shared)) === JSON.stringify(mine)) return;
+  keepColors(colorsOf(shared));
+  refreshSharedColors();
+}
 
 // WebDAV 同步配置只存手机外观以外的本地设置，密码由 Rust 私有存储保管。
 const SYNC_KEY = "minipad-mobile-webdav";
@@ -1563,9 +1593,11 @@ async function start() {
     view.dom.addEventListener("open-find", () => showFind(true));
     if (!invoke) throw new Error("请使用 Android 应用打开");
     await refresh(null, null);
+    await adoptSharedColors();
     updateSyncTimers();
     if (window.__TAURI__?.event?.listen) {
-      await window.__TAURI__.event.listen("webdav-changed", async () => {
+      await window.__TAURI__.event.listen("webdav-changed", async (event) => {
+        if (event?.payload?.includes?.(COLORS_FILE)) await adoptSharedColors();
         if (!dirty && !saving && !switching) {
           await refresh();
         } else {

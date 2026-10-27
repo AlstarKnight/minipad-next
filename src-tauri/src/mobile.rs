@@ -94,6 +94,21 @@ fn mobile_set_page_order(app: AppHandle, book: String, order: Vec<String>) -> Re
     notes::set_page_order(&root(&app)?, &book, order)
 }
 
+/// The color library shared with the desktop through the notes folder (and so through WebDAV).
+#[tauri::command]
+fn mobile_read_colors(app: AppHandle) -> Result<Option<notes::SharedColors>, String> {
+    Ok(notes::read_colors(&root(&app)?))
+}
+
+/// Returns true when the file changed, so the caller knows a sync is worth scheduling.
+#[tauri::command]
+fn mobile_write_colors(app: AppHandle, colors: notes::SharedColors) -> Result<bool, String> {
+    let _write = crate::syncer::WRITE_LOCK
+        .lock()
+        .map_err(|e| e.to_string())?;
+    notes::write_colors(&root(&app)?, &colors)
+}
+
 /// Pages that contain a [[ link at all (also the escaped \[\[ older versions wrote): after a
 /// notebook is renamed only these are read and rewritten, not every page over IPC.
 #[tauri::command]
@@ -501,6 +516,8 @@ pub fn run() {
             mobile_set_book_appearance,
             mobile_set_page_order,
             mobile_link_pages,
+            mobile_read_colors,
+            mobile_write_colors,
             mobile_save_note,
             mobile_save_image,
             mobile_open_url,

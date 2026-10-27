@@ -695,7 +695,10 @@ export function saveSettings(next, { migrateNotes = false } = {}) {
     }
     state.settings = await api.invoke("save_settings", { settings: merged, migrateNotes: dirChanged && migrateNotes });
     applySettings();
-    if (["quick_color_limit", "quick_gradient_limit", "quick_material_limit", "color_layout", "gradient_shape", "gradient_names"].some((key) => key in changed)) refreshSharedColors();
+    // 换了笔记文件夹时可能换上了那边的颜色库
+    if (dirChanged || ["quick_color_limit", "quick_gradient_limit", "quick_material_limit", "color_layout", "gradient_shape", "gradient_names"].some((key) => key in changed)) refreshSharedColors();
+    // 颜色库存进了笔记文件夹，过一会儿同步到手机
+    if (["color_library", "material_library", "quick_colors"].some((key) => key in changed)) document.dispatchEvent(new Event("webdav-saved"));
     if (dirChanged) await reload();
     return state.settings;
   };

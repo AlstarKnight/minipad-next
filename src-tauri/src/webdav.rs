@@ -835,6 +835,56 @@ mod tests {
     }
 
     #[test]
+    fn color_library_edited_on_two_devices_ends_up_the_same_on_both() {
+        let Ok(server) = std::env::var("MINIPAD_TEST_WEBDAV_URL") else {
+            return;
+        };
+        use crate::notes::{read_colors, write_colors, SharedColors};
+        use crate::syncer::{self, FirstSync, SyncOptions};
+        let desktop = crate::notes::temp_dir("webdav-colors-desktop");
+        let phone = crate::notes::temp_dir("webdav-colors-phone");
+        let records = crate::notes::temp_dir("webdav-colors-records");
+        let c =
+            WebdavClient::new(&server, "tester", "test-password", "/MinipadColors/", true).unwrap();
+        let opts = SyncOptions {
+            images: false,
+            first_mode: FirstSync::Merge,
+            conflict_copy: true,
+            confirm_deletes: false,
+            delete_limit: 20,
+            delete_divisor: 3,
+        };
+        let (journal_a, journal_b) = (records.join("a.json"), records.join("b.json"));
+        let library = |colors: &[&str]| SharedColors {
+            color_library: Some(colors.iter().map(|c| c.to_string()).collect()),
+            ..SharedColors::default()
+        };
+        write_colors(&desktop, &library(&["#111111", "#222222"])).unwrap();
+        syncer::sync_once(&c, &desktop, &journal_a, &opts, || Ok(())).unwrap();
+        let got = syncer::sync_once(&c, &phone, &journal_b, &opts, || Ok(())).unwrap();
+        assert!(got.changed.contains(&crate::notes::COLORS_FILE.to_string()));
+        assert_eq!(read_colors(&phone), read_colors(&desktop));
+
+        // 电脑删掉 #222222，手机加了 #333333，各自同步两轮
+        write_colors(&desktop, &library(&["#111111"])).unwrap();
+        write_colors(&phone, &library(&["#111111", "#222222", "#333333"])).unwrap();
+        syncer::sync_once(&c, &desktop, &journal_a, &opts, || Ok(())).unwrap();
+        let merged = syncer::sync_once(&c, &phone, &journal_b, &opts, || Ok(())).unwrap();
+        assert_eq!(
+            merged.conflicts, 0,
+            "no conflict copies for the color library"
+        );
+        syncer::sync_once(&c, &desktop, &journal_a, &opts, || Ok(())).unwrap();
+        let want = Some(vec!["#111111".to_string(), "#333333".to_string()]);
+        assert_eq!(read_colors(&phone).unwrap().color_library, want);
+        assert_eq!(read_colors(&desktop).unwrap().color_library, want);
+        assert_eq!(std::fs::read_dir(&phone).unwrap().count(), 1);
+        for path in [desktop, phone, records] {
+            std::fs::remove_dir_all(path).unwrap();
+        }
+    }
+
+    #[test]
     fn upload_changed_while_put_finishes_retries_without_false_conflict() {
         let Ok(server) = std::env::var("MINIPAD_TEST_WEBDAV_URL") else {
             return;
