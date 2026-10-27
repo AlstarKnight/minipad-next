@@ -89,20 +89,23 @@ pub fn deletion_needs_confirmation_with(
     delete_count > limit || (all_pages > 0 && delete_count.saturating_mul(divisor) > all_pages)
 }
 
-/// 保留 .md、笔记本元数据和选中的图片；只允许一层笔记本子目录。
+/// 保留 .md、笔记本元数据、根目录的颜色库和选中的图片；只允许一层笔记本子目录。
 pub fn should_sync(path: &str, images: bool) -> bool {
     let parts: Vec<&str> = path.split('/').collect();
     if parts.is_empty()
         || parts.len() > 3
         || parts.iter().any(|p| {
-            p.is_empty() || *p == "." || *p == ".." || p.starts_with('.') && *p != ".minipad.json"
+            p.is_empty()
+                || *p == "."
+                || *p == ".."
+                || p.starts_with('.') && *p != ".minipad.json" && *p != COLORS_FILE
         })
         || path.contains('\\')
     {
         return false;
     }
     match parts.as_slice() {
-        [name] => name.ends_with(".md") || *name == ".minipad.json",
+        [name] => name.ends_with(".md") || *name == ".minipad.json" || *name == COLORS_FILE,
         [folder, name] if *folder == "assets" => images && !name.starts_with('.'),
         [book, name] => !book.is_empty() && (name.ends_with(".md") || *name == ".minipad.json"),
         [book, dir, name] => images && !book.is_empty() && *dir == "assets" && !name.is_empty(),
@@ -183,6 +186,64 @@ pub fn merge_metadata(
     Ok((Value::Object(output), conflicts))
 }
 
+/// 颜色库两边都改了：每一项三方合并，只有一边改的用那一边。两边都改的颜色列表逐个颜色合并：
+/// 任一边删掉的颜色删掉，任一边新加的都留下(本机的顺序在前)，另一台设备新加的颜色不会丢。
+pub fn merge_colors(
+    base: Option<&serde_json::Value>,
+    local: &serde_json::Value,
+    remote: &serde_json::Value,
+) -> serde_json::Value {
+    use serde_json::{Map, Value};
+    let empty = Map::new();
+    let l = local.as_object().unwrap_or(&empty);
+    let r = remote.as_object().unwrap_or(&empty);
+    let before = base.and_then(Value::as_object);
+    let mut output = l.clone();
+    let keys: BTreeSet<_> = l.keys().chain(r.keys()).collect();
+    for key in keys {
+        let (lv, rv) = (l.get(key), r.get(key));
+        let bv = before.and_then(|m| m.get(key));
+        if lv == rv || rv == bv {
+            continue;
+        }
+        let merged = if lv == bv {
+            rv.cloned()
+        } else {
+            match (lv, rv) {
+                (Some(Value::Array(ours)), Some(Value::Array(theirs))) => {
+                    let old = bv.and_then(Value::as_array).cloned().unwrap_or_default();
+                    let mut list: Vec<Value> = ours
+                        .iter()
+                        .filter(|c| theirs.contains(c) || !old.contains(c))
+                        .cloned()
+                        .collect();
+                    list.extend(
+                        theirs
+                            .iter()
+                            .filter(|c| !ours.contains(c) && !old.contains(c))
+                            .cloned(),
+                    );
+                    Some(Value::Array(list))
+                }
+                (Some(Value::Number(a)), Some(Value::Number(b))) if b.as_u64() > a.as_u64() => {
+                    rv.cloned()
+                }
+                _ => lv.cloned(),
+            }
+        };
+        match merged {
+            Some(value) => {
+                output.insert(key.clone(), value);
+            }
+            None => {
+                output.remove(key);
+            }
+        }
+    }
+    Value::Object(output)
+}
+
+use crate::notes::COLORS_FILE;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fs;
@@ -538,7 +599,11 @@ pub fn preview_actions(
 }
 
 /// 只提取用于跨设备同步的 .minipad.json 字段，其余导航信息保留设备本地。
+/// 颜色库整份记下，两边都改时作为合并的基准。
 fn shared_metadata(path: &str, data: &[u8]) -> Option<serde_json::Value> {
+    if path == COLORS_FILE {
+        return serde_json::from_slice(data).ok();
+    }
     if !path.ends_with(".minipad.json") {
         return None;
     }
@@ -891,6 +956,26 @@ pub fn sync_once(
                                 report.conflicts += 1;
                             }
                             Err(_) => {}
+                        }
+                    } else if path == COLORS_FILE {
+                        let parse = |bytes: &[u8]| {
+                            serde_json::from_slice::<serde_json::Value>(bytes)
+                                .ok()
+                                .filter(serde_json::Value::is_object)
+                        };
+                        let base = journal
+                            .files
+                            .get(&path)
+                            .and_then(|entry| entry.base_metadata.as_ref());
+                        match (parse(&local_data), parse(&remote_data)) {
+                            (Some(ours), Some(theirs)) => {
+                                upload =
+                                    serde_json::to_vec_pretty(&merge_colors(base, &ours, &theirs))
+                                        .map_err(|e| e.to_string())?;
+                            }
+                            (None, Some(_)) => upload = remote_data.clone(),
+                            // 网盘那份读不出来：用本机的覆盖
+                            _ => {}
                         }
                     } else if options.conflict_copy {
                         let conflict = unique_conflict_path(root, &path)?;
@@ -1396,6 +1481,7 @@ mod tests {
             ".minipad.json",
             "工作/笔记.md",
             "工作/.minipad.json",
+            ".minipad-colors.json",
         ] {
             assert!(should_sync(p, false), "{p}");
         }
@@ -1410,6 +1496,7 @@ mod tests {
             "工作/深层/子/页.md",
             "assets/深层/图片.png",
             "assets/.minipad.json",
+            "工作/.minipad-colors.json",
             "assets/.hidden.png",
             "../secret.md",
             "工作/../页.md",
@@ -1445,6 +1532,35 @@ mod tests {
             vec!["icon".to_string()]
         );
         assert!(merge_metadata(None, &json!([]), &remote).is_err());
+    }
+
+    #[test]
+    fn color_libraries_edited_on_both_devices_keep_every_new_color() {
+        use serde_json::json;
+        let base = json!({"color_library": ["#111111", "#222222", "#333333"],
+            "material_library": null, "quick_colors": ["#111111"], "color_library_rev": 0});
+        // 电脑删了 #222222、加了 #aaaaaa；手机加了 #bbbbbb，还改了材质库
+        let desktop = json!({"color_library": ["#111111", "#333333", "#aaaaaa"],
+            "material_library": null, "quick_colors": ["#111111"], "color_library_rev": 1});
+        let phone = json!({"color_library": ["#bbbbbb", "#111111", "#222222", "#333333"],
+            "material_library": ["#cccccc"], "quick_colors": ["#111111"], "color_library_rev": 0});
+        let merged = merge_colors(Some(&base), &desktop, &phone);
+        assert_eq!(
+            merged["color_library"],
+            json!(["#111111", "#333333", "#aaaaaa", "#bbbbbb"])
+        );
+        assert_eq!(merged["material_library"], json!(["#cccccc"]));
+        assert_eq!(merged["quick_colors"], json!(["#111111"]));
+        assert_eq!(merged["color_library_rev"], 1);
+        // 第一次同步、两边早就各自改过：两边的颜色都留下
+        let merged = merge_colors(None, &desktop, &phone);
+        assert_eq!(
+            merged["color_library"],
+            json!(["#111111", "#333333", "#aaaaaa", "#bbbbbb", "#222222"])
+        );
+        // 记下的基准是整份颜色库
+        let bytes = desktop.to_string().into_bytes();
+        assert_eq!(shared_metadata(COLORS_FILE, &bytes), Some(desktop));
     }
 
     #[test]

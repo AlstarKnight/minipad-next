@@ -1,9 +1,9 @@
 // ---------- 笔记本 ----------
 import { api } from "./api.js";
 import { $ } from "./dom.js";
-import { state, book, bookLabel, makeBook, sortBooks } from "./state.js";
+import { state, book, bookLabel, makeBook, makeNote, sortBooks } from "./state.js";
 import { toast, ask, askText, openMenu, closeOverlays, focusEditor } from "./ui.js";
-import { holdSaves, saveMeta, scheduleMeta, scheduleBooks } from "./save.js";
+import { holdSaves, saveMeta, scheduleMeta, scheduleBooks, scheduleSave } from "./save.js";
 import { mutate } from "./sync.js";
 import { rememberView, showNote } from "./page.js";
 import { renderTabs, ensurePage, removeNote } from "./tabs.js";
@@ -144,6 +144,23 @@ export async function switchBook(b) {
   scheduleBooks();
 }
 
+// 新建笔记本时放进去的那一页(设置 → 数据 → 笔记文件夹 里可以关)
+const NEW_BOOK_WELCOME = `# 欢迎来到这个笔记本
+
+- 每个**页面**就是这个笔记本文件夹里的一个 \`.md\` 文件,内容会自动保存
+- **Ctrl+T** 新建页面,**Ctrl+P** 快速切换页面,没选中文字时按 **Ctrl+B** 切换笔记本
+- 行首打 \`# \` 变标题,\`- \` 变列表,\`> \` 变引用;选中文字会出来一排按钮
+- 打 \`[[\` 可以链接到别的页面
+- 这一页可以随便改、改名或删除;不想每次新建笔记本都有它,在设置里关掉「新建笔记本时放一页欢迎」
+`;
+
+async function addWelcomePage(nb) {
+  const page = makeNote(await api.invoke("create_note", { book: nb.name, name: "欢迎" }), "");
+  page.content = NEW_BOOK_WELCOME;
+  nb.notes.push(page);
+  return page;
+}
+
 export async function createBook() {
   const note = moving;
   const name = await askText("新笔记本的名字:", "新笔记本", "新建");
@@ -156,8 +173,21 @@ export async function createBook() {
   try {
     b = await mutate(async () => {
       const nb = makeBook(await api.invoke("create_book", { name }));
+      // 只是为了把页面移进来而新建的笔记本不放欢迎页
+      let welcome = null;
+      if (!note && state.settings?.new_book_welcome !== false) {
+        try {
+          welcome = await addWelcomePage(nb);
+        } catch (e) {
+          toast("新建欢迎页失败:" + e);
+        }
+      }
       state.books.push(nb);
       sortBooks();
+      if (welcome) {
+        scheduleSave(welcome);
+        scheduleMeta(nb);
+      }
       return nb;
     });
   } catch (e) {

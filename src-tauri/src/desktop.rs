@@ -338,6 +338,8 @@ pub struct Settings {
     capture_position: String,
     /// 0.5.1 模板放在哪个笔记本里:每一页就是一个模板
     template_book: String,
+    /// 0.5.2 新建笔记本时放一页「欢迎」
+    new_book_welcome: bool,
     /// 片段:打触发词再按 Tab(或空格)换成内容
     snippets: Vec<Snippet>,
     /// 片段怎么展开:tab / space / off
@@ -503,6 +505,7 @@ impl Default for Settings {
             capture_stamp: true,
             capture_position: "remember".into(),
             template_book: DEFAULT_TEMPLATE_BOOK.into(),
+            new_book_welcome: true,
             snippets: default_snippets(),
             snippet_key: "tab".into(),
             calc_key: "tab".into(),
@@ -541,7 +544,16 @@ struct EdgeState {
     peeking: bool,
     /// 隐藏时所在显示器的范围
     monitor: Rect,
+    /// 藏起来时的显示器和窗口沿边的位置,显示器断开又接回来后靠它贴回原处
+    home: Option<EdgeHome>,
     outside_ticks: u32,
+}
+
+/// 窗口藏起来时所在的显示器,和窗口沿着那条边离显示器起点多远(逻辑像素)
+struct EdgeHome {
+    rect: Rect,
+    name: String,
+    offset: f64,
 }
 
 #[derive(Default)]
@@ -1669,6 +1681,63 @@ fn append_rollback_error(original: String, rollback: Vec<String>) -> String {
     }
 }
 
+fn shared_colors_of(s: &Settings) -> notes::SharedColors {
+    notes::SharedColors {
+        color_library: s.color_library.clone(),
+        material_library: s.material_library.clone(),
+        quick_colors: s.quick_colors.clone(),
+        color_library_rev: s.color_library_rev,
+    }
+}
+
+fn use_shared_colors(s: &mut Settings, shared: notes::SharedColors) {
+    s.color_library = shared.color_library;
+    s.material_library = shared.material_library;
+    s.quick_colors = shared.quick_colors;
+    s.color_library_rev = shared.color_library_rev;
+    tidy_settings(s);
+}
+
+/// 改过的颜色库写进笔记文件夹，跟着 WebDAV 同步到手机和别的电脑
+fn write_shared_colors(root: &Path, s: &Settings) {
+    let colors = shared_colors_of(s);
+    if !colors.customized() {
+        return;
+    }
+    let Ok(_lock) = crate::syncer::WRITE_LOCK.lock() else {
+        return;
+    };
+    if let Err(e) = notes::write_colors(root, &colors) {
+        eprintln!("颜色库没能存进笔记文件夹:{e}");
+    }
+}
+
+/// 颜色库放在笔记文件夹的 .minipad-colors.json 里，手机和电脑共用一份：
+/// 文件在就换成文件里的，并告诉各个窗口；不在就把这台电脑改过的颜色库写进去。
+fn adopt_shared_colors(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    let current = state.settings.lock().unwrap().clone();
+    let root = notes_dir(app, &current);
+    let Some(shared) = notes::read_colors(&root) else {
+        write_shared_colors(&root, &current);
+        return;
+    };
+    if shared == shared_colors_of(&current) {
+        return;
+    }
+    let new = {
+        let mut s = state.settings.lock().unwrap();
+        use_shared_colors(&mut s, shared);
+        s.clone()
+    };
+    persist_settings(app);
+    for label in
+        std::iter::once("main".to_string()).chain(open_minis(app).into_iter().map(|m| m.label))
+    {
+        let _ = app.emit_to(label.as_str(), "settings-changed", &new);
+    }
+}
+
 #[tauri::command]
 fn save_settings(
     app: AppHandle,
@@ -1776,8 +1845,17 @@ fn save_settings(
     {
         state.backup_day.lock().unwrap().clear();
     }
+    // 换到的笔记文件夹里已经有颜色库(比如同步过来的):用那一份
+    if new_notes != old_notes {
+        if let Some(shared) = notes::read_colors(&new_notes) {
+            use_shared_colors(&mut new, shared);
+        }
+    }
     *state.settings.lock().unwrap() = new.clone();
     persist_settings(&app);
+    if new_notes != old_notes || shared_colors_of(&new) != shared_colors_of(&old) {
+        write_shared_colors(&new_notes, &new);
+    }
     // 别的窗口(主窗口和小窗)换上新设置
     for label in
         std::iter::once("main".to_string()).chain(open_minis(&app).into_iter().map(|m| m.label))
@@ -2169,6 +2247,9 @@ async fn webdav_sync_now(
                 report.uploaded, report.downloaded, report.conflicts, report.deleted,
             );
             crate::syncer::update_status(mode, &message);
+            if report.changed.iter().any(|p| p == notes::COLORS_FILE) {
+                adopt_shared_colors(&app);
+            }
             if !report.changed.is_empty() {
                 let _ = app.emit("webdav-changed", &report.changed);
             }
@@ -2983,6 +3064,7 @@ fn restore_from_edge(app: &AppHandle, focus: bool) {
     {
         let mut e = st.edge.lock().unwrap();
         e.hidden = None;
+        e.home = None;
         e.peeking = false;
         e.outside_ticks = 0;
     }
@@ -3012,6 +3094,81 @@ fn scaled_strip(
     (f64::from(edge::strip_for(style, peeking, line_width, glow)) * scale).round() as i32
 }
 
+fn screen_of(m: &Monitor) -> edge::Screen {
+    edge::Screen {
+        rect: monitor_rect(m),
+        scale: m.scale_factor(),
+        name: m.name().cloned().unwrap_or_default(),
+    }
+}
+
+/// 显示器断开又接上、分辨率或缩放改变后,Windows 会把窗口挪到别处(比如挪到笔记本屏上)。
+/// 藏起来的窗口不在该在的位置时,贴回原来那条边:原来的显示器回来了就回到它上面、
+/// 沿边的位置和藏起来时一样(按逻辑像素算);还没回来就先留在现在这块屏幕上。
+/// 返回 true 表示这一轮已经处理过。
+fn resnap_hidden(
+    app: &AppHandle,
+    win: &WebviewWindow,
+    edge: Edge,
+    rect: Rect,
+    mon: Rect,
+    peeking: bool,
+) -> bool {
+    let st = app.state::<AppState>();
+    let screens: Vec<edge::Screen> = win
+        .available_monitors()
+        .unwrap_or_default()
+        .iter()
+        .map(screen_of)
+        .collect();
+    // 显示器正在切换时可能一块都查不到,等下一轮
+    let rects: Vec<Rect> = screens.iter().map(|s| s.rect).collect();
+    let home = st
+        .edge
+        .lock()
+        .unwrap()
+        .home
+        .as_ref()
+        .map(|h| (h.rect, h.name.clone(), h.offset));
+    let found = home
+        .as_ref()
+        .and_then(|(home_rect, name, _)| edge::find_home(*home_rect, name, &screens))
+        .or_else(|| screens.iter().position(|s| s.rect == mon))
+        .or_else(|| {
+            let near = edge::nearest_monitor(rect, &rects)?;
+            rects.iter().position(|r| *r == near)
+        });
+    let Some(target) = found.map(|i| &screens[i]) else {
+        return false;
+    };
+    // 没记下位置时保持窗口现在的位置
+    let offset = home
+        .map(|(_, _, offset)| offset)
+        .unwrap_or_else(|| edge::along_offset(edge, rect, target.rect, target.scale));
+    // 先取出设置再问窗口缩放:后台线程查询窗口要等主线程,主线程上的命令又会锁设置
+    let (style, line_width, glow) = {
+        let settings = st.settings.lock().unwrap();
+        (
+            settings.edge_style.clone(),
+            settings.edge_line_width,
+            settings.edge_line_glow,
+        )
+    };
+    let strip = scaled_strip(win, &style, peeking, line_width, glow);
+    let (x, y) = edge::rehide_position(edge, rect, target.rect, target.scale, strip, offset);
+    if target.rect == mon && (rect.x - x).abs() <= 2 && (rect.y - y).abs() <= 2 {
+        return false;
+    }
+    st.edge.lock().unwrap().monitor = target.rect;
+    if edge::edge_is_free(edge, Rect::new(x, y, rect.w, rect.h), target.rect, &rects) {
+        let _ = win.set_position(PhysicalPosition::new(x, y));
+    } else {
+        // 这条边外面现在接着另一块显示器,缩过去会露在那块屏幕上:放出来留在屏幕里
+        restore_from_edge(app, false);
+    }
+    true
+}
+
 fn edge_tick(app: &AppHandle) {
     let st = app.state::<AppState>();
     if !st.settings.lock().unwrap().edge_hide {
@@ -3035,6 +3192,9 @@ fn edge_tick(app: &AppHandle) {
         (e.hidden, e.peeking, e.monitor)
     };
     if let Some(edge) = hidden {
+        if resnap_hidden(app, &win, edge, rect, mon, peeking) {
+            return;
+        }
         let (style, length, unit, fixed_px) = {
             let settings = st.settings.lock().unwrap();
             (
@@ -3106,14 +3266,14 @@ fn edge_tick(app: &AppHandle) {
         None
     } else {
         win.current_monitor().ok().flatten().and_then(|m| {
-            let mon = monitor_rect(&m);
+            let screen = screen_of(&m);
             let monitors: Vec<Rect> = win
                 .available_monitors()
                 .unwrap_or_default()
                 .iter()
                 .map(monitor_rect)
                 .collect();
-            edge::docked_edge(rect, mon, &monitors).map(|e| (e, mon))
+            edge::docked_edge(rect, screen.rect, &monitors).map(|e| (e, screen))
         })
     };
 
@@ -3125,13 +3285,18 @@ fn edge_tick(app: &AppHandle) {
                 e.outside_ticks = 0;
                 None
             }
-            Some((edge, mon)) => {
+            Some((edge, screen)) => {
                 e.outside_ticks += 1;
                 if e.outside_ticks >= 3 {
                     e.hidden = Some(edge);
-                    e.monitor = mon;
+                    e.monitor = screen.rect;
+                    e.home = Some(EdgeHome {
+                        rect: screen.rect,
+                        offset: edge::along_offset(edge, rect, screen.rect, screen.scale),
+                        name: screen.name,
+                    });
                     e.outside_ticks = 0;
-                    Some((edge, mon))
+                    Some((edge, screen.rect))
                 } else {
                     None
                 }
@@ -3332,6 +3497,8 @@ pub fn run() {
                     eprintln!("快速记录的热键注册失败: {e}");
                 }
             }
+
+            adopt_shared_colors(&handle);
 
             let win = main_window(&handle).expect("main window");
             let _ = win.set_always_on_top(settings.always_on_top);
@@ -4061,6 +4228,8 @@ mod tests {
         // 0.5.0 的设置文件里没有这几项,读出来是默认值(三个默认片段)
         let old: Settings = serde_json::from_str(r#"{"hotkey":"Ctrl+M"}"#).unwrap();
         assert!(old.capture_enabled);
+        // 0.5.1 及以前的设置里没有「新建笔记本放欢迎页」:默认开着
+        assert!(old.new_book_welcome);
         assert_eq!(
             old.snippets
                 .iter()

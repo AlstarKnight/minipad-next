@@ -10,6 +10,7 @@ import { mutate, syncFromDisk, readNotes } from "./sync.js";
 import { rememberView, showNote, refreshCurrent } from "./page.js";
 import { renderTabs, switchTo, goTo } from "./tabs.js";
 import { applySettings } from "./settings.js";
+import { refreshSharedColors } from "./sharedcolors.js";
 import { addEntry, dropEmptyEntry } from "./capture.js";
 
 // ---- 主窗口 ----
@@ -169,6 +170,8 @@ export async function initMini() {
   api.listen("settings-changed", (e) => {
     state.settings = e.payload;
     applySettings();
+    // 颜色库可能是从手机同步来的
+    refreshSharedColors();
   });
   // 退出程序前:存好以后告诉后端
   api.listen("mini-flush", async () => {

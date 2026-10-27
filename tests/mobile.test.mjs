@@ -31,8 +31,10 @@ async function chooseNote(page, name) {
 }
 
 // look: the saved appearance (0.4.4). Older tests were written for the original look, so they get "classic".
-async function open({ colorScheme, keyboard, look = { ui: "classic" } } = {}) {
+// sharedColors: the color library file already in the notes folder (synced from the desktop).
+async function open({ colorScheme, keyboard, look = { ui: "classic" }, sharedColors = null } = {}) {
   const context = await browser.newContext({ viewport: { width: 390, height: 740 }, colorScheme });
+  if (sharedColors) await context.addInitScript((c) => { window.__sharedColors = c; }, sharedColors);
   if (look) await context.addInitScript((v) => { if (!localStorage.getItem("minipad-mobile-look")) localStorage.setItem("minipad-mobile-look", v); }, JSON.stringify(look));
   if (keyboard) {
     // Android WebViews can shrink only the visual viewport when the soft keyboard opens.
@@ -55,6 +57,7 @@ async function open({ colorScheme, keyboard, look = { ui: "classic" } } = {}) {
     // Android 返回键(Tauri 的 onBackButtonPress):登记了才由页面处理,back() 模拟按一次
     const backHandlers = [];
     window.__mobileTest = { disk, writes, images, calls, failSaves: 0, readDelay: 0, conflictNext: false,
+      colors: window.__sharedColors ?? null, colorWrites: [],
       emit: (name, payload) => listeners[name]?.({ payload }),
       backListeners: () => backHandlers.length,
       back: () => { for (const handler of [...backHandlers]) handler({ canGoBack: false }); } };
@@ -70,7 +73,7 @@ async function open({ colorScheme, keyboard, look = { ui: "classic" } } = {}) {
         const book = disk.find((b) => b.name === args.book) || disk[0];
         if (command === "mobile_list_books") {
           calls.list++;
-          return disk.map((b) => ({ name: b.name, notes: b.notes.map((n) => n.name) }));
+          return disk.map((b) => ({ name: b.name, notes: b.notes.map((n) => n.name), icon: b.icon || "", icon_color: b.icon_color || "" }));
         }
         if (command === "mobile_read_note") {
           calls.read++;
@@ -98,6 +101,38 @@ async function open({ colorScheme, keyboard, look = { ui: "classic" } } = {}) {
         if (command === "mobile_create_note") {
           book.notes.push({ name: args.name, content: "", unreadable: false });
           return args.name;
+        }
+        if (command === "mobile_rename_book") {
+          disk.find((b) => b.name === args.old).name = args.new;
+          return args.new;
+        }
+        if (command === "mobile_delete_book") {
+          disk.splice(disk.findIndex((b) => b.name === args.name), 1);
+          return null;
+        }
+        if (command === "mobile_set_book_appearance") {
+          Object.assign(book, { icon: args.icon === "book" ? "" : args.icon, icon_color: args.color });
+          return null;
+        }
+        if (command === "mobile_set_page_order") {
+          window.__mobileTest.orders = [...(window.__mobileTest.orders || []), args.order];
+          book.notes.sort((a, b) => args.order.indexOf(a.name) - args.order.indexOf(b.name));
+          return null;
+        }
+        if (command === "mobile_link_pages") {
+          return disk.flatMap((b) => b.notes.filter((n) => n.content.includes("[[")).map((n) => [b.name, n.name]));
+        }
+        if (command === "mobile_read_colors") return window.__mobileTest.colors;
+        if (command === "mobile_write_colors") {
+          const changed = JSON.stringify(window.__mobileTest.colors) !== JSON.stringify(args.colors);
+          window.__mobileTest.colors = args.colors;
+          window.__mobileTest.colorWrites.push(args.colors);
+          return changed;
+        }
+        if (command === "mobile_delete_note") {
+          book.notes.splice(book.notes.findIndex((n) => n.name === args.name), 1);
+          (window.__mobileTest.deleted ||= []).push(args.name);
+          return null;
         }
         if (command === "mobile_save_image") {
           images["assets/test.png"] = { mime: args.mime, data: args.data };
@@ -1022,6 +1057,8 @@ test("Android sync status color uses the shared solid, gradient and material lib
     await page.waitForFunction(() => JSON.parse(localStorage.getItem("minipad-mobile-webdav")).status_color === "");
     await page.reload();
     await page.locator("#editor .ProseMirror").waitFor();
+    // 笔记文件夹里还没有颜色库：手机改过的颜色库写进去，同步给电脑
+    await page.waitForFunction(() => window.__mobileTest.colors?.color_library?.includes("#123456"));
     await page.click("#open-drawer");
     await page.click("#open-sync-settings");
     await tool.locator('.uc-kind[data-kind="solid"]').click();
@@ -1031,6 +1068,37 @@ test("Android sync status color uses the shared solid, gradient and material lib
     await tool.locator(".uc-reset").click();
     await answerDialog(page);
     await page.waitForFunction(() => !JSON.parse(localStorage.getItem("minipad-mobile-colors")).color_library.includes("#123456"));
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test("the color library comes from the notes folder, so the phone and the desktop share it", async () => {
+  const desktop = { color_library: ["#abcdef", "#222222"], material_library: null, quick_colors: ["#abcdef"], color_library_rev: 1 };
+  const { context, page, errors } = await open({ sharedColors: desktop });
+  try {
+    await page.waitForFunction(() => JSON.parse(localStorage.getItem("minipad-mobile-colors") || "{}").color_library?.[0] === "#abcdef");
+    await page.click("#open-drawer");
+    await page.click("#open-sync-settings");
+    const tool = page.locator("#mobile-webdav-settings .shared-colors");
+    await tool.locator('.uc-kind[data-kind="solid"]').click();
+    await tool.locator(".uc-more").click();
+    const shown = () => tool.locator(".uc-swatch").evaluateAll((nodes) => [...new Set(nodes.map((n) => n.dataset.color))].sort());
+    assert.deepEqual(await shown(), ["#222222", "#abcdef"]);
+    // 电脑上加的颜色同步下来，打开着的颜色库马上换上
+    await page.evaluate(() => {
+      window.__mobileTest.colors = { ...window.__mobileTest.colors, color_library: ["#abcdef", "#222222", "#fedcba"] };
+      return window.__mobileTest.emit("webdav-changed", [".minipad-colors.json"]);
+    });
+    await tool.locator('.uc-swatch[data-color="#fedcba"]').waitFor();
+    // 手机上改的写回笔记文件夹
+    await tool.locator(".uc-actions button", { hasText: "自定义" }).click();
+    await tool.locator(".uc-editor select").selectOption("solid");
+    await tool.locator('.uc-stop input[type="color"]').fill("#123456");
+    await tool.locator(".uc-actions button", { hasText: /^保存$/ }).click();
+    await page.waitForFunction(() => window.__mobileTest.colors.color_library.includes("#123456"));
+    const saved = await page.evaluate(() => window.__mobileTest.colors);
+    assert.deepEqual(saved.color_library.filter((c) => c !== "#123456"), ["#abcdef", "#222222", "#fedcba"]);
+    assert.equal(saved.color_library_rev, 1);
     assert.deepEqual(errors, []);
   } finally { await context.close(); }
 });
@@ -1098,6 +1166,220 @@ test("Android local path option stays optional and changing appearance keeps edi
     await page.keyboard.press("End");
     await page.keyboard.type("继续编辑");
     await page.waitForFunction(() => window.__mobileTest.disk[0].notes[0].content.includes("继续编辑"));
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test("a literal \\<a href> typed as text stays in the rich editor, an unescaped one still uses the source", async () => {
+  const { context, page, errors } = await open();
+  try {
+    const escaped = "\\<a href =\"某网页的链接地址\">你想要显示的文字\\</a>\n\n使用地址:https\\://dx.jihuo.plus";
+    await page.evaluate((content) => window.__mobileTest.disk[0].notes.push(
+      { name: "转义", content, unreadable: false },
+      { name: "标签", content: "\\\\<b>真的标签", unreadable: false },
+    ), escaped);
+    await page.click("#refresh");
+    await chooseNote(page, "转义");
+    await page.locator("#editor .ProseMirror").waitFor({ state: "visible" });
+    assert.equal(await page.locator("#source").isHidden(), true, "escaped < is text, not HTML");
+    await chooseNote(page, "标签");
+    await page.locator("#source").waitFor({ state: "visible" });
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test("a page can be deleted from the list: it asks first, moves to the next page and never touches other pages", async () => {
+  const { context, page, errors } = await open();
+  try {
+    const deleteButton = async () => {
+      if (await page.locator("#mobile-drawer").isHidden()) await page.click("#open-drawer");
+      await page.click("#delete-note");
+    };
+    await chooseNote(page, "一");
+    await deleteButton();
+    await page.locator("#dialog").waitFor({ state: "visible" });
+    assert.match(await page.locator("#dialog-msg").textContent(), /删除页面「一」/);
+    await page.click("#dialog-cancel");
+    assert.equal(await page.evaluate(() => window.__mobileTest.deleted || null), null, "cancel deletes nothing");
+    await deleteButton();
+    await page.click("#dialog-ok");
+    await page.waitForFunction(() => document.getElementById("page-title").textContent === "二");
+    assert.deepEqual(await page.evaluate(() => window.__mobileTest.deleted), ["一"]);
+    assert.equal(await page.evaluate(() => window.__mobileTest.disk[0].notes.map((n) => n.name).join()), "二");
+    await deleteButton();
+    await page.click("#dialog-ok");
+    await page.waitForFunction(() => document.getElementById("page-title").textContent === "空笔记本");
+    assert.equal(await page.locator("#delete-note").isDisabled(), true, "nothing left to delete");
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test("long-pressing a page offers delete; deleting another page keeps the open one", async () => {
+  const { context, page, errors } = await open();
+  try {
+    await chooseNote(page, "一");
+    await page.click("#open-drawer");
+    const row = page.locator('#notes-list button[data-page="二"]');
+    await row.dispatchEvent("contextmenu");
+    await page.locator("#ctx").waitFor({ state: "visible" });
+    assert.deepEqual(await page.locator("#ctx button").allTextContents(), ["打开", "调整顺序", "删除页面"]);
+    await page.click('#ctx [data-act="delete"]');
+    await page.click("#dialog-ok");
+    await page.waitForFunction(() => (window.__mobileTest.deleted || []).includes("二"));
+    await page.waitForFunction(() => !document.querySelector('#notes-list button[data-page="二"]'));
+    assert.equal(await page.locator("#page-title").textContent(), "一", "the open page stays");
+    // a real long press (pointer held still) opens the menu too, and the release does not open the page
+    await page.evaluate(() => window.__mobileTest.disk[0].notes.push({ name: "三", content: "第三页", unreadable: false }));
+    await page.click("#close-drawer");
+    await page.click("#refresh");
+    await page.click("#open-drawer");
+    const box = await page.locator('#notes-list button[data-page="三"]').boundingBox();
+    await page.mouse.move(box.x + 30, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.locator("#ctx").waitFor({ state: "visible" });
+    await page.mouse.up();
+    assert.equal(await page.locator("#page-title").textContent(), "一");
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test("pages can be reordered by dragging the handle; the order is saved and the filter is off while sorting", async () => {
+  const { context, page, errors } = await open();
+  try {
+    await page.evaluate(() => window.__mobileTest.disk[0].notes.push({ name: "三", content: "第三页", unreadable: false }));
+    await page.click("#refresh");
+    await page.click("#open-drawer");
+    await page.fill("#note-filter", "一");
+    await page.click("#sort-notes");
+    assert.equal(await page.locator("#sort-notes").textContent(), "完成");
+    assert.equal(await page.locator("#note-filter").isDisabled(), true);
+    assert.deepEqual(await page.locator("#notes-list button[data-page]").evaluateAll((rows) => rows.map((r) => r.dataset.page)), ["一", "二", "三"]);
+    const handle = page.locator('#notes-list button[data-page="一"] .drag-handle');
+    const from = await handle.boundingBox();
+    const to = await page.locator('#notes-list button[data-page="三"]').boundingBox();
+    await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(from.x + from.width / 2, to.y + to.height - 2, { steps: 8 });
+    await page.mouse.up();
+    await page.waitForFunction(() => (window.__mobileTest.orders || []).length === 1);
+    assert.deepEqual(await page.evaluate(() => window.__mobileTest.orders[0]), ["二", "三", "一"]);
+    assert.deepEqual(await page.locator("#notes-list button[data-page]").evaluateAll((rows) => rows.map((r) => r.dataset.page)), ["二", "三", "一"]);
+    // tapping a row while sorting does not open it
+    await page.click('#notes-list button[data-page="三"] span');
+    assert.equal(await page.locator("#page-title").textContent(), "一");
+    await page.click("#sort-notes");
+    assert.equal(await page.locator("#note-filter").isDisabled(), false);
+    assert.equal(await page.locator(".drag-handle").count(), 0);
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test("notebook management: icon and color, rename (links follow), delete; 默认 cannot be renamed or deleted", async () => {
+  const { context, page, errors } = await open();
+  try {
+    await page.evaluate(() => {
+      const t = window.__mobileTest;
+      t.disk.push({ name: "工作", notes: [{ name: "计划", content: "下周", unreadable: false }] });
+      t.disk[0].notes.push({ name: "索引", content: "看 [[工作/计划]] 和 [[二]]", unreadable: false });
+    });
+    await page.click("#refresh");
+    await page.click("#open-drawer");
+    await page.click("#manage-books");
+    await page.locator("#mobile-books").waitFor({ state: "visible" });
+    assert.equal(await page.locator("#mobile-drawer").isHidden(), true);
+    assert.deepEqual(await page.locator("#mb-list .mb-name").allTextContents(), ["默认笔记本", "工作"]);
+    assert.equal(await page.locator("#mb-rename").isDisabled(), true);
+    assert.equal(await page.locator("#mb-delete").isDisabled(), true);
+
+    await page.click('#mb-list [data-book="工作"]');
+    assert.equal(await page.locator("#mb-selected").textContent(), "工作");
+    await page.click('#mb-icons [data-icon="star"]');
+    await page.waitForFunction(() => window.__mobileTest.disk[1].icon === "star");
+    assert.equal(await page.locator('#mb-icons [data-icon="star"]').getAttribute("aria-checked"), "true");
+    await page.locator("#mobile-books .uc-presets button").first().click();
+    await page.waitForFunction(() => !!window.__mobileTest.disk[1].icon_color);
+    assert.equal(await page.locator('#mb-colors [data-color=""]').getAttribute("aria-checked"), "false");
+    await page.click('#mb-colors [data-color=""]');
+    await page.waitForFunction(() => window.__mobileTest.disk[1].icon_color === "");
+
+    await page.click("#mb-rename");
+    await page.fill("#dialog-input", "项目");
+    await page.click("#dialog-ok");
+    await page.waitForFunction(() => window.__mobileTest.disk[1].name === "项目");
+    await page.waitForFunction(() => window.__mobileTest.disk[0].notes.find((n) => n.name === "索引").content.includes("[[项目/计划]]"));
+    assert.equal(await page.evaluate(() => window.__mobileTest.disk[0].notes.find((n) => n.name === "索引").content), "看 [[项目/计划]] 和 [[二]]");
+    assert.deepEqual(await page.locator("#mb-list .mb-name").allTextContents(), ["默认笔记本", "项目"]);
+    assert.equal(await page.locator("#mb-selected").textContent(), "项目");
+
+    await page.click("#mb-delete");
+    assert.match(await page.locator("#dialog-msg").textContent(), /删除笔记本「项目」和里面的 1 个页面/);
+    await page.click("#dialog-ok");
+    await page.waitForFunction(() => window.__mobileTest.disk.length === 1);
+    assert.deepEqual(await page.locator("#mb-list .mb-name").allTextContents(), ["默认笔记本"]);
+
+    // the back button closes the manager
+    assert.equal(await page.evaluate(() => window.__mobileTest.backListeners()), 1);
+    await page.evaluate(() => window.__mobileTest.back());
+    await page.locator("#mobile-books").waitFor({ state: "hidden" });
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test("long-pressing a notebook opens its management page, and notebook icons show in the list", async () => {
+  const { context, page, errors } = await open();
+  try {
+    await page.evaluate(() => window.__mobileTest.disk.push({ name: "读书", icon: "heart", icon_color: "#ff3366", notes: [] }));
+    await page.click("#refresh");
+    await page.click("#open-drawer");
+    const row = page.locator("#books-list button").filter({ hasText: "读书" });
+    assert.equal(await row.locator(".book-mark svg").count(), 1);
+    assert.equal(await row.locator(".book-mark").evaluate((m) => m.style.color), "rgb(255, 51, 102)");
+    await row.dispatchEvent("contextmenu");
+    await page.locator("#mobile-books").waitFor({ state: "visible" });
+    assert.equal(await page.locator("#mb-selected").textContent(), "读书");
+    assert.equal(await page.locator('#mb-icons [data-icon="heart"]').getAttribute("aria-checked"), "true");
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test("the sync state lives on the sync button at the bottom right: it spins while syncing and follows the display setting", async () => {
+  const { context, page, errors } = await open();
+  try {
+    const sync = () => page.evaluate(() => {
+      const b = document.getElementById("refresh");
+      const mark = document.getElementById("sync-mark");
+      const label = document.getElementById("sync-label");
+      return { state: b.dataset.sync ?? null, mark: mark.hidden ? null : mark.textContent, label: label.hidden ? null : label.textContent,
+        spinning: getComputedStyle(b.querySelector("svg")).animationName };
+    });
+    assert.deepEqual(await sync(), { state: null, mark: null, label: null, spinning: "none" }, "a plain refresh button while sync is off");
+    assert.equal(await page.locator(".context-strip #sync-badge").count(), 0, "nothing at the top any more");
+    await page.click("#open-drawer");
+    await page.click("#open-sync-settings");
+    await page.locator("#ms-enable").check();
+    await page.fill("#ms-server", "https://dav.example.com/");
+    await page.fill("#ms-user", "tester");
+    await page.selectOption("#ms-display", "icon");
+    await page.click("#ms-save-config");
+    await page.click("#close-sync-settings");
+    await page.waitForFunction(() => document.getElementById("refresh").dataset.sync === "synced");
+    assert.deepEqual(await sync(), { state: "synced", mark: "✓", label: null, spinning: "none" });
+    assert.equal(await page.locator("#refresh").getAttribute("aria-label"), "立即同步（已同步）");
+    await page.evaluate(() => { window.__mobileTest.syncDelay = 600; });
+    await page.click("#refresh");
+    await page.waitForFunction(() => document.getElementById("refresh").dataset.sync === "syncing");
+    assert.deepEqual(await sync(), { state: "syncing", mark: null, label: null, spinning: "sync-spin" });
+    await page.waitForFunction(() => document.getElementById("refresh").dataset.sync === "synced");
+    assert.equal(await page.locator("#sync-mark").evaluate((m) => m.classList.contains("pop")), true, "the result pops in after a sync");
+    await page.click("#open-drawer");
+    await page.click("#open-sync-settings");
+    await page.selectOption("#ms-display", "text");
+    await page.click("#ms-save-config");
+    assert.deepEqual(await sync(), { state: "synced", mark: "✓", label: "已同步", spinning: "none" });
+    await page.selectOption("#ms-display", "none");
+    await page.click("#ms-save-config");
+    assert.deepEqual(await sync(), { state: null, mark: null, label: null, spinning: "none" });
+    assert.equal(await page.locator("#refresh").getAttribute("aria-label"), "立即同步");
     assert.deepEqual(errors, []);
   } finally { await context.close(); }
 });

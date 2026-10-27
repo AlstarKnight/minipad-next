@@ -143,5 +143,5 @@ export const BUTTONS = [
     title: "引用",
     run: (c, v) => toggleQuote(v.state, v.dispatch) || c.call(wrapInBlockquoteCommand.key),
   },
-  { id: "codeblock", label: "{ }", title: "代码块", run: (c, v) => copyToCode(v.state, v.dispatch) || codeToText(v.state, v.dispatch) || c.call(createCodeBlockCommand.key) },
+  { id: "codeblock", label: '<svg viewBox="0 0 16 16"><path d="M6 2.5c-1.5 0-2 .7-2 2v2c0 1-.6 1.5-1.5 1.5.9 0 1.5.5 1.5 1.5v2c0 1.3.5 2 2 2"/><path d="M10 2.5c1.5 0 2 .7 2 2v2c0 1 .6 1.5 1.5 1.5-.9 0-1.5.5-1.5 1.5v2c0 1.3-.5 2-2 2"/></svg>', title: "代码块", run: (c, v) => copyToCode(v.state, v.dispatch) || codeToText(v.state, v.dispatch) || c.call(createCodeBlockCommand.key) },
 ];

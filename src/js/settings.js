@@ -243,6 +243,7 @@ export function openSettings() {
   pageLinkColor.show(s.page_link_color || "");
   pageLinkBrokenColor.show(s.page_link_broken_color || "");
   $("#set-template-book").value = s.template_book || DEFAULT_TEMPLATE_BOOK;
+  $("#set-new-book-welcome").checked = s.new_book_welcome !== false;
   $("#set-snippet-key").value = ["space", "off"].includes(s.snippet_key) ? s.snippet_key : "tab";
   showSnippets(Array.isArray(s.snippets) ? s.snippets : DEFAULT_SNIPPETS);
   $("#set-calc-key").value = ["equals", "off"].includes(s.calc_key) ? s.calc_key : "tab";
@@ -694,7 +695,10 @@ export function saveSettings(next, { migrateNotes = false } = {}) {
     }
     state.settings = await api.invoke("save_settings", { settings: merged, migrateNotes: dirChanged && migrateNotes });
     applySettings();
-    if (["quick_color_limit", "quick_gradient_limit", "quick_material_limit", "color_layout", "gradient_shape", "gradient_names"].some((key) => key in changed)) refreshSharedColors();
+    // 换了笔记文件夹时可能换上了那边的颜色库
+    if (dirChanged || ["quick_color_limit", "quick_gradient_limit", "quick_material_limit", "color_layout", "gradient_shape", "gradient_names"].some((key) => key in changed)) refreshSharedColors();
+    // 颜色库存进了笔记文件夹，过一会儿同步到手机
+    if (["color_library", "material_library", "quick_colors"].some((key) => key in changed)) document.dispatchEvent(new Event("webdav-saved"));
     if (dirChanged) await reload();
     return state.settings;
   };
@@ -784,6 +788,7 @@ async function submitSettings() {
     capture_stamp: $("#set-capture-stamp").checked,
     capture_position: $("#set-capture-position").value,
     template_book: $("#set-template-book").value.trim(),
+    new_book_welcome: $("#set-new-book-welcome").checked,
     snippets: collectSnippets(),
     snippet_key: $("#set-snippet-key").value,
     calc_key: $("#set-calc-key").value,

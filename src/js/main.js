@@ -17,7 +17,7 @@ import { bindTrash, closeTrash } from "./trash.js";
 import { bindQuick } from "./quickswitch.js";
 import { openSettings, saveSettings, applySettings, applyEdgeAppearance, bindSettings, skippedText } from "./settings.js";
 import { bindOutline } from "./outline.js";
-import { upgradeColorLibrary } from "./sharedcolors.js";
+import { upgradeColorLibrary, refreshSharedColors } from "./sharedcolors.js";
 import { createEditor, editorDebug, insertText, toggleTask, markLocalPathMissing } from "./editor.js";
 import { setLinkPrompt, setTaskCommand } from "./toolbar.js";
 import { formatDate } from "./datetime.js";
@@ -111,6 +111,8 @@ async function init() {
   api.listen("settings-changed", (e) => {
     state.settings = e.payload;
     applySettings();
+    // 颜色库可能是从手机同步来的
+    refreshSharedColors();
   });
   bindMiniMain();
   bindCapture();
