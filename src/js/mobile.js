@@ -7,7 +7,7 @@ import { setSelectionBar, setFormatBarItems } from "./formatbar.js";
 import { setLinkPrompt, setTaskCommand } from "./toolbar.js";
 import { ACCENTS, applyAccent, tidyAccent, parseAccent } from "./accent.js";
 import { makeSharedColorTools, setColorLibrarySaver, refreshSharedColors } from "./sharedcolors.js";
-import { ask, askText, closeDialog, dialogOpen, openMenu } from "./ui.js";
+import { ask, askText, closeDialog, dialogOpen, openMenu, toast } from "./ui.js";
 import { setPageLinkHost, pageNamesChanged, applyPageLinkSettings, linkIndex } from "./pagelinkview.js";
 import { resolveTarget, retarget } from "./pagelinks.js";
 import { BOOK_ICONS, bookIcon, iconColor } from "./bookicons.js";
@@ -35,7 +35,12 @@ let busy = false;
 let reading = false;
 let sorting = false; // 抽屉里正在调整页面顺序(见 setSorting)
 
-const notify = (message) => { status.textContent = message; };
+// 简洁布局没有状态条:状态写进标题上面那行小字,保存失败和冲突副本再弹一次提示
+const notify = (message) => {
+  status.textContent = message;
+  showMeta();
+  if (look.layout === "clean" && /^保存失败|冲突副本/.test(message)) toast(message);
+};
 const markdown = () => { syncContent(selected); return selected?.content ?? ""; };
 const allowedImage = { "image/jpeg": true, "image/png": true, "image/gif": true, "image/webp": true, "image/bmp": true };
 
@@ -144,6 +149,7 @@ const drawer = el("mobile-drawer");
 const backdrop = el("drawer-backdrop");
 function toggleDrawer(open) {
   if (!open && sorting) setSorting(false);
+  if (!open && !el("note-filter").value) showDrawerSearch(false);
   drawer.hidden = !open;
   backdrop.hidden = !open;
   el("open-drawer").setAttribute("aria-expanded", String(open));
@@ -175,10 +181,13 @@ function markDrawerPage() {
 function renderDrawer() {
   const bookName = currentBook;
   const book = books.find((b) => b.name === bookName);
-  // 语雀纸感:页面列表是目录树,笔记本一行一行排下来,当前笔记本的页面缩进排在它下面
-  const tree = look.ui === "paper";
-  const key = JSON.stringify([tree, bookName, el("note-filter").value.trim().toLowerCase(), sorting, look.accent,
-    books.map((b) => [b.name, b.icon, b.icon_color]), book?.notes.map((n) => n.name)]);
+  // 语雀纸感和简洁布局:页面列表是目录树,笔记本一行一行排下来,当前笔记本的页面缩进排在它下面。
+  // 简洁布局的树每行多一个折叠箭头和页面数,页面最后是「＋ 新建页面」;「只当前笔记本」时只列当前这本
+  const clean = look.layout === "clean";
+  const tree = clean || look.ui === "paper";
+  const onlyCurrent = clean && look.drawer_tree === "current";
+  const key = JSON.stringify([tree, clean, onlyCurrent, bookName, el("note-filter").value.trim().toLowerCase(), sorting, look.accent,
+    books.map((b) => [b.name, b.icon, b.icon_color, b.notes.length]), book?.notes.map((n) => n.name)]);
   if (key === drawerKey) return markDrawerPage();
   drawerKey = key;
   drawerRows.clear();
@@ -188,7 +197,7 @@ function renderDrawer() {
   noteList.replaceChildren();
   el("pages-heading").textContent = tree ? "目录" : "页面";
   if (tree) {
-    for (const b of books) {
+    for (const b of onlyCurrent ? books.filter((x) => x.name === bookName) : books) {
       const row = document.createElement("button");
       row.type = "button";
       row.className = "tree-book";
@@ -197,14 +206,34 @@ function renderDrawer() {
       const name = document.createElement("span");
       name.textContent = b.name || "默认笔记本";
       row.append(bookMark(b), name);
+      if (clean) {
+        const chevron = document.createElement("i");
+        chevron.className = "tree-chev";
+        chevron.setAttribute("aria-hidden", "true");
+        chevron.textContent = b.name === bookName ? "⌄" : "›";
+        const count = document.createElement("small");
+        count.className = "tree-count";
+        count.textContent = String(b.notes.length);
+        row.prepend(chevron);
+        row.append(count);
+      }
       onLongPress(row, () => showBookManager(true, b.name));
-      // 点别的笔记本:换过去,抽屉留着,好接着点它的页面
+      // 点别的笔记本:换过去,抽屉留着,好接着点它的页面;「只当前笔记本」时点它弹出笔记本列表来换
       row.addEventListener("click", () => {
         if (b.name !== currentBook) void refresh(b.name, null);
+        else if (onlyCurrent) pickBook(row);
         else toggleDrawer(false);
       });
       noteList.append(row);
       if (b.name === bookName) noteList.append(...pageButtons(book, bookName, "tree-page"));
+      if (b.name === bookName && clean && !sorting) {
+        const add = document.createElement("button");
+        add.type = "button";
+        add.className = "tree-new";
+        add.textContent = "＋ 新建页面";
+        add.addEventListener("click", () => el("add-note").click());
+        noteList.append(add);
+      }
     }
     return;
   }
@@ -225,6 +254,16 @@ function renderDrawer() {
     bookList.append(button);
   }
   noteList.append(...pageButtons(book, bookName, ""));
+}
+
+// 换笔记本的小菜单(简洁布局「抽屉:只当前笔记本」时,点顶上那行小字或树里的笔记本)
+function pickBook(anchor) {
+  const r = anchor.getBoundingClientRect();
+  openMenu(books.map((b) => ({
+    id: "book",
+    label: (b.name === currentBook ? "✓ " : "") + bookLabel(b.name) + "（" + b.notes.length + "）",
+    act: () => { if (b.name !== currentBook) void refresh(b.name, null); },
+  })), r.left, r.bottom + 4);
 }
 
 // 笔记本的图标(和电脑版同一套图形和颜色),跟随强调色时用手机上选的强调色
@@ -288,6 +327,7 @@ function render() {
     return arrow;
   })());
   el("page-title").textContent = selected?.name || "空笔记本";
+  el("meta-book").textContent = book?.name || "默认笔记本";
   renderDrawer();
   renderBookManager();
   // While another page loads the editor is read-only, but the toolbar stays put (it only goes
@@ -306,6 +346,9 @@ function render() {
     b.disabled = el("mode").disabled;
     b.setAttribute("aria-pressed", String((b.dataset.mode === "read") === reading));
   }
+  el("mode-icon").disabled = el("mode").disabled;
+  el("mode-icon").setAttribute("aria-pressed", String(reading));
+  el("mode-icon").setAttribute("aria-label", reading ? "阅读中,点了编辑" : "编辑中,点了阅读");
   toolbar.hidden = !canEdit || raw;
   toolbar.inert = switching;
   el("add-note").disabled = !book || switching;
@@ -318,6 +361,56 @@ function render() {
     !selected ? "这个笔记本还没有页面，点列表里的「＋ 新建」添加" :
     raw ? "该笔记包含无法富文本编辑的 HTML，使用保真源码模式" :
       reading ? "阅读模式" : "本地自动保存 · 支持图片和 Markdown";
+  el("more-find").disabled = el("find-open").disabled;
+  el("more-image").disabled = el("insert-image").disabled;
+  el("more-new-page").disabled = el("add-note").disabled;
+  el("more-delete").disabled = el("delete-note").disabled;
+  showMeta();
+  placeControls();
+}
+
+// 标题上面那行小字(简洁布局):笔记本 · 要让人看到的状态(只能看、源码模式、还没有页面)· 保存状态
+function showMeta() {
+  const hint = selected?.unreadable ? "文件无法识别，只能看" : !selected ? "还没有页面" : selected.sourceOnly ? "源码模式" : "";
+  const text = status.textContent;
+  const parts = [hint];
+  if (selected ? !selected.unreadable : text !== "已保存") parts.push(text);
+  el("meta-status").textContent = parts.filter(Boolean).map((t) => " · " + t).join("");
+}
+
+// 两种布局用同一批按钮,只是放的地方不同:经典布局放回 0.5.2 的位置;简洁布局里
+// 同步按钮在顶栏(设置里选了顶栏)、工具栏右边(编辑时)或右下角胶囊(阅读时),新建页面按钮在胶囊里或悬浮
+const put = (parent, node, before = null) => { if (node.parentNode !== parent) parent.insertBefore(node, before); };
+function placeControls() {
+  const syncBox = el("sync-box");
+  const newPage = el("new-page");
+  const capsule = el("read-capsule");
+  const dockFixed = el("dock-fixed");
+  if (look.layout === "classic") {
+    put(document.querySelector(".bottom-status"), syncBox);
+    put(document.body, newPage, toolbar);
+    const actions = document.querySelector(".dock-actions");
+    put(actions, el("hide-keyboard"));
+    put(actions, el("block-actions"), el("hide-keyboard"));
+    put(el("mobile-sync-state").parentElement, el("mobile-sync-now"));
+    capsule.hidden = true;
+    placeFab();
+    return;
+  }
+  const docked = !toolbar.hidden;
+  if (look.sync_button_place === "top") put(document.querySelector(".app-header"), syncBox, el("open-more"));
+  else put(docked ? dockFixed : capsule, syncBox);
+  if (look.new_page_button === "capsule") put(capsule, newPage, capsule.firstChild);
+  else put(document.body, newPage, toolbar);
+  put(el("format-bar").parentElement, el("block-actions"), dockFixed);
+  put(dockFixed, el("hide-keyboard"), el("dock-sep"));
+  put(el("sync-foot"), el("mobile-sync-now"));
+  const hasNew = newPage.parentNode === capsule;
+  const hasSync = syncBox.parentNode === capsule;
+  el("capsule-div").hidden = !(hasNew && hasSync);
+  // 编辑时只有工具栏;新建页面在「更多」里
+  capsule.hidden = docked || !(hasNew || hasSync);
+  placeFab();
 }
 
 async function flush() {
@@ -478,7 +571,8 @@ document.addEventListener("keydown", (e) => {
     }
     return;
   }
-  if (e.key === "Escape" && !settingsSheet.hidden) showSettings(false);
+  if (e.key === "Escape" && !moreSheet.hidden) showMore(false);
+  else if (e.key === "Escape" && !settingsSheet.hidden) showSettings(false);
   else if (e.key === "Escape" && !drawer.hidden) toggleDrawer(false);
 });
 // 应用内对话框(代替系统的 prompt / confirm)。按按钮时不抢走输入框的焦点:
@@ -623,6 +717,69 @@ el("add-note").addEventListener("click", async () => {
 
 el("delete-note").addEventListener("click", () => { if (selected) void deletePage(selected.book, selected.name); });
 
+// ---- 简洁布局(0.5.4)的抽屉:🔍 展开搜索框,「笔记本」右边 ⇅ 排序、＋ 新建笔记本,底部 同步 / 明暗 / 设置 ----
+function showDrawerSearch(open) {
+  drawer.classList.toggle("searching", open);
+  el("drawer-search").setAttribute("aria-pressed", String(open));
+}
+el("drawer-search").addEventListener("click", () => {
+  const open = !drawer.classList.contains("searching");
+  showDrawerSearch(open);
+  if (open) el("note-filter").focus();
+  else if (el("note-filter").value) {
+    el("note-filter").value = "";
+    renderDrawer();
+  }
+});
+el("tree-sort").addEventListener("click", () => setSorting(!sorting));
+el("tree-add-book").addEventListener("click", () => el("add-book").click());
+el("drawer-open-settings").addEventListener("click", () => showSettings(true));
+el("drawer-sync-open").addEventListener("click", () => el("open-sync-settings").click());
+el("header-meta").addEventListener("click", () => {
+  if (look.drawer_tree === "current") pickBook(el("header-meta"));
+  else toggleDrawer(true);
+});
+
+// ---- 简洁布局顶栏的「更多」:点一项先收起面板再做 ----
+const moreSheet = el("more-sheet");
+function showMore(open) {
+  moreSheet.hidden = !open;
+  el("more-backdrop").hidden = !open;
+  el("open-more").setAttribute("aria-expanded", String(open));
+}
+el("open-more").addEventListener("click", () => showMore(true));
+el("more-backdrop").addEventListener("click", () => showMore(false));
+for (const [id, act] of [
+  ["more-find", () => showFind(true)],
+  ["more-image", () => el("insert-image").click()],
+  ["more-new-page", () => el("add-note").click()],
+  ["more-sync", () => el("refresh").click()],
+  ["more-sort", () => { toggleDrawer(true); setSorting(true); }],
+  ["more-books", () => showBookManager(true)],
+  ["more-look", () => showSettings(true)],
+  ["more-sync-settings", () => el("open-sync-settings").click()],
+  ["more-delete", () => el("delete-note").click()],
+]) {
+  el(id).addEventListener("click", () => { showMore(false); act(); });
+}
+
+// 工具栏右边的 ⊕ 插入:第一项图片,后面是格式栏里插入类的按钮(代码块、复制文本、表格、分隔线)
+el("dock-insert").addEventListener("click", () => {
+  const items = [{ id: "image", label: "图片", disabled: el("insert-image").disabled, act: () => el("insert-image").click() }];
+  for (const cmd of ["codeblock", "copytext", "table", "hr"]) {
+    const b = el("format-bar").querySelector(`[data-cmd="${cmd}"]`);
+    if (b) items.push({ id: cmd, label: b.title.replace(/\s*\(.*\)$/, ""), disabled: b.disabled, act: () => b.click() });
+  }
+  const r = el("dock-insert").getBoundingClientRect();
+  openMenu(items, r.right, r.top);
+  // 菜单开在按钮上面,右边和按钮对齐
+  const menu = el("ctx");
+  menu.style.left = Math.max(4, r.right - menu.offsetWidth) + "px";
+  menu.style.top = Math.max(4, r.top - menu.offsetHeight - 6) + "px";
+});
+// 点菜单里的按钮不抢编辑器的焦点:键盘不收起,选区还在
+el("ctx").addEventListener("pointerdown", (e) => { if (e.target.closest("button")) e.preventDefault(); });
+
 // 删掉的是正在看的页面就打开相邻的一页,别的页面只从名单里拿掉,正在编辑的这页不动
 async function deletePage(book, name) {
   if (switching || busy) return;
@@ -689,6 +846,8 @@ function setSorting(on) {
   const button = el("sort-notes");
   button.textContent = on ? "完成" : "排序";
   button.setAttribute("aria-pressed", String(on));
+  el("tree-sort").setAttribute("aria-pressed", String(on));
+  el("tree-sort").setAttribute("aria-label", on ? "排好了" : "调整页面顺序");
   el("sort-hint").hidden = !on;
   drawer.classList.toggle("sorting", on);
   if (on) el("note-filter").value = "";
@@ -968,6 +1127,7 @@ async function toggleMode() {
   if (!reading) (selected?.sourceOnly ? source : view).focus();
 }
 el("mode").addEventListener("click", toggleMode);
+el("mode-icon").addEventListener("click", toggleMode);
 // 星空渐变的「阅读 | 编辑」分段:点已经选中的那一边不动
 for (const b of el("mode-seg").children) {
   b.addEventListener("click", () => { if ((b.dataset.mode === "read") !== reading) void toggleMode(); });
@@ -1104,21 +1264,27 @@ async function saveSyncForm() {
   el("ms-result").textContent = "同步设置已保存";
 }
 const SYNC_LABELS = { synced: "已同步", syncing: "同步中", conflict: "有冲突", offline: "离线", error: "出错", confirm: "需要确认", off: "未同步" };
+// 和电脑状态栏(webdav.js)同一套符号
 const SYNC_SYMBOLS = { synced: "✓", syncing: "⟳", conflict: "!", offline: "○", error: "!", confirm: "?", off: "○" };
-// 同步状态就显示在右下角的同步按钮上(同步开着时点它就是立即同步):同步时图标转,同步完角上的小圆点
-// 弹一下显示结果(✓ ! ? ○),「图标和文字」时按钮左边再写上一句。跟随 同步设置 → 状态显示 和状态颜色
-const SYNC_MARKS = { synced: "✓", conflict: "!", offline: "○", error: "!", confirm: "?", off: "○" };
+// 同步状态就显示在同步按钮上(同步开着时点它就是立即同步):符号和电脑一样,同步中的 ⟳ 转,
+// 同步完结果符号弹一下;「图标和文字」时旁边再写上一句。跟随 同步设置 → 状态显示 和状态颜色。
+// 同步没开(或状态显示选了隐藏)时是一个不转的灰色 ⟳
 let shownSync = "";
+let syncKind = "off";
+let lastSyncTime = "";
 function showSyncBadge(kind) {
   const button = el("refresh");
   const label = el("sync-label");
-  const mark = el("sync-mark");
+  const glyph = el("sync-glyph");
   const on = syncSettings.enabled && syncSettings.display !== "none";
   const k = SYNC_LABELS[kind] ? kind : "off";
+  syncKind = k;
+  showSyncRows();
+  setSyncGlyph(glyph, on ? k : null);
   if (!on) {
     delete button.dataset.sync;
     delete label.dataset.sync;
-    label.hidden = mark.hidden = true;
+    label.hidden = true;
     button.setAttribute("aria-label", syncSettings.enabled ? "立即同步" : "重新读取页面");
     button.title = syncSettings.enabled ? "立即同步" : "重新读取";
     shownSync = "";
@@ -1129,39 +1295,57 @@ function showSyncBadge(kind) {
   button.title = "同步：" + SYNC_LABELS[k] + "，点一下立即同步";
   label.hidden = syncSettings.display !== "text";
   label.textContent = SYNC_LABELS[k];
-  mark.hidden = k === "syncing";
-  mark.textContent = SYNC_MARKS[k] || "";
-  // 从「同步中」变成别的状态时圆点弹一下
+  // 从「同步中」变成别的状态时符号弹一下
   if (shownSync === "syncing" && k !== "syncing") {
-    mark.classList.remove("pop");
-    void mark.offsetWidth;
-    mark.classList.add("pop");
+    glyph.classList.remove("pop");
+    void glyph.offsetWidth;
+    glyph.classList.add("pop");
   }
   shownSync = k;
-  // 状态颜色:纯色直接用;渐变给图标的线条一个 SVG 渐变,文字用渐变填充
-  const color = parseAccent(syncSettings.status_color);
-  for (const node of [button, label]) {
-    if (color?.from) node.style.setProperty("--sync-color", color.from);
-    else node.style.removeProperty("--sync-color");
-  }
-  const grad = el("sync-grad");
-  const stroke = button.querySelector("svg");
-  if (color?.to) {
-    const stops = color.stops || [color.from, color.to];
-    grad.replaceChildren(...stops.map((hex, i) => {
-      const stop = document.createElementNS("http://www.w3.org/2000/svg", "stop");
-      stop.setAttribute("offset", (color.positions?.[i] ?? (i / (stops.length - 1)) * 100) + "%");
-      stop.setAttribute("stop-color", hex);
-      return stop;
-    }));
-    stroke.style.stroke = "url(#sync-grad)";
-    label.style.backgroundImage = syncSettings.status_color;
-    label.style.webkitBackgroundClip = label.style.backgroundClip = "text";
-    label.style.webkitTextFillColor = "transparent";
-  } else {
-    stroke.style.stroke = "";
-    label.style.backgroundImage = label.style.backgroundClip = label.style.webkitBackgroundClip = label.style.webkitTextFillColor = "";
-  }
+  paintSync(label, true);
+}
+
+// 一个同步符号:k 是状态,null 是「重新读取」(不转的灰色 ⟳)
+function setSyncGlyph(node, k) {
+  node.textContent = k ? SYNC_SYMBOLS[k] : "⟳";
+  node.classList.toggle("spinning", k === "syncing");
+  node.classList.toggle("idle", !k);
+  if (!k || k === "syncing") node.classList.remove("pop");
+  paintSync(node, !!k);
+}
+
+// 状态颜色:纯色直接上色;渐变用文字渐变(和电脑版一样)。off 时交还给样式表(强调色或灰色)
+function paintSync(node, on) {
+  const color = on ? parseAccent(syncSettings.status_color) : null;
+  node.style.color = color?.from || "";
+  node.style.backgroundImage = color?.to ? syncSettings.status_color : "";
+  node.style.backgroundClip = node.style.webkitBackgroundClip = color?.to ? "text" : "";
+  node.style.webkitTextFillColor = color?.to ? "transparent" : "";
+}
+
+// 「已同步 · 2 分钟前」:last_time 是手机本地时间 2026-10-27 18:30:05
+function syncAgo(time) {
+  const at = new Date(String(time).replace(" ", "T"));
+  const minutes = Math.floor((Date.now() - at) / 60_000);
+  if (Number.isNaN(minutes)) return "";
+  if (minutes < 1) return "刚刚";
+  if (minutes < 60) return minutes + " 分钟前";
+  if (minutes < 24 * 60) return Math.floor(minutes / 60) + " 小时前";
+  return String(time).slice(5, 16);
+}
+
+// 简洁布局里别处的同步状态:抽屉底部的同步行、「更多」里的立即同步和同步设置
+function showSyncRows() {
+  const on = syncSettings.enabled;
+  const k = syncKind;
+  setSyncGlyph(el("drawer-sync-glyph"), on ? k : null);
+  if (!on) el("drawer-sync-glyph").textContent = "○";
+  el("drawer-sync-text").textContent = !on ? "未开启" :
+    SYNC_LABELS[k] + (k === "synced" && lastSyncTime ? " · " + syncAgo(lastSyncTime) : "");
+  setSyncGlyph(el("more-sync-glyph"), on ? k : null);
+  el("more-sync-label").textContent = on ? "立即同步" : "重新读取";
+  el("more-sync-state").textContent = on ? SYNC_LABELS[k] : "未开启";
+  el("mobile-sync-now").hidden = look.layout === "clean" && !on;
 }
 async function showSyncStatus() {
   if (!invoke) return;
@@ -1170,6 +1354,7 @@ async function showSyncStatus() {
     const labels = SYNC_LABELS;
     const symbols = SYNC_SYMBOLS;
     const kind = result.state || "off";
+    lastSyncTime = result.last_time || "";
     showSyncBadge(kind);
     const icon = symbols[kind] || "○";
     el("mobile-sync-state").textContent = syncSettings.enabled
@@ -1360,7 +1545,13 @@ function loadLook() {
     accent: tidyAccent(typeof saved.accent === "string" ? saved.accent : ""),
     stars: saved.stars !== false,
     cats: saved.cats !== false,
-    fab: saved.fab !== false,
+    // 界面布局(0.5.4):简洁(方案 A,默认)或经典(0.5.2 原样),后面几项是简洁布局里的摆法
+    layout: saved.layout === "classic" ? "classic" : "clean",
+    header_meta: ["book", "off"].includes(saved.header_meta) ? saved.header_meta : "full",
+    // 代替原来的开关 fab:关掉过的(fab=false)是「不显示」,其余是「底部胶囊」
+    new_page_button: ["capsule", "fab", "off"].includes(saved.new_page_button) ? saved.new_page_button : saved.fab === false ? "off" : "capsule",
+    sync_button_place: saved.sync_button_place === "top" ? "top" : "bottom",
+    drawer_tree: saved.drawer_tree === "current" ? "current" : "all",
     debug: saved.debug === true,
     local_path_enabled: saved.local_path_enabled === true,
     // 很长的页面只排版看得见的部分(和电脑版设置里的同名字段一样)
@@ -1395,8 +1586,13 @@ function applyLook() {
   else root.dataset.ui = look.ui;
   root.dataset.theme = look.theme === "system" ? (systemDark.matches ? "dark" : "light") : look.theme;
   root.toggleAttribute("data-stars", look.stars);
-  root.toggleAttribute("data-cats", look.cats);
-  root.toggleAttribute("data-fab", look.fab);
+  const classic = look.layout === "classic";
+  root.dataset.layout = look.layout;
+  root.dataset.headerMeta = look.header_meta;
+  // 分类工具栏:简洁布局四种风格都能开;经典布局和 0.5.2 一样只有星空渐变有
+  root.toggleAttribute("data-cats", look.cats && (!classic || look.ui === "starry"));
+  // 悬浮的新建页面按钮:经典布局里只要没选「不显示」就有(经典没有胶囊)
+  root.toggleAttribute("data-fab", classic ? look.new_page_button !== "off" : look.new_page_button === "fab");
   applyAccent(look.accent);
   // 自选的强调色也给按钮的浅底换色(经典风格的浅底是写死的绿色)
   if (look.accent) root.style.setProperty("--soft-accent", "var(--accent-soft)");
@@ -1408,7 +1604,17 @@ function applyLook() {
   for (const row of settingsSheet.querySelectorAll("[data-ui-only]")) row.hidden = row.dataset.uiOnly !== look.ui;
   el("look-stars").checked = look.stars;
   el("look-cats").checked = look.cats;
-  el("look-fab").checked = look.fab;
+  for (const [box, attr, value] of [
+    ["look-layout", "layoutChoice", look.layout], ["look-header-meta", "headerMeta", look.header_meta],
+    ["look-new-page", "newPage", look.new_page_button], ["look-sync-place", "syncPlace", look.sync_button_place],
+    ["look-drawer-tree", "drawerTree", look.drawer_tree],
+  ]) for (const b of el(box).children) b.setAttribute("aria-pressed", String(b.dataset[attr] === value));
+  // 经典布局用不上的几项灰掉
+  for (const row of settingsSheet.querySelectorAll(".clean-only-setting")) {
+    row.classList.toggle("off", classic);
+    for (const b of row.querySelectorAll("button")) b.disabled = classic;
+  }
+  el("layout-classic-note").hidden = !classic;
   el("look-debug").checked = look.debug;
   el("look-local-path").checked = look.local_path_enabled;
   el("look-long-page").checked = look.long_page_lazy;
@@ -1425,6 +1631,9 @@ function applyLook() {
   el("viewport-debug").hidden = !look.debug;
   if (look.debug) requestAnimationFrame(fitViewport);
   renderDrawer();
+  showMeta();
+  showSyncRows();
+  placeControls();
 }
 
 for (const a of ACCENTS) {
@@ -1442,7 +1651,11 @@ for (const b of el("ui-styles").children) b.addEventListener("click", () => setL
 for (const b of document.querySelectorAll("[data-theme-choice]")) b.addEventListener("click", () => setLook({ theme: b.dataset.themeChoice }));
 el("look-stars").addEventListener("change", (e) => setLook({ stars: e.target.checked }));
 el("look-cats").addEventListener("change", (e) => setLook({ cats: e.target.checked }));
-el("look-fab").addEventListener("change", (e) => setLook({ fab: e.target.checked }));
+for (const [box, attr, field] of [
+  ["look-layout", "layoutChoice", "layout"], ["look-header-meta", "headerMeta", "header_meta"],
+  ["look-new-page", "newPage", "new_page_button"], ["look-sync-place", "syncPlace", "sync_button_place"],
+  ["look-drawer-tree", "drawerTree", "drawer_tree"],
+]) for (const b of el(box).children) b.addEventListener("click", () => setLook({ [field]: b.dataset[attr] }));
 el("look-debug").addEventListener("change", (e) => setLook({ debug: e.target.checked }));
 el("look-local-path").addEventListener("change", (e) => setLook({ local_path_enabled: e.target.checked }));
 el("look-long-page").addEventListener("change", (e) => setLook({ long_page_lazy: e.target.checked }));
@@ -1472,15 +1685,16 @@ el("close-settings").addEventListener("click", () => showSettings(false));
 settingsBackdrop.addEventListener("click", () => showSettings(false));
 applyLook();
 
-// ---- 返回键(0.4.5):按一次关掉最上面开着的一层,顺序是 对话框 → 菜单和弹窗 → 查找栏 → 笔记本管理 → 同步设置 → 外观设置 → 抽屉。
+// ---- 返回键(0.4.5):按一次关掉最上面开着的一层,顺序是 对话框 → 菜单和弹窗 → 查找栏 → 「更多」 → 笔记本管理 → 同步设置 → 外观设置 → 抽屉。
 // 只在有东西开着时才接管返回键(Tauri 的 onBackButtonPress),全关了就交还,返回键照常让应用退到后台。
 const syncSheet = el("mobile-webdav-settings");
 const openMenus = () => [...document.querySelectorAll(".menu:not([hidden])")];
-const layerOpen = () => dialogOpen() || openMenus().length > 0 || !findPanel.hidden || !booksSheet.hidden || !syncSheet.hidden || !settingsSheet.hidden || !drawer.hidden;
+const layerOpen = () => dialogOpen() || openMenus().length > 0 || !findPanel.hidden || !moreSheet.hidden || !booksSheet.hidden || !syncSheet.hidden || !settingsSheet.hidden || !drawer.hidden;
 function closeTopLayer() {
   if (dialogOpen()) closeDialog(false);
   else if (openMenus().length) for (const menu of openMenus()) menu.hidden = true;
   else if (!findPanel.hidden) showFind(false);
+  else if (!moreSheet.hidden) showMore(false);
   else if (!booksSheet.hidden) showBookManager(false);
   else if (!syncSheet.hidden) closeSyncSettings();
   else if (!settingsSheet.hidden) showSettings(false);
@@ -1559,7 +1773,10 @@ function showDebug(d) {
 // 新建页面的悬浮按钮停在页面区域的右下角,工具栏和状态栏变高变矮时跟着挪
 const fab = el("new-page");
 function placeFab() {
-  const bottom = el("page").getBoundingClientRect().bottom;
+  let bottom = el("page").getBoundingClientRect().bottom;
+  // 简洁布局右下角有胶囊(比如只放同步按钮)时停在它上面
+  const capsule = el("read-capsule");
+  if (capsule.getClientRects().length) bottom = Math.min(bottom, capsule.getBoundingClientRect().top);
   document.documentElement.style.setProperty("--fab-bottom", Math.max(0, Math.round(window.innerHeight - bottom)) + 16 + "px");
 }
 fab.addEventListener("click", () => el("add-note").click());

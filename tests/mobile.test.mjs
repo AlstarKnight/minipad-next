@@ -31,10 +31,13 @@ async function chooseNote(page, name) {
 }
 
 // look: the saved appearance (0.4.4). Older tests were written for the original look, so they get "classic".
+// They were also written for the 0.5.2 layout, so a look without a layout gets layout "classic" (0.5.4);
+// look: null is a fresh install (the clean layout).
 // sharedColors: the color library file already in the notes folder (synced from the desktop).
 async function open({ colorScheme, keyboard, look = { ui: "classic" }, sharedColors = null } = {}) {
   const context = await browser.newContext({ viewport: { width: 390, height: 740 }, colorScheme });
   if (sharedColors) await context.addInitScript((c) => { window.__sharedColors = c; }, sharedColors);
+  if (look && !look.layout) look = { layout: "classic", ...look };
   if (look) await context.addInitScript((v) => { if (!localStorage.getItem("minipad-mobile-look")) localStorage.setItem("minipad-mobile-look", v); }, JSON.stringify(look));
   if (keyboard) {
     // Android WebViews can shrink only the visual viewport when the soft keyboard opens.
@@ -142,7 +145,9 @@ async function open({ colorScheme, keyboard, look = { ui: "classic" }, sharedCol
           (window.__mobileTest.opened ||= []).push(args);
           return null;
         }
-        if (command === "mobile_webdav_status") return { state: "synced", message: "已同步（测试）", history: [] };
+        if (command === "mobile_webdav_status") {
+          return { state: window.__mobileTest.webdavState ?? "synced", last_time: window.__mobileTest.webdavLast ?? "", message: "已同步（测试）", history: [] };
+        }
         if (command === "mobile_webdav_set_password") {
           window.__mobileTest.savedWebdavPassword = args.password;
           return null;
@@ -730,8 +735,8 @@ test("pinch-zooming is not mistaken for the soft keyboard", async () => {
 const shown = (page, selector) => page.locator(selector).first().evaluate((e) => getComputedStyle(e).display !== "none" && !e.closest("[hidden]"));
 const rootAttr = (page, name) => page.evaluate((n) => document.documentElement.getAttribute(n), name);
 
-test("a fresh install is starry: reading | editing segment and the categorized toolbar", async () => {
-  const { context, page, errors } = await open({ look: null });
+test("classic layout, starry style: reading | editing segment and the categorized toolbar", async () => {
+  const { context, page, errors } = await open({ look: { layout: "classic" } });
   try {
     assert.equal(await rootAttr(page, "data-ui"), "starry");
     assert.equal(await shown(page, "#mode"), false, "the single mode button gives way to the segment");
@@ -759,7 +764,7 @@ test("a fresh install is starry: reading | editing segment and the categorized t
 });
 
 test("appearance settings switch style, light/dark and accent at once and are remembered", async () => {
-  const { context, page, errors } = await open({ look: null, colorScheme: "light" });
+  const { context, page, errors } = await open({ look: { layout: "classic" }, colorScheme: "light" });
   try {
     await page.click("#open-drawer");
     await page.click("#open-settings");
@@ -826,7 +831,7 @@ test("paper: the drawer is an outline tree and keeps the drawer open while chang
 });
 
 test("the hide-keyboard button shows while the keyboard is up and takes the focus away", async () => {
-  const { context, page, errors } = await open({ keyboard: true, look: null });
+  const { context, page, errors } = await open({ keyboard: true, look: { layout: "classic" } });
   try {
     await page.locator(".ProseMirror p").first().click();
     assert.equal(await page.locator("#hide-keyboard").isVisible(), false);
@@ -898,7 +903,7 @@ test("the floating new-page button creates a page, steps aside for the keyboard 
       await fab.waitFor({ state: "visible" });
       await page.click("#open-drawer");
       await page.click("#open-settings");
-      await page.uncheck("#look-fab");
+      await page.click('#look-new-page [data-new-page="off"]');
       await page.click("#close-settings");
       assert.equal(await fab.isVisible(), false, `${ui}: turned off`);
       assert.deepEqual(errors, []);
@@ -1345,14 +1350,16 @@ test("long-pressing a notebook opens its management page, and notebook icons sho
 test("the sync state lives on the sync button at the bottom right: it spins while syncing and follows the display setting", async () => {
   const { context, page, errors } = await open();
   try {
+    // 0.5.4: the button shows the desktop status-bar glyphs (✓ ⟳ ! ? ○) instead of an arrows icon with a corner dot
     const sync = () => page.evaluate(() => {
       const b = document.getElementById("refresh");
-      const mark = document.getElementById("sync-mark");
+      const glyph = document.getElementById("sync-glyph");
       const label = document.getElementById("sync-label");
-      return { state: b.dataset.sync ?? null, mark: mark.hidden ? null : mark.textContent, label: label.hidden ? null : label.textContent,
-        spinning: getComputedStyle(b.querySelector("svg")).animationName };
+      return { state: b.dataset.sync ?? null, mark: glyph.textContent + (glyph.classList.contains("idle") ? " idle" : ""),
+        label: label.hidden ? null : label.textContent, spinning: getComputedStyle(glyph).animationName };
     });
-    assert.deepEqual(await sync(), { state: null, mark: null, label: null, spinning: "none" }, "a plain refresh button while sync is off");
+    assert.equal(await page.locator("#refresh svg, #sync-mark").count(), 0, "no arrows icon and no corner dot");
+    assert.deepEqual(await sync(), { state: null, mark: "⟳ idle", label: null, spinning: "none" }, "a still grey ⟳ (reload) while sync is off");
     assert.equal(await page.locator(".context-strip #sync-badge").count(), 0, "nothing at the top any more");
     await page.click("#open-drawer");
     await page.click("#open-sync-settings");
@@ -1368,17 +1375,17 @@ test("the sync state lives on the sync button at the bottom right: it spins whil
     await page.evaluate(() => { window.__mobileTest.syncDelay = 600; });
     await page.click("#refresh");
     await page.waitForFunction(() => document.getElementById("refresh").dataset.sync === "syncing");
-    assert.deepEqual(await sync(), { state: "syncing", mark: null, label: null, spinning: "sync-spin" });
+    assert.deepEqual(await sync(), { state: "syncing", mark: "⟳", label: null, spinning: "webdav-rotate" });
     await page.waitForFunction(() => document.getElementById("refresh").dataset.sync === "synced");
-    assert.equal(await page.locator("#sync-mark").evaluate((m) => m.classList.contains("pop")), true, "the result pops in after a sync");
+    assert.equal(await page.locator("#sync-glyph").evaluate((m) => m.classList.contains("pop")), true, "the result pops in after a sync");
     await page.click("#open-drawer");
     await page.click("#open-sync-settings");
     await page.selectOption("#ms-display", "text");
     await page.click("#ms-save-config");
-    assert.deepEqual(await sync(), { state: "synced", mark: "✓", label: "已同步", spinning: "none" });
+    assert.deepEqual(await sync(), { state: "synced", mark: "✓", label: "已同步", spinning: "sync-pop" });
     await page.selectOption("#ms-display", "none");
     await page.click("#ms-save-config");
-    assert.deepEqual(await sync(), { state: null, mark: null, label: null, spinning: "none" });
+    assert.deepEqual(await sync(), { state: null, mark: "⟳ idle", label: null, spinning: "none" });
     assert.equal(await page.locator("#refresh").getAttribute("aria-label"), "立即同步");
     assert.deepEqual(errors, []);
   } finally { await context.close(); }
@@ -1790,6 +1797,371 @@ test("inline calc on the phone: off at first, then typing = writes the result", 
     await page.keyboard.press("End");
     await page.keyboard.type(" 12*3.5=");
     await page.waitForFunction(() => window.__mobileTest.disk[0].notes[0].content.endsWith("12\\*3.5=42"));
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+// ---------- 0.5.4 简洁布局(方案 A):顶栏一行、正文、一行工具栏;抽屉是目录树;顶栏「更多」;外观里的「界面布局」 ----------
+const CLEAN = { ui: "starry", layout: "clean" };
+const visible = (page, selector) => page.locator(selector).first().evaluate((e) => e.getClientRects().length > 0 && getComputedStyle(e).visibility !== "hidden");
+async function turnOnSync(page) {
+  await page.click("#open-more");
+  await page.click("#more-sync-settings");
+  await page.locator("#ms-enable").check();
+  await page.fill("#ms-server", "https://dav.example.com/");
+  await page.fill("#ms-user", "tester");
+  await page.click("#ms-save-config");
+  await page.click("#close-sync-settings");
+}
+
+test("a fresh install uses the clean layout: one header row, the text, one toolbar row", async () => {
+  const { context, page, errors } = await open({ look: null });
+  try {
+    assert.equal(await rootAttr(page, "data-layout"), "clean");
+    assert.equal(await rootAttr(page, "data-ui"), "starry");
+    for (const gone of [".context-strip", ".bottom-status", ".dock-heading", "#mode", "#mode-seg", "#book-title"]) {
+      assert.equal(await visible(page, gone), false, gone + " is gone");
+    }
+    assert.equal(await page.locator("#meta-book").textContent(), "默认笔记本");
+    assert.equal(await page.locator("#meta-status").textContent(), " · 已保存", "the save state moved above the title");
+    // 编辑时:一行工具栏,右边固定 ⊕ 插入、同步;收起键盘只在键盘弹出时有
+    assert.equal(await page.locator("#mode-icon").getAttribute("aria-pressed"), "false");
+    assert.equal(await visible(page, "#mobile-dock"), true);
+    assert.equal(await page.locator("#dock-fixed #dock-insert").count(), 1);
+    assert.equal(await page.locator("#dock-fixed #refresh").count(), 1, "the sync button ends the toolbar");
+    assert.equal(await page.locator(".dock-row #block-actions").count(), 1, "block actions sit in the toolbar row");
+    assert.equal(await visible(page, "#hide-keyboard"), false);
+    assert.equal(await visible(page, "#read-capsule"), false, "editing shows only the toolbar");
+    const dock = await page.locator("#mobile-dock").boundingBox();
+    assert.ok(dock.height < 110, "one toolbar row (plus the category tabs): " + dock.height);
+    // 阅读时:工具栏收起,右下角胶囊「＋ 新页面 | 同步」
+    await page.click("#mode-icon");
+    assert.equal(await page.locator("#mode-icon").getAttribute("aria-pressed"), "true");
+    assert.equal(await visible(page, "#mobile-dock"), false);
+    assert.equal(await visible(page, "#read-capsule"), true);
+    assert.deepEqual(await page.locator("#read-capsule > *:not([hidden])").evaluateAll((n) => n.map((e) => e.id)), ["new-page", "capsule-div", "sync-box"]);
+    const capsule = await page.locator("#read-capsule").boundingBox();
+    assert.ok(capsule.x + capsule.width <= 390 - 12 && capsule.y + capsule.height <= 740 - 12, "bottom right");
+    assert.equal(await page.locator("#read-capsule").evaluate((e) => getComputedStyle(e).boxShadow), "none", "no shadow");
+    const pageBox = await page.locator("#page").boundingBox();
+    assert.ok(pageBox.y + pageBox.height >= 738, "the text reaches the bottom of the screen");
+    await page.click("#read-capsule #new-page");
+    await answerDialog(page, "三");
+    await page.waitForFunction(() => document.getElementById("page-title").textContent === "三");
+    await page.click("#mode-icon");
+    assert.equal(await visible(page, "#mobile-dock"), true);
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test("clean: the hide-keyboard button joins the toolbar while the keyboard is up", async () => {
+  const { context, page, errors } = await open({ keyboard: true, look: CLEAN });
+  try {
+    await page.locator("#editor .ProseMirror p").first().click();
+    await page.evaluate(() => { window.visualViewport.height = innerHeight - 300; window.visualViewport.dispatchEvent(new Event("resize")); });
+    assert.equal(await visible(page, "#dock-fixed #hide-keyboard"), true);
+    const dock = await page.locator("#mobile-dock").boundingBox();
+    assert.ok(Math.abs(dock.y + dock.height - (740 - 300)) <= 1, "the toolbar sits on the keyboard");
+    await page.click("#hide-keyboard");
+    assert.equal(await page.evaluate(() => document.activeElement?.closest?.(".ProseMirror") == null), true);
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test("clean: the ⊕ insert menu offers the picture first, then the insert buttons of the format bar", async () => {
+  const { context, page, errors } = await open({ look: CLEAN });
+  try {
+    await page.locator("#editor .ProseMirror p").first().click();
+    await page.click("#dock-insert");
+    await page.locator("#ctx").waitFor({ state: "visible" });
+    assert.deepEqual(await page.locator("#ctx button").allTextContents(), ["图片", "代码块", "复制文本", "表格", "分隔线"]);
+    const menu = await page.locator("#ctx").boundingBox();
+    const plus = await page.locator("#dock-insert").boundingBox();
+    assert.ok(menu.y + menu.height <= plus.y, "the menu opens above the button");
+    await page.click('#ctx [data-act="hr"]');
+    await page.waitForFunction(() => /^---$|^\*\*\*$/m.test(window.__mobileTest.disk[0].notes[0].content));
+    await page.click("#dock-insert");
+    const picked = page.waitForEvent("filechooser");
+    await page.click('#ctx [data-act="image"]');
+    await (await picked).setFiles({ name: "pic.png", mimeType: "image/png", buffer: TINY_PNG });
+    await page.waitForFunction(() => window.__mobileTest.disk[0].notes[0].content.includes("assets/test.png"));
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test("clean: every item of the ⋯ sheet works", async () => {
+  const { context, page, errors } = await open({ look: CLEAN });
+  try {
+    const more = async (id) => {
+      await page.click("#open-more");
+      await page.locator("#more-sheet").waitFor({ state: "visible" });
+      await page.click(id);
+      assert.equal(await page.locator("#more-sheet").isHidden(), true, id + " closes the sheet");
+    };
+    await page.click("#open-more");
+    assert.deepEqual(await page.locator("#more-sheet button").allTextContents(),
+      ["查找替换", "插入图片", "新建页面", "⟳重新读取", "调整页面顺序", "笔记本管理", "外观设置", "同步设置未开启", "删除这一页"]);
+    await page.keyboard.press("Escape");
+    assert.equal(await page.locator("#more-sheet").isHidden(), true);
+    await more("#more-find");
+    assert.equal(await page.locator("#find-panel").isVisible(), true);
+    await page.click("#find-close");
+    const picked = page.waitForEvent("filechooser");
+    await more("#more-image");
+    await picked;
+    await more("#more-new-page");
+    await answerDialog(page, "三");
+    await page.waitForFunction(() => document.getElementById("page-title").textContent === "三");
+    const lists = await page.evaluate(() => window.__mobileTest.calls.list);
+    await more("#more-sync");
+    await page.waitForFunction((n) => window.__mobileTest.calls.list > n, lists);
+    await more("#more-sort");
+    assert.equal(await page.locator("#mobile-drawer").isVisible(), true);
+    assert.equal(await page.locator("#tree-sort").getAttribute("aria-pressed"), "true");
+    assert.equal(await page.locator(".drag-handle").count(), 3);
+    await page.click("#tree-sort");
+    await page.click("#drawer-backdrop", { position: { x: 370, y: 300 } });
+    await more("#more-books");
+    assert.equal(await page.locator("#mobile-books").isVisible(), true);
+    await page.click("#close-books");
+    await more("#more-look");
+    assert.equal(await page.locator("#mobile-settings").isVisible(), true);
+    await page.click("#close-settings");
+    await more("#more-sync-settings");
+    assert.equal(await page.locator("#mobile-webdav-settings").isVisible(), true);
+    await page.click("#close-sync-settings");
+    await more("#more-delete");
+    await page.click("#dialog-ok");
+    await page.waitForFunction(() => (window.__mobileTest.deleted || []).includes("三"));
+    // 同步开着时那一格是立即同步
+    await turnOnSync(page);
+    await page.click("#open-more");
+    assert.equal(await page.locator("#more-sync").textContent(), "✓立即同步");
+    assert.equal(await page.locator("#more-sync-state").textContent(), "已同步");
+    const syncs = await page.evaluate(() => window.__mobileTest.syncCalls || 0);
+    await page.click("#more-sync");
+    await page.waitForFunction((n) => (window.__mobileTest.syncCalls || 0) > n, syncs);
+    // 返回键先关「更多」
+    await page.click("#open-more");
+    await page.evaluate(() => window.__mobileTest.back());
+    assert.equal(await page.locator("#more-sheet").isHidden(), true);
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test("clean: the drawer is one notebook/page tree; long press, sorting, new page and new notebook still work", async () => {
+  const { context, page, errors } = await open({ look: CLEAN });
+  try {
+    await page.evaluate(() => window.__mobileTest.disk.push({ name: "工作", notes: [{ name: "周报", content: "# 周报", unreadable: false }] }));
+    await page.click("#refresh");
+    await page.click("#open-drawer");
+    const rows = () => page.$$eval("#notes-list button", (bs) => bs.map((b) => b.className + ":" + b.textContent));
+    await page.waitForFunction(() => document.querySelectorAll("#notes-list .tree-book").length === 2);
+    assert.deepEqual(await rows(), ["tree-book open:⌄默认笔记本2", "tree-page active:一", "tree-page:二", "tree-new:＋ 新建页面", "tree-book:›工作1"]);
+    for (const gone of [".books-section", ".page-section > .section-heading", ".sync-section", ".drawer-actions", ".drawer-footnote", ".search-wrap", "#close-drawer"]) {
+      assert.equal(await visible(page, gone), false, gone + " is gone");
+    }
+    // 🔍 展开搜索框,搜的是当前笔记本的页面
+    await page.click("#drawer-search");
+    await page.fill("#note-filter", "二");
+    assert.deepEqual(await page.locator("#notes-list button[data-page]").evaluateAll((r) => r.map((x) => x.dataset.page)), ["二"]);
+    await page.click("#drawer-search");
+    assert.equal(await page.locator("#note-filter").inputValue(), "");
+    assert.equal(await visible(page, ".search-wrap"), false);
+    // 点别的笔记本:换过去并展开它,同一时间只展开一个
+    await page.locator("#notes-list .tree-book").filter({ hasText: "工作" }).click();
+    await page.waitForFunction(() => document.getElementById("page-title").textContent === "周报");
+    assert.equal(await page.locator("#mobile-drawer").isVisible(), true);
+    assert.deepEqual(await rows(), ["tree-book:›默认笔记本2", "tree-book open:⌄工作1", "tree-page active:周报", "tree-new:＋ 新建页面"]);
+    await page.click("#notes-list .tree-new");
+    await answerDialog(page, "月报");
+    await page.waitForFunction(() => document.getElementById("page-title").textContent === "月报");
+    assert.deepEqual(await page.evaluate(() => window.__mobileTest.disk[1].notes.map((n) => n.name)), ["周报", "月报"]);
+    // 长按页面:原来的菜单;长按笔记本:笔记本管理
+    await page.locator('#notes-list button[data-page="周报"]').dispatchEvent("contextmenu");
+    assert.deepEqual(await page.locator("#ctx button").allTextContents(), ["打开", "调整顺序", "删除页面"]);
+    await page.click('#ctx [data-act="sort"]');
+    assert.equal(await page.locator("#tree-sort").textContent(), "完成");
+    const handle = page.locator('#notes-list button[data-page="周报"] .drag-handle');
+    const from = await handle.boundingBox();
+    const to = await page.locator('#notes-list button[data-page="月报"]').boundingBox();
+    await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(from.x + from.width / 2, to.y + to.height - 2, { steps: 8 });
+    await page.mouse.up();
+    await page.waitForFunction(() => (window.__mobileTest.orders || []).length === 1);
+    assert.deepEqual(await page.evaluate(() => window.__mobileTest.orders[0]), ["月报", "周报"]);
+    await page.click("#tree-sort");
+    assert.equal(await page.locator(".drag-handle").count(), 0);
+    await page.locator("#notes-list .tree-book").filter({ hasText: "默认笔记本" }).dispatchEvent("contextmenu");
+    assert.equal(await page.locator("#mobile-books").isVisible(), true);
+    assert.equal(await page.locator("#mb-selected").textContent(), "默认笔记本");
+    await page.click("#close-books");
+    await page.click("#open-drawer");
+    await page.click("#tree-add-book");
+    await answerDialog(page, "读书");
+    await page.waitForFunction(() => document.getElementById("meta-book").textContent === "读书");
+    // 底部三行:同步、明暗、设置
+    assert.equal(await page.locator("#drawer-sync-text").textContent(), "未开启");
+    await page.click('#drawer-theme-mini [data-theme-choice="dark"]');
+    assert.equal(await rootAttr(page, "data-theme"), "dark");
+    await page.click("#drawer-open-settings");
+    assert.equal(await page.locator("#mobile-settings").isVisible(), true);
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test("clean: the sync button and the drawer use the desktop glyphs in every state; off it reloads with a still grey ⟳", async () => {
+  const { context, page, errors } = await open({ look: CLEAN });
+  try {
+    const glyph = (id) => page.locator(id).evaluate((g) => g.textContent + (g.classList.contains("spinning") ? " spinning" : "") + (g.classList.contains("idle") ? " idle" : ""));
+    assert.equal(await glyph("#sync-glyph"), "⟳ idle");
+    assert.equal(await page.locator("#refresh").getAttribute("aria-label"), "重新读取页面");
+    const grey = await page.locator("#sync-glyph").evaluate((g) => getComputedStyle(g).color);
+    const subtle = await page.evaluate(() => { const p = document.createElement("i"); p.style.color = "var(--subtle)"; document.body.append(p); const c = getComputedStyle(p).color; p.remove(); return c; });
+    assert.equal(grey, subtle, "muted grey while sync is off");
+    await page.evaluate(() => { window.__mobileTest.webdavLast = new Date(Date.now() - 2 * 60_000).toLocaleString("sv-SE"); });
+    await turnOnSync(page);
+    await page.waitForFunction(() => document.getElementById("refresh").dataset.sync === "synced");
+    assert.equal(await glyph("#sync-glyph"), "✓");
+    await page.click("#open-drawer");
+    assert.equal(await glyph("#drawer-sync-glyph"), "✓");
+    assert.equal(await page.locator("#drawer-sync-text").textContent(), "已同步 · 2 分钟前");
+    assert.equal(await visible(page, "#sync-foot #mobile-sync-now"), true, "a small sync-now button while sync is on");
+    await page.click("#drawer-backdrop", { position: { x: 370, y: 300 } });
+    await page.evaluate(() => { window.__mobileTest.syncDelay = 600; });
+    await page.click("#refresh");
+    await page.waitForFunction(() => document.getElementById("refresh").dataset.sync === "syncing");
+    assert.equal(await glyph("#sync-glyph"), "⟳ spinning");
+    assert.equal(await page.locator("#sync-glyph").evaluate((g) => getComputedStyle(g).animationName), "webdav-rotate");
+    await page.waitForFunction(() => document.getElementById("refresh").dataset.sync === "synced");
+    assert.equal(await page.locator("#sync-glyph").evaluate((g) => g.classList.contains("pop")), true, "the result pops");
+    for (const [state, symbol] of [["conflict", "!"], ["error", "!"], ["confirm", "?"], ["offline", "○"]]) {
+      await page.evaluate((s) => { window.__mobileTest.webdavState = s; window.__mobileTest.syncDelay = 0; }, state);
+      await page.click("#refresh");
+      await page.waitForFunction((s) => document.getElementById("refresh").dataset.sync === s, state);
+      assert.equal(await glyph("#sync-glyph"), symbol, state);
+      assert.equal(await glyph("#more-sync-glyph"), symbol, state + " in the ⋯ sheet");
+    }
+    // 渐变的同步状态颜色:文字渐变
+    await page.click("#open-more");
+    await page.click("#more-sync-settings");
+    const tool = page.locator("#mobile-webdav-settings .shared-colors");
+    await tool.locator('.uc-kind[data-kind="gradient"]').click();
+    await tool.locator(".uc-swatch").first().click();
+    await page.click("#ms-save-config");
+    await page.click("#close-sync-settings");
+    assert.match(await page.locator("#sync-glyph").evaluate((g) => g.style.backgroundImage), /^linear-gradient/);
+    assert.equal(await page.locator("#sync-glyph").evaluate((g) => g.style.webkitTextFillColor), "transparent");
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test("clean: every 界面布局 setting takes effect, and 经典 brings back the 0.5.2 screen", async () => {
+  const { context, page, errors } = await open({ look: CLEAN });
+  try {
+    const set = async (selector) => {
+      await page.click("#open-more");
+      await page.click("#more-look");
+      await page.click(selector);
+      await page.click("#close-settings");
+    };
+    await set('#look-header-meta [data-header-meta="book"]');
+    assert.equal(await visible(page, "#meta-status"), false);
+    assert.equal(await visible(page, "#meta-book"), true);
+    await set('#look-header-meta [data-header-meta="off"]');
+    assert.equal(await visible(page, "#header-meta"), false);
+    await set('#look-sync-place [data-sync-place="top"]');
+    assert.equal(await page.locator(".app-header #sync-box + #open-more").count(), 1, "the sync button sits left of ⋯");
+    await page.click("#mode-icon");
+    assert.deepEqual(await page.locator("#read-capsule > *:not([hidden])").evaluateAll((n) => n.map((e) => e.id)), ["new-page"]);
+    await set('#look-new-page [data-new-page="fab"]');
+    assert.equal(await visible(page, "#read-capsule"), false, "no capsule left");
+    assert.equal(await rootAttr(page, "data-fab"), "");
+    assert.equal(await page.locator("#new-page").evaluate((b) => getComputedStyle(b).position), "fixed");
+    await set('#look-sync-place [data-sync-place="bottom"]');
+    const fab = await page.locator("#new-page").boundingBox();
+    const capsule = await page.locator("#read-capsule").boundingBox();
+    assert.ok(fab.y + fab.height <= capsule.y, "the round button steps above the capsule with the sync button");
+    await set('#look-new-page [data-new-page="off"]');
+    assert.equal(await visible(page, "#new-page"), false);
+    await set('#look-drawer-tree [data-drawer-tree="current"]');
+    await page.evaluate(() => window.__mobileTest.disk.push({ name: "工作", notes: [{ name: "周报", content: "# 周报", unreadable: false }] }));
+    await page.click("#refresh");
+    await set('#look-header-meta [data-header-meta="full"]');
+    await page.click("#open-drawer");
+    assert.deepEqual(await page.locator("#notes-list .tree-book").allTextContents(), ["⌄默认笔记本2"], "only the current notebook");
+    await page.click("#drawer-backdrop", { position: { x: 370, y: 300 } });
+    await page.click("#header-meta");
+    assert.deepEqual(await page.locator("#ctx button").allTextContents(), ["✓ 默认笔记本（2）", "工作（1）"]);
+    await page.locator("#ctx button", { hasText: "工作" }).click();
+    await page.waitForFunction(() => document.getElementById("page-title").textContent === "周报");
+    // 工具栏分类四种风格都能开
+    await set('#ui-styles [data-ui="paper"]');
+    await page.click("#mode-icon");
+    await set("#look-cats");
+    assert.equal(await visible(page, "#dock-cats"), false);
+    await set("#look-cats");
+    assert.equal(await visible(page, "#dock-cats"), true, "paper has the category tabs in the clean layout");
+    // 经典:0.5.2 的样子回来,简洁布局的几项灰掉
+    await set('#look-layout [data-layout-choice="classic"]');
+    assert.equal(await rootAttr(page, "data-layout"), "classic");
+    for (const back of [".context-strip", ".bottom-status", ".dock-heading", "#mode", "#book-title"]) assert.equal(await visible(page, back), true, back + " is back");
+    for (const gone of ["#header-meta", "#mode-icon", "#open-more", "#read-capsule", "#dock-fixed"]) assert.equal(await visible(page, gone), false, gone + " is gone");
+    assert.equal(await page.locator(".bottom-status #sync-box").count(), 1);
+    assert.equal(await page.locator(".dock-actions #block-actions + #hide-keyboard").count(), 1);
+    assert.equal(await visible(page, "#dock-cats"), false, "classic keeps the tabs for starry only");
+    await page.click("#open-drawer");
+    await page.click("#open-settings");
+    assert.equal(await page.locator('#look-sync-place [data-sync-place="top"]').isDisabled(), true);
+    assert.equal(await page.locator('#look-new-page [data-new-page="fab"]').isDisabled(), false);
+    await page.click('#look-layout [data-layout-choice="clean"]');
+    assert.equal(await page.locator('#look-sync-place [data-sync-place="top"]').isDisabled(), false);
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test("clean: the old new-page switch is carried over (fab=false → 不显示, otherwise 底部胶囊)", async () => {
+  for (const [fab, want] of [[false, "off"], [true, "capsule"], [undefined, "capsule"]]) {
+    const { context, page, errors } = await open({ look: { ui: "material", fab } });
+    try {
+      assert.equal(await rootAttr(page, "data-layout"), "classic", "the test helper keeps old looks on the classic layout");
+      await page.evaluate(() => {
+        const saved = JSON.parse(localStorage.getItem("minipad-mobile-look"));
+        delete saved.layout;
+        localStorage.setItem("minipad-mobile-look", JSON.stringify(saved));
+      });
+      await page.reload();
+      await page.locator("#editor .ProseMirror h1").waitFor();
+      assert.equal(await rootAttr(page, "data-layout"), "clean", "a 0.5.2 look opens in the clean layout");
+      await page.click("#mode-icon");
+      assert.equal(await page.locator("#read-capsule #new-page").count(), want === "capsule" ? 1 : 0, String(fab));
+      assert.equal(await visible(page, "#new-page"), want === "capsule", String(fab));
+      await page.click("#open-more");
+      await page.click("#more-look");
+      assert.deepEqual(await page.locator("#look-new-page [aria-pressed=true]").evaluateAll((b) => b.map((x) => x.dataset.newPage)), [want]);
+      assert.deepEqual(errors, []);
+    } finally { await context.close(); }
+  }
+});
+
+test("clean: long titles and names wrap instead of being cut off", async () => {
+  const long = "旅行计划 · 京都五日游行程安排，清水寺、伏见稻荷、岚山和金阁寺，标题再长也要完整显示";
+  const { context, page, errors } = await open({ look: CLEAN });
+  try {
+    await page.evaluate((name) => {
+      window.__mobileTest.disk[0].notes.push({ name, content: "# 京都", unreadable: false });
+      window.__mobileTest.disk.push({ name: "一个名字特别特别特别长的笔记本，也要换行显示完整", notes: [] });
+    }, long);
+    await page.click("#refresh");
+    await page.click("#open-drawer");
+    await page.locator(`#notes-list button[data-page="${long}"]`).click();
+    await page.waitForFunction((n) => document.getElementById("page-title").textContent === n, long);
+    const fits = (selector) => page.locator(selector).first().evaluate((e) => e.scrollWidth <= e.clientWidth && getComputedStyle(e).textOverflow !== "ellipsis" && e.getBoundingClientRect().height > 30);
+    assert.equal(await fits("#page-title"), true, "the header title wraps");
+    await page.click("#open-drawer");
+    assert.equal(await fits(`#notes-list button[data-page="${long}"] span`), true, "the tree row wraps");
+    assert.equal(await fits("#notes-list .tree-book:last-of-type span:not(.book-mark)"), true, "the notebook name wraps");
     assert.deepEqual(errors, []);
   } finally { await context.close(); }
 });
