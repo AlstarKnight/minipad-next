@@ -1075,22 +1075,63 @@ async function saveSyncForm() {
 }
 const SYNC_LABELS = { synced: "已同步", syncing: "同步中", conflict: "有冲突", offline: "离线", error: "出错", confirm: "需要确认", off: "未同步" };
 const SYNC_SYMBOLS = { synced: "✓", syncing: "⟳", conflict: "!", offline: "○", error: "!", confirm: "?", off: "○" };
-// The small mark in the strip under the title, so the sync state is visible without opening the
-// list; it follows 同步设置 → 显示方式 and the status colour like the sheet's own state line.
+// 同步状态就显示在右下角的同步按钮上(同步开着时点它就是立即同步):同步时图标转,同步完角上的小圆点
+// 弹一下显示结果(✓ ! ? ○),「图标和文字」时按钮左边再写上一句。跟随 同步设置 → 状态显示 和状态颜色
+const SYNC_MARKS = { synced: "✓", conflict: "!", offline: "○", error: "!", confirm: "?", off: "○" };
+let shownSync = "";
 function showSyncBadge(kind) {
-  const badge = el("sync-badge");
-  badge.hidden = !syncSettings.enabled || syncSettings.display === "none";
-  if (badge.hidden) return;
+  const button = el("refresh");
+  const label = el("sync-label");
+  const mark = el("sync-mark");
+  const on = syncSettings.enabled && syncSettings.display !== "none";
   const k = SYNC_LABELS[kind] ? kind : "off";
-  badge.textContent = SYNC_SYMBOLS[k] + (syncSettings.display === "text" ? " " + SYNC_LABELS[k] : "");
-  badge.title = "同步：" + SYNC_LABELS[k];
-  badge.dataset.state = k;
+  if (!on) {
+    delete button.dataset.sync;
+    delete label.dataset.sync;
+    label.hidden = mark.hidden = true;
+    button.setAttribute("aria-label", syncSettings.enabled ? "立即同步" : "重新读取页面");
+    button.title = syncSettings.enabled ? "立即同步" : "重新读取";
+    shownSync = "";
+    return;
+  }
+  button.dataset.sync = label.dataset.sync = k;
+  button.setAttribute("aria-label", "立即同步（" + SYNC_LABELS[k] + "）");
+  button.title = "同步：" + SYNC_LABELS[k] + "，点一下立即同步";
+  label.hidden = syncSettings.display !== "text";
+  label.textContent = SYNC_LABELS[k];
+  mark.hidden = k === "syncing";
+  mark.textContent = SYNC_MARKS[k] || "";
+  // 从「同步中」变成别的状态时圆点弹一下
+  if (shownSync === "syncing" && k !== "syncing") {
+    mark.classList.remove("pop");
+    void mark.offsetWidth;
+    mark.classList.add("pop");
+  }
+  shownSync = k;
+  // 状态颜色:纯色直接用;渐变给图标的线条一个 SVG 渐变,文字用渐变填充
   const color = parseAccent(syncSettings.status_color);
-  badge.style.color = color?.from || "var(--accent)";
-  badge.style.backgroundImage = color?.to ? syncSettings.status_color : "";
-  badge.style.backgroundClip = color?.to ? "text" : "";
-  badge.style.webkitBackgroundClip = color?.to ? "text" : "";
-  badge.style.webkitTextFillColor = color?.to ? "transparent" : "";
+  for (const node of [button, label]) {
+    if (color?.from) node.style.setProperty("--sync-color", color.from);
+    else node.style.removeProperty("--sync-color");
+  }
+  const grad = el("sync-grad");
+  const stroke = button.querySelector("svg");
+  if (color?.to) {
+    const stops = color.stops || [color.from, color.to];
+    grad.replaceChildren(...stops.map((hex, i) => {
+      const stop = document.createElementNS("http://www.w3.org/2000/svg", "stop");
+      stop.setAttribute("offset", (color.positions?.[i] ?? (i / (stops.length - 1)) * 100) + "%");
+      stop.setAttribute("stop-color", hex);
+      return stop;
+    }));
+    stroke.style.stroke = "url(#sync-grad)";
+    label.style.backgroundImage = syncSettings.status_color;
+    label.style.webkitBackgroundClip = label.style.backgroundClip = "text";
+    label.style.webkitTextFillColor = "transparent";
+  } else {
+    stroke.style.stroke = "";
+    label.style.backgroundImage = label.style.backgroundClip = label.style.webkitBackgroundClip = label.style.webkitTextFillColor = "";
+  }
 }
 async function showSyncStatus() {
   if (!invoke) return;

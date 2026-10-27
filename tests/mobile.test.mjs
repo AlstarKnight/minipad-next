@@ -1299,10 +1299,18 @@ test("long-pressing a notebook opens its management page, and notebook icons sho
   } finally { await context.close(); }
 });
 
-test("the sync state shows in the strip under the title and follows the display setting", async () => {
+test("the sync state lives on the sync button at the bottom right: it spins while syncing and follows the display setting", async () => {
   const { context, page, errors } = await open();
   try {
-    assert.equal(await page.locator("#sync-badge").isHidden(), true, "hidden while sync is off");
+    const sync = () => page.evaluate(() => {
+      const b = document.getElementById("refresh");
+      const mark = document.getElementById("sync-mark");
+      const label = document.getElementById("sync-label");
+      return { state: b.dataset.sync ?? null, mark: mark.hidden ? null : mark.textContent, label: label.hidden ? null : label.textContent,
+        spinning: getComputedStyle(b.querySelector("svg")).animationName };
+    });
+    assert.deepEqual(await sync(), { state: null, mark: null, label: null, spinning: "none" }, "a plain refresh button while sync is off");
+    assert.equal(await page.locator(".context-strip #sync-badge").count(), 0, "nothing at the top any more");
     await page.click("#open-drawer");
     await page.click("#open-sync-settings");
     await page.locator("#ms-enable").check();
@@ -1311,20 +1319,24 @@ test("the sync state shows in the strip under the title and follows the display 
     await page.selectOption("#ms-display", "icon");
     await page.click("#ms-save-config");
     await page.click("#close-sync-settings");
-    await page.locator("#sync-badge").waitFor({ state: "visible" });
-    assert.equal((await page.locator("#sync-badge").textContent()).trim(), "✓");
-    await page.evaluate(() => { window.__mobileTest.syncDelay = 400; });
+    await page.waitForFunction(() => document.getElementById("refresh").dataset.sync === "synced");
+    assert.deepEqual(await sync(), { state: "synced", mark: "✓", label: null, spinning: "none" });
+    assert.equal(await page.locator("#refresh").getAttribute("aria-label"), "立即同步（已同步）");
+    await page.evaluate(() => { window.__mobileTest.syncDelay = 600; });
     await page.click("#refresh");
-    await page.waitForFunction(() => document.getElementById("sync-badge").dataset.state === "syncing");
-    await page.waitForFunction(() => document.getElementById("sync-badge").dataset.state === "synced");
+    await page.waitForFunction(() => document.getElementById("refresh").dataset.sync === "syncing");
+    assert.deepEqual(await sync(), { state: "syncing", mark: null, label: null, spinning: "sync-spin" });
+    await page.waitForFunction(() => document.getElementById("refresh").dataset.sync === "synced");
+    assert.equal(await page.locator("#sync-mark").evaluate((m) => m.classList.contains("pop")), true, "the result pops in after a sync");
     await page.click("#open-drawer");
     await page.click("#open-sync-settings");
     await page.selectOption("#ms-display", "text");
     await page.click("#ms-save-config");
-    assert.equal((await page.locator("#sync-badge").textContent()).trim(), "✓ 已同步");
+    assert.deepEqual(await sync(), { state: "synced", mark: "✓", label: "已同步", spinning: "none" });
     await page.selectOption("#ms-display", "none");
     await page.click("#ms-save-config");
-    assert.equal(await page.locator("#sync-badge").isHidden(), true);
+    assert.deepEqual(await sync(), { state: null, mark: null, label: null, spinning: "none" });
+    assert.equal(await page.locator("#refresh").getAttribute("aria-label"), "立即同步");
     assert.deepEqual(errors, []);
   } finally { await context.close(); }
 });

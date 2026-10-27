@@ -70,8 +70,6 @@ html[data-mobile] #status {
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 html[data-mobile] .strip-spacer { flex: 1; }
-html[data-mobile] #sync-badge { white-space: nowrap; font-size: 13px; font-weight: 700; }
-html[data-mobile] #sync-badge[data-state="syncing"] { opacity: .65; }
 html[data-mobile] .heading-actions { display: flex; gap: 6px; }
 /* 笔记本图标(0.5.2):抽屉、目录树和笔记本管理里都是电脑版同一套图形 */
 html[data-mobile] .book-mark { display: inline-flex; flex: none; }
@@ -173,7 +171,28 @@ html[data-mobile] .bottom-status {
   background: var(--paper); border: 0; color: var(--subtle); font-size: 11px;
 }
 html[data-mobile] #hint { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-html[data-mobile] #refresh { border: 0; padding: 6px; background: none; color: var(--subtle); width: 38px; min-height: 36px; }
+html[data-mobile] #refresh { border: 0; padding: 6px; background: none; color: var(--subtle); width: 38px; min-height: 36px; position: relative; }
+/* 同步状态(0.5.2):右下角的同步按钮本身。同步时图标转,同步完角上的小圆点弹一下显示结果 */
+html[data-mobile] #refresh[data-sync] { color: var(--sync-color, var(--accent)); }
+html[data-mobile] #refresh[data-sync] svg { transform-origin: 50% 50%; }
+html[data-mobile] #refresh[data-sync="syncing"] svg { animation: sync-spin 1.1s linear infinite; }
+html[data-mobile] .sync-mark { position: absolute; right: 1px; top: 2px; min-width: 15px; height: 15px; padding: 0 3px; border-radius: 8px;
+  display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 800; line-height: 1;
+  color: #fff; background: var(--sync-color, var(--accent)); box-shadow: 0 0 0 2px var(--paper); }
+html[data-mobile] .sync-mark[hidden] { display: none; }
+html[data-mobile] #refresh:is([data-sync="error"], [data-sync="conflict"]) .sync-mark { background: #d6453d; }
+html[data-mobile] #refresh:is([data-sync="offline"], [data-sync="off"]) .sync-mark { background: var(--subtle); }
+html[data-mobile] #refresh[data-sync="confirm"] .sync-mark { background: #d98a1c; }
+html[data-mobile] .sync-mark.pop { animation: sync-pop .45s cubic-bezier(.3, 1.6, .5, 1); }
+html[data-mobile] #sync-label { flex: none; white-space: nowrap; font-size: 12px; font-weight: 650; color: var(--sync-color, var(--accent)); }
+html[data-mobile] #sync-label[data-sync="syncing"] { animation: sync-fade 1.1s ease-in-out infinite alternate; }
+@keyframes sync-spin { to { transform: rotate(360deg); } }
+@keyframes sync-pop { 0% { transform: scale(.3); opacity: 0; } 70% { transform: scale(1.2); opacity: 1; } 100% { transform: scale(1); } }
+@keyframes sync-fade { from { opacity: 1; } to { opacity: .45; } }
+@media (prefers-reduced-motion: reduce) {
+  html[data-mobile] #refresh[data-sync="syncing"] svg, html[data-mobile] .sync-mark.pop, html[data-mobile] #sync-label[data-sync="syncing"] { animation: none; }
+  html[data-mobile] #refresh[data-sync="syncing"] svg { opacity: .55; }
+}
 html[data-mobile] .drawer-backdrop { position: fixed; inset: 0; z-index: 29; background: rgba(14,24,17,.38); backdrop-filter: blur(2px); }
 html[data-mobile] .drawer {
   display: flex; flex-direction: column; position: fixed; z-index: 30; top: 0; left: 0;
