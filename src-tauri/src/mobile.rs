@@ -50,6 +50,91 @@ fn mobile_create_note(app: AppHandle, book: String, name: String) -> Result<Stri
     notes::create_note(&dir, &name)
 }
 
+/// Deleting a page moves it into the notes folder's .trash, the same as on the desktop; the next
+/// WebDAV sync then moves the cloud copy into the cloud's .trash.
+#[tauri::command]
+fn mobile_delete_note(app: AppHandle, book: String, name: String) -> Result<(), String> {
+    let _write = crate::syncer::WRITE_LOCK
+        .lock()
+        .map_err(|e| e.to_string())?;
+    notes::move_to_trash(&root(&app)?, &book, &name)
+}
+
+// Notebook management, the same operations as the desktop's 笔记本管理. Each one holds the sync
+// write lock, so a WebDAV sync never sees a notebook half renamed or a .minipad.json half written.
+#[tauri::command]
+fn mobile_rename_book(app: AppHandle, old: String, new: String) -> Result<String, String> {
+    let _write = crate::syncer::WRITE_LOCK
+        .lock()
+        .map_err(|e| e.to_string())?;
+    notes::rename_book(&root(&app)?, &old, &new)
+}
+
+#[tauri::command]
+fn mobile_delete_book(app: AppHandle, name: String) -> Result<(), String> {
+    let _write = crate::syncer::WRITE_LOCK
+        .lock()
+        .map_err(|e| e.to_string())?;
+    notes::delete_book(&root(&app)?, &name)
+}
+
+#[tauri::command]
+fn mobile_set_book_appearance(
+    app: AppHandle,
+    book: String,
+    icon: String,
+    color: String,
+) -> Result<(), String> {
+    let _write = crate::syncer::WRITE_LOCK
+        .lock()
+        .map_err(|e| e.to_string())?;
+    notes::set_book_appearance(&root(&app)?, &book, &icon, &color)
+}
+
+#[tauri::command]
+fn mobile_set_page_order(app: AppHandle, book: String, order: Vec<String>) -> Result<(), String> {
+    let _write = crate::syncer::WRITE_LOCK
+        .lock()
+        .map_err(|e| e.to_string())?;
+    notes::set_page_order(&root(&app)?, &book, order)
+}
+
+/// The color library shared with the desktop through the notes folder (and so through WebDAV).
+#[tauri::command]
+fn mobile_read_colors(app: AppHandle) -> Result<Option<notes::SharedColors>, String> {
+    Ok(notes::read_colors(&root(&app)?))
+}
+
+/// Returns true when the file changed, so the caller knows a sync is worth scheduling.
+#[tauri::command]
+fn mobile_write_colors(app: AppHandle, colors: notes::SharedColors) -> Result<bool, String> {
+    let _write = crate::syncer::WRITE_LOCK
+        .lock()
+        .map_err(|e| e.to_string())?;
+    notes::write_colors(&root(&app)?, &colors)
+}
+
+/// Pages that contain a [[ link at all (also the escaped \[\[ older versions wrote): after a
+/// notebook is renamed only these are read and rewritten, not every page over IPC.
+#[tauri::command]
+fn mobile_link_pages(app: AppHandle) -> Result<Vec<(String, String)>, String> {
+    let root = root(&app)?;
+    let mut found = Vec::new();
+    for book in notes::index_books(&root)? {
+        let dir = notes::book_dir(&root, &book.name)?;
+        for name in book.notes {
+            let Ok(bytes) = fs::read(notes::note_path(&dir, &name)) else {
+                continue;
+            };
+            let text = notes::decode_text(&bytes);
+            if text.contains("[[") || text.contains("\\[\\[") {
+                found.push((book.name.clone(), name));
+            }
+        }
+    }
+    Ok(found)
+}
+
 #[derive(Serialize)]
 struct SaveResult {
     conflict_name: Option<String>,
@@ -432,6 +517,14 @@ pub fn run() {
             mobile_read_note,
             mobile_create_book,
             mobile_create_note,
+            mobile_delete_note,
+            mobile_rename_book,
+            mobile_delete_book,
+            mobile_set_book_appearance,
+            mobile_set_page_order,
+            mobile_link_pages,
+            mobile_read_colors,
+            mobile_write_colors,
             mobile_save_note,
             mobile_save_image,
             mobile_open_url,

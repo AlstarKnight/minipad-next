@@ -149,6 +149,7 @@ const DEFAULT_SETTINGS = {
   capture_stamp: true,
   capture_position: "remember",
   template_book: "模板",
+  new_book_welcome: true,
   snippets: [
     { trigger: ";rq", text: "{{日期}}" },
     { trigger: ";sj", text: "{{时间}}" },

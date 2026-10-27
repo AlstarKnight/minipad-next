@@ -435,6 +435,17 @@ function removeEmptyFirstCode(state, dispatch) {
   return true;
 }
 
+// Ctrl+A:光标在代码块里时先只选中这个代码块的内容;已经全选了,再按才选整页
+function selectCodeBlock(state, dispatch) {
+  const { $from, $to } = state.selection;
+  if (!$from.parent.type.spec.code || !$from.sameParent($to)) return false;
+  const from = $from.start();
+  const to = $from.end();
+  if ($from.pos === from && $to.pos === to) return false;
+  dispatch(state.tr.setSelection(TextSelection.create(state.doc, from, to)));
+  return true;
+}
+
 // Ctrl+B:选中了文字就加粗;没选中时留给窗口(打开笔记本列表)
 let emptyBold = () => {};
 
@@ -444,7 +455,8 @@ const keys = $prose(
       props: {
         handleKeyDown(v, e) {
           if (e.isComposing || e.keyCode === 229) return false;
-          if (e.key === "Tab" || e.key === "Enter" || e.key === "ArrowDown" || e.key.toLowerCase() === "b") readSelection(v);
+          if (e.key === "Tab" || e.key === "Enter" || e.key === "ArrowDown" || e.key.toLowerCase() === "b" ||
+              ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "a")) readSelection(v);
           const mod = e.ctrlKey || e.metaKey;
           // 编辑器里明确处理 Ctrl+End，避免换页后浏览器原生选区偶尔跳到段落开头。
           if (mod && e.key === "End" && !e.shiftKey && !e.altKey) {
@@ -460,6 +472,7 @@ const keys = $prose(
           else if (e.key === "Enter" && !e.shiftKey && !mod && !e.altKey) run = (state, dispatch) =>
             exitCodeBlock(state, dispatch, true) || enterInTask(state, dispatch);
           else if (e.key === "ArrowDown" && !e.shiftKey && !mod && !e.altKey) run = downOutOfBlock;
+          else if (mod && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "a") run = selectCodeBlock;
           else if (mod && e.altKey && !e.shiftKey && e.key === "0") run = codeToText;
           else if (e.key === "Backspace" && !mod && !e.altKey && !e.shiftKey) run = (state, dispatch) =>
             undoCodeRule(state, dispatch) || removeEmptyFirstCode(state, dispatch);

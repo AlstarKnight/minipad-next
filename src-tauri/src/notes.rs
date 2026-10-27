@@ -32,6 +32,8 @@ const META_FILE: &str = ".minipad.json";
 pub const IMPORT_STAGE_PREFIX: &str = ".import-";
 /// 「默认」笔记本显示的名字,其他笔记本不能叫这个
 pub const DEFAULT_BOOK_LABEL: &str = "默认";
+/// 颜色库(纯色、渐变、材质和快捷色)放在笔记文件夹根目录的这个文件里,跟着 WebDAV 同步,手机和电脑用同一份
+pub const COLORS_FILE: &str = ".minipad-colors.json";
 
 /// 页面顺序、当前页面、每页的编辑/阅读模式,存在每个笔记本文件夹的 .minipad.json;
 /// 笔记文件夹根目录那份还记着当前打开的是哪个笔记本
@@ -756,6 +758,9 @@ pub fn load_books_with(
 pub struct BookIndex {
     pub name: String,
     pub notes: Vec<String>,
+    /// 笔记本图标和颜色(见 set_book_appearance),手机端的列表和笔记本管理用
+    pub icon: String,
+    pub icon_color: String,
 }
 
 /// 和 load_books 一样,无法读取的子笔记本跳过,默认笔记本读不出来才报错
@@ -766,6 +771,8 @@ pub fn index_books(root: &Path) -> Result<Vec<BookIndex>, String> {
         Ok(BookIndex {
             name: book.to_string(),
             notes: order_names(&list_names(&dir)?, &meta.order),
+            icon: meta.icon,
+            icon_color: meta.icon_color,
         })
     };
     let mut books = vec![index("")?];
@@ -1049,6 +1056,77 @@ pub fn set_book_appearance(root: &Path, book: &str, icon: &str, color: &str) -> 
     };
     meta.icon_color = normalized;
     write_meta(&dir, &meta)
+}
+
+/// 只改页面顺序(手机上拖动排序),当前页面、分组、图标这些都不动;笔记本已经不在了就不写
+#[cfg(any(mobile, test))]
+pub fn set_page_order(root: &Path, book: &str, order: Vec<String>) -> Result<(), String> {
+    let dir = book_dir(root, book)?;
+    if !dir.is_dir() {
+        return Ok(());
+    }
+    let mut meta = read_meta_strict(&dir)?;
+    meta.order = order_names(&list_names(&dir)?, &order);
+    write_meta(&dir, &meta)
+}
+
+/// 颜色库:和电脑版设置里的同名字段一样。None 表示用内置的(还没改过)
+#[derive(Serialize, Deserialize, Default, Clone, Debug, PartialEq)]
+#[serde(default)]
+pub struct SharedColors {
+    pub color_library: Option<Vec<String>>,
+    pub material_library: Option<Vec<String>>,
+    pub quick_colors: Option<Vec<String>>,
+    pub color_library_rev: u32,
+}
+
+impl SharedColors {
+    /// 改过颜色库(有一项不是内置的):只有这时才值得写进笔记文件夹
+    pub fn customized(&self) -> bool {
+        self.color_library.is_some()
+            || self.material_library.is_some()
+            || self.quick_colors.is_some()
+    }
+
+    /// 文件是从网盘同步来的:每个颜色都按笔记本颜色的规矩检查(纯色或渐变),去重,最多 256 个
+    fn tidy(mut self) -> Self {
+        for list in [
+            &mut self.color_library,
+            &mut self.material_library,
+            &mut self.quick_colors,
+        ]
+        .into_iter()
+        .flatten()
+        {
+            let mut seen = HashSet::new();
+            *list = list
+                .iter()
+                .filter_map(|c| normalized_book_color(c))
+                .filter(|c| seen.insert(c.clone()))
+                .take(256)
+                .collect();
+        }
+        self
+    }
+}
+
+/// 读笔记文件夹里的颜色库;没有或读不出来是 None(那就用本机自己的)
+pub fn read_colors(root: &Path) -> Option<SharedColors> {
+    let bytes = fs::read(root.join(COLORS_FILE)).ok()?;
+    serde_json::from_str::<SharedColors>(&decode_text(&bytes))
+        .ok()
+        .map(SharedColors::tidy)
+}
+
+/// 写进笔记文件夹;和文件里的一样就不写(不然每次都算一次改动去同步)。写了返回 true
+pub fn write_colors(root: &Path, colors: &SharedColors) -> Result<bool, String> {
+    let colors = colors.clone().tidy();
+    if read_colors(root).as_ref() == Some(&colors) {
+        return Ok(false);
+    }
+    let json = serde_json::to_string_pretty(&colors).map_err(|e| e.to_string())?;
+    write_atomic(&root.join(COLORS_FILE), &json)?;
+    Ok(true)
 }
 
 /// 记住当前打开的笔记本
@@ -1691,6 +1769,93 @@ mod tests {
         assert_eq!(create_note(&gone, "计划").unwrap(), "计划");
         assert!(note_path(&gone, "计划").is_file());
         fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn the_color_library_file_is_checked_and_only_written_when_it_changes() {
+        let root = temp_dir("colors");
+        assert_eq!(read_colors(&root), None);
+        let colors = SharedColors {
+            color_library: Some(vec![
+                "#AABBCC".into(),
+                "#aabbcc".into(),
+                "linear-gradient(90deg, #111111, #222222)".into(),
+                "url(evil)".into(),
+            ]),
+            material_library: None,
+            quick_colors: Some(vec!["#aabbcc".into()]),
+            color_library_rev: 1,
+        };
+        assert!(colors.customized());
+        assert!(!SharedColors::default().customized());
+        assert!(write_colors(&root, &colors).unwrap());
+        let read = read_colors(&root).unwrap();
+        assert_eq!(
+            read.color_library.unwrap(),
+            vec!["#aabbcc", "linear-gradient(90deg, #111111, #222222)"]
+        );
+        assert_eq!(read.material_library, None);
+        assert_eq!(read.color_library_rev, 1);
+        // 一样的内容不再写(文件的修改时间不变)
+        let before = fs::metadata(root.join(COLORS_FILE))
+            .unwrap()
+            .modified()
+            .unwrap();
+        std::thread::sleep(Duration::from_millis(20));
+        assert!(!write_colors(&root, &colors).unwrap());
+        assert_eq!(
+            fs::metadata(root.join(COLORS_FILE))
+                .unwrap()
+                .modified()
+                .unwrap(),
+            before
+        );
+        // 坏掉的文件当作没有
+        fs::write(root.join(COLORS_FILE), "{").unwrap();
+        assert_eq!(read_colors(&root), None);
+        // 它不是页面
+        assert!(list_names(&root).unwrap().is_empty());
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn page_order_from_the_phone_keeps_the_rest_of_the_notebook_info() {
+        let root = temp_dir("page-order");
+        for name in ["甲", "乙", "丙"] {
+            fs::write(note_path(&root, name), name).unwrap();
+        }
+        save_book_meta(
+            &root,
+            "",
+            vec!["甲".into(), "乙".into(), "丙".into()],
+            "乙".into(),
+            HashMap::from([("乙".to_string(), "read".to_string())]),
+            None,
+            Some(vec!["甲".into()]),
+        )
+        .unwrap();
+        set_book_appearance(&root, "", "star", "#112233").unwrap();
+        // 名单里没有的页面排在后面,不存在的、重复的名字不记
+        set_page_order(
+            &root,
+            "",
+            vec!["丙".into(), "不存在".into(), "甲".into(), "丙".into()],
+        )
+        .unwrap();
+        let meta = read_meta(&root);
+        assert_eq!(meta.order, vec!["丙", "甲", "乙"]);
+        assert_eq!(meta.active, "乙");
+        assert_eq!(meta.modes.get("乙").map(String::as_str), Some("read"));
+        assert_eq!(meta.pinned, vec!["甲"]);
+        assert_eq!(
+            (meta.icon.as_str(), meta.icon_color.as_str()),
+            ("star", "#112233")
+        );
+        assert_eq!(index_books(&root).unwrap()[0].notes, vec!["丙", "甲", "乙"]);
+        // 笔记本已经删掉了:不把文件夹建回来
+        set_page_order(&root, "没有", vec!["x".into()]).unwrap();
+        assert!(!root.join("没有").exists());
+        fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]
@@ -2770,6 +2935,16 @@ mod tests {
             assert_eq!(listed.notes, names(book));
         }
         assert_eq!(index[1].notes, vec!["计划", "周报", "乱码"]);
+        assert_eq!(
+            (index[1].icon.as_str(), index[1].icon_color.as_str()),
+            ("", "")
+        );
+        set_book_appearance(&root, "工作", "star", "#3366ff").unwrap();
+        let index = index_books(&root).unwrap();
+        assert_eq!(
+            (index[1].icon.as_str(), index[1].icon_color.as_str()),
+            ("star", "#3366ff")
+        );
 
         let page = read_page_body(&root, "工作", "周报").unwrap();
         assert_eq!((page.content.as_str(), page.unreadable), ("本周", false));
