@@ -20,9 +20,10 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 base64 = "0.22"
 quick-xml = "0.42"
-reqwest = { version = "0.13", default-features = false, features = ["blocking", "rustls"] }
-# Same rustls as reqwest; only used to tell certificate errors from other TLS failures.
-rustls = { version = "0.23", default-features = false, features = ["std"] }
+# rustls 用 ring 做加密(webdav.rs 里装上),不用 reqwest 默认的 aws-lc:程序小约 0.8 MB,安卓 APK 和电脑安装包都跟着变小
+reqwest = { version = "0.13", default-features = false, features = ["blocking", "rustls-no-provider"] }
+# Same rustls as reqwest; tells certificate errors from other TLS failures and provides the ring crypto.
+rustls = { version = "0.23", default-features = false, features = ["std", "ring"] }
 sha2 = "0.10"
 webpki-root-certs = "1.0.9"
 percent-encoding = "2"

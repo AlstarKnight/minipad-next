@@ -230,6 +230,8 @@ impl WebdavClient {
             .map(|cert| reqwest::tls::Certificate::from_der(cert.as_ref()))
             .collect::<Result<Vec<_>, _>>()
             .map_err(|_| "WebDAV 内置根证书加载失败")?;
+        // reqwest 不自带加密库(见 Cargo.toml):第一次建连接前装上 ring,已经装过时什么也不做
+        let _ = rustls::crypto::ring::default_provider().install_default();
         let http = Client::builder()
             .connect_timeout(Duration::from_secs(15))
             .timeout(Duration::from_secs(300))

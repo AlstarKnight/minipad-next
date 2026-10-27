@@ -126,6 +126,15 @@ jobs:
             echo "The launcher icon is still the template's vector drawable" >&2
             exit 1
           fi
+      # What takes the space in the APK (largest entries by compressed size), so a size change can be
+      # traced to the native library, the dex or the resources.
+      - name: Show what takes space in the APK
+        shell: bash
+        run: |
+          set -uo pipefail
+          apk="$(find src-tauri/gen/android/app/build/outputs/apk -type f -iname '*release*unsigned*.apk' -print -quit)"
+          ls -l "$apk"
+          unzip -lv "$apk" | awk '$2 ~ /^(Stored|Defl)/' | sort -k3,3nr | head -15
       # Release APKs are unsigned by default. With the four ANDROID_* repository secrets set, sign
       # with the stable key so a newer test APK installs over an older one. Without them, fall
       # back to a throw-away key so CI still produces an installable (but not upgradable) APK.
