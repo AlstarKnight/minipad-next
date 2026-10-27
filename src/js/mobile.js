@@ -7,9 +7,10 @@ import { setSelectionBar, setFormatBarItems } from "./formatbar.js";
 import { setLinkPrompt, setTaskCommand } from "./toolbar.js";
 import { ACCENTS, applyAccent, tidyAccent, parseAccent } from "./accent.js";
 import { makeSharedColorTools, setColorLibrarySaver } from "./sharedcolors.js";
-import { ask, askText, closeDialog, dialogOpen } from "./ui.js";
+import { ask, askText, closeDialog, dialogOpen, openMenu } from "./ui.js";
 import { setPageLinkHost, pageNamesChanged, applyPageLinkSettings, linkIndex } from "./pagelinkview.js";
-import { resolveTarget } from "./pagelinks.js";
+import { resolveTarget, retarget } from "./pagelinks.js";
+import { BOOK_ICONS, bookIcon, iconColor } from "./bookicons.js";
 import { applyExpandSettings, setExpandHost } from "./expand.js";
 
 const invoke = window.__TAURI__?.core?.invoke;
@@ -32,6 +33,7 @@ let timer = null;
 let loading = false;
 let busy = false;
 let reading = false;
+let sorting = false; // 抽屉里正在调整页面顺序(见 setSorting)
 
 const notify = (message) => { status.textContent = message; };
 const markdown = () => { syncContent(selected); return selected?.content ?? ""; };
@@ -141,6 +143,7 @@ function options(select, pairs, value) {
 const drawer = el("mobile-drawer");
 const backdrop = el("drawer-backdrop");
 function toggleDrawer(open) {
+  if (!open && sorting) setSorting(false);
   drawer.hidden = !open;
   backdrop.hidden = !open;
   el("open-drawer").setAttribute("aria-expanded", String(open));
@@ -174,8 +177,8 @@ function renderDrawer() {
   const book = books.find((b) => b.name === bookName);
   // 语雀纸感:页面列表是目录树,笔记本一行一行排下来,当前笔记本的页面缩进排在它下面
   const tree = look.ui === "paper";
-  const key = JSON.stringify([tree, bookName, el("note-filter").value.trim().toLowerCase(),
-    books.map((b) => b.name), book?.notes.map((n) => n.name)]);
+  const key = JSON.stringify([tree, bookName, el("note-filter").value.trim().toLowerCase(), sorting, look.accent,
+    books.map((b) => [b.name, b.icon, b.icon_color]), book?.notes.map((n) => n.name)]);
   if (key === drawerKey) return markDrawerPage();
   drawerKey = key;
   drawerRows.clear();
@@ -193,7 +196,8 @@ function renderDrawer() {
       row.setAttribute("aria-expanded", String(b.name === bookName));
       const name = document.createElement("span");
       name.textContent = b.name || "默认笔记本";
-      row.append(name);
+      row.append(bookMark(b), name);
+      onLongPress(row, () => showBookManager(true, b.name));
       // 点别的笔记本:换过去,抽屉留着,好接着点它的页面
       row.addEventListener("click", () => {
         if (b.name !== currentBook) void refresh(b.name, null);
@@ -211,7 +215,8 @@ function renderDrawer() {
     button.setAttribute("aria-current", b.name === bookName ? "true" : "false");
     const name = document.createElement("span");
     name.textContent = b.name || "默认笔记本";
-    button.append(name);
+    button.append(bookMark(b), name);
+    onLongPress(button, () => showBookManager(true, b.name));
     button.addEventListener("click", async () => {
       // Tapping the notebook already on screen just closes the list; the open page stays.
       if (b.name !== currentBook) await refresh(b.name, null);
@@ -222,21 +227,41 @@ function renderDrawer() {
   noteList.append(...pageButtons(book, bookName, ""));
 }
 
-// 当前笔记本里和搜索框对得上的页面
+// 笔记本的图标(和电脑版同一套图形和颜色),跟随强调色时用手机上选的强调色
+function bookMark(b) {
+  const mark = document.createElement("span");
+  mark.className = "book-mark";
+  mark.innerHTML = bookIcon(b.icon, b.icon_color || look.accent);
+  mark.style.color = iconColor(b);
+  return mark;
+}
+
+// 当前笔记本里和搜索框对得上的页面;排序时每行右边有拖动的把手,点了不打开
 function pageButtons(book, bookName, className) {
-  const query = el("note-filter").value.trim().toLowerCase();
+  const query = sorting ? "" : el("note-filter").value.trim().toLowerCase();
   const notes = (book?.notes || []).filter((n) => n.name.toLowerCase().includes(query));
   const out = [];
   for (const n of notes) {
     const button = document.createElement("button");
     button.className = className;
     button.type = "button";
+    button.dataset.page = n.name;
     button.classList.toggle("active", selected?.name === n.name);
     button.setAttribute("aria-current", selected?.name === n.name ? "page" : "false");
     const name = document.createElement("span");
     name.textContent = n.name;
     button.append(name);
+    if (sorting) {
+      const handle = document.createElement("span");
+      handle.className = "drag-handle";
+      handle.textContent = "⠿";
+      handle.setAttribute("aria-hidden", "true");
+      handle.addEventListener("pointerdown", (e) => dragPage(e, button));
+      button.append(handle);
+    }
+    onLongPress(button, (at) => pageMenu(bookName, n.name, at));
     button.addEventListener("click", async () => {
+      if (sorting) return;
       await refresh(bookName, n.name);
       if (selected?.name === n.name && selected?.book === bookName) toggleDrawer(false);
     });
@@ -264,6 +289,7 @@ function render() {
   })());
   el("page-title").textContent = selected?.name || "空笔记本";
   renderDrawer();
+  renderBookManager();
   // While another page loads the editor is read-only, but the toolbar stays put (it only goes
   // inert) so it does not flicker on every page switch.
   const canEdit = !!selected && !selected.unreadable && !reading;
@@ -326,7 +352,7 @@ async function flush() {
 // Only names are listed; just the opened page is read, so many pages stay cheap to switch.
 async function listBooks() {
   return (await invoke("mobile_list_books")).map((b) => ({
-    name: b.name, notes: b.notes.map((name) => ({ name })),
+    name: b.name, notes: b.notes.map((name) => ({ name })), icon: b.icon || "", icon_color: b.icon_color || "",
   }));
 }
 
@@ -581,13 +607,7 @@ booksSelect.addEventListener("change", () => { void refresh(booksSelect.value, n
 notesSelect.addEventListener("change", () => { void refresh(currentBook, notesSelect.value); });
 
 el("add-book").addEventListener("click", async () => {
-  const name = await askText("新笔记本名称", "", "新建");
-  if (!name?.trim()) return;
-  try {
-    await flush();
-    const created = await invoke("mobile_create_book", { name: name.trim() });
-    await refresh(created, null);
-  } catch (error) { notify("新建笔记本失败：" + error); }
+  try { await createBook(); } catch (error) { notify("新建笔记本失败：" + error); }
 });
 
 el("add-note").addEventListener("click", async () => {
@@ -601,21 +621,343 @@ el("add-note").addEventListener("click", async () => {
   } catch (error) { notify("新建页面失败：" + error); }
 });
 
-el("delete-note").addEventListener("click", async () => {
-  if (!selected || switching || busy) return;
-  const { book, name } = selected;
+el("delete-note").addEventListener("click", () => { if (selected) void deletePage(selected.book, selected.name); });
+
+// 删掉的是正在看的页面就打开相邻的一页,别的页面只从名单里拿掉,正在编辑的这页不动
+async function deletePage(book, name) {
+  if (switching || busy) return;
   if (!(await ask("删除页面「" + name + "」？它会移到回收站（笔记文件夹的 .trash），同步开着时网盘上的那份也会移进网盘的 .trash。", "删除", true))) return;
   try {
     await flush();
+    const open = selected?.book === book && selected?.name === name;
     const pages = books.find((b) => b.name === book)?.notes || [];
     const at = pages.findIndex((n) => n.name === name);
     const next = pages[at + 1] ?? pages[at - 1];
     await invoke("mobile_delete_note", { book, name });
-    await refresh(book, next?.name ?? null);
+    if (open) await refresh(book, next?.name ?? null);
+    else await showNewPages();
     notify("已删除页面「" + name + "」");
     scheduleMobileSync();
   } catch (error) { notify("删除失败：" + error); }
+}
+
+// ---- 长按(0.5.2):页面弹出菜单(删除、调整顺序),笔记本打开笔记本管理。手指挪开就是在滚动列表,不算长按 ----
+const LONG_PRESS_MS = 500;
+function onLongPress(target, act) {
+  let timer = 0;
+  let start = null;
+  let fired = false;
+  const cancel = () => { clearTimeout(timer); timer = 0; };
+  const fire = (at) => { cancel(); fired = true; act(at); };
+  target.addEventListener("pointerdown", (e) => {
+    fired = false;
+    cancel();
+    if (e.button !== 0 || sorting) return;
+    start = { x: e.clientX, y: e.clientY };
+    timer = setTimeout(() => fire(start), LONG_PRESS_MS);
+  });
+  target.addEventListener("pointermove", (e) => {
+    if (timer && Math.hypot(e.clientX - start.x, e.clientY - start.y) > 10) cancel();
+  });
+  for (const type of ["pointerup", "pointercancel", "pointerleave"]) target.addEventListener(type, cancel);
+  // 安卓的 WebView 长按时还会发 contextmenu(不弹系统菜单):先到的那个算数
+  target.addEventListener("contextmenu", (e) => {
+    e.preventDefault();
+    if (!fired && !sorting) fire({ x: e.clientX, y: e.clientY });
+  });
+  // 长按以后松手的那一下不算点击
+  target.addEventListener("click", (e) => {
+    if (!fired) return;
+    fired = false;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+  }, true);
+}
+
+function pageMenu(book, name, at) {
+  navigator.vibrate?.(15);
+  openMenu([
+    { id: "open", label: "打开", act: () => { void refresh(book, name).then(() => toggleDrawer(false)); } },
+    { id: "sort", label: "调整顺序", act: () => setSorting(true) },
+    { id: "delete", label: "删除页面", danger: true, act: () => void deletePage(book, name) },
+  ], at.x, at.y);
+}
+
+// ---- 页面排序(0.5.2):按住每行右边的把手上下拖,松手就存进笔记本的 .minipad.json(和电脑版标签的顺序是同一份,会同步) ----
+function setSorting(on) {
+  sorting = on;
+  const button = el("sort-notes");
+  button.textContent = on ? "完成" : "排序";
+  button.setAttribute("aria-pressed", String(on));
+  el("sort-hint").hidden = !on;
+  drawer.classList.toggle("sorting", on);
+  if (on) el("note-filter").value = "";
+  el("note-filter").disabled = on;
+  drawerKey = "";
+  if (!drawer.hidden) renderDrawer();
+}
+el("sort-notes").addEventListener("click", () => setSorting(!sorting));
+
+function dragPage(e, row) {
+  if (e.button !== 0) return;
+  e.preventDefault();
+  e.stopPropagation();
+  const list = el("notes-list");
+  const pageRows = () => [...list.querySelectorAll("button[data-page]")];
+  const before = pageRows().map((r) => r.dataset.page);
+  const pointer = e.pointerId;
+  row.classList.add("dragging");
+  // 跟着手指挪的是这一行本身;挪动 DOM 会丢掉指针捕获,所以在 window 上听
+  const move = (ev) => {
+    if (ev.pointerId !== pointer) return;
+    const others = pageRows().filter((r) => r !== row);
+    const next = others.find((r) => { const b = r.getBoundingClientRect(); return ev.clientY < b.top + b.height / 2; });
+    if (next) { if (row.nextElementSibling !== next) list.insertBefore(row, next); }
+    else if (others.length && others.at(-1).nextElementSibling !== row) others.at(-1).after(row);
+    // 拖到抽屉的上下边缘时跟着滚
+    const box = drawer.getBoundingClientRect();
+    if (ev.clientY < box.top + 48) drawer.scrollTop -= 12;
+    else if (ev.clientY > box.bottom - 48) drawer.scrollTop += 12;
+  };
+  const end = (ev) => {
+    if (ev.pointerId !== pointer) return;
+    window.removeEventListener("pointermove", move);
+    window.removeEventListener("pointerup", end);
+    window.removeEventListener("pointercancel", end);
+    row.classList.remove("dragging");
+    const order = pageRows().map((r) => r.dataset.page);
+    if (order.join("\n") !== before.join("\n")) void savePageOrder(order);
+  };
+  window.addEventListener("pointermove", move);
+  window.addEventListener("pointerup", end);
+  window.addEventListener("pointercancel", end);
+}
+
+async function savePageOrder(order) {
+  const book = currentBook;
+  try {
+    await invoke("mobile_set_page_order", { book, order });
+    const b = books.find((x) => x.name === book);
+    if (b) b.notes = order.map((name) => b.notes.find((n) => n.name === name) || { name });
+    pageNamesChanged();
+    render();
+    scheduleMobileSync();
+  } catch (error) {
+    notify("保存顺序失败：" + error);
+    drawerKey = "";
+    renderDrawer();
+  }
+}
+
+// ---- 笔记本管理(0.5.2,和电脑版的「笔记本管理」一样):图标、颜色、改名、删除、新建 ----
+const booksSheet = el("mobile-books");
+const booksBackdrop = el("books-backdrop");
+const bookLabel = (name) => name || "默认笔记本";
+let managed = ""; // 管理页里选中的笔记本
+let appearanceBusy = false;
+
+function showBookManager(open, name = currentBook) {
+  booksSheet.hidden = !open;
+  booksBackdrop.hidden = !open;
+  if (!open) return;
+  managed = name;
+  if (!drawer.hidden) toggleDrawer(false);
+  el("mb-error").hidden = true;
+  notebookColors.reopen();
+  renderBookManager();
+  el("close-books").focus();
+}
+el("manage-books").addEventListener("click", () => showBookManager(true));
+el("close-books").addEventListener("click", () => showBookManager(false));
+booksBackdrop.addEventListener("click", () => showBookManager(false));
+
+function bookError(text) {
+  el("mb-error").textContent = text;
+  el("mb-error").hidden = !text;
+}
+
+function renderBookManager() {
+  if (el("mobile-books").hidden) return;
+  // 名单正在重新读(比如刚改完名)时选中的那个可能暂时不在里面:先显示当前笔记本,不改 managed
+  const b = books.find((x) => x.name === managed) || books.find((x) => x.name === currentBook) || books[0];
+  const list = el("mb-list");
+  list.replaceChildren();
+  for (const x of books) {
+    const row = document.createElement("button");
+    row.type = "button";
+    row.dataset.book = x.name;
+    row.setAttribute("role", "radio");
+    row.setAttribute("aria-checked", String(x === b));
+    const name = document.createElement("span");
+    name.className = "mb-name";
+    name.textContent = bookLabel(x.name);
+    const count = document.createElement("span");
+    count.className = "mb-count";
+    count.textContent = String(x.notes.length);
+    row.append(bookMark(x), name, count);
+    row.addEventListener("click", () => { managed = x.name; bookError(""); renderBookManager(); });
+    list.append(row);
+  }
+  if (!b) return;
+  el("mb-selected").textContent = bookLabel(b.name);
+  el("mb-rename").disabled = !b.name || appearanceBusy;
+  el("mb-delete").disabled = !b.name || appearanceBusy;
+  const icons = el("mb-icons");
+  icons.replaceChildren();
+  for (const [id, label] of BOOK_ICONS) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.title = label;
+    button.dataset.icon = id;
+    button.setAttribute("role", "radio");
+    button.setAttribute("aria-label", label);
+    button.setAttribute("aria-checked", String((b.icon || "book") === id));
+    button.disabled = appearanceBusy;
+    button.innerHTML = bookIcon(id, b.icon_color || look.accent);
+    button.style.color = iconColor(b);
+    button.addEventListener("click", () => void saveAppearance(b.name, id, b.icon_color));
+    icons.append(button);
+  }
+  followBookAccent.setAttribute("aria-checked", String(!b.icon_color));
+  followBookAccent.disabled = appearanceBusy;
+  notebookColors.sync();
+}
+
+// 颜色:「跟随强调色」加上共用的颜色库(纯色、渐变、材质),和电脑版一样
+const followBookAccent = document.createElement("button");
+followBookAccent.type = "button";
+followBookAccent.dataset.color = "";
+followBookAccent.title = "跟随强调色";
+followBookAccent.setAttribute("role", "radio");
+followBookAccent.setAttribute("aria-label", "跟随强调色");
+followBookAccent.style.setProperty("--sw", "var(--accent)");
+const managedBook = () => books.find((x) => x.name === managed) || books.find((x) => x.name === currentBook);
+followBookAccent.addEventListener("click", () => {
+  const b = managedBook();
+  if (b) void saveAppearance(b.name, b.icon || "book", "");
 });
+const followBookLabel = document.createElement("span");
+followBookLabel.className = "mb-follow";
+followBookLabel.textContent = "跟随强调色";
+el("mb-colors").append(followBookAccent, followBookLabel);
+const notebookColors = makeSharedColorTools({
+  id: "mobile-notebook",
+  getValue: () => managedBook()?.icon_color || getComputedStyle(document.documentElement).getPropertyValue("--accent").trim(),
+  onApply: (value) => {
+    const b = managedBook();
+    if (b) void saveAppearance(b.name, b.icon || "book", value);
+  },
+  compact: true,
+});
+el("mb-colors").closest(".sync-field").after(notebookColors.root);
+
+async function saveAppearance(name, icon, color) {
+  const b = books.find((x) => x.name === name);
+  color = tidyAccent(color || "");
+  if (!b || appearanceBusy || ((b.icon || "book") === icon && (b.icon_color || "") === color)) return;
+  appearanceBusy = true;
+  bookError("");
+  try {
+    await invoke("mobile_set_book_appearance", { book: name, icon, color });
+    b.icon = icon === "book" ? "" : icon;
+    b.icon_color = color;
+    scheduleMobileSync();
+  } catch (error) {
+    bookError("保存图标失败：" + error);
+  } finally {
+    appearanceBusy = false;
+    renderBookManager();
+    renderDrawer();
+  }
+}
+
+async function createBook() {
+  const name = await askText("新笔记本名称", "", "新建");
+  if (!name?.trim()) return null;
+  await flush();
+  const created = await invoke("mobile_create_book", { name: name.trim() });
+  await refresh(created, null);
+  return created;
+}
+
+el("mb-new").addEventListener("click", async () => {
+  try {
+    const created = await createBook();
+    if (created != null) { managed = created; renderBookManager(); }
+  } catch (error) { bookError("新建笔记本失败：" + error); }
+});
+
+el("mb-rename").addEventListener("click", () => void renameBook(managedBook()?.name));
+el("mb-delete").addEventListener("click", () => void deleteBook(managedBook()?.name));
+
+async function renameBook(old) {
+  if (!old) return;
+  const wanted = (await askText("笔记本的新名字", old, "改名"))?.trim();
+  if (!wanted || wanted === old) return;
+  bookError("");
+  try {
+    await flush();
+    const renamed = await invoke("mobile_rename_book", { old, new: wanted });
+    if (selected?.book === old) selected.book = renamed;
+    if (currentBook === old) currentBook = renamed;
+    managed = renamed;
+    // 别的页面里写了「旧名/页面」的链接跟着改(用改名前的名单算)
+    const changed = await updateBookLinks(old, renamed);
+    await refresh(currentBook, selected?.name);
+    notify(`笔记本已改名为「${renamed}」` + (changed ? `，更新了 ${changed} 个页面里的链接` : ""));
+    scheduleMobileSync();
+  } catch (error) {
+    bookError("改名失败：" + error);
+  }
+  renderBookManager();
+}
+
+// 和电脑版一样:改 2 个以上页面时先问一下。只读有 [[ 的页面,不把每一页都读一遍
+async function updateBookLinks(old, renamed) {
+  if (!look.page_links) return 0;
+  const index = linkIndex(); // 还是改名前的名单
+  const edits = [];
+  for (const [book, name] of await invoke("mobile_link_pages")) {
+    const page = await invoke("mobile_read_note", { book, name });
+    if (page.unreadable) continue;
+    const home = { book: book === renamed ? old : book, page: name };
+    const after = retarget(page.content, home, index, { book: [old, renamed] });
+    if (after !== page.content) edits.push({ book, name, before: page.content, after });
+  }
+  if (!edits.length) return 0;
+  if (edits.length >= 2) {
+    const names = edits.slice(0, 8).map((e) => `「${e.name}」`).join("、") + (edits.length > 8 ? ` 等 ${edits.length} 个页面` : "");
+    if (!(await ask(`有 ${edits.length} 个页面里有指向这个笔记本的链接：${names}\n要同时更新这些链接吗？`, "更新链接"))) return 0;
+  }
+  let done = 0;
+  for (const e of edits) {
+    try {
+      await invoke("mobile_save_note", { book: e.book, name: e.name, content: e.after, expected: e.before });
+      done++;
+    } catch { /* 那一页刚被别处改过:不动它 */ }
+  }
+  return done;
+}
+
+async function deleteBook(name) {
+  const b = books.find((x) => x.name === name);
+  if (!b?.name) return;
+  const count = b.notes.length;
+  if (!(await ask(`删除笔记本「${name}」${count ? `和里面的 ${count} 个页面` : ""}？\n笔记本会移到回收站（笔记文件夹的 .trash），电脑上的回收站里可以恢复。`, "删除", true))) return;
+  bookError("");
+  try {
+    await flush();
+    await invoke("mobile_delete_book", { name });
+    managed = currentBook === name ? "" : currentBook;
+    if (currentBook === name) await refresh("", null);
+    else await showNewPages();
+    notify(`已删除笔记本「${name}」`);
+    scheduleMobileSync();
+  } catch (error) {
+    bookError("删除失败：" + error);
+  }
+  renderBookManager();
+}
 
 async function toggleMode() {
   if (!reading) {
@@ -1054,15 +1396,16 @@ el("close-settings").addEventListener("click", () => showSettings(false));
 settingsBackdrop.addEventListener("click", () => showSettings(false));
 applyLook();
 
-// ---- 返回键(0.4.5):按一次关掉最上面开着的一层,顺序是 对话框 → 菜单和弹窗 → 查找栏 → 同步设置 → 外观设置 → 抽屉。
+// ---- 返回键(0.4.5):按一次关掉最上面开着的一层,顺序是 对话框 → 菜单和弹窗 → 查找栏 → 笔记本管理 → 同步设置 → 外观设置 → 抽屉。
 // 只在有东西开着时才接管返回键(Tauri 的 onBackButtonPress),全关了就交还,返回键照常让应用退到后台。
 const syncSheet = el("mobile-webdav-settings");
 const openMenus = () => [...document.querySelectorAll(".menu:not([hidden])")];
-const layerOpen = () => dialogOpen() || openMenus().length > 0 || !findPanel.hidden || !syncSheet.hidden || !settingsSheet.hidden || !drawer.hidden;
+const layerOpen = () => dialogOpen() || openMenus().length > 0 || !findPanel.hidden || !booksSheet.hidden || !syncSheet.hidden || !settingsSheet.hidden || !drawer.hidden;
 function closeTopLayer() {
   if (dialogOpen()) closeDialog(false);
   else if (openMenus().length) for (const menu of openMenus()) menu.hidden = true;
   else if (!findPanel.hidden) showFind(false);
+  else if (!booksSheet.hidden) showBookManager(false);
   else if (!syncSheet.hidden) closeSyncSettings();
   else if (!settingsSheet.hidden) showSettings(false);
   else if (!drawer.hidden) toggleDrawer(false);

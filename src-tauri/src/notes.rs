@@ -747,6 +747,9 @@ pub fn load_books_with(
 pub struct BookIndex {
     pub name: String,
     pub notes: Vec<String>,
+    /// 笔记本图标和颜色(见 set_book_appearance),手机端的列表和笔记本管理用
+    pub icon: String,
+    pub icon_color: String,
 }
 
 /// 和 load_books 一样,无法读取的子笔记本跳过,默认笔记本读不出来才报错
@@ -757,6 +760,8 @@ pub fn index_books(root: &Path) -> Result<Vec<BookIndex>, String> {
         Ok(BookIndex {
             name: book.to_string(),
             notes: order_names(&list_names(&dir)?, &meta.order),
+            icon: meta.icon,
+            icon_color: meta.icon_color,
         })
     };
     let mut books = vec![index("")?];
@@ -1039,6 +1044,18 @@ pub fn set_book_appearance(root: &Path, book: &str, icon: &str, color: &str) -> 
         icon.into()
     };
     meta.icon_color = normalized;
+    write_meta(&dir, &meta)
+}
+
+/// 只改页面顺序(手机上拖动排序),当前页面、分组、图标这些都不动;笔记本已经不在了就不写
+#[cfg(any(mobile, test))]
+pub fn set_page_order(root: &Path, book: &str, order: Vec<String>) -> Result<(), String> {
+    let dir = book_dir(root, book)?;
+    if !dir.is_dir() {
+        return Ok(());
+    }
+    let mut meta = read_meta_strict(&dir)?;
+    meta.order = order_names(&list_names(&dir)?, &order);
     write_meta(&dir, &meta)
 }
 
@@ -1682,6 +1699,46 @@ mod tests {
         assert_eq!(create_note(&gone, "计划").unwrap(), "计划");
         assert!(note_path(&gone, "计划").is_file());
         fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn page_order_from_the_phone_keeps_the_rest_of_the_notebook_info() {
+        let root = temp_dir("page-order");
+        for name in ["甲", "乙", "丙"] {
+            fs::write(note_path(&root, name), name).unwrap();
+        }
+        save_book_meta(
+            &root,
+            "",
+            vec!["甲".into(), "乙".into(), "丙".into()],
+            "乙".into(),
+            HashMap::from([("乙".to_string(), "read".to_string())]),
+            None,
+            Some(vec!["甲".into()]),
+        )
+        .unwrap();
+        set_book_appearance(&root, "", "star", "#112233").unwrap();
+        // 名单里没有的页面排在后面,不存在的、重复的名字不记
+        set_page_order(
+            &root,
+            "",
+            vec!["丙".into(), "不存在".into(), "甲".into(), "丙".into()],
+        )
+        .unwrap();
+        let meta = read_meta(&root);
+        assert_eq!(meta.order, vec!["丙", "甲", "乙"]);
+        assert_eq!(meta.active, "乙");
+        assert_eq!(meta.modes.get("乙").map(String::as_str), Some("read"));
+        assert_eq!(meta.pinned, vec!["甲"]);
+        assert_eq!(
+            (meta.icon.as_str(), meta.icon_color.as_str()),
+            ("star", "#112233")
+        );
+        assert_eq!(index_books(&root).unwrap()[0].notes, vec!["丙", "甲", "乙"]);
+        // 笔记本已经删掉了:不把文件夹建回来
+        set_page_order(&root, "没有", vec!["x".into()]).unwrap();
+        assert!(!root.join("没有").exists());
+        fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]
@@ -2761,6 +2818,16 @@ mod tests {
             assert_eq!(listed.notes, names(book));
         }
         assert_eq!(index[1].notes, vec!["计划", "周报", "乱码"]);
+        assert_eq!(
+            (index[1].icon.as_str(), index[1].icon_color.as_str()),
+            ("", "")
+        );
+        set_book_appearance(&root, "工作", "star", "#3366ff").unwrap();
+        let index = index_books(&root).unwrap();
+        assert_eq!(
+            (index[1].icon.as_str(), index[1].icon_color.as_str()),
+            ("star", "#3366ff")
+        );
 
         let page = read_page_body(&root, "工作", "周报").unwrap();
         assert_eq!((page.content.as_str(), page.unreadable), ("本周", false));

@@ -70,7 +70,7 @@ async function open({ colorScheme, keyboard, look = { ui: "classic" } } = {}) {
         const book = disk.find((b) => b.name === args.book) || disk[0];
         if (command === "mobile_list_books") {
           calls.list++;
-          return disk.map((b) => ({ name: b.name, notes: b.notes.map((n) => n.name) }));
+          return disk.map((b) => ({ name: b.name, notes: b.notes.map((n) => n.name), icon: b.icon || "", icon_color: b.icon_color || "" }));
         }
         if (command === "mobile_read_note") {
           calls.read++;
@@ -98,6 +98,26 @@ async function open({ colorScheme, keyboard, look = { ui: "classic" } } = {}) {
         if (command === "mobile_create_note") {
           book.notes.push({ name: args.name, content: "", unreadable: false });
           return args.name;
+        }
+        if (command === "mobile_rename_book") {
+          disk.find((b) => b.name === args.old).name = args.new;
+          return args.new;
+        }
+        if (command === "mobile_delete_book") {
+          disk.splice(disk.findIndex((b) => b.name === args.name), 1);
+          return null;
+        }
+        if (command === "mobile_set_book_appearance") {
+          Object.assign(book, { icon: args.icon === "book" ? "" : args.icon, icon_color: args.color });
+          return null;
+        }
+        if (command === "mobile_set_page_order") {
+          window.__mobileTest.orders = [...(window.__mobileTest.orders || []), args.order];
+          book.notes.sort((a, b) => args.order.indexOf(a.name) - args.order.indexOf(b.name));
+          return null;
+        }
+        if (command === "mobile_link_pages") {
+          return disk.flatMap((b) => b.notes.filter((n) => n.content.includes("[[")).map((n) => [b.name, n.name]));
         }
         if (command === "mobile_delete_note") {
           book.notes.splice(book.notes.findIndex((n) => n.name === args.name), 1);
@@ -1147,6 +1167,134 @@ test("a page can be deleted from the list: it asks first, moves to the next page
     await page.click("#dialog-ok");
     await page.waitForFunction(() => document.getElementById("page-title").textContent === "空笔记本");
     assert.equal(await page.locator("#delete-note").isDisabled(), true, "nothing left to delete");
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test("long-pressing a page offers delete; deleting another page keeps the open one", async () => {
+  const { context, page, errors } = await open();
+  try {
+    await chooseNote(page, "一");
+    await page.click("#open-drawer");
+    const row = page.locator('#notes-list button[data-page="二"]');
+    await row.dispatchEvent("contextmenu");
+    await page.locator("#ctx").waitFor({ state: "visible" });
+    assert.deepEqual(await page.locator("#ctx button").allTextContents(), ["打开", "调整顺序", "删除页面"]);
+    await page.click('#ctx [data-act="delete"]');
+    await page.click("#dialog-ok");
+    await page.waitForFunction(() => (window.__mobileTest.deleted || []).includes("二"));
+    await page.waitForFunction(() => !document.querySelector('#notes-list button[data-page="二"]'));
+    assert.equal(await page.locator("#page-title").textContent(), "一", "the open page stays");
+    // a real long press (pointer held still) opens the menu too, and the release does not open the page
+    await page.evaluate(() => window.__mobileTest.disk[0].notes.push({ name: "三", content: "第三页", unreadable: false }));
+    await page.click("#close-drawer");
+    await page.click("#refresh");
+    await page.click("#open-drawer");
+    const box = await page.locator('#notes-list button[data-page="三"]').boundingBox();
+    await page.mouse.move(box.x + 30, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.locator("#ctx").waitFor({ state: "visible" });
+    await page.mouse.up();
+    assert.equal(await page.locator("#page-title").textContent(), "一");
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test("pages can be reordered by dragging the handle; the order is saved and the filter is off while sorting", async () => {
+  const { context, page, errors } = await open();
+  try {
+    await page.evaluate(() => window.__mobileTest.disk[0].notes.push({ name: "三", content: "第三页", unreadable: false }));
+    await page.click("#refresh");
+    await page.click("#open-drawer");
+    await page.fill("#note-filter", "一");
+    await page.click("#sort-notes");
+    assert.equal(await page.locator("#sort-notes").textContent(), "完成");
+    assert.equal(await page.locator("#note-filter").isDisabled(), true);
+    assert.deepEqual(await page.locator("#notes-list button[data-page]").evaluateAll((rows) => rows.map((r) => r.dataset.page)), ["一", "二", "三"]);
+    const handle = page.locator('#notes-list button[data-page="一"] .drag-handle');
+    const from = await handle.boundingBox();
+    const to = await page.locator('#notes-list button[data-page="三"]').boundingBox();
+    await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(from.x + from.width / 2, to.y + to.height - 2, { steps: 8 });
+    await page.mouse.up();
+    await page.waitForFunction(() => (window.__mobileTest.orders || []).length === 1);
+    assert.deepEqual(await page.evaluate(() => window.__mobileTest.orders[0]), ["二", "三", "一"]);
+    assert.deepEqual(await page.locator("#notes-list button[data-page]").evaluateAll((rows) => rows.map((r) => r.dataset.page)), ["二", "三", "一"]);
+    // tapping a row while sorting does not open it
+    await page.click('#notes-list button[data-page="三"] span');
+    assert.equal(await page.locator("#page-title").textContent(), "一");
+    await page.click("#sort-notes");
+    assert.equal(await page.locator("#note-filter").isDisabled(), false);
+    assert.equal(await page.locator(".drag-handle").count(), 0);
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test("notebook management: icon and color, rename (links follow), delete; 默认 cannot be renamed or deleted", async () => {
+  const { context, page, errors } = await open();
+  try {
+    await page.evaluate(() => {
+      const t = window.__mobileTest;
+      t.disk.push({ name: "工作", notes: [{ name: "计划", content: "下周", unreadable: false }] });
+      t.disk[0].notes.push({ name: "索引", content: "看 [[工作/计划]] 和 [[二]]", unreadable: false });
+    });
+    await page.click("#refresh");
+    await page.click("#open-drawer");
+    await page.click("#manage-books");
+    await page.locator("#mobile-books").waitFor({ state: "visible" });
+    assert.equal(await page.locator("#mobile-drawer").isHidden(), true);
+    assert.deepEqual(await page.locator("#mb-list .mb-name").allTextContents(), ["默认笔记本", "工作"]);
+    assert.equal(await page.locator("#mb-rename").isDisabled(), true);
+    assert.equal(await page.locator("#mb-delete").isDisabled(), true);
+
+    await page.click('#mb-list [data-book="工作"]');
+    assert.equal(await page.locator("#mb-selected").textContent(), "工作");
+    await page.click('#mb-icons [data-icon="star"]');
+    await page.waitForFunction(() => window.__mobileTest.disk[1].icon === "star");
+    assert.equal(await page.locator('#mb-icons [data-icon="star"]').getAttribute("aria-checked"), "true");
+    await page.locator("#mobile-books .uc-presets button").first().click();
+    await page.waitForFunction(() => !!window.__mobileTest.disk[1].icon_color);
+    assert.equal(await page.locator('#mb-colors [data-color=""]').getAttribute("aria-checked"), "false");
+    await page.click('#mb-colors [data-color=""]');
+    await page.waitForFunction(() => window.__mobileTest.disk[1].icon_color === "");
+
+    await page.click("#mb-rename");
+    await page.fill("#dialog-input", "项目");
+    await page.click("#dialog-ok");
+    await page.waitForFunction(() => window.__mobileTest.disk[1].name === "项目");
+    await page.waitForFunction(() => window.__mobileTest.disk[0].notes.find((n) => n.name === "索引").content.includes("[[项目/计划]]"));
+    assert.equal(await page.evaluate(() => window.__mobileTest.disk[0].notes.find((n) => n.name === "索引").content), "看 [[项目/计划]] 和 [[二]]");
+    assert.deepEqual(await page.locator("#mb-list .mb-name").allTextContents(), ["默认笔记本", "项目"]);
+    assert.equal(await page.locator("#mb-selected").textContent(), "项目");
+
+    await page.click("#mb-delete");
+    assert.match(await page.locator("#dialog-msg").textContent(), /删除笔记本「项目」和里面的 1 个页面/);
+    await page.click("#dialog-ok");
+    await page.waitForFunction(() => window.__mobileTest.disk.length === 1);
+    assert.deepEqual(await page.locator("#mb-list .mb-name").allTextContents(), ["默认笔记本"]);
+
+    // the back button closes the manager
+    assert.equal(await page.evaluate(() => window.__mobileTest.backListeners()), 1);
+    await page.evaluate(() => window.__mobileTest.back());
+    await page.locator("#mobile-books").waitFor({ state: "hidden" });
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test("long-pressing a notebook opens its management page, and notebook icons show in the list", async () => {
+  const { context, page, errors } = await open();
+  try {
+    await page.evaluate(() => window.__mobileTest.disk.push({ name: "读书", icon: "heart", icon_color: "#ff3366", notes: [] }));
+    await page.click("#refresh");
+    await page.click("#open-drawer");
+    const row = page.locator("#books-list button").filter({ hasText: "读书" });
+    assert.equal(await row.locator(".book-mark svg").count(), 1);
+    assert.equal(await row.locator(".book-mark").evaluate((m) => m.style.color), "rgb(255, 51, 102)");
+    await row.dispatchEvent("contextmenu");
+    await page.locator("#mobile-books").waitFor({ state: "visible" });
+    assert.equal(await page.locator("#mb-selected").textContent(), "读书");
+    assert.equal(await page.locator('#mb-icons [data-icon="heart"]').getAttribute("aria-checked"), "true");
     assert.deepEqual(errors, []);
   } finally { await context.close(); }
 });

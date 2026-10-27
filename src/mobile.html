@@ -94,16 +94,17 @@
       <button id="close-drawer" class="icon-button" aria-label="关闭笔记列表" type="button">✕</button>
     </div>
     <section class="drawer-section">
-      <div class="section-heading"><h3>笔记本</h3><button id="add-book" aria-label="新建笔记本" type="button">＋ 新建</button></div>
+      <div class="section-heading"><h3>笔记本</h3><div class="heading-actions"><button id="manage-books" type="button" aria-label="管理笔记本">管理</button><button id="add-book" aria-label="新建笔记本" type="button">＋ 新建</button></div></div>
       <div id="books-list" class="book-list"></div>
       <select id="book" aria-label="选择笔记本" class="test-select"></select>
     </section>
     <section class="drawer-section page-section">
-      <div class="section-heading"><h3 id="pages-heading">页面</h3><div class="heading-actions"><button id="delete-note" type="button" aria-label="删除当前页面" disabled>删除</button><button id="add-note" type="button" aria-label="新建页面">＋ 新建</button></div></div>
+      <div class="section-heading"><h3 id="pages-heading">页面</h3><div class="heading-actions"><button id="sort-notes" type="button" aria-pressed="false" aria-label="调整页面顺序">排序</button><button id="delete-note" type="button" aria-label="删除当前页面" disabled>删除</button><button id="add-note" type="button" aria-label="新建页面">＋ 新建</button></div></div>
       <label class="search-wrap">
         <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10" cy="10" r="6"/><path d="m15 15 5 5"/></svg>
         <input id="note-filter" placeholder="搜索当前笔记本的页面" aria-label="筛选页面" autocomplete="off">
       </label>
+      <p id="sort-hint" class="sheet-note sort-hint" hidden>按住页面右边的 ⠿ 上下拖动，松手就保存；排好了点「完成」。</p>
       <div id="notes-list" class="note-list"></div>
       <select id="note" aria-label="选择页面" class="test-select"></select>
     </section>
@@ -173,6 +174,20 @@
     <h3>行内计算</h3>
     <label class="switch-row"><span>打 = 就算出结果(比如打 12*3.5= 后面写上 42;代码里不算)</span><input id="look-calc" type="checkbox"></label>
     <p class="sheet-note">只保存在这台手机上,改了马上生效。</p>
+  </section>
+  <!-- 笔记本管理(和电脑版一样):图标、颜色、改名、删除、新建。图标和颜色存在笔记本的 .minipad.json,会同步 -->
+  <div id="books-backdrop" class="drawer-backdrop" hidden></div>
+  <section id="mobile-books" class="sheet" role="dialog" aria-modal="true" aria-labelledby="books-title" hidden>
+    <div class="sheet-grip" aria-hidden="true"></div>
+    <div class="sheet-top"><h2 id="books-title">笔记本管理</h2><button id="close-books" type="button" class="icon-button" aria-label="关闭笔记本管理">✕</button></div>
+    <div id="mb-list" class="mb-list" role="radiogroup" aria-label="笔记本"></div>
+    <button id="mb-new" type="button" class="mb-new">＋ 新建笔记本</button>
+    <h3 id="mb-selected" class="mb-selected">默认笔记本</h3>
+    <div class="sync-field"><span>图标</span><div id="mb-icons" class="mb-icons" role="radiogroup" aria-label="笔记本图标"></div></div>
+    <div class="sync-field"><span>颜色</span><div id="mb-colors" class="accent-swatches" role="radiogroup" aria-label="笔记本颜色"></div></div>
+    <div class="sync-actions"><button id="mb-rename" type="button">重命名</button><button id="mb-delete" type="button" class="danger">删除笔记本</button></div>
+    <p id="mb-error" class="sheet-note mb-error" role="alert" hidden></p>
+    <p class="sheet-note">「默认笔记本」不能改名和删除。删掉的笔记本移到笔记文件夹的 .trash,电脑上的回收站里可以恢复;同步开着时会同步到网盘。</p>
   </section>
   <div id="sync-settings-backdrop" class="drawer-backdrop" hidden></div>
   <section id="mobile-webdav-settings" class="sheet" role="dialog" aria-modal="true" aria-labelledby="sync-settings-title" hidden>
