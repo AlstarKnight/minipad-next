@@ -143,8 +143,9 @@ export function closeOverlays(keepBooks = false) {
   if (closeGroupEditor()) wasOpen = true;
   if (closeTabPopups()) wasOpen = true;
   closeDialog(false);
+  // 设置里正在录快捷键:不录了(失去焦点时恢复全局热键)
+  document.querySelector(".key-keys.recording")?.blur();
   for (const sel of overlays) $(sel).hidden = true;
-  $("#set-hotkey").classList.remove("recording");
   if (!keepBooks) {
     closeBooks();
     closeBookManager();

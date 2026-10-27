@@ -158,6 +158,15 @@ const DEFAULT_SETTINGS = {
   snippet_key: "tab",
   calc_key: "tab",
   calc_decimals: "auto",
+  shortcuts: {},
+  fullscreen_enabled: true,
+  fullscreen_mode: "screen",
+  fullscreen_width: 860,
+  fullscreen_font_size: 0,
+  fullscreen_tabs: false,
+  fullscreen_format_bar: false,
+  fullscreen_exit_button: true,
+  fullscreen_button: true,
   calc_thousands: false,
 };
 
@@ -641,7 +650,18 @@ export function mockApi() {
         snippet_key: pickOne(settings.snippet_key, ["tab", "space", "off"]),
         calc_key: pickOne(settings.calc_key, ["tab", "equals", "off"]),
         calc_decimals: pickOne(String(settings.calc_decimals), ["auto", "0", "1", "2", "3", "4", "5", "6"]),
+        shortcuts: settings.shortcuts && typeof settings.shortcuts === "object" ? settings.shortcuts : {},
+        fullscreen_mode: pickOne(settings.fullscreen_mode, ["screen", "window"]),
+        fullscreen_width: Math.min(2000, Math.max(480, Math.round(Number(settings.fullscreen_width)) || 860)),
+        fullscreen_font_size: Number(settings.fullscreen_font_size) ? Math.min(40, Math.max(10, Math.round(Number(settings.fullscreen_font_size)))) : 0,
       };
+      // 测试用 __mockControl.takenHotkeys:被别的程序占用的全局热键,和后端一样换回原来的、别的设置照常保存
+      const taken = (k) => (window.__mockControl?.takenHotkeys || []).some((x) => x.toLowerCase() === String(k).toLowerCase());
+      if (s.hotkey !== db.settings.hotkey && taken(s.hotkey)) s.hotkey = db.settings.hotkey;
+      if (s.capture_hotkey !== db.settings.capture_hotkey && taken(s.capture_hotkey)) {
+        s.capture_hotkey = db.settings.capture_hotkey;
+        s.capture_enabled = db.settings.capture_enabled;
+      }
       if (s.capture_enabled !== false && s.capture_hotkey && s.capture_hotkey.toLowerCase() === s.hotkey.toLowerCase()) {
         throw "快速记录的热键和呼出热键一样,换一个吧";
       }
@@ -654,6 +674,18 @@ export function mockApi() {
     },
     pause_hotkey: () => {},
     resume_hotkey: () => {},
+    probe_hotkey: ({ combo }) => {
+      if ((window.__mockControl?.takenHotkeys || []).some((x) => x.toLowerCase() === combo.toLowerCase())) throw "HotKey already registered";
+    },
+    // 测试用:导出的文字记在 __mockControl.exported;导入时读 __mockControl.importText(没有就是取消)
+    export_shortcuts: ({ text }) => {
+      if (window.__mockControl) window.__mockControl.exported = text;
+      return true;
+    },
+    import_shortcuts: () => window.__mockControl?.importText ?? null,
+    set_fullscreen: ({ on }) => {
+      if (window.__mockControl) window.__mockControl.fullscreen = on;
+    },
     note_activity: () => {},
     start_window_drag: () => {
       if (window.__mockControl) window.__mockControl.dragStarted = (window.__mockControl.dragStarted || 0) + 1;

@@ -17,6 +17,7 @@ on:
       - 'src/style.css'
       - 'src/js/**'
       - '!src/js/main.js'
+      - '!src/js/quickswitch.js'
       - '!src/js/ball.js'
       - '!src/js/search.js'
       - '!src/js/trash.js'
@@ -101,6 +102,26 @@ jobs:
           test -s "$res/values/ic_launcher_background.xml"
           echo "launcher icon files:"
           find "$res" -name 'ic_launcher*' | sort
+      # 分享到 Minipad (0.5.5): our MainActivity (keeps the generated enableEdgeToEdge, adds the
+      # MinipadShare bridge the page takes shared text from) replaces the generated one, and the
+      # manifest gets the .ShareTarget alias that receives text shares.
+      - name: Add the share target to the Android project
+        run: |
+          set -euo pipefail
+          main=src-tauri/gen/android/app/src/main
+          activity="$(find "$main/java" -name MainActivity.kt -print -quit)"
+          test -n "$activity"
+          cp src-tauri/android-share/MainActivity.kt "$activity"
+          node -e '
+            const fs = require("fs");
+            const [file, alias] = process.argv.slice(1);
+            const xml = fs.readFileSync(file, "utf8");
+            if (!xml.includes("</application>")) throw new Error("no </application> in " + file);
+            fs.writeFileSync(file, xml.replace(/[ \t]*<\/application>/, fs.readFileSync(alias, "utf8") + "    </application>"));
+          ' "$main/AndroidManifest.xml" src-tauri/android-share/share-target.xml
+          grep -q 'android.intent.action.SEND' "$main/AndroidManifest.xml"
+          grep -q 'MinipadShare' "$activity"
+          echo "share target added to $activity and the manifest"
       - name: Build release APK
         run: npm run android:build
       # Reads the launcher icon back out of the built APK, so a build that still carries Tauri's

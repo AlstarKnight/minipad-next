@@ -1,4 +1,4 @@
-// ---------- 快速切换页面(默认 Ctrl+P,设置里可以换或者关掉) ----------
+// ---------- 快速切换页面(默认 Ctrl+P,设置 → 快捷键 里可以换或者关掉) ----------
 // 打几个字找页面名字(也能带上笔记本的名字,空格隔开;可以打拼音),上下键选,回车打开(Shift+回车放进小窗);
 // 什么都没打时列出最近打开过的页面。设置里可以只找当前笔记本
 import { $ } from "./dom.js";
@@ -9,27 +9,11 @@ import { goTo } from "./tabs.js";
 import { openInMini } from "./mini.js";
 import { isMiniWindow } from "./api.js";
 import { pageScore, termsOf } from "./match.js";
+import { comboOf } from "./shortcuts.js";
 
 // [{ b, n }]
 let results = [];
 let sel = 0;
-
-// 按下的组合键写成 "Ctrl+Shift+P" 这样(和设置里录快捷键一样)
-export function comboOf(e) {
-  const mods = [];
-  if (e.ctrlKey) mods.push("Ctrl");
-  if (e.altKey) mods.push("Alt");
-  if (e.shiftKey) mods.push("Shift");
-  if (e.metaKey) mods.push("Super");
-  const c = e.code || "";
-  if (/^(Control|Alt|Shift|Meta|OS)/.test(c)) return null;
-  let key;
-  if (/^Key[A-Z]$/.test(c)) key = c.slice(3);
-  else if (/^Digit\d$/.test(c)) key = c.slice(5);
-  else key = c;
-  if (!mods.length && !/^F\d{1,2}$/.test(key)) return null;
-  return [...mods, key].join("+");
-}
 
 export function openQuick() {
   closeOverlays();
@@ -144,7 +128,7 @@ export function bindQuick() {
     "keydown",
     (e) => {
       const key = state.settings?.quick_switch_key;
-      if (!key || isMiniWindow || e.isComposing || e.keyCode === 229 || e.target.closest?.("#set-quick-key, #set-hotkey, #set-capture-key")) return;
+      if (!key || isMiniWindow || e.isComposing || e.keyCode === 229 || e.target.closest?.(".key-keys")) return;
       if (comboOf(e)?.toLowerCase() !== key.toLowerCase()) return;
       e.preventDefault();
       e.stopPropagation();
