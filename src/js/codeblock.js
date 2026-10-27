@@ -364,6 +364,26 @@ const ICON_FOLD = '<svg viewBox="0 0 16 16"><path d="M4.5 6.5 8 10l3.5-3.5"/></s
 
 const lineCount = (node) => node.textContent.split("\n").length;
 
+// 行号的位置:一页里所有代码块先一起量、再一起写。一个块写完行号、下一个块再量,会让整页重新排版一次,
+// 页面上代码块多时(几十个)换页要多等几百毫秒
+function layoutAllLines(blocks) {
+  const marks = blocks.map((block) => block.measureLines());
+  blocks.forEach((block, i) => { if (marks[i] != null) block.gutter.innerHTML = marks[i]; });
+}
+const blockOfCode = new WeakMap();
+const lineResize = new ResizeObserver((entries) => layoutAllLines(entries.map((e) => blockOfCode.get(e.target)).filter(Boolean)));
+const linesDue = new Set();
+let linesFrame = 0;
+function queueLines(block) {
+  linesDue.add(block);
+  linesFrame ||= requestAnimationFrame(() => {
+    linesFrame = 0;
+    const blocks = [...linesDue];
+    linesDue.clear();
+    layoutAllLines(blocks);
+  });
+}
+
 class CodeBlockView {
   constructor(node, view, getPos) {
     this.node = node;
@@ -420,15 +440,19 @@ class CodeBlockView {
     this.dom.addEventListener("click", (e) => {
       if (this.node.attrs.language === "copy" && !view.editable && !e.target.closest("button,input")) this.copyCode();
     });
-    this.resize = new ResizeObserver(() => this.layoutLines());
-    this.resize.observe(this.contentDOM);
+    blockOfCode.set(this.contentDOM, this);
+    lineResize.observe(this.contentDOM);
     this.sync();
   }
 
-  // 量出每一行开头的位置,把行号放过去;节点还没放进页面、或者折叠着时不量
   layoutLines() {
+    layoutAllLines([this]);
+  }
+
+  // 量出每一行开头的位置,返回摆好的行号;节点还没放进页面、或者折叠着时不量(返回 null)
+  measureLines() {
     const pos = this.getPos();
-    if (pos == null || !this.dom.isConnected || this.dom.classList.contains("folded")) return;
+    if (pos == null || !this.dom.isConnected || this.dom.classList.contains("folded")) return null;
     const text = this.node.textContent;
     const top = this.pre.getBoundingClientRect().top;
     const marks = [];
@@ -438,14 +462,14 @@ class CodeBlockView {
       try {
         y = this.view.coordsAtPos(pos + 1 + at, 1).top - top;
       } catch (_) {
-        return;
+        return null;
       }
       marks.push(`<span style="top:${y}px">${line}</span>`);
       const nl = text.indexOf("\n", at);
       if (nl === -1) break;
       at = nl + 1;
     }
-    this.gutter.innerHTML = marks.join("");
+    return marks.join("");
   }
 
   // 顶栏里的输入框:标题和语言。回车或点到别处时写进文档,Esc 放弃修改
@@ -604,12 +628,7 @@ class CodeBlockView {
     this.dom.style.setProperty("--digits", String(String(lines).length));
     // 编辑器这时还没把新内容放进代码块,现在量是白量:等内容放进页面以后再量行号的位置,一帧只量一次
     this.paintFolded(this.foldOverride ?? this.node.attrs.folded, false);
-    if (!this.lineFrame) {
-      this.lineFrame = requestAnimationFrame(() => {
-        this.lineFrame = 0;
-        this.layoutLines();
-      });
-    }
+    queueLines(this);
   }
 
   update(node) {
@@ -633,7 +652,8 @@ class CodeBlockView {
   }
 
   destroy() {
-    this.resize.disconnect();
+    lineResize.unobserve(this.contentDOM);
+    linesDue.delete(this);
     if (menu.input === this.lang) menu.close();
     if (themeMenu.owner === this) themeMenu.close();
     if (titleColorMenu.owner === this) titleColorMenu.close();

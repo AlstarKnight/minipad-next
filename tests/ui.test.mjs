@@ -7840,4 +7840,58 @@ describe("0.5.3: long pages stay fast", () => {
   }, async ({ p }) => {
     await until(() => p.locator("#editor .local-file-path.missing").count(), 150, "all checked");
   });
+
+  // 两页的路径在同一个位置时,换页后编辑器直接改旧节点上的路径,不重建节点
+  ui("a path that takes the place of another one when switching pages is checked too", {
+    seed: seed({ "": { 甲: "打开 C:\\docs\\a.pdf", 乙: "打开 C:\\docs\\b.pdf" } }),
+    mockControl: { existingLocalPaths: ["C:\\docs\\a.pdf"] },
+  }, async (h) => {
+    const { p } = h;
+    await p.locator("#editor .local-file-path").waitFor();
+    await sleep(300);
+    assert.equal(await p.locator("#editor .local-file-path.missing").count(), 0, "a.pdf exists");
+    await h.tab("乙").click();
+    await until(() => p.locator("#editor .local-file-path.missing").count(), 1, "b.pdf does not");
+  });
+
+  ui("paths shown while greying out is off are checked once it is back on", {
+    seed: seed({ "": { 甲: "打开 C:\\docs\\a.pdf", 乙: "打开 C:\\docs\\b.pdf" } }),
+  }, async (h) => {
+    const { p } = h;
+    await p.locator("#editor .local-file-path.missing").waitFor();
+    const setMissing = async (on) => {
+      await p.click("#btn-settings");
+      await settingsPage(p, "edit");
+      await (on ? p.check("#set-local-path-missing") : p.uncheck("#set-local-path-missing"));
+      await p.click("#set-save");
+      await until(async () => (await h.stored()).settings.local_path_missing, on, "saved");
+    };
+    await setMissing(false);
+    await h.tab("乙").click();
+    await p.locator("#editor .local-file-path").waitFor();
+    await setMissing(true);
+    // 在下面另起一段打字:路径那一段不重画,要靠重新打开后的那次整页检查
+    await p.click("#editor");
+    await p.keyboard.press("Control+End");
+    await p.keyboard.press("Enter");
+    await p.keyboard.type("新的一段");
+    await until(() => p.locator("#editor .local-file-path.missing").count(), 1, "the path on the page opened meanwhile is checked");
+  });
+
+  // 每个代码块的行数不一样,第 1 行很长(窄的时候会换行)
+  const CODES = Array.from({ length: 30 }, (_, i) => "```js\n" + [`const long${i} = "${"很长的一行".repeat(12)}";`, ...Array.from({ length: i % 5 }, (_, j) => `let x${j} = ${j};`)].join("\n") + "\n```").join("\n\n");
+
+  ui("every code block on a page gets its line numbers, also after the editor gets narrower", {
+    seed: seed({ "": { 短页: "# 短页", 代码: CODES } }),
+  }, async (h) => {
+    const { p } = h;
+    await h.tab("代码").click();
+    const gutters = () => p.$$eval("#editor .codeblock", (els) => els.map((e) => [...e.querySelectorAll(".cb-gutter span")].map((s) => s.offsetTop)));
+    const counts = async () => (await gutters()).map((tops) => tops.length);
+    await until(counts, Array.from({ length: 30 }, (_, i) => 1 + (i % 5)), "every line of every block is numbered");
+    const secondLine = async () => (await gutters()).filter((tops) => tops.length > 1).map((tops) => tops[1] - tops[0]);
+    const wide = await secondLine();
+    await p.evaluate(() => { document.querySelector("#editor .ProseMirror").style.maxWidth = "320px"; });
+    await until(async () => (await secondLine()).every((gap, i) => gap > wide[i]), true, "line 2 moves down in every block when line 1 wraps more");
+  });
 });
