@@ -1,5 +1,5 @@
 // 页面很多时的性能基准(0.4.5):浏览器预览(模拟后端)里放一个 5000 页的笔记本,
-// 测电脑版三种布局和手机版的常用操作,打印一张表。
+// 测电脑版三种布局和手机版的常用操作,打印一张表。0.5.3 加了一页很长的页面:换过去和打字要多久。
 //   npm run bench               只看数字
 //   npm run bench -- --check    有一项超过上限就失败(CI 里跑;表格同时写进这次运行的摘要页)
 // 上限留了余量,机器忽快忽慢不会误报;退回到「换页整排重画」那种量级一定会被抓到。
@@ -38,6 +38,13 @@ const DESKTOP = [
   ["search", "搜索全部页面", 200],
   ["quickOpen", "Ctrl+P 打开", 150],
   ["quickFilter", "Ctrl+P 筛选", 150],
+];
+// 0.5.3:一页很长的页面(17 万多字、75 个代码块、600 个本地路径和页面链接)。
+// 上限卡在优化前后之间(优化前换过去约 4 秒、打字每个键 64 毫秒、代码块里 74 毫秒)
+const BIG = [
+  ["open", "换到这一页(含路径检查)", 3000],
+  ["typing", "打字(每个键,到画出来)", 40],
+  ["codeTyping", "在代码块里打字(每个键)", 50],
 ];
 const MOBILE = [
   ["startup", "启动到能编辑", 2000],
@@ -185,6 +192,71 @@ async function desktop(browser, base, settings) {
   return { out, errors };
 }
 
+// 很长的一页:每节一个标题、一段带页面链接和本地路径的话、一个列表,每 8 节一个 20 行的代码块
+function bigText() {
+  const out = ["# 大页面"];
+  for (let s = 0; s < 600; s++) {
+    out.push(`## 第 ${s} 节`, "", LINE.repeat(3) + ` 见 [[${pageName(s + 1)}]] 和 C:\\Users\\me\\doc${s}.txt`, "", `- 待办 ${s}`, "- [ ] 任务", "- [x] **完成** 的 *事情*", "");
+    if (s % 8 === 0) out.push("```js", ...Array.from({ length: 20 }, (_, i) => `const x${i} = foo(${i}, "str") + bar; // 注释`), "```", "");
+    if (s % 15 === 0) out.push("| a | b |", "| --- | --- |", "| 1 | 2 |", "");
+  }
+  return out.join("\n");
+}
+
+async function bigPage(browser, base) {
+  const ctx = await browser.newContext({ viewport: { width: 900, height: 700 } });
+  await ctx.addInitScript(([files]) => {
+    window.__mockControl = { books: { "": { files } }, book: "" };
+    localStorage.setItem("minipad-next-demo", JSON.stringify({ settings: { ui_style: "starry" } }));
+  }, [{ 一页短的: "# 一页短的", 大页面: bigText() }]);
+  await ctx.addInitScript(helpers);
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  const out = {};
+  try {
+    await page.goto(base + "/index.html");
+    await page.waitForFunction(() => window.__bench.title() === "一页短的", null, { timeout: 30000 });
+    await page.mouse.move(450, 450);
+    // 换过去,等到每个本地路径都检查完(模拟后端里这些路径都不存在,检查完是灰的)
+    out.open = await page.evaluate(() => __bench.time(() => __bench.key("Tab", { ctrlKey: true }),
+      () => __bench.title() === "大页面" && document.querySelectorAll("#editor .local-file-path.missing").length === 600));
+    // 按键时记下时间,画出下一帧时算一次(真的按键,包括浏览器自己往编辑区里插字)
+    await page.evaluate(() => {
+      window.__keys = [];
+      document.addEventListener("keydown", () => {
+        const t = performance.now();
+        requestAnimationFrame(() => setTimeout(() => window.__keys.push(performance.now() - t), 0));
+      }, true);
+    });
+    const typeAt = async (find) => {
+      await page.evaluate((find) => {
+        const view = window.__minipad.editor().view;
+        let at = 0;
+        view.state.doc.descendants((node, pos) => {
+          if (!at && pos > view.state.doc.content.size / 2 && node.type.name === find) at = pos + 2;
+          return !at;
+        });
+        view.focus();
+        view.dispatch(view.state.tr.setSelection(view.state.selection.constructor.near(view.state.doc.resolve(at))).scrollIntoView());
+      }, find);
+      await page.waitForTimeout(300);
+      await page.evaluate(() => (window.__keys = []));
+      for (const ch of "abcdefghijklmnopqrstuvwxyz") {
+        await page.keyboard.type(ch);
+        await page.waitForTimeout(30);
+      }
+      await page.waitForTimeout(200);
+      return median(await page.evaluate(() => window.__keys));
+    };
+    out.typing = await typeAt("paragraph");
+    out.codeTyping = await typeAt("code_block");
+  } finally {
+    await ctx.close();
+  }
+  return { out, errors };
+}
+
 async function mobile(browser, base, ui) {
   const ctx = await browser.newContext({ viewport: { width: 390, height: 740 } });
   // 手机版的后端只列页面名,打开哪页读哪页
@@ -244,7 +316,7 @@ async function mobile(browser, base, ui) {
   return { out, errors };
 }
 
-function table(title, metrics, columns) {
+function table(title, metrics, columns, scope = `${PAGES} 页`) {
   const over = [];
   const rows = metrics.map(([key, label, limit]) => {
     const cells = columns.map(([name, r]) => {
@@ -254,7 +326,7 @@ function table(title, metrics, columns) {
     });
     return `| ${label} | ${cells.join(" | ")} | ${limit} |`;
   });
-  const head = `| ${title}(${PAGES} 页,毫秒) | ${columns.map(([name]) => name).join(" | ")} | 上限 |`;
+  const head = `| ${title}(${scope},毫秒) | ${columns.map(([name]) => name).join(" | ")} | 上限 |`;
   const line = `| --- | ${columns.map(() => "---:").join(" | ")} | ---: |`;
   return { text: [head, line, ...rows].join("\n"), over };
 }
@@ -263,13 +335,14 @@ const browser = await chromium.launch();
 const desktopServer = await serve(fileURLToPath(new URL("../src/", import.meta.url)));
 const mobileServer = await serve(fileURLToPath(new URL("../mobile-dist/", import.meta.url)));
 const url = (server) => `http://127.0.0.1:${server.address().port}`;
-let desktopRuns, mobileRuns;
+let desktopRuns, bigRuns, mobileRuns;
 try {
   desktopRuns = [
     ["星空渐变", await desktop(browser, url(desktopServer), { ui_style: "starry" })],
     ["语雀纸感", await desktop(browser, url(desktopServer), { ui_style: "paper" })],
     ["侧拉页面列表(钉住)", await desktop(browser, url(desktopServer), { ui_style: "starry", tab_overflow: "drawer", tab_drawer_pinned: true })],
   ];
+  bigRuns = [["星空渐变", await bigPage(browser, url(desktopServer))]];
   mobileRuns = [
     ["星空渐变", await mobile(browser, url(mobileServer), "starry")],
     ["语雀纸感", await mobile(browser, url(mobileServer), "paper")],
@@ -283,14 +356,15 @@ try {
 }
 
 const d = table("电脑版", DESKTOP, desktopRuns);
+const g = table("电脑版", BIG, bigRuns, "一页 17 万字");
 const m = table("手机版", MOBILE, mobileRuns);
-const errors = [...desktopRuns, ...mobileRuns].flatMap(([name, r]) => r.errors.map((e) => `${name}:${e}`));
-const report = [d.text, "", m.text, ""].join("\n");
+const errors = [...desktopRuns, ...bigRuns, ...mobileRuns].flatMap(([name, r]) => r.errors.map((e) => `${name}:${e}`));
+const report = [d.text, "", g.text, "", m.text, ""].join("\n");
 console.log(report);
 if (process.env.GITHUB_STEP_SUMMARY) {
-  appendFileSync(process.env.GITHUB_STEP_SUMMARY, `## 性能基准\n\n浏览器预览(模拟后端)里 ${PAGES} 页的笔记本,见 scripts/bench.mjs。\n\n${report}\n`);
+  appendFileSync(process.env.GITHUB_STEP_SUMMARY, `## 性能基准\n\n浏览器预览(模拟后端)里 ${PAGES} 页的笔记本和一页 17 万字的长页面,见 scripts/bench.mjs。\n\n${report}\n`);
 }
 for (const e of errors) console.error("页面出错:" + e);
-const over = [...d.over, ...m.over];
+const over = [...d.over, ...g.over, ...m.over];
 for (const o of over) console.error("超过上限:" + o);
 if (check && (over.length || errors.length)) process.exit(1);

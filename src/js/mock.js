@@ -62,6 +62,7 @@ const DEFAULT_SETTINGS = {
   block_context_menu: "system",
   code_exit_mode: "blank3",
   fold_save_state: true,
+  long_page_lazy: true,
   format_bar: true,
   format_bar_hidden: [],
   format_bar_order: [],

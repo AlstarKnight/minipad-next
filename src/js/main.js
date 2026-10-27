@@ -49,12 +49,23 @@ async function init() {
   // 只检查当前可见的路径；节点重建时重新检查，失败时保留普通样式。
   const observedPaths = new WeakMap();
   const pathChecks = new Map();
-  const pathObserver = new MutationObserver(() => {
-    if (state.settings?.local_path_missing === false) return;
-    for (const el of document.querySelectorAll("#editor [data-local-path]")) {
-      if (observedPaths.has(el)) continue;
-      observedPaths.set(el, true);
+  // 只看这次新放进页面的节点和换了路径的节点(换页时编辑器会直接改旧节点上的路径),
+  // 不每次都把整页的路径找一遍(长页面上每打一个字都会触发);
+  // 「路径不存在时变灰」关着的那段时间放进来的没检查过,重新打开后的第一次整页找一遍
+  const changedPaths = (records) => records.flatMap((r) => r.type === "attributes" ? [r.target] : [...r.addedNodes].flatMap((node) =>
+    node.nodeType !== 1 ? [] : node.matches("[data-local-path]") ? [node] : [...node.querySelectorAll("[data-local-path]")]));
+  let pathsSkipped = false;
+  const pathObserver = new MutationObserver((records) => {
+    if (state.settings?.local_path_missing === false) {
+      pathsSkipped = true;
+      return;
+    }
+    const found = pathsSkipped ? document.querySelectorAll("#editor [data-local-path]") : changedPaths(records);
+    pathsSkipped = false;
+    for (const el of found) {
       const path = el.dataset.localPath;
+      if (!path || observedPaths.get(el) === path) continue;
+      observedPaths.set(el, path);
       if (path.startsWith("\\\\")) continue; // 网络共享离线时不阻塞存在性检查。
       const cached = pathChecks.get(path);
       const check = cached && cached.until > Date.now() ? cached.check
@@ -67,7 +78,7 @@ async function init() {
         .catch(() => { pathChecks.delete(path); });
     }
   });
-  pathObserver.observe($("#editor"), { subtree: true, childList: true });
+  pathObserver.observe($("#editor"), { subtree: true, childList: true, attributes: true, attributeFilter: ["data-local-path"] });
   // 小窗:只放一页,别的(托盘退出、贴边隐藏、备份提示……)都归主窗口
   if (isMiniWindow) { bindWebdav(); return initMini(); }
   await reload();

@@ -279,7 +279,7 @@ print("hello")
 
 - `[!fold]-` 代表收起,`[!fold]+` 代表展开。默认展开/收起会写入 Markdown;在“设置 → 编辑”关闭“把折叠状态写入 Markdown”后仅改变界面,不会保存折叠操作。只读页面可以展开查看,不会写文件。
 - 查找或目录跳转命中收起的内容时会临时展开折叠块。
-- “设置 → 编辑”另有**块管理开关**(默认开,关闭时恢复 14px 左边距和系统右键)、**编辑区右键菜单**(系统/块菜单,默认系统)、**代码块退出方式**(第三次 Enter/第二次 Enter/仅 Ctrl+Enter)和**折叠状态是否写入文件**。
+- “设置 → 编辑”另有**块管理开关**(默认开,关闭时恢复 14px 左边距和系统右键)、**编辑区右键菜单**(系统/块菜单,默认系统)、**代码块退出方式**(第三次 Enter/第二次 Enter/仅 Ctrl+Enter)、**折叠状态是否写入文件**和**很长的页面只排版看得见的部分**(默认开:两万字以上的页面只排版看得见的那几屏,打字更快;滚动位置和目录跳转不受影响。安卓在外观设置里)。
 
 
 ### 列表和任务
@@ -601,7 +601,7 @@ npm run build
 ```powershell
 cargo test --manifest-path src-tauri/Cargo.toml       # 单元测试:文件名、编码识别、笔记本、备份、贴边计算、设置等
 npm run test:ui                                       # 界面测试:在浏览器里用模拟后端操作界面
-npm run bench                                         # 性能基准:5000 页时换页、新建、搜索等操作各要多久(加 -- --check 时超过上限就失败,CI 用)
+npm run bench                                         # 性能基准:5000 页时换页、新建、搜索等操作,17 万字的长页面换过去和打字各要多久(加 -- --check 时超过上限就失败,CI 用)
 cargo fmt --check --manifest-path src-tauri/Cargo.toml                            # 代码格式
 cargo clippy --all-targets --manifest-path src-tauri/Cargo.toml -- -D warnings    # 代码检查
 ```

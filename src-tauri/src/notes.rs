@@ -12,9 +12,18 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, SystemTime};
 
 static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+static IO_ORDER: Mutex<()> = Mutex::new(());
+
+/// 读写笔记文件的命令在后台线程上跑(以前在主线程上:保存一页、切回窗口扫一遍页面时,
+/// 贴边、拖动窗口、热键都要等它做完),拿着这个锁一个接一个地做,先后顺序和以前在主线程上排队一样
+pub fn io_order() -> MutexGuard<'static, ()> {
+    IO_ORDER.lock().unwrap_or_else(|e| e.into_inner())
+}
 
 pub const NOTE_EXT: &str = "md";
 pub const TRASH_DIR: &str = ".trash";
