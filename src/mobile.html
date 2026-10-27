@@ -274,6 +274,30 @@
     <div class="sync-field"><span>还没有的页面的颜色</span><div id="look-page-link-broken-color" class="accent-swatches" role="radiogroup" aria-label="还没有的页面的颜色"></div></div>
     <h3>行内计算</h3>
     <label class="switch-row"><span>打 = 就算出结果(比如打 12*3.5= 后面写上 42;代码里不算)</span><input id="look-calc" type="checkbox"></label>
+    <h3>分享到 Minipad</h3>
+    <label class="switch-row"><span>在别的 App 里点「分享」可以选 Minipad,分享的文字记到下面的页面(关掉后分享列表里没有 Minipad)</span><input id="look-share" type="checkbox"></label>
+    <div class="sync-field share-option"><span>写到</span><div id="look-share-target" class="seg" role="group" aria-label="分享的文字写到">
+      <button type="button" data-share-target="page">追加到一个页面</button>
+      <button type="button" data-share-target="new">每次新建一页</button>
+    </div></div>
+    <label class="sync-field share-option">笔记本<select id="look-share-book"></select></label>
+    <label class="sync-field share-option share-page-only">页面(没有就新建)<input id="look-share-page" list="look-share-pages" autocapitalize="off" spellcheck="false"></label>
+    <datalist id="look-share-pages"></datalist>
+    <div class="sync-field share-option share-page-only"><span>加在</span><div id="look-share-where" class="seg" role="group" aria-label="加在">
+      <button type="button" data-share-where="end">末尾</button>
+      <button type="button" data-share-where="start">开头</button>
+    </div></div>
+    <div class="sync-field share-option"><span>每一条是</span><div id="look-share-format" class="seg" role="group" aria-label="每一条是">
+      <button type="button" data-share-format="paragraph">段落</button>
+      <button type="button" data-share-format="list">列表项</button>
+      <button type="button" data-share-format="task">待办</button>
+    </div></div>
+    <label class="switch-row share-option"><span>前面加上时间</span><input id="look-share-stamp" type="checkbox"></label>
+    <label class="switch-row share-option"><span>带上来源标题和链接(关掉时原样记下分享的文字)</span><input id="look-share-source" type="checkbox"></label>
+    <div class="sync-field share-option"><span>分享完以后</span><div id="look-share-after" class="seg" role="group" aria-label="分享完以后">
+      <button type="button" data-share-after="back">提示一下,回到原来的 App</button>
+      <button type="button" data-share-after="open">打开 Minipad 看这一条</button>
+    </div></div>
     <p class="sheet-note">只保存在这台手机上,改了马上生效。</p>
   </section>
   <!-- 笔记本管理(和电脑版一样):图标、颜色、改名、删除、新建。图标和颜色存在笔记本的 .minipad.json,会同步 -->

@@ -21,7 +21,9 @@ import { applyTabBarSettings } from "./tabbar.js";
 import { applyUpdateCheck } from "./update.js";
 import { ALL_ITEMS, DEFAULT_SEL_ITEMS, itemChecklist, orderedItems } from "./formatbar.js";
 import { renderTabs } from "./tabs.js";
-import { comboOf } from "./quickswitch.js";
+import { showKeys, keysDraft, bindKeys } from "./keytable.js";
+import { keysOf, keyLabel } from "./shortcuts.js";
+import { applyFullscreen, FS_WIDTH_MAX } from "./fullscreen.js";
 import { makeSharedColorTools, refreshSharedColors, quickLimit, askResetColors } from "./sharedcolors.js";
 import { webdavStatus, webdavSavePassword, webdavTest, webdavRun, webdavForget, resetWebdavTimers } from "./webdav.js";
 import { DEFAULT_CAPTURE_PAGE, DEFAULT_CAPTURE_NAME } from "./capture.js";
@@ -53,7 +55,11 @@ export function applySettings() {
   applyEdgeAppearance();
   $("#btn-ball").hidden = !s.ball_enabled;
   applyFindAppearance(s);
-  $("#btn-search").title = s.ctrl_f === "all" ? "搜索全部页面 (Ctrl+F)" : "搜索全部页面 (Ctrl+Shift+F)";
+  // 按钮上提示的快捷键跟着 设置 → 快捷键 里的
+  const hint = (id) => keyLabel(keysOf(s, id)[0] || "");
+  $("#btn-search").title = "搜索全部页面" + (hint("search") ? ` (${hint("search")})` : "");
+  $("#btn-new").title = "新建页面" + (hint("new_page") ? ` (${hint("new_page")})` : "") + ";右键" + (hint("new_from_template") ? `或 ${hint("new_from_template")} ` : "") + "选模板";
+  applyFullscreen();
   applyEditorSettings(s);
   applyOutlineSettings(s);
   applyTabBarSettings(s);
@@ -99,7 +105,7 @@ matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => stat
 let backupInfo = null;
 
 // ---- 分类:点左边(或上面)的分类只显示那一类,下次打开设置还停在上次看的那一类 ----
-const PAGES = ["general", "look", "window", "edit", "data"];
+const PAGES = ["general", "keys", "look", "window", "edit", "data"];
 // 0.3.1 分成 10 类,记着的旧分类换成合并后的那一类
 const OLD_PAGES = { edge: "window", ball: "window", editor: "edit", outline: "edit", find: "edit", storage: "data", backup: "data", import: "data" };
 const PAGE_KEY = "minipad-next-settings-page";
@@ -131,7 +137,8 @@ export function showSettingsPage(name, { focus = false } = {}) {
 
 // 保存时出的错放在下面,同时换到出错的那一类,好看到要改的地方
 function pageForError(msg) {
-  if (/热键|开机启动/.test(msg)) return "general";
+  if (/热键/.test(msg)) return "keys";
+  if (/开机启动/.test(msg)) return "general";
   if (/备份|文件夹|笔记/.test(msg)) return "data";
   return page;
 }
@@ -150,16 +157,13 @@ function showUiStyle(ui) {
 export function openSettings() {
   closeOverlays();
   const s = state.settings;
-  $("#set-hotkey").value = s.hotkey;
   $("#set-top").checked = s.always_on_top;
   $("#set-update-check").checked = s.update_check !== false;
   $("#set-edge").checked = s.edge_hide;
   $("#set-edge-button").checked = s.edge_button !== false;
-  $("#set-quick-key").value = s.quick_switch_key || "";
   $("#set-quick-scope").value = s.quick_switch_scope === "book" ? "book" : "all";
   $("#set-pinyin").checked = s.pinyin_match !== false;
   $("#set-capture").checked = s.capture_enabled !== false;
-  $("#set-capture-key").value = s.capture_hotkey || "";
   $("#set-capture-target").value = s.capture_target === "new" ? "new" : "page";
   fillCaptureBooks(s.capture_book || "");
   $("#set-capture-page").value = s.capture_page || DEFAULT_CAPTURE_PAGE;
@@ -307,6 +311,16 @@ export function openSettings() {
   $("#set-sel-bar").value = ["always", "nobar", "off"].includes(s.sel_bar) ? s.sel_bar : "always";
   $("#set-sel-pos").value = s.sel_bar_pos === "below" ? "below" : "above";
   showSelItems(Array.isArray(s.sel_bar_items) ? s.sel_bar_items : DEFAULT_SEL_ITEMS);
+  showKeys(s);
+  $("#set-fs").checked = s.fullscreen_enabled !== false;
+  $("#set-fs-mode").value = s.fullscreen_mode === "window" ? "window" : "screen";
+  $("#set-fs-width").value = Math.min(FS_WIDTH_MAX, Math.max(480, Number(s.fullscreen_width) || 860));
+  $("#set-fs-font").value = s.fullscreen_font_size || "";
+  $("#set-fs-tabs").checked = !!s.fullscreen_tabs;
+  $("#set-fs-format").checked = !!s.fullscreen_format_bar;
+  $("#set-fs-exit").checked = s.fullscreen_exit_button !== false;
+  $("#set-fs-button").checked = s.fullscreen_button !== false;
+  updateFullscreenOptions();
   $("#set-nav-pos").value = s.settings_nav === "top" ? "top" : "left";
   applyNavPos(s.settings_nav);
   $("#set-error").hidden = true;
@@ -537,6 +551,15 @@ async function pickBallIcon() {
   }
 }
 
+// 全屏编辑关着时别的选项灰掉;正文宽度拉到最右是不限
+function updateFullscreenOptions() {
+  const off = !$("#set-fs").checked;
+  for (const el of document.querySelectorAll(".fs-option")) el.classList.toggle("off", off);
+  for (const el of document.querySelectorAll(".fs-option input, .fs-option select")) el.disabled = off;
+  const width = Number($("#set-fs-width").value);
+  $("#set-fs-width-val").textContent = width >= FS_WIDTH_MAX ? "不限" : width + " 像素";
+}
+
 // 快速记录关掉时其他选项变灰;「写到」只显示选中的那一种的选项
 function updateCaptureOptions() {
   const off = !$("#set-capture").checked;
@@ -711,12 +734,10 @@ export function saveSettings(next, { migrateNotes = false } = {}) {
 async function submitSettings() {
   const next = {
     ...state.settings,
-    hotkey: $("#set-hotkey").value || state.settings.hotkey,
     always_on_top: $("#set-top").checked,
     update_check: $("#set-update-check").checked,
     edge_hide: $("#set-edge").checked,
     edge_button: $("#set-edge-button").checked,
-    quick_switch_key: $("#set-quick-key").value,
     quick_switch_scope: $("#set-quick-scope").value,
     pin_style: $("#set-pin-style").value,
     edge_style: $("#set-edge-style").value,
@@ -779,7 +800,6 @@ async function submitSettings() {
     page_link_underline: $("#set-page-link-underline").value,
     pinyin_match: $("#set-pinyin").checked,
     capture_enabled: $("#set-capture").checked,
-    capture_hotkey: $("#set-capture-key").value,
     capture_target: $("#set-capture-target").value,
     capture_book: $("#set-capture-book").value,
     capture_page: $("#set-capture-page").value.trim(),
@@ -847,6 +867,15 @@ async function submitSettings() {
     backup_enabled: $("#set-backup").checked,
     backup_keep: Math.min(365, Math.max(1, Math.round(Number($("#set-backup-keep").value)) || 14)),
     backup_dir: $("#set-backup-dir").value.trim(),
+    ...keysDraft(),
+    fullscreen_enabled: $("#set-fs").checked,
+    fullscreen_mode: $("#set-fs-mode").value,
+    fullscreen_width: Number($("#set-fs-width").value) || 860,
+    fullscreen_font_size: Math.min(40, Math.max(0, Math.round(Number($("#set-fs-font").value)) || 0)),
+    fullscreen_tabs: $("#set-fs-tabs").checked,
+    fullscreen_format_bar: $("#set-fs-format").checked,
+    fullscreen_exit_button: $("#set-fs-exit").checked,
+    fullscreen_button: $("#set-fs-button").checked,
   };
   try {
     await saveSettings(next, { migrateNotes: $("#set-migrate-notes").checked });
@@ -856,13 +885,26 @@ async function submitSettings() {
     }
     resetWebdavTimers();
     closeOverlays();
-    toast("设置已保存");
+    const kept = keptHotkeys(next, state.settings);
+    toast(kept || "设置已保存", kept ? 9000 : undefined);
   } catch (e) {
     const err = $("#set-error");
     err.textContent = String(e);
     err.hidden = false;
     showSettingsPage(pageForError(String(e)));
   }
+}
+
+// 新的全局热键被系统或别的程序占用了:后端换回了原来的,别的设置照常保存了
+function keptHotkeys(sent, saved) {
+  const lost = [];
+  if (sent.hotkey !== saved.hotkey) lost.push(`呼出热键 ${keyLabel(sent.hotkey)} 被系统或别的程序占用了,还是用 ${keyLabel(saved.hotkey)}`);
+  if (sent.capture_enabled !== saved.capture_enabled || sent.capture_hotkey !== saved.capture_hotkey) {
+    lost.push(saved.capture_enabled && saved.capture_hotkey
+      ? `快速记录的热键 ${keyLabel(sent.capture_hotkey)} 被占用了,还是用 ${keyLabel(saved.capture_hotkey)}`
+      : `快速记录的热键 ${keyLabel(sent.capture_hotkey)} 被占用了,快速记录没打开`);
+  }
+  return lost.length ? lost.join(";") + "。其他设置已保存" : "";
 }
 
 async function pickFolder(input, title) {
@@ -885,45 +927,9 @@ function updateMigration() {
 
 export function bindSettings() {
   for (const picker of [accentColor, edgeColor, localPathColor, pageLinkColor, pageLinkBrokenColor, webdavColor, findColor, outlineColor, ballColor]) picker.install();
-  // 录热键时先停用全局热键,不然按下现在的热键会把窗口藏起来
-  const hk = $("#set-hotkey");
-  hk.addEventListener("focus", () => {
-    hk.classList.add("recording");
-    api.invoke("pause_hotkey").catch(() => {});
-  });
-  hk.addEventListener("blur", () => {
-    hk.classList.remove("recording");
-    api.invoke("resume_hotkey").catch(() => {});
-  });
-  hk.addEventListener("keydown", (e) => {
-    if (e.key === "Tab") return;
-    e.preventDefault();
-    e.stopPropagation();
-    if (e.key === "Escape") return hk.blur();
-    const combo = comboOf(e);
-    if (combo) hk.value = combo;
-  });
-  // 快速切换页面的快捷键(窗口里的)和快速记录的热键:按组合键换成它,Backspace / Delete 清空就不用
-  for (const qk of [$("#set-quick-key"), $("#set-capture-key")]) {
-    qk.addEventListener("focus", () => {
-      qk.classList.add("recording");
-      api.invoke("pause_hotkey").catch(() => {});
-    });
-    qk.addEventListener("blur", () => {
-      qk.classList.remove("recording");
-      api.invoke("resume_hotkey").catch(() => {});
-    });
-    qk.addEventListener("keydown", (e) => {
-      if (e.key === "Tab") return;
-      e.preventDefault();
-      e.stopPropagation();
-      if (e.key === "Escape") return qk.blur();
-      if (!e.ctrlKey && !e.altKey && !e.metaKey && (e.key === "Backspace" || e.key === "Delete")) return void (qk.value = "");
-      const combo = comboOf(e);
-      if (combo) qk.value = combo;
-    });
-  }
+  bindKeys();
   for (const id of ["#set-capture", "#set-capture-target"]) $(id).addEventListener("input", updateCaptureOptions);
+  for (const id of ["#set-fs", "#set-fs-width"]) $(id).addEventListener("input", updateFullscreenOptions);
   $("#set-snippet-add").addEventListener("click", () => {
     const row = snippetRow();
     $("#set-snippets").append(row);
