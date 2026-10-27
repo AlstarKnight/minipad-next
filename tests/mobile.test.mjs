@@ -2165,3 +2165,24 @@ test("clean: long titles and names wrap instead of being cut off", async () => {
     assert.deepEqual(errors, []);
   } finally { await context.close(); }
 });
+
+test("long pages on the phone only lay out what is on screen, and the appearance setting turns it off", async () => {
+  const { context, page, errors } = await open();
+  try {
+    const mode = () => page.evaluate(() => document.querySelector("#editor").dataset.longPage ?? null);
+    await page.evaluate(() => {
+      window.__mobileTest.disk[0].notes[1].content = Array.from({ length: 300 }, (_, i) => `## 第 ${i} 节\n\n` + "今天整理了项目的进度和下一步计划。".repeat(5)).join("\n\n");
+    });
+    await page.click("#open-drawer");
+    await page.locator("#notes-list button", { hasText: /^二$/ }).click();
+    await page.waitForFunction(() => document.querySelector("#editor").dataset.longPage === "lazy");
+    await page.click("#open-drawer");
+    await page.click("#open-settings");
+    assert.equal(await page.locator("#look-long-page").isChecked(), true, "on by default");
+    await page.locator("#look-long-page").uncheck();
+    await page.click("#close-settings");
+    assert.equal(await mode(), null);
+    assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem("minipad-mobile-look")).long_page_lazy), false);
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});

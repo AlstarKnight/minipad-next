@@ -1,6 +1,6 @@
 // Android-only Milkdown editor. Persist Markdown; binary images go to the book's assets folder.
 import { $prose, Plugin, TextSelection } from "../vendor/milkdown.js";
-import { createEditor, editorDebug, showInEditor, syncContent, setMobileLocalPathEnabled, toggleTask } from "./editor.js";
+import { createEditor, editorDebug, showInEditor, syncContent, setMobileLocalPathEnabled, setLazyLongPages, toggleTask } from "./editor.js";
 import { imageSrc } from "./images.js";
 import { state as desktopState } from "./state.js";
 import { setSelectionBar, setFormatBarItems } from "./formatbar.js";
@@ -1554,6 +1554,8 @@ function loadLook() {
     drawer_tree: saved.drawer_tree === "current" ? "current" : "all",
     debug: saved.debug === true,
     local_path_enabled: saved.local_path_enabled === true,
+    // 很长的页面只排版看得见的部分(和电脑版设置里的同名字段一样)
+    long_page_lazy: saved.long_page_lazy !== false,
     // 格式栏右边「自定义」挑的按钮和顺序(和电脑版设置里的同名字段一样)
     format_bar_hidden: Array.isArray(saved.format_bar_hidden) ? saved.format_bar_hidden : [],
     format_bar_order: Array.isArray(saved.format_bar_order) ? saved.format_bar_order : [],
@@ -1615,6 +1617,8 @@ function applyLook() {
   el("layout-classic-note").hidden = !classic;
   el("look-debug").checked = look.debug;
   el("look-local-path").checked = look.local_path_enabled;
+  el("look-long-page").checked = look.long_page_lazy;
+  setLazyLongPages(look.long_page_lazy);
   for (const b of el("look-link-open").children) b.setAttribute("aria-pressed", String(b.dataset.linkOpen === look.link_open));
   el("look-link-tap-edit").checked = look.link_tap_edit;
   el("look-page-links").checked = look.page_links;
@@ -1654,6 +1658,7 @@ for (const [box, attr, field] of [
 ]) for (const b of el(box).children) b.addEventListener("click", () => setLook({ [field]: b.dataset[attr] }));
 el("look-debug").addEventListener("change", (e) => setLook({ debug: e.target.checked }));
 el("look-local-path").addEventListener("change", (e) => setLook({ local_path_enabled: e.target.checked }));
+el("look-long-page").addEventListener("change", (e) => setLook({ long_page_lazy: e.target.checked }));
 for (const b of el("look-link-open").children) b.addEventListener("click", () => setLook({ link_open: b.dataset.linkOpen }));
 el("look-link-tap-edit").addEventListener("change", (e) => setLook({ link_tap_edit: e.target.checked }));
 el("look-page-links").addEventListener("change", (e) => setLook({ page_links: e.target.checked }));

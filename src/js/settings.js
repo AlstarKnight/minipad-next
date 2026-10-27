@@ -253,6 +253,7 @@ export function openSettings() {
   $("#set-block-context").value = s.block_context_menu === "block" ? "block" : "system";
   $("#set-code-exit").value = ["blank2", "blank3", "ctrl"].includes(s.code_exit_mode) ? s.code_exit_mode : "blank3";
   $("#set-fold-save").checked = s.fold_save_state !== false;
+  $("#set-long-page").checked = s.long_page_lazy !== false;
   $("#set-image-paste").checked = s.image_paste !== false;
   $("#set-image-size").value = ["medium", "small"].includes(s.image_size) ? s.image_size : "full";
   $("#set-block-context").disabled = !$("#set-block-enabled").checked;
@@ -798,6 +799,7 @@ async function submitSettings() {
     block_context_menu: $("#set-block-context").value,
     code_exit_mode: $("#set-code-exit").value,
     fold_save_state: $("#set-fold-save").checked,
+    long_page_lazy: $("#set-long-page").checked,
     image_paste: $("#set-image-paste").checked,
     image_size: $("#set-image-size").value,
     format_bar: $("#set-format-bar").checked,

@@ -59,13 +59,17 @@ export function refuseInMini(target, action) {
 async function setMinis(list) {
   state.minis = Array.isArray(list) ? list : [];
   const freed = [];
+  let changed = false;
   for (const b of state.books) {
     for (const n of b.notes) {
       const mini = inMini(b.name, n.name);
       if (n.mini && !mini) freed.push([b, n]);
+      if (n.mini !== mini) changed = true;
       n.mini = mini;
     }
   }
+  // 哪一页都没进出小窗(比如启动时一个小窗也没开):标签不用重画,几千页时能省下一次重画
+  if (!changed) return;
   const b = book();
   if (current()?.mini) {
     const free = nearestFree(b);

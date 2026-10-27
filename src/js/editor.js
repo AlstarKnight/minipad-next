@@ -13,6 +13,7 @@ import {
   linkAttr,
   hardbreakSchema,
   commonmark,
+  syncHeadingIdPlugin,
   gfm,
   history,
   clipboard,
@@ -73,10 +74,16 @@ export function setMobileLocalPathEnabled(enabled) {
   if (view) view.dispatch(view.state.tr.setMeta(localPathKey, true).setMeta("addToHistory", false));
 }
 
+// 一页里有很多路径时,检查结果是一个个回来的:攒一下再一起重画,不用每回来一个就把整页扫一遍
+let pathRefresh = 0;
 export function markLocalPathMissing(path, missing) {
   if (missingLocalPaths.get(path) === missing) return;
   missingLocalPaths.set(path, missing);
-  if (view) view.dispatch(view.state.tr.setMeta(localPathKey, true).setMeta("addToHistory", false));
+  if (!view || pathRefresh) return;
+  pathRefresh = setTimeout(() => {
+    pathRefresh = 0;
+    view.dispatch(view.state.tr.setMeta(localPathKey, true).setMeta("addToHistory", false));
+  }, 30);
 }
 const localPathDecorations = (doc, from = 0, to = doc.content.size) => {
   if (!pathSettings.local_path_enabled) return DecorationSet.empty;
@@ -541,7 +548,9 @@ export async function createEditor(opts) {
     .use(pageLinkPlugin)
     .use(expandPlugin)
     .use(keys)
-    .use(commonmark)
+    // 不要 Milkdown 给标题算 id 的插件:没有地方用到标题的 id(大纲、跳转都按位置),
+    // 它却在每次打开页面、每次打字时把整页的标题过一遍,打开页面时还要多改一次文档
+    .use(commonmark.filter((p) => p !== syncHeadingIdPlugin))
     .use(gfm)
     .use(plainEmails)
     .use(localPathPlugin)
@@ -560,6 +569,7 @@ export async function createEditor(opts) {
   });
   view.dom.setAttribute("aria-label", "页面内容");
   view.dom.spellcheck = false;
+  watchLongPageWidth();
 }
 
 export function editorView() {
@@ -578,6 +588,42 @@ export function editorDebug() {
 
 function scroller() {
   return $("#editor");
+}
+
+// ---------- 长页面 ----------
+// 很长的页面只排版看得见的那几屏(CSS 的 content-visibility,见 style.css 的 data-long-page):
+// 十几万字、几十个代码块的页面,每打一个字浏览器都要把整页重新排一遍,很慢。
+// 先照常完整排版一次(这时浏览器记下每一段的真实高度),下一帧才开始跳过看不见的部分,
+// 所以滚动条、换页回来的滚动位置、目录跳转都和以前一样准。窗口宽度变了重来一次。设置 → 编辑 里可以关掉
+const LONG_PAGE = 20000;
+let lazyLongPages = true;
+let lazyFrame = 0;
+export function setLazyLongPages(on) {
+  lazyLongPages = on !== false;
+  if (view) markLongPage();
+}
+function markLongPage() {
+  const box = scroller();
+  cancelAnimationFrame(lazyFrame);
+  if (!lazyLongPages || !shown || view.state.doc.content.size <= LONG_PAGE) {
+    box.removeAttribute("data-long-page");
+    return;
+  }
+  box.dataset.longPage = "";
+  lazyFrame = requestAnimationFrame(() => {
+    lazyFrame = requestAnimationFrame(() => {
+      if (box.hasAttribute("data-long-page")) box.dataset.longPage = "lazy";
+    });
+  });
+}
+// 宽度变了,没排版的那些段落记下的高度就不对了
+let lazyWidth = 0;
+function watchLongPageWidth() {
+  new ResizeObserver(([entry]) => {
+    const width = Math.round(entry.contentRect.width);
+    if (width !== lazyWidth && lazyWidth && scroller().hasAttribute("data-long-page")) markLongPage();
+    lazyWidth = width;
+  }).observe(scroller());
 }
 
 // 把编辑器里的页面的状态、内容和滚动位置存回页面对象
@@ -640,6 +686,7 @@ export function showInEditor(n) {
   n.emailLinkVersion = emailLinkVersion;
   view.updateState(st);
   shown = n;
+  markLongPage();
   view.setProps({ editable: () => !shown?.unreadable && !shown?.mini });
   // 查找栏开着时,换过来的页面也按同样的条件高亮
   reapplyFind(view);
@@ -658,6 +705,7 @@ export function setEditorText(n) {
   const tr = replaceTr(view.state, n.content);
   n.stateMd = n.content;
   if (tr) view.dispatch(tr);
+  markLongPage();
 }
 
 // 记下当前位置
@@ -745,6 +793,7 @@ export function applyEditorSettings(s) {
       shown.emailLinkVersion = emailLinkVersion;
     }
   }
+  setLazyLongPages(s.long_page_lazy);
   applyPageLinkSettings(s);
   applyExpandSettings(s);
   codeExitMode = ["blank2", "blank3", "ctrl"].includes(s.code_exit_mode) ? s.code_exit_mode : "blank3";
