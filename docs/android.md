@@ -3,8 +3,8 @@
 This is a **local-first** Android prototype, separate from the Windows desktop
 interface. The mobile editor uses Milkdown to display and edit the same `.md`
 files with headings, lists, emphasis, links, tables, code and inline images.
-Since 0.4.5, an optional WebDAV client can synchronize Markdown and image assets
-with the Windows app. WebDAV remains **off by default** until an account is
+Since 0.4.5, an optional WebDAV client can synchronize Markdown and the files in
+`assets/` (images, and since 0.5.6 attachments) with the Windows app. WebDAV remains **off by default** until an account is
 configured. This feature requires on-device validation before relying on it
 for important notes.
 
@@ -100,7 +100,7 @@ a new file is missing. Manual runs and release builds are not filtered.
   A note containing any other raw HTML tag (outside code blocks and inline code)
   opens as raw Markdown instead, so nothing is stripped by mistake.
 - Insert images from the Android file picker or paste images from a compatible
-  clipboard. Files are restricted to PNG/JPG/GIF/WebP/BMP and 10 MiB, saved in
+  clipboard. Files are restricted to PNG/JPG/GIF/WebP/BMP (SVG and AVIF since 0.5.6) and 10 MiB, saved in
   the current notebook's `assets/` directory and referenced by relative paths
   in Markdown, consistent with Windows.
 - Light/dark follows the system setting (menus and bars included). The format toolbar
@@ -176,7 +176,7 @@ Check the in-app sync status and error history for problems.
 until the Windows and Android workflow passes real-device testing. A successful
 mock/browser test cannot verify phone storage and network behavior.
 
-## Share to Minipad (0.5.5)
+## Share to Minipad (0.5.5; images and files 0.5.6)
 
 - Other apps' **Share** sheet lists Minipad for plain text. The manifest gets a `.ShareTarget`
   `<activity-alias>` (`ACTION_SEND`, `text/plain`) pointing at `MainActivity`; the Android CI
@@ -187,7 +187,7 @@ mock/browser test cannot verify phone storage and network behavior.
   and exposes a `MinipadShare` JavaScript interface: `take()` hands it to the page once,
   `done(message, back)` shows a toast and, after a successful write, moves the task to the back
   so the user returns to the app they shared from, and `setEnabled(on)` enables or disables the
-  alias (the 总开关 in 外观 → 分享到 Minipad). A cold start is picked up when the page has loaded;
+  alias (the 总开关 in 外观 → 分享到 Minipad; replaced by `setOptions(json)` in 0.5.6, see below). A cold start is picked up when the page has loaded;
   a share while the app is running calls `window.__minipadShared()`. Intents relaunched from
   Recents (`FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY`) or replayed after the activity is restored are
   ignored, so one share is never written twice.
@@ -198,6 +198,43 @@ mock/browser test cannot verify phone storage and network behavior.
 - On a device, check: share a web page from a browser with Minipad closed and with it open (both
   land in 收集箱 once, then you are back in the browser); share with 打开 Minipad 看这一条; turn
   the switch off and see Minipad disappear from the Share sheet, then on again.
+
+Since 0.5.6 images and files are received too (`ACTION_SEND` and `ACTION_SEND_MULTIPLE`):
+
+- `share-target.xml` has one `<activity-alias>` per combination of the three switches in
+  外观 → 分享到 Minipad (接收文字 / 接收图片 / 接收文件). `setOptions(json)` stores the options in the
+  app's SharedPreferences and enables exactly the alias for the current combination (none when all
+  three are off), because an intent of type `*/*` matches every filter that has a type, so two
+  enabled aliases would list Minipad twice. Before the app has run once, `.ShareAll` is the
+  enabled one. A phone that turned the 0.5.5 switch off keeps images and files off as well.
+- The read grant for a shared `content://` URI lasts only while the receiving activity lives, so
+  `MainActivity` copies every stream on a background thread right away, in 64 KB chunks and never
+  as base64, into `cache/share/` (files older than a day are removed there). Size and count limits
+  apply here; HEIC/HEIF photos become JPEG and, with 压缩 on, larger images are scaled to a long
+  edge of 2048 px with the system `ImageDecoder` (API 28+, no new dependency). URIs of Minipad's
+  own provider and `file://` URIs are ignored; for a `text/*` share the ClipData preview image
+  that Chrome adds is ignored too.
+- The page then calls `mobile_place_shared`, which moves the copies into the target notebook's
+  `assets/` (images as `img-<date>-<time>.<ext>`, other files under their own cleaned name, `-2`
+  on a clash). The page writes the Markdown lines with the 0.5.5 rules and saves with `expected`;
+  if that write fails, `mobile_remove_assets` deletes the files just placed. Copies the page
+  cannot use go back through `discard(json)`.
+- Tapping an `assets/` link resolves it with `mobile_attachment_path` and calls `openFile(path)`,
+  which only accepts files directly inside a notebook's `assets/` under the app's `notes/`
+  folder, and opens them through `androidx.core.content.FileProvider` with a read grant. The
+  Android CI job adds a `notes` entry to the generated `file_paths.xml` for that.
+- On a device, check: one and several photos from the gallery, a share from WeChat, a PDF and a
+  large file from a file manager, a HEIC photo, a cold start and a running app, and each switch
+  off (Minipad leaves that kind of Share sheet).
+
+## Backlinks and templates (0.5.6)
+
+- 外观 → 页面链接 → 谁链接了这页 (off by default): the page's long-press menu (and ⋯ 更多 in the
+  clean layout) lists the pages and lines that link to it. Pages are only read on demand, so
+  `mobile_link_bodies` reads the pages containing `[[` only when the list is opened.
+- Long-press 新建页面 (the drawer's ＋ 新建 / ＋ 新建页面 and the floating 新建页面 button) lists the pages of
+  the template notebook (默认「模板」, the same one as on Windows) and fills the variables with the
+  shared `vars.js`. 外观 → 模板新建页面 turns it off or names another notebook.
 
 ## Planned follow-ups
 

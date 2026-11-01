@@ -17,6 +17,7 @@ import { APP_ICON, paintBall } from "./ballicon.js";
 import { applyFindAppearance, findColors } from "./findbar.js";
 import { openImport } from "./importer.js";
 import { applyOutlineSettings, outlineVars } from "./outline.js";
+import { applyBacklinkSettings } from "./backlinkpanel.js";
 import { applyTabBarSettings } from "./tabbar.js";
 import { applyUpdateCheck } from "./update.js";
 import { ALL_ITEMS, DEFAULT_SEL_ITEMS, itemChecklist, orderedItems } from "./formatbar.js";
@@ -62,6 +63,7 @@ export function applySettings() {
   applyFullscreen();
   applyEditorSettings(s);
   applyOutlineSettings(s);
+  applyBacklinkSettings(s);
   applyTabBarSettings(s);
   applyUpdateCheck();
   // 分组开关、分组样式变了要重画标签
@@ -237,6 +239,8 @@ export function openSettings() {
   $("#set-local-path-missing").checked = s.local_path_missing !== false;
   $("#set-local-path-confirm").checked = s.local_path_confirm !== false;
   localPathColor.show(s.local_path_color || "");
+  $("#set-attachment-click").checked = s.attachment_click !== false;
+  attachmentColor.show(s.attachment_color || "");
   $("#set-page-links").checked = s.page_links !== false;
   $("#set-page-link-click").value = s.page_link_click === "click" ? "click" : "ctrl";
   $("#set-page-link-suggest").value = ["typing", "off"].includes(s.page_link_suggest) ? s.page_link_suggest : "brackets";
@@ -246,6 +250,10 @@ export function openSettings() {
   $("#set-page-link-underline").value = ["solid", "dashed", "none"].includes(s.page_link_underline) ? s.page_link_underline : "hover";
   pageLinkColor.show(s.page_link_color || "");
   pageLinkBrokenColor.show(s.page_link_broken_color || "");
+  $("#set-backlinks").checked = s.backlinks === true;
+  $("#set-backlinks-place").value = s.backlinks_place === "bottom" ? "bottom" : "right";
+  $("#set-backlinks-count").checked = s.backlinks_count !== false;
+  backlinksColor.show(s.backlinks_color || "");
   $("#set-template-book").value = s.template_book || DEFAULT_TEMPLATE_BOOK;
   $("#set-new-book-welcome").checked = s.new_book_welcome !== false;
   $("#set-snippet-key").value = ["space", "off"].includes(s.snippet_key) ? s.snippet_key : "tab";
@@ -260,6 +268,10 @@ export function openSettings() {
   $("#set-long-page").checked = s.long_page_lazy !== false;
   $("#set-image-paste").checked = s.image_paste !== false;
   $("#set-image-size").value = ["medium", "small"].includes(s.image_size) ? s.image_size : "full";
+  $("#set-attachment-drop").checked = s.attachment_drop !== false;
+  $("#set-attachment-max").value = ["10", "25", "100", "200"].includes(String(s.attachment_max_mb)) ? String(s.attachment_max_mb) : "50";
+  $("#set-attachment-label").value = s.attachment_label === "name" ? "name" : "size";
+  $("#set-attachment-clip").checked = s.attachment_clip !== false;
   $("#set-block-context").disabled = !$("#set-block-enabled").checked;
   $("#set-format-bar").checked = s.format_bar !== false;
   $("#set-outline").checked = !!s.outline_enabled;
@@ -328,7 +340,7 @@ export function openSettings() {
   backupInfo = null;
   updateBackup();
   $("#settings").hidden = false;
-  for (const picker of [accentColor, edgeColor, localPathColor, pageLinkColor, pageLinkBrokenColor, webdavColor, findColor, outlineColor, ballColor]) picker.reopen();
+  for (const picker of [accentColor, edgeColor, localPathColor, attachmentColor, pageLinkColor, pageLinkBrokenColor, backlinksColor, webdavColor, findColor, outlineColor, ballColor]) picker.reopen();
   showSettingsPage(page, { focus: true });
   api
     .invoke("backup_info")
@@ -412,6 +424,21 @@ const localPathColor = colorPicker(
   "#set-local-path-color",
   [{ name: "跟随链接", value: "" }, ...ACCENTS.filter((a) => a.value)],
   "var(--accent-grad)",
+);
+
+// 附件链接 [📎 文件](assets/…) 的颜色(0.5.6),默认跟随链接
+const attachmentColor = colorPicker(
+  "attachment",
+  "#set-attachment-color",
+  [{ name: "跟随链接", value: "" }, ...ACCENTS.filter((a) => a.value)],
+  "var(--accent-grad)",
+);
+// 反向链接面板里页面名的颜色(0.5.6),默认跟随正文
+const backlinksColor = colorPicker(
+  "backlinks",
+  "#set-backlinks-color",
+  [{ name: "跟随正文", value: "" }, ...ACCENTS.filter((a) => a.value)],
+  "var(--text)",
 );
 
 // 页面链接 [[页面名]] 的颜色;还没有的页面默认灰色
@@ -789,6 +816,8 @@ async function submitSettings() {
     local_path_underline: $("#set-local-path-underline").value,
     local_path_missing: $("#set-local-path-missing").checked,
     local_path_confirm: $("#set-local-path-confirm").checked,
+    attachment_click: $("#set-attachment-click").checked,
+    attachment_color: attachmentColor.value,
     page_links: $("#set-page-links").checked,
     page_link_click: $("#set-page-link-click").value,
     page_link_suggest: $("#set-page-link-suggest").value,
@@ -798,6 +827,10 @@ async function submitSettings() {
     page_link_broken_color: pageLinkBrokenColor.value,
     page_link_brackets: $("#set-page-link-brackets").value,
     page_link_underline: $("#set-page-link-underline").value,
+    backlinks: $("#set-backlinks").checked,
+    backlinks_place: $("#set-backlinks-place").value,
+    backlinks_count: $("#set-backlinks-count").checked,
+    backlinks_color: backlinksColor.value,
     pinyin_match: $("#set-pinyin").checked,
     capture_enabled: $("#set-capture").checked,
     capture_target: $("#set-capture-target").value,
@@ -822,6 +855,10 @@ async function submitSettings() {
     long_page_lazy: $("#set-long-page").checked,
     image_paste: $("#set-image-paste").checked,
     image_size: $("#set-image-size").value,
+    attachment_drop: $("#set-attachment-drop").checked,
+    attachment_max_mb: Number($("#set-attachment-max").value),
+    attachment_label: $("#set-attachment-label").value,
+    attachment_clip: $("#set-attachment-clip").checked,
     format_bar: $("#set-format-bar").checked,
     outline_enabled: $("#set-outline").checked,
     outline_mode: $("#set-outline-mode").value,
@@ -926,7 +963,7 @@ function updateMigration() {
 }
 
 export function bindSettings() {
-  for (const picker of [accentColor, edgeColor, localPathColor, pageLinkColor, pageLinkBrokenColor, webdavColor, findColor, outlineColor, ballColor]) picker.install();
+  for (const picker of [accentColor, edgeColor, localPathColor, attachmentColor, pageLinkColor, pageLinkBrokenColor, backlinksColor, webdavColor, findColor, outlineColor, ballColor]) picker.install();
   bindKeys();
   for (const id of ["#set-capture", "#set-capture-target"]) $(id).addEventListener("input", updateCaptureOptions);
   for (const id of ["#set-fs", "#set-fs-width"]) $(id).addEventListener("input", updateFullscreenOptions);

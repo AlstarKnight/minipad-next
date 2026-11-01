@@ -17,6 +17,7 @@ import { bindTrash, closeTrash } from "./trash.js";
 import { bindQuick } from "./quickswitch.js";
 import { openSettings, saveSettings, applySettings, applyEdgeAppearance, bindSettings, skippedText } from "./settings.js";
 import { bindOutline } from "./outline.js";
+import { bindBacklinks } from "./backlinkpanel.js";
 import { upgradeColorLibrary, refreshSharedColors } from "./sharedcolors.js";
 import { createEditor, editorDebug, insertText, toggleTask, markLocalPathMissing } from "./editor.js";
 import { setLinkPrompt, setTaskCommand } from "./toolbar.js";
@@ -49,6 +50,17 @@ async function init() {
       { id: "reveal", label: "在文件夹中显示", act: () => void showLocalPath(path) },
       { id: "copy", label: "复制路径", act: () => navigator.clipboard.writeText(path).catch((e) => toast(String(e))) },
     ], x, y),
+    // 附件链接(0.5.6)右键:和本地路径同一个菜单,先换成这台电脑上的完整路径
+    linkMenu: (href, x, y) => {
+      if (!attachmentLink(href)) return false;
+      const withPath = (act) => () => void attachmentPath(href).then((path) => path && act(path));
+      openMenu([
+        { id: "open", label: "打开", act: withPath(openLocalPath) },
+        { id: "reveal", label: "在文件夹中显示", act: withPath(showLocalPath) },
+        { id: "copy", label: "复制路径", act: withPath((path) => navigator.clipboard.writeText(path).catch((e) => toast(String(e)))) },
+      ], x, y);
+      return true;
+    },
   });
   bindUi();
   bindPageLinks();
@@ -189,9 +201,22 @@ async function handleQuit(id) {
   }
 }
 
-// 用系统浏览器打开链接(编辑区里 Ctrl+点击链接)
+// 用系统浏览器打开链接(编辑区里 Ctrl+点击链接);附件链接 assets/… 用关联的程序打开
 function openLink(href) {
-  if (/^(https?:|mailto:)/i.test(href || "")) api.invoke("open_link", { url: href }).catch((err) => toast(String(err)));
+  if (attachmentLink(href)) void attachmentPath(href).then((path) => path && openLocalPath(path));
+  else if (/^(https?:|mailto:)/i.test(href || "")) api.invoke("open_link", { url: href }).catch((err) => toast(String(err)));
+}
+
+// 附件链接(0.5.6):指向这个笔记本 assets 里的文件,设置里「附件链接可点击」关掉时当普通文字
+const attachmentLink = (href) => state.settings?.attachment_click !== false && /^(\.\/)?assets\//i.test(href || "");
+// 换成完整路径(后端只认这个笔记本自己 assets 里的文件),找不到时提示一下、返回空
+async function attachmentPath(href) {
+  try {
+    return await api.invoke("attachment_path", { book: book()?.name ?? "", path: href });
+  } catch (e) {
+    toast(String(e));
+    return "";
+  }
 }
 
 // 后端再次检查路径是否存在，并阻止未确认的可执行文件运行。
@@ -352,6 +377,7 @@ function bindUi() {
   bindTrash();
   bindQuick();
   bindOutline();
+  bindBacklinks();
   bindTabBar();
   bindGroups();
   bindTemplates();

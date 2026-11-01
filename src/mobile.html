@@ -196,6 +196,7 @@
     </div>
     <div class="more-line" aria-hidden="true"></div>
     <div class="more-list">
+      <button id="more-backlinks" type="button" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></svg>谁链接了这页</button>
       <button id="more-sort" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 4v16M4 8l4-4 4 4M16 20V4M12 16l4 4 4-4"/></svg>调整页面顺序</button>
       <button id="more-books" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h4v15H4zM10 5h4v15h-4z"/><path d="m16 6 3.5-1 3 14-3.5 1z"/></svg>笔记本管理</button>
       <button id="more-look" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a9 9 0 1 0 0 18c1.2 0 1.8-.9 1.4-2-.5-1.3.4-2.5 1.8-2.5H18a3 3 0 0 0 3-3A9 9 0 0 0 12 3z"/><circle cx="7.5" cy="11" r="1"/><circle cx="10" cy="7" r="1"/><circle cx="15" cy="7.5" r="1"/></svg>外观设置</button>
@@ -272,10 +273,14 @@
     <label class="switch-row"><span>中文的 【【 】】 当作 [[ ]]</span><input id="look-page-link-cn" type="checkbox"></label>
     <div class="sync-field"><span>链接颜色</span><div id="look-page-link-color" class="accent-swatches" role="radiogroup" aria-label="页面链接颜色"></div></div>
     <div class="sync-field"><span>还没有的页面的颜色</span><div id="look-page-link-broken-color" class="accent-swatches" role="radiogroup" aria-label="还没有的页面的颜色"></div></div>
+    <label class="switch-row"><span>谁链接了这页:长按抽屉里的页面(或者在「更多」里)列出链接到这一页的页面和那一行,点一下过去</span><input id="look-backlinks" type="checkbox"></label>
+    <h3>模板新建页面</h3>
+    <label class="switch-row"><span>长按「新建页面」列出模板笔记本里的页面,选一个就照着它新建({{日期}}、{{时间}}、{{光标}} 这些变量和电脑上一样)</span><input id="look-templates" type="checkbox"></label>
+    <label class="sync-field template-option">模板笔记本(和电脑上的是同一个)<input id="look-template-book" autocapitalize="off" spellcheck="false"></label>
     <h3>行内计算</h3>
     <label class="switch-row"><span>打 = 就算出结果(比如打 12*3.5= 后面写上 42;代码里不算)</span><input id="look-calc" type="checkbox"></label>
     <h3>分享到 Minipad</h3>
-    <label class="switch-row"><span>在别的 App 里点「分享」可以选 Minipad,分享的文字记到下面的页面(关掉后分享列表里没有 Minipad)</span><input id="look-share" type="checkbox"></label>
+    <label class="switch-row"><span>接收文字:在别的 App 里分享文字、链接时可以选 Minipad,记到下面的页面(关掉后分享文字时列表里没有 Minipad)</span><input id="look-share" type="checkbox"></label>
     <div class="sync-field share-option"><span>写到</span><div id="look-share-target" class="seg" role="group" aria-label="分享的文字写到">
       <button type="button" data-share-target="page">追加到一个页面</button>
       <button type="button" data-share-target="new">每次新建一页</button>
@@ -298,7 +303,43 @@
       <button type="button" data-share-after="back">提示一下,回到原来的 App</button>
       <button type="button" data-share-after="open">打开 Minipad 看这一条</button>
     </div></div>
+    <label class="switch-row"><span>接收图片:在相册等 App 里分享图片时可以选 Minipad,存进笔记本的 assets,页面里直接显示(关掉后分享图片时列表里没有 Minipad)</span><input id="look-share-images" type="checkbox"></label>
+    <label class="switch-row"><span>接收文件:分享 pdf、文档、压缩包、音频、视频等文件时可以选 Minipad,页面里是一个文件链接,点了用手机里的应用打开(关掉后同上)</span><input id="look-share-files" type="checkbox"></label>
+    <div class="sync-field share-option share-image-only"><span>图片质量</span><div id="look-share-quality" class="seg" role="group" aria-label="图片质量">
+      <button type="button" data-share-quality="original">保留原图</button>
+      <button type="button" data-share-quality="compress">压缩(长边 2048 像素;gif、svg 不压)</button>
+    </div></div>
+    <label class="switch-row share-option share-image-only"><span>heic 照片转成 jpg(关掉时当文件存)</span><input id="look-share-heic" type="checkbox"></label>
+    <div class="sync-field share-option share-media-only"><span>单个文件大小上限</span><div id="look-share-max" class="seg" role="group" aria-label="单个文件大小上限">
+      <button type="button" data-share-max="10">10 MB</button>
+      <button type="button" data-share-max="25">25 MB</button>
+      <button type="button" data-share-max="50">50 MB</button>
+      <button type="button" data-share-max="100">100 MB</button>
+      <button type="button" data-share-max="200">200 MB</button>
+    </div></div>
+    <div class="sync-field share-option share-media-only"><span>一次最多几个</span><div id="look-share-count" class="seg" role="group" aria-label="一次最多几个">
+      <button type="button" data-share-count="5">5 个</button>
+      <button type="button" data-share-count="20">20 个</button>
+      <button type="button" data-share-count="50">50 个</button>
+    </div></div>
+    <div class="sync-field share-option share-file-only"><span>文件链接显示</span><div id="look-share-file-label" class="seg" role="group" aria-label="文件链接显示">
+      <button type="button" data-share-file-label="size">文件名和大小</button>
+      <button type="button" data-share-file-label="name">只显示文件名</button>
+    </div></div>
+    <label class="switch-row share-option share-file-only"><span>文件链接前加 📎</span><input id="look-share-clip" type="checkbox"></label>
+    <div class="sync-field share-option share-media-only"><span>和文字一起分享时,图片和文件放在文字的</span><div id="look-share-media-place" class="seg" role="group" aria-label="图片和文件放在文字的">
+      <button type="button" data-share-media-place="below">下面</button>
+      <button type="button" data-share-media-place="above">上面</button>
+    </div></div>
     <p class="sheet-note">只保存在这台手机上,改了马上生效。</p>
+  </section>
+  <!-- 谁链接了这页(0.5.6):底部弹出链接到这一页的页面,每条下面是链接所在的那一行,点一下过去 -->
+  <div id="backlinks-backdrop" class="drawer-backdrop" hidden></div>
+  <section id="mobile-backlinks" class="sheet" role="dialog" aria-modal="true" aria-labelledby="backlinks-title" hidden>
+    <div class="sheet-grip" aria-hidden="true"></div>
+    <div class="sheet-top"><h2 id="backlinks-title">谁链接了这页</h2><button id="close-backlinks" type="button" class="icon-button" aria-label="关闭">✕</button></div>
+    <p id="backlinks-page" class="sheet-note"></p>
+    <div id="backlinks-list" class="backlinks-list"></div>
   </section>
   <!-- 笔记本管理(和电脑版一样):图标、颜色、改名、删除、新建。图标和颜色存在笔记本的 .minipad.json,会同步 -->
   <div id="books-backdrop" class="drawer-backdrop" hidden></div>
@@ -327,7 +368,7 @@
     <label class="sync-field">远程文件夹<input id="ms-folder" value="/MinipadNext/" autocapitalize="off"></label>
     <label class="switch-row"><span>允许 HTTP（仅可信局域网，连接未加密）</span><input id="ms-http" type="checkbox"></label>
     <label class="sync-field">首次同步方式<select id="ms-first"><option value="merge">合并并保留冲突副本</option><option value="remote">以网盘为准</option><option value="local">以手机为准</option></select></label>
-    <label class="switch-row"><span>同步图片</span><input id="ms-images" type="checkbox" checked></label>
+    <label class="switch-row"><span>同步图片和附件</span><input id="ms-images" type="checkbox" checked></label>
     <label class="switch-row"><span>启动和切回应用时同步</span><input id="ms-start" type="checkbox" checked></label>
     <label class="switch-row"><span>保存后同步</span><input id="ms-save" type="checkbox" checked></label>
     <label class="sync-field">保存后等待秒数<input id="ms-delay" type="number" min="10" max="300" value="30"></label>
@@ -355,6 +396,6 @@
   <div id="ctx" class="menu" role="menu" hidden></div>
   <div id="toast" class="mobile-toast" role="status" hidden></div>
   <pre id="viewport-debug" class="viewport-debug" aria-hidden="true" hidden></pre>
-  <input id="image-file" type="file" accept="image/jpeg,image/png,image/gif,image/webp,image/bmp" hidden>
+  <input id="image-file" type="file" accept="image/jpeg,image/png,image/gif,image/webp,image/bmp,image/svg+xml,image/avif" hidden>
 </body>
 </html>

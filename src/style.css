@@ -455,6 +455,58 @@ html[data-find-pos="bottom"] #status { order: 2; }
   background: var(--ol-grad, var(--accent-grad));
 }
 .ol-empty { padding: 4px 8px; font-size: 12px; }
+
+/* ---------- 反向链接面板(0.5.6,见 js/backlinkpanel.js) ----------
+   放在右边时占编辑区旁边的一列(--bl-w),放在下面时按内容定高度(--bl-h,最多四成);
+   --bl-c / --bl-grad 是页面名的颜色,空着跟随正文 */
+#backlinks {
+  position: absolute;
+  z-index: 2;
+  overflow: auto;
+  padding: 4px 6px 6px;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+#main[data-backlinks="right"] #backlinks { top: 0; bottom: 0; right: 0; width: var(--bl-w, 200px); border-left: 1px solid var(--code-border); }
+#main[data-backlinks="right"] #editor { right: var(--bl-w, 200px); }
+#main[data-backlinks="bottom"] #backlinks { left: 0; right: 0; bottom: 0; height: var(--bl-h, 96px); border-top: 1px solid var(--code-border); }
+#main[data-backlinks="bottom"] #editor { bottom: var(--bl-h, 96px); }
+/* 目录也在右边时,面板在目录左边,目录的短线在面板左边 */
+#main[data-outline="pinned"][data-ol-side="right"][data-backlinks="right"] #backlinks { right: var(--ol-width, 200px); }
+#main[data-outline="pinned"][data-ol-side="right"][data-backlinks="right"] #editor { right: calc(var(--ol-width, 200px) + var(--bl-w, 200px)); }
+#main[data-outline="hover"][data-ol-side="right"][data-backlinks="right"] #outline { right: calc(var(--bl-w, 200px) + var(--sbw, 0px) + 4px); }
+#main[data-backlinks="bottom"] #outline { bottom: calc(var(--bl-h, 96px) + 10px); }
+#main[data-outline="pinned"][data-backlinks="bottom"] #outline { bottom: var(--bl-h, 96px); }
+.bl-title { padding: 2px 4px 4px; font-size: 11.5px; color: var(--muted); }
+.bl-count:not(:empty) {
+  display: inline-block;
+  min-width: 16px;
+  padding: 0 5px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+  text-align: center;
+}
+.bl-item { padding: 2px 0 4px; }
+.bl-page, .bl-line {
+  display: block;
+  width: 100%;
+  padding: 2px 6px;
+  border-radius: 5px;
+  text-align: left;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.bl-page { color: var(--bl-c, var(--text)); font-weight: 600; }
+#backlinks[data-gradient] .bl-page {
+  background: var(--bl-grad);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+.bl-book { font-weight: 400; font-size: 11.5px; color: var(--muted); -webkit-text-fill-color: var(--muted); }
+.bl-line { padding-left: 14px; color: var(--muted); }
+.bl-page:hover, .bl-line:hover { background-color: color-mix(in srgb, var(--text) 6%, transparent); }
+.bl-empty { padding: 2px 6px; color: var(--muted); }
 /* 一直展开:编辑区让出一列,目录不再浮在正文上面 */
 #main[data-outline="pinned"][data-ol-side="right"] #editor { right: var(--ol-width, 200px); }
 #main[data-outline="pinned"][data-ol-side="left"] #editor { left: var(--ol-width, 200px); }
@@ -2060,6 +2112,14 @@ html[data-side="rail"] .side-list { align-items: center; gap: 6px; padding: 10px
 #editor[data-local-path-underline="solid"] .local-file-path { text-decoration-style: solid; }
 #editor[data-local-path-underline="none"] .local-file-path { text-decoration: none; }
 #editor .local-file-path.missing { color: var(--muted); text-decoration: line-through; }
+/* 附件链接 [📎 文件](assets/…)(0.5.6):颜色在设置里改,空着跟随链接颜色 */
+#editor :is(a[href^="assets/" i], a[href^="./assets/" i]) { color: var(--attachment-color, var(--accent)); }
+#editor[data-attachment-gradient] :is(a[href^="assets/" i], a[href^="./assets/" i]) {
+  background: var(--attachment-gradient);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
 
 /* ---------- 页面链接 [[页面名]](见 js/pagelinkview.js):只是装饰,文件里还是原样的文字 ---------- */
 #editor .page-link { color: var(--page-link-color, var(--accent)); text-decoration: none; text-underline-offset: 3px; cursor: pointer; }

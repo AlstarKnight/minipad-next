@@ -121,26 +121,53 @@ fn mobile_write_colors(app: AppHandle, colors: notes::SharedColors) -> Result<bo
     notes::write_colors(&root(&app)?, &colors)
 }
 
-/// Pages that contain a [[ link at all (also the escaped \[\[ older versions wrote): after a
-/// notebook is renamed only these are read and rewritten, not every page over IPC.
-#[tauri::command(async)]
-fn mobile_link_pages(app: AppHandle) -> Result<Vec<(String, String)>, String> {
-    let _order = notes::io_order();
-    let root = root(&app)?;
+/// Pages that contain a [[ link at all (also the escaped \[\[ older versions wrote), with their text.
+fn link_pages(root: &Path) -> Result<Vec<(String, String, String)>, String> {
     let mut found = Vec::new();
-    for book in notes::index_books(&root)? {
-        let dir = notes::book_dir(&root, &book.name)?;
+    for book in notes::index_books(root)? {
+        let dir = notes::book_dir(root, &book.name)?;
         for name in book.notes {
             let Ok(bytes) = fs::read(notes::note_path(&dir, &name)) else {
                 continue;
             };
             let text = notes::decode_text(&bytes);
             if text.contains("[[") || text.contains("\\[\\[") {
-                found.push((book.name.clone(), name));
+                found.push((book.name.clone(), name, text));
             }
         }
     }
     Ok(found)
+}
+
+/// After a notebook is renamed only the pages with links are read and rewritten, not every page over IPC.
+#[tauri::command(async)]
+fn mobile_link_pages(app: AppHandle) -> Result<Vec<(String, String)>, String> {
+    let _order = notes::io_order();
+    Ok(link_pages(&root(&app)?)?
+        .into_iter()
+        .map(|(book, name, _)| (book, name))
+        .collect())
+}
+
+#[derive(Serialize)]
+struct LinkBody {
+    book: String,
+    name: String,
+    content: String,
+}
+
+/// 谁链接了这页(0.5.6):有链接的页面连同内容,点开列表时才读一次;前端挑出链到那一页的那几行
+#[tauri::command(async)]
+fn mobile_link_bodies(app: AppHandle) -> Result<Vec<LinkBody>, String> {
+    let _order = notes::io_order();
+    Ok(link_pages(&root(&app)?)?
+        .into_iter()
+        .map(|(book, name, content)| LinkBody {
+            book,
+            name,
+            content,
+        })
+        .collect())
 }
 
 #[derive(Serialize)]
@@ -192,6 +219,8 @@ fn mobile_save_image(
         "image/gif" => "gif",
         "image/webp" => "webp",
         "image/bmp" => "bmp",
+        "image/svg+xml" => "svg",
+        "image/avif" => "avif",
         _ => return Err("不支持的图片格式".into()),
     };
     if data.len() > 16 * 1024 * 1024 {
@@ -209,6 +238,11 @@ fn mobile_save_image(
         "gif" => bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a"),
         "webp" => bytes.len() >= 12 && bytes.starts_with(b"RIFF") && &bytes[8..12] == b"WEBP",
         "bmp" => bytes.starts_with(b"BM"),
+        "avif" => {
+            bytes.len() >= 12 && (&bytes[4..12] == b"ftypavif" || &bytes[4..12] == b"ftypavis")
+        }
+        // svg 是文字:开头(前 1 KB 里)要有 <svg
+        "svg" => String::from_utf8_lossy(&bytes[..bytes.len().min(1024)]).contains("<svg"),
         _ => false,
     };
     if !valid {
@@ -220,6 +254,118 @@ fn mobile_save_image(
     }
     let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S-%3f").to_string();
     crate::images::save(&dir, &bytes, ext, &stamp)
+}
+
+// ---- 分享来的图片和文件(0.5.6) ----
+// 安卓那边(android-share/MainActivity.kt)趁着有读取权限,把分享来的文件边读边写复制到 cache/share;
+// 这里把它们移进目标笔记本的 assets(起名字、去重名),页面怎么写由前端决定。页面没写成时前端再叫 mobile_remove_assets 删掉
+
+/// 安卓那边放分享来的文件的临时文件夹(只认这里面的文件)
+fn share_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    let dir = app
+        .path()
+        .app_cache_dir()
+        .map_err(|e| e.to_string())?
+        .join("share");
+    dir.canonicalize()
+        .map_err(|_| "找不到分享来的文件".to_string())
+}
+
+#[derive(Deserialize)]
+struct SharedFile {
+    path: String,
+    name: String,
+    #[serde(default)]
+    mime: String,
+}
+
+#[derive(Serialize)]
+struct PlacedFile {
+    /// 页面里写的相对路径(assets/…),没存成时是空的
+    rel: String,
+    image: bool,
+    size: u64,
+    name: String,
+    /// 没存成的原因
+    error: Option<String>,
+}
+
+#[tauri::command(async)]
+fn mobile_place_shared(
+    app: AppHandle,
+    book: String,
+    files: Vec<SharedFile>,
+    max_mb: u64,
+) -> Result<Vec<PlacedFile>, String> {
+    let _order = notes::io_order();
+    let dir = notes::book_dir(&root(&app)?, &book)?;
+    if !dir.is_dir() {
+        return Err("笔记本不存在".into());
+    }
+    let temp_dir = share_dir(&app)?;
+    let max = max_mb.clamp(1, 200) * 1024 * 1024;
+    let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S").to_string();
+    Ok(files
+        .into_iter()
+        .map(|f| {
+            let temp = Path::new(&f.path)
+                .canonicalize()
+                .ok()
+                .filter(|t| t.starts_with(&temp_dir) && t.is_file());
+            let placed = temp
+                .as_deref()
+                .ok_or("找不到分享来的文件".to_string())
+                .and_then(|temp| {
+                    let size = fs::metadata(temp).map_err(|e| e.to_string())?.len();
+                    let (name, image) =
+                        crate::images::shared_target(&f.name, &f.mime, size, max, &stamp)?;
+                    Ok((crate::images::place(&dir, temp, &name)?, image, size))
+                });
+            match placed {
+                Ok((rel, image, size)) => PlacedFile {
+                    rel,
+                    image,
+                    size,
+                    name: f.name,
+                    error: None,
+                },
+                Err(error) => {
+                    if let Some(temp) = temp {
+                        let _ = fs::remove_file(temp);
+                    }
+                    PlacedFile {
+                        rel: String::new(),
+                        image: false,
+                        size: 0,
+                        name: f.name,
+                        error: Some(error),
+                    }
+                }
+            }
+        })
+        .collect())
+}
+
+/// 页面没写成:刚放进 assets 的文件删掉,不留没人用的文件(只删 assets 里的)
+#[tauri::command(async)]
+fn mobile_remove_assets(app: AppHandle, book: String, paths: Vec<String>) -> Result<(), String> {
+    let _order = notes::io_order();
+    let dir = notes::book_dir(&root(&app)?, &book)?;
+    for rel in paths {
+        if let Some(file) = crate::images::resolve_asset(&dir, &rel) {
+            let _ = fs::remove_file(file);
+        }
+    }
+    Ok(())
+}
+
+/// 点页面里的附件链接 [📎 文件](assets/…):这个笔记本 assets 里的那个文件在手机上的完整路径,交给安卓那边打开
+#[tauri::command(async)]
+fn mobile_attachment_path(app: AppHandle, book: String, path: String) -> Result<String, String> {
+    let dir = notes::book_dir(&root(&app)?, &book)?;
+    crate::images::find_asset(&dir, &path)
+        .map(|(_, file)| file.to_string_lossy().into_owned())
+        .ok_or_else(|| "找不到这个附件,可能已经删掉或者改了名字".into())
 }
 
 #[derive(Clone, Deserialize)]
@@ -531,10 +677,14 @@ pub fn run() {
             mobile_set_book_appearance,
             mobile_set_page_order,
             mobile_link_pages,
+            mobile_link_bodies,
             mobile_read_colors,
             mobile_write_colors,
             mobile_save_note,
             mobile_save_image,
+            mobile_place_shared,
+            mobile_remove_assets,
+            mobile_attachment_path,
             mobile_open_url,
             mobile_webdav_set_password,
             mobile_webdav_test,

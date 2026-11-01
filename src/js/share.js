@@ -28,7 +28,7 @@ export function parseShared({ text = "", title = "" } = {}) {
 
 // 分享来的是纯文字:会被当成 Markdown 格式的字符前面加 \,显示出来还是原来的字。
 // 字母、数字中间的 _ 不会变成斜体,不用加
-const inline = (s) =>
+export const inline = (s) =>
   s.replace(/[\\`*[\]<~]/g, "\\$&").replace(/_/g, (m, i, t) => (/[\p{L}\p{N}]/u.test(t[i - 1] ?? "") && /[\p{L}\p{N}]/u.test(t[i + 1] ?? "") ? m : "\\_"));
 // 行首会变成标题、引用、列表、分隔线、表格的
 const BLOCK_START = /^(?:#{1,6}(?:\s|$)|>|[-+](?:\s|$)|-{2,}|=+\s*$|\|)/;
@@ -50,8 +50,9 @@ function plain(line) {
 const textLines = (text) => String(text).replace(/\r\n?/g, "\n").split("\n").map((l) => l.trim()).filter(Boolean).map(plain);
 
 // 一条分享写成的几行 Markdown;什么也没有时是空数组。
-// source 关着时原样记下分享的文字,不拆标题和链接,也不加分享时带的标题
-export function shareLines(shared, { stamp = true, source = true, date = new Date() } = {}) {
+// source 关着时原样记下分享的文字,不拆标题和链接,也不加分享时带的标题。
+// media(0.5.6):分享来的图片和文件写成的那几行(一个一行),放在文字下面,mediaFirst 时放在上面;时间加在最前面那一行
+export function shareLines(shared, { stamp = true, source = true, date = new Date(), media = [], mediaFirst = false } = {}) {
   let out;
   if (source) {
     const p = parseShared(shared);
@@ -59,8 +60,18 @@ export function shareLines(shared, { stamp = true, source = true, date = new Dat
     const link = p.url ? (name ? `[${name}](${p.url.replace(/[()<>]/g, (c) => "%" + c.charCodeAt(0).toString(16).toUpperCase())})` : p.url) : name;
     out = [...textLines(p.body), ...(link ? [link] : [])];
   } else out = textLines(shared?.text ?? "");
+  out = mediaFirst ? [...media, ...out] : [...out, ...media];
   if (out.length && stamp) out[0] = formatDate(date) + " " + out[0];
   return out;
+}
+
+// 分享来的图片、文件里没存的那几个(0.5.6),写在提示里:「a.pdf」没存(超过 50 MB);
+// 同一个原因的超过两个时只写第一个和个数
+export function shareSkippedText(skipped) {
+  const groups = new Map();
+  for (const s of skipped) groups.set(s.reason, [...(groups.get(s.reason) || []), s.name]);
+  return [...groups].map(([reason, names]) =>
+    (names.length > 2 ? `「${names[0]}」等 ${names.length} 个` : names.map((n) => `「${n}」`).join("")) + `没存(${reason})`).join(";");
 }
 
 // format:paragraph 段落、list 列表项、task 待办;marker 是接着的那个列表用的符号

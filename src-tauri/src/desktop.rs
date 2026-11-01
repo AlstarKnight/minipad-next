@@ -11,6 +11,7 @@ use notes::Book;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
@@ -232,6 +233,10 @@ pub struct Settings {
     local_path_confirm: bool,
     /// 用户逐个允许跳过确认的本地路径。
     local_path_trusted: Vec<String>,
+    /// 0.5.6 附件链接 [📎 文件](assets/…):Ctrl+点击用关联的程序打开,右键可以在文件夹中显示、复制路径
+    attachment_click: bool,
+    /// 附件链接的颜色(写法同 accent);空着跟随链接颜色
+    attachment_color: String,
     /// 0.5.0 页面链接 [[页面名]]:显示成链接,点了打开那一页
     page_links: bool,
     /// ctrl 按 Ctrl 点击打开 / click 单击就打开
@@ -250,6 +255,14 @@ pub struct Settings {
     page_link_brackets: String,
     /// 下划线:hover 鼠标移上去才有 / solid 实线 / dashed 虚线 / none 不要
     page_link_underline: String,
+    /// 0.5.6 反向链接面板:列出链接到当前页面的页面,点了过去
+    backlinks: bool,
+    /// 面板放在 right 编辑区右边(窗口太窄时放到下面) / bottom 下面
+    backlinks_place: String,
+    /// 面板标题旁显示有几个页面链接到这里
+    backlinks_count: bool,
+    /// 面板里页面名的颜色(写法同 accent);空着跟随正文
+    backlinks_color: String,
     /// 设置页面的分类放在哪:left 左边一列 / top 上面一排
     settings_nav: String,
     /// 悬浮目录:列出这一页的标题,点了跳过去
@@ -318,6 +331,14 @@ pub struct Settings {
     image_paste: bool,
     /// 图片显示多大:full 最宽铺满 / medium 最宽一半多 / small 小图
     image_size: String,
+    /// 0.5.6 拖进编辑区的文件(不是图片的)复制进 assets,页面里写成 [📎 文件名](assets/…)
+    attachment_drop: bool,
+    /// 单个文件最大多少 MB:10 / 25 / 50 / 100 / 200
+    attachment_max_mb: u32,
+    /// 文件链接显示:size 文件名+大小 / name 只显示文件名
+    attachment_label: String,
+    /// 文件链接前面加 📎
+    attachment_clip: bool,
     /// 0.5.1 快速记录:全局热键弹出小窗,写进一个页面(或者新建一页)
     capture_enabled: bool,
     /// 快速记录的全局热键(写法同 hotkey),空着就只能从托盘菜单打开
@@ -467,6 +488,8 @@ impl Default for Settings {
             local_path_missing: true,
             local_path_confirm: true,
             local_path_trusted: Vec::new(),
+            attachment_click: true,
+            attachment_color: String::new(),
             page_links: true,
             page_link_click: "ctrl".into(),
             page_link_suggest: "brackets".into(),
@@ -476,6 +499,10 @@ impl Default for Settings {
             page_link_broken_color: String::new(),
             page_link_brackets: "faint".into(),
             page_link_underline: "hover".into(),
+            backlinks: false,
+            backlinks_place: "right".into(),
+            backlinks_count: true,
+            backlinks_color: String::new(),
             settings_nav: "left".into(),
             outline_enabled: false,
             outline_mode: "hover".into(),
@@ -514,6 +541,10 @@ impl Default for Settings {
             mini_tab_button: true,
             image_paste: true,
             image_size: "full".into(),
+            attachment_drop: true,
+            attachment_max_mb: 50,
+            attachment_label: "size".into(),
+            attachment_clip: true,
             capture_enabled: true,
             capture_hotkey: "Ctrl+Alt+M".into(),
             capture_target: "page".into(),
@@ -1084,6 +1115,8 @@ fn tidy_settings(s: &mut Settings) {
     tidy_color(&mut s.find_color);
     tidy_color(&mut s.outline_color);
     tidy_color(&mut s.local_path_color);
+    tidy_color(&mut s.attachment_color);
+    tidy_color(&mut s.backlinks_color);
     tidy_color(&mut s.page_link_color);
     tidy_color(&mut s.page_link_broken_color);
     tidy_color(&mut s.webdav_status_color);
@@ -1132,6 +1165,11 @@ fn tidy_settings(s: &mut Settings) {
     pick_one(&mut s.sel_bar_pos, &["above", "below"]);
     pick_one(&mut s.mini_hotkey, &["follow", "independent"]);
     pick_one(&mut s.image_size, &["full", "medium", "small"]);
+    if ![10, 25, 50, 100, 200].contains(&s.attachment_max_mb) {
+        s.attachment_max_mb = 50;
+    }
+    pick_one(&mut s.attachment_label, &["size", "name"]);
+    pick_one(&mut s.backlinks_place, &["right", "bottom"]);
     s.mini_opacity = mini::clamp_opacity(s.mini_opacity);
     s.mini_max = s.mini_max.min(20);
     mini::tidy(&mut s.mini_windows);
@@ -1500,6 +1538,104 @@ fn save_image(app: AppHandle, request: tauri::ipc::Request<'_>) -> Result<String
     }
     let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S").to_string();
     images::save(&dir, bytes, &meta.ext, &stamp)
+}
+
+#[derive(Deserialize)]
+struct AttachmentChunk {
+    book: String,
+    /// 拖进来的文件原来的名字
+    name: String,
+    /// 这一次上传的编号(前端随机起的,只能是字母、数字和 -)
+    id: String,
+    /// 这一块从文件的第几个字节开始
+    offset: u64,
+    /// 最后一块:写完就放进 assets
+    last: bool,
+}
+
+/// 上传到一半的文件:放在 assets 里,点开头(不同步、页面里也链不到),.tmp~ 结尾(启动时清理留下来的)
+fn attachment_part(dir: &Path, id: &str) -> Result<PathBuf, String> {
+    if id.is_empty() || id.len() > 40 || !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+        return Err("上传编号不对".into());
+    }
+    Ok(dir.join(images::DIR).join(format!(".upload-{id}.tmp~")))
+}
+
+/// 0.5.6 拖进来的文件(不是图片的)存成附件:前端一块一块传过来(每块几 MB,大文件不用整个放进内存),
+/// 笔记本、文件名、这一块的位置放在 x-attachment 头里(encodeURIComponent 过的 JSON)。
+/// 中间的块返回空字符串,最后一块写完放进 assets(重名加 -2),返回页面里写的相对路径
+#[tauri::command(async)]
+fn save_attachment(app: AppHandle, request: tauri::ipc::Request<'_>) -> Result<String, String> {
+    let _order = notes::io_order();
+    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
+        return Err("文件数据不对".into());
+    };
+    let meta = request
+        .headers()
+        .get("x-attachment")
+        .and_then(|v| v.to_str().ok())
+        .and_then(images::percent_decode)
+        .ok_or("缺少文件信息")?;
+    let meta: AttachmentChunk = serde_json::from_str(&meta).map_err(|e| e.to_string())?;
+    let s = app.state::<AppState>().settings.lock().unwrap().clone();
+    if !s.attachment_drop {
+        return Err("拖进来的文件存成附件已经关掉了,可以在 设置 → 编辑 里打开".into());
+    }
+    let dir = notes::book_dir(&notes_dir(&app, &s), &meta.book)?;
+    if !dir.is_dir() {
+        return Err("找不到这个笔记本".into());
+    }
+    let part = attachment_part(&dir, &meta.id)?;
+    let limit = u64::from(s.attachment_max_mb) * 1024 * 1024;
+    let result = (|| {
+        if meta.offset + bytes.len() as u64 > limit {
+            return Err(format!("文件太大了(超过 {} MB)", s.attachment_max_mb));
+        }
+        let mut file = if meta.offset == 0 {
+            fs::create_dir_all(dir.join(images::DIR)).map_err(|e| format!("无法建立附件文件夹:{e}"))?;
+            fs::OpenOptions::new().write(true).create_new(true).open(&part)
+        } else {
+            fs::OpenOptions::new().append(true).open(&part)
+        }
+        .map_err(|e| format!("无法保存附件:{e}"))?;
+        // 块是按顺序一块一块传的:接不上(中间丢了一块)就不要了
+        let len = file.metadata().map_err(|e| e.to_string())?.len();
+        if len != meta.offset {
+            return Err("文件没有传完整,请再拖一次".into());
+        }
+        file.write_all(bytes).map_err(|e| format!("无法保存附件:{e}"))?;
+        if !meta.last {
+            return Ok(String::new());
+        }
+        file.sync_all().map_err(|e| format!("无法保存附件:{e}"))?;
+        drop(file);
+        images::place(&dir, &part, &images::attachment_name(&meta.name))
+    })();
+    if result.as_ref().map_or(true, |rel| !rel.is_empty()) {
+        let _ = fs::remove_file(&part);
+    }
+    result
+}
+
+/// 上传没传完(读文件出错、窗口关了):删掉传了一半的文件
+#[tauri::command(async)]
+fn discard_attachment(app: AppHandle, book: String, id: String) -> Result<(), String> {
+    let _order = notes::io_order();
+    let dir = notes::book_dir(&current_notes_dir(&app), &book)?;
+    let part = attachment_part(&dir, &id)?;
+    match fs::remove_file(part) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e.to_string()),
+        _ => Ok(()),
+    }
+}
+
+/// 页面里附件链接(assets/…)在这台电脑上的完整路径,打开、在文件夹中显示、复制路径都用它。
+/// 只认这个笔记本自己 assets 里确实存在的文件(.. 跳出去的、别的笔记本的都不认)
+#[tauri::command(async)]
+fn attachment_path(app: AppHandle, book: String, path: String) -> Result<String, String> {
+    let dir = notes::book_dir(&current_notes_dir(&app), &book)?;
+    let (_, file) = images::find_asset(&dir, &path).ok_or("找不到这个附件,可能已经删掉或者改了名字")?;
+    Ok(file.to_string_lossy().into_owned())
 }
 
 /// 编辑器里显示图片:https://note.localhost/img?book=…&path=assets/…(Windows 上的写法,小窗是 http)
@@ -3589,6 +3725,9 @@ pub fn run() {
             local_path_exists,
             open_path,
             save_image,
+            save_attachment,
+            discard_attachment,
+            attachment_path,
             mini_open,
             mini_self,
             mini_list,

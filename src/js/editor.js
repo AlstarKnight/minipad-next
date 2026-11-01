@@ -399,7 +399,7 @@ const afterRule = $prose(
     }),
 );
 
-// 链接:Ctrl+点击用系统浏览器打开
+// 链接:Ctrl+点击用系统浏览器打开(附件链接 assets/… 用关联的程序打开,见 main.js 的 openLink)
 let openLink = () => {};
 function clickLink(v, e) {
   if (!(e.ctrlKey || e.metaKey)) return false;
@@ -407,6 +407,16 @@ function clickLink(v, e) {
   if (!a || !v.dom.contains(a)) return false;
   e.preventDefault();
   openLink(a.getAttribute("href"));
+  return true;
+}
+// 附件链接右键(0.5.6):打开 / 在文件夹中显示 / 复制路径。不是附件链接、设置里关掉了时返回 false,照常弹系统菜单。
+// 块管理的右键菜单也挂在编辑区上(后挂的),这里接管了就不再给它
+let onLinkMenu = () => false;
+function menuLink(v, e) {
+  const a = e.target.closest?.("a[href]");
+  if (!a || !v.dom.contains(a) || !onLinkMenu(a.getAttribute("href"), e.clientX, e.clientY)) return false;
+  e.preventDefault();
+  e.stopImmediatePropagation();
   return true;
 }
 
@@ -489,6 +499,7 @@ const keys = $prose(
         handleDOMEvents: {
           mousedown: (v, e) => e.button === 0 && clickTask(v, e),
           click: (v, e) => clickLink(v, e),
+          contextmenu: (v, e) => menuLink(v, e),
         },
       },
     }),
@@ -533,6 +544,7 @@ export async function createEditor(opts) {
   openLink = opts.openLink;
   onLocalPath = opts.openLocalPath || (() => {});
   onLocalPathMenu = opts.localPathMenu || (() => {});
+  onLinkMenu = opts.linkMenu || (() => false);
   emptyBold = opts.emptyBold;
   const mobile = opts.mobile === true;
   editorMobile = mobile;
@@ -663,10 +675,11 @@ function replaceTr(state, md) {
   return tr;
 }
 
-// 换页时调用:放上 n 的状态,内容在别处变过就先换成新内容
+// 换页时调用:放上 n 的状态,内容在别处变过就先换成新内容。换好以后编辑区发 page-shown(反向链接面板听)
 export function showInEditor(n) {
   if (shown === n) {
     setEditorText(n);
+    $("#editor").dispatchEvent(new Event("page-shown"));
     return;
   }
   keep();
@@ -692,6 +705,7 @@ export function showInEditor(n) {
   // 查找栏开着时,换过来的页面也按同样的条件高亮
   reapplyFind(view);
   scroller().scrollTop = scroll;
+  $("#editor").dispatchEvent(new Event("page-shown"));
 }
 
 // 编辑器里的页面的内容在别处变了(n.content 已经是新内容):换上新内容,可以撤销回去
@@ -779,6 +793,12 @@ export function applyEditorSettings(s) {
   root.style.setProperty("--local-path-color", pathColor?.from || "var(--accent)");
   root.style.setProperty("--local-path-gradient", pathColor?.to ? pathSettings.local_path_color : "none");
   root.toggleAttribute("data-local-path-gradient", !!pathColor?.to);
+  // 附件链接的颜色(0.5.6):空着跟随链接颜色
+  const fileColor = parseAccent(s.attachment_color || "");
+  if (fileColor) root.style.setProperty("--attachment-color", fileColor.from);
+  else root.style.removeProperty("--attachment-color");
+  root.style.setProperty("--attachment-gradient", fileColor?.to ? s.attachment_color : "none");
+  root.toggleAttribute("data-attachment-gradient", !!fileColor?.to);
   if (view && oldPath !== JSON.stringify(pathSettings)) {
     view.dispatch(view.state.tr.setMeta(localPathKey, true).setMeta("addToHistory", false));
   }

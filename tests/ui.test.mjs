@@ -8175,3 +8175,260 @@ describe("0.5.5: shortcuts in a table, fullscreen editing", () => {
     );
   });
 });
+
+// ---------- 0.5.6:附件、反向链接 ----------
+// 拖进来几个文件:[{ name, type, size }],内容是 size 个 0
+function dropFiles(p, files) {
+  return p.evaluate((files) => {
+    const dt = new DataTransfer();
+    for (const f of files) dt.items.add(new File([new Uint8Array(f.size)], f.name, { type: f.type || "" }));
+    const target = document.querySelector("#editor .ProseMirror");
+    const r = target.querySelector("p").getBoundingClientRect();
+    target.dispatchEvent(new DragEvent("drop", { dataTransfer: dt, clientX: r.right - 1, clientY: r.top + 4, bubbles: true, cancelable: true }));
+  }, files);
+}
+
+describe("0.5.6: attachments", () => {
+  const MB = 1024 * 1024;
+  const opened = (p) => p.evaluate(() => (window.__mockControl.openedPaths || []).map((x) => [x.path, x.reveal, x.confirmed]));
+  const attachment = (p, href) => p.locator(`#editor a[href="${href}"]`);
+  const PAGE = (extra = {}) => ({
+    ...seed({ "": { 页: "看 [📎 报告.pdf（1.2 MB）](assets/报告.pdf) 和 [📎 没了.txt](assets/没了.txt) [装](assets/setup.exe)" }, 别处: { 旧: "x" } }),
+    attachments: { "\nassets/报告.pdf": { size: 1258291 }, "\nassets/setup.exe": { size: 10 } },
+    ...extra,
+  });
+
+  ui("a dropped file is saved in assets piece by piece and linked with its name and size", {
+    seed: seed({ "": { 页: "文字" } }), mockControl: {},
+  }, async (h) => {
+    const { p } = h;
+    await dropFiles(p, [{ name: "季度 报告(终).zip", type: "application/zip", size: 9 * MB }]);
+    await until(() => h.mockFile("", "页"), "文字[📎 季度 报告(终).zip（9 MB）](<assets/季度 报告(终).zip>)",
+      "linked at the drop point; a name with spaces goes inside <>");
+    assert.deepEqual(await mockCtl(p, "attachmentChunks"), [
+      { name: "季度 报告(终).zip", offset: 0, size: 4 * MB, last: false },
+      { name: "季度 报告(终).zip", offset: 4 * MB, size: 4 * MB, last: false },
+      { name: "季度 报告(终).zip", offset: 8 * MB, size: MB, last: true },
+    ], "sent in 4 MB pieces");
+    assert.deepEqual(await p.evaluate(() => window.__mockAttachments["\nassets/季度 报告(终).zip"]), { size: 9 * MB });
+    await until(h.toast, "已存好附件", "a big file says when it is done");
+    // 读回来还是同一个链接,Ctrl+点击能打开
+    await p.reload();
+    await p.waitForSelector("#tabs .tab", { state: "attached" });
+    await control(p, { openedPaths: [] });
+    await attachment(p, "assets/季度 报告(终).zip").click({ modifiers: ["Control"] });
+    await until(() => opened(p), [["C:\\Users\\me\\Minipad\\assets\\季度 报告(终).zip", false, false]], "opened after reading it back");
+  });
+
+  ui("images and files dropped together: images first, then one link per line; the same name gets -2", {
+    seed: seed({ "": { 页: "文字" } }), mockControl: {},
+  }, async (h) => {
+    const { p } = h;
+    await p.evaluate(() => { window.__mockAttachments["\nassets/a.txt"] = { size: 1 }; });
+    await p.evaluate((png) => {
+      const dt = new DataTransfer();
+      dt.items.add(new File(["hello"], "a.txt", { type: "text/plain" }));
+      dt.items.add(new File([Uint8Array.from(atob(png), (c) => c.charCodeAt(0))], "图.png", { type: "image/png" }));
+      dt.items.add(new File([new Uint8Array(2048)], "说明", { type: "" }));
+      const target = document.querySelector("#editor .ProseMirror");
+      const r = target.querySelector("p").getBoundingClientRect();
+      target.dispatchEvent(new DragEvent("drop", { dataTransfer: dt, clientX: r.right - 1, clientY: r.top + 4, bubbles: true, cancelable: true }));
+    }, PNG);
+    await until(async () => (await h.mockFile("", "页")).split("\n"), [
+      "文字![图](assets/img-20261016-101500.png)[📎 a.txt（5 B）](assets/a-2.txt)",
+      "[📎 说明（2 KB）](assets/说明)",
+    ], "the image, then the files on their own lines");
+    assert.equal(await h.toast(), "", "small files need no message");
+  });
+
+  ui("files over the limit are refused; a failed upload is cleaned up; turning it off leaves drops alone", {
+    seed: seed({ "": { 页: "文字" } }), mockControl: {},
+  }, async (h) => {
+    const { p } = h;
+    await p.click("#btn-settings");
+    await settingsPage(p, "edit");
+    assert.equal(await p.isChecked("#set-attachment-drop"), true);
+    assert.equal(await p.inputValue("#set-attachment-max"), "50");
+    await p.selectOption("#set-attachment-max", "10");
+    await p.selectOption("#set-attachment-label", "name");
+    await p.uncheck("#set-attachment-clip");
+    await p.click("#set-save");
+    await until(async () => {
+      const s = (await h.stored()).settings;
+      return [s.attachment_max_mb, s.attachment_label, s.attachment_clip];
+    }, [10, "name", false], "saved");
+    await dropFiles(p, [{ name: "大.iso", type: "", size: 11 * MB }, { name: "小.txt", type: "text/plain", size: 3 }]);
+    await until(() => h.mockFile("", "页"), "文字[小.txt](assets/小.txt)", "only the small one, without 📎 or size");
+    assert.equal(await h.toast(), "「大.iso」超过 10 MB,没有存(设置 → 编辑 里可以改上限)");
+    assert.deepEqual((await mockCtl(p, "attachmentChunks")).map((c) => c.name), ["小.txt"], "the big one is not even sent");
+    // 后端出错:提示,传了一半的那份扔掉,页面不变
+    await control(p, { attachmentError: "磁盘满了" });
+    await dropFiles(p, [{ name: "坏.bin", type: "", size: 5 }]);
+    await until(h.toast, "「坏.bin」没存上:磁盘满了");
+    await until(async () => (await mockCtl(p, "attachmentsDiscarded"))?.length, 1, "the half-written file is discarded");
+    assert.equal(await h.mockFile("", "页"), "文字[小.txt](assets/小.txt)");
+    // 关掉以后不管拖进来的文件
+    await control(p);
+    await p.click("#btn-settings");
+    await settingsPage(p, "edit");
+    await p.uncheck("#set-attachment-drop");
+    await p.click("#set-save");
+    await until(async () => (await h.stored()).settings.attachment_drop, false);
+    await dropFiles(p, [{ name: "又一个.txt", type: "text/plain", size: 3 }]);
+    await p.evaluate(() => window.__minipad.flush());
+    assert.ok(!(await mockCtl(p, "calls")).includes("save_attachment"), "nothing is sent");
+    assert.equal(await h.mockFile("", "页"), "文字[小.txt](assets/小.txt)");
+  });
+
+  ui("Ctrl+click opens an attachment; the right-click menu opens, shows it in its folder or copies the path; missing files say so", {
+    seed: PAGE(), mockControl: { openedPaths: [] },
+  }, async (h) => {
+    const { p } = h;
+    const pdf = attachment(p, "assets/报告.pdf");
+    await pdf.click();
+    await sleep(150);
+    assert.deepEqual(await opened(p), [], "a plain click only places the cursor");
+    await pdf.click({ modifiers: ["Control"] });
+    await until(() => opened(p), [["C:\\Users\\me\\Minipad\\assets\\报告.pdf", false, false]], "Ctrl+click opens it");
+    await pdf.click({ button: "right" });
+    await p.locator("#ctx").waitFor();
+    assert.deepEqual(await p.$$eval("#ctx button", (bs) => bs.map((b) => b.textContent)), ["打开", "在文件夹中显示", "复制路径"]);
+    await p.click('#ctx [data-act="reveal"]');
+    await until(async () => (await opened(p))[1], ["C:\\Users\\me\\Minipad\\assets\\报告.pdf", true, false], "shown in its folder");
+    await pdf.click({ button: "right" });
+    await p.click('#ctx [data-act="copy"]');
+    await until(() => p.evaluate(() => navigator.clipboard.readText()), "C:\\Users\\me\\Minipad\\assets\\报告.pdf", "the path is copied");
+    // 不在了:提示,不打开
+    await attachment(p, "assets/没了.txt").click({ modifiers: ["Control"] });
+    await until(h.toast, "找不到这个附件,可能已经删掉或者改了名字");
+    // 程序先问一下(和本地路径一样),取消就不运行
+    await attachment(p, "assets/setup.exe").click({ modifiers: ["Control"] });
+    await p.locator("#dialog").waitFor();
+    assert.match(await p.textContent("#dialog-msg"), /setup\.exe/);
+    await p.click("#dialog-cancel");
+    await sleep(150);
+    assert.equal((await opened(p)).length, 2, "cancelled: not run");
+    // 网址链接的右键菜单不变(这里是块菜单)
+    assert.equal(await p.locator("#ctx").isHidden(), true);
+  });
+
+  ui("attachment links can be made plain and get their own color; moving a page takes its attachments along", {
+    seed: PAGE({ settings: { ...SETTINGS, attachment_color: "#16a34a" } }), mockControl: { openedPaths: [] },
+  }, async (h) => {
+    const { p } = h;
+    const pdf = attachment(p, "assets/报告.pdf");
+    await pdf.waitFor();
+    assert.equal(await pdf.evaluate((a) => getComputedStyle(a).color), "rgb(22, 163, 74)", "the chosen color");
+    await p.click("#btn-settings");
+    await settingsPage(p, "edit");
+    assert.equal(await p.isChecked("#set-attachment-click"), true);
+    assert.equal(await p.locator("#set-attachment-color button.on").count(), 0, "a library color is chosen, not 跟随链接");
+    await p.click('#set-attachment-color button[title="跟随链接"]');
+    await p.uncheck("#set-attachment-click");
+    await p.click("#set-save");
+    await until(async () => {
+      const s = (await h.stored()).settings;
+      return [s.attachment_click, s.attachment_color];
+    }, [false, ""], "saved");
+    assert.equal(await pdf.evaluate((a) => getComputedStyle(a).color), await p.evaluate(() => getComputedStyle(document.querySelector("#editor a[href='assets/没了.txt']")).color));
+    await pdf.click({ modifiers: ["Control"] });
+    await sleep(150);
+    assert.deepEqual(await opened(p), [], "turned off: Ctrl+click does nothing");
+    // 移到别的笔记本:附件也复制过去(原来的留着)
+    await h.tabMenu("页");
+    await p.click('#ctx [data-act="move"]');
+    await h.item("别处").click();
+    await until(() => p.evaluate(() => [window.__mockAttachments["别处\nassets/报告.pdf"], window.__mockAttachments["\nassets/报告.pdf"]]),
+      [{ size: 1258291 }, { size: 1258291 }], "copied to the other notebook");
+  });
+});
+
+describe("0.5.6: backlinks", () => {
+  const BOOKS = (settings = {}) => {
+    const db = seed({
+      "": { 首页: "看 [[周报]]\n\n- [ ] 再看 [[周报]] 和 `[[周报]]`", 周报: "本周", 别的: "[[首页]]" },
+      工作: { 计划: "参考 [[默认/周报]]", 周报: "工作周报" },
+    });
+    Object.assign(db.settings, { backlinks: true, ...settings });
+    return db;
+  };
+  const panel = (p) => p.$$eval("#backlinks .bl-item, #backlinks .bl-empty", (els) => els.map((e) => e.classList.contains("bl-empty")
+    ? e.textContent
+    : [...e.querySelectorAll("button")].map((b) => (b.classList.contains("bl-page") ? "# " : "") + b.textContent).join(" | ")));
+
+  ui("off by default; turned on it lists the pages and lines that link here, also from other notebooks", {
+    seed: seed({ "": { 首页: "看 [[周报]]", 周报: "本周" } }),
+  }, async (h) => {
+    const { p } = h;
+    assert.equal(await p.locator("#backlinks").isHidden(), true, "off by default");
+    await p.click("#btn-settings");
+    await settingsPage(p, "edit");
+    assert.equal(await p.isChecked("#set-backlinks"), false);
+    await p.check("#set-backlinks");
+    await p.click("#set-save");
+    await until(async () => (await h.stored()).settings.backlinks, true);
+    await until(() => panel(p), ["没有页面链接到这一页"], "nothing links to 首页");
+    await h.tab("周报").click();
+    await until(() => panel(p), ["# 首页 | 看 [[周报]]"], "首页 links to 周报");
+    assert.equal(await p.textContent("#backlinks .bl-count"), "1");
+    assert.equal(await p.getAttribute("#main", "data-backlinks"), "right");
+  });
+
+  ui("each line once, not code; another notebook's page says which notebook; clicking a line jumps to that link", { seed: BOOKS() }, async (h) => {
+    const { p } = h;
+    await h.tab("周报").click();
+    await until(() => panel(p), ["# 首页 | 看 [[周报]] | 再看 [[周报]] 和 `[[周报]]`", "# 计划 工作 | 参考 [[默认/周报]]"]);
+    assert.equal(await p.textContent("#backlinks .bl-count"), "2");
+    // 点第二行:到首页,光标在第二处链接里
+    await p.locator("#backlinks .bl-line").nth(1).click();
+    await until(h.activeTab, "首页");
+    await until(() => p.evaluate(() => {
+      const { $from } = window.__minipad.editor().view.state.selection;
+      return [$from.parent.textContent, $from.parentOffset];
+    }), ["再看 [[周报]] 和 [[周报]]", 5], "the cursor is in that link");
+    assert.equal(await h.editorFocused(), true);
+    // 首页自己:别的 链接过来
+    await until(() => panel(p), ["# 别的 | [[首页]]"]);
+    // 另一个笔记本的页面
+    await p.locator("#backlinks .bl-page").click();
+    await until(h.activeTab, "别的");
+    await until(() => panel(p), ["没有页面链接到这一页"]);
+  });
+
+  ui("renaming a linking page updates the list; it can sit below the page, hide the count and use a color", {
+    seed: BOOKS({ backlinks_place: "bottom", backlinks_count: false }),
+  }, async (h) => {
+    const { p } = h;
+    await h.tab("周报").click();
+    await until(() => p.getAttribute("#main", "data-backlinks"), "bottom");
+    assert.equal(await p.textContent("#backlinks .bl-count"), "", "no count");
+    const box = await p.$eval("#backlinks", (e) => [e.getBoundingClientRect().height, document.querySelector("#editor").getBoundingClientRect().bottom - e.getBoundingClientRect().top]);
+    assert.ok(box[0] > 30 && box[0] <= 540 * 0.4 + 1, `fits its content, at most 40%: ${box[0]}`);
+    assert.ok(Math.abs(box[1]) <= 1, "the editor ends where the panel starts");
+    await h.tabMenu("首页");
+    await p.click('#ctx button[data-act="rename"]');
+    await p.locator("#tabs .tab input").waitFor();
+    await p.fill("#tabs .tab input", "主页");
+    await p.keyboard.press("Enter");
+    await until(() => p.$$eval("#backlinks .bl-page", (bs) => bs.map((b) => b.textContent)), ["主页", "计划 工作"], "the new name");
+    await p.click("#btn-settings");
+    await settingsPage(p, "edit");
+    assert.equal(await p.inputValue("#set-backlinks-place"), "bottom");
+    await p.selectOption("#set-backlinks-place", "right");
+    await p.check("#set-backlinks-count");
+    await expandLibrary(p, "#set-backlinks-color + .shared-colors");
+    await p.click('#set-backlinks-color + .shared-colors .uc-swatch[data-color="#3b82f6"]');
+    await p.click("#set-save");
+    await until(() => p.getAttribute("#main", "data-backlinks"), "right");
+    await until(() => p.textContent("#backlinks .bl-count"), "2", "the count is back");
+    assert.equal(await p.$eval("#backlinks .bl-page", (b) => getComputedStyle(b).color), "rgb(59, 130, 246)");
+    const s = (await h.stored()).settings;
+    assert.deepEqual([s.backlinks_place, s.backlinks_count, s.backlinks_color], ["right", true, "#3b82f6"]);
+  });
+
+  ui("small windows never show it", { seed: BOOKS(), url: miniUrl("", "周报") }, async ({ p }) => {
+    await sleep(300);
+    assert.equal(await p.locator("#backlinks").isHidden(), true);
+    assert.equal(await p.getAttribute("#main", "data-backlinks"), null);
+  });
+});

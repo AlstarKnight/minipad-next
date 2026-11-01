@@ -247,8 +247,9 @@ use crate::notes::COLORS_FILE;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fs;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 /// 同步下载和页面、笔记本信息的保存共用此锁，避免同一文件并发改写。
 pub static WRITE_LOCK: Mutex<()> = Mutex::new(());
@@ -413,11 +414,8 @@ fn local_files_cached(
                     {
                         old.hash.clone()
                     }
-                    _ => {
-                        let bytes = fs::read(entry.path())
-                            .map_err(|e| format!("读取待同步文件「{path}」失败：{e}"))?;
-                        content_hash(&path, &bytes)
-                    }
+                    _ => file_hash(&path, &entry.path())
+                        .map_err(|e| format!("读取待同步文件「{path}」失败：{e}"))?,
                 };
                 result.insert(path.clone(), hash);
             } else if kind.is_dir()
@@ -452,13 +450,134 @@ pub fn content_hash(path: &str, bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
 
+/// assets 里的图片和附件可能很大(附件最大 200 MB):哈希边读边算,上传、下载也边读边传,
+/// 不整个放进内存。页面和笔记本信息很小,照旧整个读
+fn streamed(path: &str) -> bool {
+    path.rsplit('/').nth(1) == Some("assets")
+}
+
+/// 本机文件的内容哈希,和 content_hash 算出来的一样
+fn file_hash(path: &str, file: &Path) -> std::io::Result<String> {
+    if !streamed(path) {
+        return fs::read(file).map(|bytes| content_hash(path, &bytes));
+    }
+    let mut hasher = Sha256::new();
+    std::io::copy(&mut fs::File::open(file)?, &mut hasher)?;
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+/// 写进去(或者读出来)的同时算哈希
+struct Hashing<T> {
+    inner: T,
+    hasher: Arc<Mutex<Sha256>>,
+}
+
+impl<T: Write> Write for Hashing<T> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let n = self.inner.write(buf)?;
+        self.hasher.lock().unwrap().update(&buf[..n]);
+        Ok(n)
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.inner.flush()
+    }
+}
+
+impl<T: Read> Read for Hashing<T> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let n = self.inner.read(buf)?;
+        self.hasher.lock().unwrap().update(&buf[..n]);
+        Ok(n)
+    }
+}
+
+fn hex(hasher: &Mutex<Sha256>) -> String {
+    format!("{:x}", hasher.lock().unwrap().clone().finalize())
+}
+
+/// 同步时下载大文件用的临时文件夹:笔记文件夹里的 .sync-tmp(点开头,不算笔记本也不同步)。
+/// 和笔记在同一个盘,下载完直接改名过去,不会留下半个文件;开始时清掉上次留下的(同步到一半关了程序),结束时整个删掉
+const SYNC_TEMP_DIR: &str = ".sync-tmp";
+
+struct SyncTemp {
+    dir: PathBuf,
+    next: std::cell::Cell<u32>,
+}
+
+impl SyncTemp {
+    fn new(root: &Path) -> Self {
+        let dir = root.join(SYNC_TEMP_DIR);
+        let _ = fs::remove_dir_all(&dir);
+        Self {
+            dir,
+            next: std::cell::Cell::new(0),
+        }
+    }
+
+    fn file(&self) -> Result<PathBuf, String> {
+        fs::create_dir_all(&self.dir).map_err(|e| format!("创建同步临时文件夹失败：{e}"))?;
+        let n = self.next.get();
+        self.next.set(n + 1);
+        Ok(self.dir.join(format!("{n}.tmp~")))
+    }
+}
+
+impl Drop for SyncTemp {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.dir);
+    }
+}
+
 use crate::webdav::{RemoteEntry, WebdavClient};
+
+/// 从网盘下载下来的内容:小文件在内存里,assets 里的在同步临时文件夹里
+#[derive(Clone, Debug)]
+pub enum Fetched {
+    Bytes(Vec<u8>),
+    File(PathBuf),
+}
 
 #[derive(Clone, Debug)]
 pub struct RemoteFile {
     pub entry: RemoteEntry,
     pub hash: String,
-    pub downloaded: Option<Vec<u8>>,
+    pub downloaded: Option<Fetched>,
+}
+
+/// 下载一个文件,返回内容、内容哈希和 ETag。assets 里的边下载边写进临时文件、边算哈希
+fn fetch(
+    client: &WebdavClient,
+    temp: &SyncTemp,
+    path: &str,
+    size: Option<u64>,
+) -> Result<(Fetched, String, Option<String>), String> {
+    if !streamed(path) {
+        let (bytes, etag) = client.get(path)?;
+        let hash = content_hash(path, &bytes);
+        return Ok((Fetched::Bytes(bytes), hash, etag));
+    }
+    let file = temp.file()?;
+    let hasher = Arc::new(Mutex::new(Sha256::new()));
+    let result = fs::File::create(&file)
+        .map_err(|e| format!("创建同步临时文件失败：{e}"))
+        .and_then(|out| {
+            let mut out = Hashing {
+                inner: out,
+                hasher: hasher.clone(),
+            };
+            let etag = client.get_to(path, size, &mut out)?;
+            out.inner
+                .sync_all()
+                .map_err(|e| format!("写入同步临时文件失败：{e}"))?;
+            Ok(etag)
+        });
+    match result {
+        Ok(etag) => Ok((Fetched::File(file), hex(&hasher), etag)),
+        Err(e) => {
+            let _ = fs::remove_file(&file);
+            Err(e)
+        }
+    }
 }
 
 fn unchanged_remote(entry: &RemoteEntry, old: &FileRecord) -> bool {
@@ -473,8 +592,9 @@ fn unchanged_remote(entry: &RemoteEntry, old: &FileRecord) -> bool {
 }
 
 /// 远端仅逐层请求 Depth:1；ETag 未变时沿用上次的内容哈希。
-pub fn remote_files(
+fn remote_files(
     client: &WebdavClient,
+    temp: &SyncTemp,
     images: bool,
     journal: &Journal,
 ) -> Result<BTreeMap<String, RemoteFile>, String> {
@@ -514,8 +634,8 @@ pub fn remote_files(
         let (hash, downloaded) = match journal.files.get(&path) {
             Some(old) if unchanged_remote(&entry, old) => (old.hash.clone(), None),
             _ => {
-                let (bytes, _) = client.get(&path)?;
-                (content_hash(&path, &bytes), Some(bytes))
+                let (data, hash, _) = fetch(client, temp, &path, entry.size)?;
+                (hash, Some(data))
             }
         };
         files.insert(
@@ -530,15 +650,64 @@ pub fn remote_files(
     Ok(files)
 }
 
+/// 网盘上的内容、内容哈希和 ETag:列目录时下载过就用那份,没有就现在下载
 fn remote_content(
     client: &WebdavClient,
+    temp: &SyncTemp,
     path: &str,
     remote: &mut RemoteFile,
-) -> Result<(Vec<u8>, Option<String>), String> {
+) -> Result<(Fetched, String, Option<String>), String> {
     match remote.downloaded.take() {
-        Some(bytes) => Ok((bytes, remote.entry.etag.clone())),
-        None => client.get(path),
+        Some(data) => Ok((data, remote.hash.clone(), remote.entry.etag.clone())),
+        None => fetch(client, temp, path, remote.entry.size),
     }
+}
+
+/// 网盘上的内容只要是一份小文件(页面、笔记本信息)的时候用
+fn bytes_of(data: Fetched) -> Result<Vec<u8>, String> {
+    match data {
+        Fetched::Bytes(bytes) => Ok(bytes),
+        Fetched::File(file) => fs::read(file).map_err(|e| format!("读取同步临时文件失败：{e}")),
+    }
+}
+
+/// 把下载下来的内容传到网盘上的 path(冲突副本用)
+fn put_fetched(client: &WebdavClient, path: &str, data: &Fetched) -> Result<(), String> {
+    match data {
+        Fetched::Bytes(bytes) => client.put(path, bytes.clone(), None).map(|_| ()),
+        Fetched::File(file) => {
+            let reader = fs::File::open(file).map_err(|e| format!("读取同步临时文件失败：{e}"))?;
+            let len = reader.metadata().map_err(|e| e.to_string())?.len();
+            client.put_from(path, reader, len, None).map(|_| ())
+        }
+    }
+}
+
+/// 把下载下来的内容放到本机的 file:小文件原子写入,大文件从临时文件夹改名过去
+fn place_fetched(file: &Path, data: &Fetched) -> Result<(), String> {
+    match data {
+        Fetched::Bytes(bytes) => crate::notes::write_atomic_bytes(file, bytes),
+        Fetched::File(temp) => crate::notes::move_into_place(temp, file),
+    }
+}
+
+/// 把本机的 path(assets 里的大文件)边读边传到网盘,返回 ETag 和真正传上去的内容的哈希、大小
+fn put_local_file(
+    client: &WebdavClient,
+    root: &Path,
+    path: &str,
+    existing: Option<&RemoteEntry>,
+) -> Result<(Option<String>, String, u64), String> {
+    let file =
+        fs::File::open(root.join(path)).map_err(|e| format!("读取文件「{path}」失败：{e}"))?;
+    let len = file.metadata().map_err(|e| e.to_string())?.len();
+    let hasher = Arc::new(Mutex::new(Sha256::new()));
+    let reader = Hashing {
+        inner: file,
+        hasher: hasher.clone(),
+    };
+    let etag = client.put_from(path, reader, len, existing)?;
+    Ok((etag, hex(&hasher), len))
 }
 
 pub fn remote_hashes(files: &BTreeMap<String, RemoteFile>) -> BTreeMap<String, String> {
@@ -654,6 +823,26 @@ fn check_local(root: &Path, path: &str, expected: Option<&str>) -> Result<Vec<u8
         return Err(format!("「{path}」在扫描后被修改，留到下一轮同步"));
     }
     Ok(bytes)
+}
+
+/// 和 check_local 一样核对本机文件还是不是扫描时的样子,但不把内容读进内存(assets 里的边读边算哈希)
+fn local_unchanged(root: &Path, path: &str, expected: Option<&str>) -> Result<(), String> {
+    let file = root.join(path);
+    let Some(expected) = expected else {
+        return match fs::metadata(&file) {
+            Ok(_) => Err(format!("「{path}」在扫描后新建，拒绝覆盖")),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(format!("重新读取文件「{path}」失败：{e}")),
+        };
+    };
+    match file_hash(path, &file) {
+        Ok(hash) if hash == expected => Ok(()),
+        Ok(_) => Err(format!("「{path}」在扫描后被修改，留到下一轮同步")),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            Err(format!("「{path}」在扫描后被删除，留到下一轮同步"))
+        }
+        Err(e) => Err(format!("重新读取文件「{path}」失败：{e}")),
+    }
 }
 
 fn ensure_parent(client: &WebdavClient, path: &str) -> Result<(), String> {
@@ -818,7 +1007,8 @@ pub fn sync_once(
         .collect();
     let mode = journal.initial_mode.unwrap_or(options.first_mode);
     let local = local_files_cached(root, options.images, Some(&journal))?;
-    let mut remote = remote_files(client, options.images, &journal)?;
+    let temp = SyncTemp::new(root);
+    let mut remote = remote_files(client, &temp, options.images, &journal)?;
     let (actions, deletes, total) = preview_actions(&journal, &local, &remote, mode, first);
     if !options.confirm_deletes
         && deletion_needs_confirmation_with(
@@ -859,6 +1049,19 @@ pub fn sync_once(
             }
         };
     }
+    // 同上,只核对、不读内容
+    macro_rules! unchanged_local {
+        ($path:expr, $expected:expr) => {
+            match local_unchanged(root, $path, $expected) {
+                Ok(()) => {}
+                Err(message) if message.contains("在扫描后") => {
+                    report.rescan_needed = true;
+                    continue;
+                }
+                Err(message) => return Err(message),
+            }
+        };
+    }
     let mut created_dirs: BTreeSet<String> = remote
         .keys()
         .filter_map(|path| path.rsplit_once('/').map(|(folder, _)| folder.to_string()))
@@ -883,22 +1086,30 @@ pub fn sync_once(
                             old.modified = info.entry.modified.clone();
                             old
                         } else {
-                            let local_data = checked_local!(&path, Some(hash));
-                            if local_stamp(&root.join(&path)) != stamp_at_action {
-                                report.rescan_needed = true;
-                                continue;
-                            }
-                            stamp_record(
-                                root,
-                                &path,
+                            let record = if streamed(&path) {
+                                unchanged_local!(&path, Some(hash));
+                                FileRecord {
+                                    hash: hash.to_string(),
+                                    etag: info.entry.etag.clone(),
+                                    size: info.entry.size,
+                                    modified: info.entry.modified.clone(),
+                                    ..FileRecord::default()
+                                }
+                            } else {
+                                let local_data = checked_local!(&path, Some(hash));
                                 record_for(
                                     &path,
                                     &local_data,
                                     info.entry.etag.clone(),
                                     info.entry.size,
                                     info.entry.modified.clone(),
-                                ),
-                            )
+                                )
+                            };
+                            if local_stamp(&root.join(&path)) != stamp_at_action {
+                                report.rescan_needed = true;
+                                continue;
+                            }
+                            stamp_record(root, &path, record)
                         };
                         journal.files.insert(path.clone(), record);
                     }
@@ -908,12 +1119,21 @@ pub fn sync_once(
             }
             Action::Upload | Action::Conflict => {
                 let hash = local_hash.ok_or("上传时文件已不存在")?;
-                let local_data = checked_local!(&path, Some(hash));
+                // assets 里的大文件不读进内存:这里只看还在不在,传的时候边读边传、边算哈希(见下面)
+                let local_data = if streamed(&path) {
+                    if !root.join(&path).is_file() {
+                        report.rescan_needed = true;
+                        continue;
+                    }
+                    Vec::new()
+                } else {
+                    checked_local!(&path, Some(hash))
+                };
                 let mut upload = local_data.clone();
                 if first && mode == FirstSync::Local && action == Action::Upload {
                     if let Some(previous) = remote_file.as_deref_mut() {
-                        let (old_bytes, _) = remote_content(client, &path, previous)?;
-                        if content_hash(&path, &old_bytes) != previous.hash {
+                        let (_, old_hash, _) = remote_content(client, &temp, &path, previous)?;
+                        if old_hash != previous.hash {
                             return Err(format!("「{path}」在同步期间再次修改，请重试"));
                         }
                         client.mkcol(".trash/")?;
@@ -928,11 +1148,13 @@ pub fn sync_once(
                 }
                 if action == Action::Conflict {
                     let previous = remote_file.as_deref_mut().ok_or("冲突时远端文件不存在")?;
-                    let (remote_data, _) = remote_content(client, &path, previous)?;
-                    if content_hash(&path, &remote_data) != previous.hash {
+                    let (remote_data, remote_hash, _) =
+                        remote_content(client, &temp, &path, previous)?;
+                    if remote_hash != previous.hash {
                         return Err(format!("「{path}」在同步期间再次修改，请重试"));
                     }
                     if path.ends_with(".minipad.json") {
+                        let remote_data = bytes_of(remote_data)?;
                         let ours: serde_json::Value = serde_json::from_slice(&local_data)
                             .map_err(|_| "本地笔记本信息 JSON 损坏")?;
                         let theirs: serde_json::Value = serde_json::from_slice(&remote_data)
@@ -958,6 +1180,7 @@ pub fn sync_once(
                             Err(_) => {}
                         }
                     } else if path == COLORS_FILE {
+                        let remote_data = bytes_of(remote_data)?;
                         let parse = |bytes: &[u8]| {
                             serde_json::from_slice::<serde_json::Value>(bytes)
                                 .ok()
@@ -980,13 +1203,13 @@ pub fn sync_once(
                     } else if options.conflict_copy {
                         let conflict = unique_conflict_path(root, &path)?;
                         ensure_parent(client, &conflict)?;
-                        client.put(&conflict, remote_data.clone(), None)?;
+                        put_fetched(client, &conflict, &remote_data)?;
                         {
                             let _lock = WRITE_LOCK.lock().map_err(|e| e.to_string())?;
                             if root.join(&conflict).exists() {
                                 return Err("冲突副本重名，停止覆盖".into());
                             }
-                            crate::notes::write_atomic_bytes(&root.join(&conflict), &remote_data)?;
+                            place_fetched(&root.join(&conflict), &remote_data)?;
                         }
                         report.changed.push(conflict);
                         report.conflicts += 1;
@@ -1001,63 +1224,99 @@ pub fn sync_once(
                     ensure_parent(client, &path)?;
                 }
                 // 只有真实存在的远端文件才允许 If-Match/If-Unmodified-Since。
-                let etag = client.put(
-                    &path,
-                    upload.clone(),
-                    if first && mode == FirstSync::Local {
-                        None
+                let existing = if first && mode == FirstSync::Local {
+                    None
+                } else {
+                    remote_file.as_deref().map(|f| &f.entry)
+                };
+                if streamed(&path) {
+                    let file = root.join(&path);
+                    let before = local_stamp(&file);
+                    let (etag, sent, len) = put_local_file(client, root, &path, existing)?;
+                    // 记下的是真正传上去的那份;传的时候文件变了(和扫描时不一样,或者传完大小、时间变了)
+                    // 就不记本机的大小和时间,下一轮重新算哈希
+                    let record = FileRecord {
+                        hash: sent.clone(),
+                        etag,
+                        size: Some(len),
+                        ..FileRecord::default()
+                    };
+                    let _lock = WRITE_LOCK.lock().map_err(|e| e.to_string())?;
+                    if sent == hash && before.is_some() && local_stamp(&file) == before {
+                        journal
+                            .files
+                            .insert(path.clone(), stamp_record(root, &path, record));
                     } else {
-                        remote_file.as_deref().map(|f| &f.entry)
-                    },
-                )?;
-                let (record, needs_rescan, replaced) =
-                    finish_upload(root, &path, hash, &local_data, &upload, etag)?;
-                if needs_rescan {
-                    report.rescan_needed = true;
+                        report.rescan_needed = true;
+                        journal.files.insert(path.clone(), record);
+                    }
+                } else {
+                    let etag = client.put(&path, upload.clone(), existing)?;
+                    let (record, needs_rescan, replaced) =
+                        finish_upload(root, &path, hash, &local_data, &upload, etag)?;
+                    if needs_rescan {
+                        report.rescan_needed = true;
+                    }
+                    if replaced {
+                        report.changed.push(path.clone());
+                    }
+                    journal.files.insert(path.clone(), record);
                 }
-                if replaced {
-                    report.changed.push(path.clone());
-                }
-                journal.files.insert(path.clone(), record);
                 report.uploaded += 1;
             }
             Action::Download => {
                 let info = remote_file.ok_or("下载时远端文件不存在")?;
-                let (received, etag) = remote_content(client, &path, info)?;
-                if content_hash(&path, &received) != info.hash {
+                let (received, received_hash, etag) = remote_content(client, &temp, &path, info)?;
+                if received_hash != info.hash {
                     return Err(format!("「{path}」在下载期间变化，稍后重试"));
                 }
+                let etag = etag.or_else(|| info.entry.etag.clone());
                 let _lock = WRITE_LOCK.lock().map_err(|e| e.to_string())?;
-                let current = checked_local!(&path, local_hash);
-                let bytes = if path.ends_with(".minipad.json") && local_hash.is_some() {
-                    preserve_navigation(&current, &received)?
-                } else {
-                    received.clone()
-                };
-                if first && mode == FirstSync::Remote && local_hash.is_some() {
-                    local_trash(root, &path)?;
-                }
-                crate::notes::write_atomic_bytes(&root.join(&path), &bytes)?;
-                journal.files.insert(
-                    path.clone(),
-                    stamp_record(
-                        root,
-                        &path,
+                let record = match received {
+                    Fetched::Bytes(received) => {
+                        let current = checked_local!(&path, local_hash);
+                        let bytes = if path.ends_with(".minipad.json") && local_hash.is_some() {
+                            preserve_navigation(&current, &received)?
+                        } else {
+                            received
+                        };
+                        if first && mode == FirstSync::Remote && local_hash.is_some() {
+                            local_trash(root, &path)?;
+                        }
+                        crate::notes::write_atomic_bytes(&root.join(&path), &bytes)?;
                         record_for(
                             &path,
                             &bytes,
-                            etag.or_else(|| info.entry.etag.clone()),
+                            etag,
                             info.entry.size,
                             info.entry.modified.clone(),
-                        ),
-                    ),
-                );
+                        )
+                    }
+                    // assets 里的大文件:下载好的临时文件直接改名过去
+                    Fetched::File(file) => {
+                        unchanged_local!(&path, local_hash);
+                        if first && mode == FirstSync::Remote && local_hash.is_some() {
+                            local_trash(root, &path)?;
+                        }
+                        crate::notes::move_into_place(&file, &root.join(&path))?;
+                        FileRecord {
+                            hash: received_hash,
+                            etag,
+                            size: info.entry.size,
+                            modified: info.entry.modified.clone(),
+                            ..FileRecord::default()
+                        }
+                    }
+                };
+                journal
+                    .files
+                    .insert(path.clone(), stamp_record(root, &path, record));
                 report.changed.push(path.clone());
                 report.downloaded += 1;
             }
             Action::DeleteLocal => {
                 let _lock = WRITE_LOCK.lock().map_err(|e| e.to_string())?;
-                checked_local!(&path, local_hash);
+                unchanged_local!(&path, local_hash);
                 local_trash(root, &path)?;
                 journal.files.remove(&path);
                 report.changed.push(path.clone());
@@ -1065,9 +1324,9 @@ pub fn sync_once(
             }
             Action::DeleteRemote => {
                 let info = remote_file.ok_or("远端文件已不存在")?;
-                checked_local!(&path, None);
-                let (contents, _) = remote_content(client, &path, info)?;
-                if content_hash(&path, &contents) != info.hash {
+                unchanged_local!(&path, None);
+                let (_, remote_hash, _) = remote_content(client, &temp, &path, info)?;
+                if remote_hash != info.hash {
                     return Err(format!("「{path}」在删除前已被别处修改，停止删除"));
                 }
                 client.mkcol(".trash/")?;
@@ -1374,6 +1633,54 @@ mod tests {
         let with_images = local_files(&root, true).unwrap();
         assert_eq!(with_images.len(), 4);
         assert!(with_images.contains_key("assets/默认笔记本 图片.png"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn big_files_in_assets_are_hashed_while_reading_and_temp_files_never_sync() {
+        let root = crate::notes::temp_dir("webdav-streamed");
+        fs::create_dir_all(root.join("工作/assets")).unwrap();
+        let big: Vec<u8> = (0..3_000_000u32).map(|i| (i * 7 % 251) as u8).collect();
+        fs::write(root.join("工作/assets/录像.mp4"), &big).unwrap();
+        fs::write(root.join("工作/页.md"), "[📎 录像.mp4](assets/录像.mp4)").unwrap();
+        assert!(streamed("工作/assets/录像.mp4") && streamed("assets/图.png"));
+        assert!(!streamed("工作/页.md") && !streamed("工作/.minipad.json") && !streamed("assets"));
+        // 边读边算的哈希和整个读进来算的一样
+        let files = local_files(&root, true).unwrap();
+        assert_eq!(
+            files["工作/assets/录像.mp4"],
+            content_hash("工作/assets/录像.mp4", &big)
+        );
+        assert!(local_unchanged(
+            &root,
+            "工作/assets/录像.mp4",
+            Some(&content_hash("x", &big))
+        )
+        .is_ok());
+        assert!(local_unchanged(&root, "工作/assets/录像.mp4", Some("0"))
+            .unwrap_err()
+            .contains("在扫描后被修改"));
+        assert!(local_unchanged(&root, "工作/assets/录像.mp4", None)
+            .unwrap_err()
+            .contains("在扫描后新建"));
+        assert!(local_unchanged(&root, "工作/assets/没有.mp4", None).is_ok());
+        // 同步临时文件夹:上次留下的开始时清掉,不算要同步的文件,用完整个删掉
+        fs::create_dir_all(root.join(SYNC_TEMP_DIR)).unwrap();
+        fs::write(root.join(SYNC_TEMP_DIR).join("0.tmp~"), b"left over").unwrap();
+        let temp = SyncTemp::new(&root);
+        assert!(!root.join(SYNC_TEMP_DIR).exists());
+        let file = temp.file().unwrap();
+        fs::write(&file, b"downloaded").unwrap();
+        assert_ne!(temp.file().unwrap(), file);
+        assert_eq!(local_files(&root, true).unwrap().len(), 2);
+        crate::notes::move_into_place(&file, &root.join("工作/assets/下载.bin")).unwrap();
+        assert_eq!(
+            fs::read(root.join("工作/assets/下载.bin")).unwrap(),
+            b"downloaded"
+        );
+        assert!(!file.exists());
+        drop(temp);
+        assert!(!root.join(SYNC_TEMP_DIR).exists());
         fs::remove_dir_all(root).unwrap();
     }
 

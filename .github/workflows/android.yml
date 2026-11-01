@@ -102,9 +102,11 @@ jobs:
           test -s "$res/values/ic_launcher_background.xml"
           echo "launcher icon files:"
           find "$res" -name 'ic_launcher*' | sort
-      # 分享到 Minipad (0.5.5): our MainActivity (keeps the generated enableEdgeToEdge, adds the
-      # MinipadShare bridge the page takes shared text from) replaces the generated one, and the
-      # manifest gets the .ShareTarget alias that receives text shares.
+      # 分享到 Minipad (0.5.5 text, 0.5.6 images and files): our MainActivity (keeps the generated
+      # enableEdgeToEdge, adds the MinipadShare bridge the page takes shares from and opens attachments
+      # through) replaces the generated one, the manifest gets the share aliases (one per combination
+      # of the text / images / files switches), and the template's FileProvider paths get the notes
+      # folder so attachments can be handed to other apps (MainActivity only grants files in assets).
       - name: Add the share target to the Android project
         run: |
           set -euo pipefail
@@ -119,9 +121,22 @@ jobs:
             if (!xml.includes("</application>")) throw new Error("no </application> in " + file);
             fs.writeFileSync(file, xml.replace(/[ \t]*<\/application>/, fs.readFileSync(alias, "utf8") + "    </application>"));
           ' "$main/AndroidManifest.xml" src-tauri/android-share/share-target.xml
-          grep -q 'android.intent.action.SEND' "$main/AndroidManifest.xml"
+          node -e '
+            const fs = require("fs");
+            const file = process.argv[1];
+            const xml = fs.readFileSync(file, "utf8");
+            if (!xml.includes("</paths>")) throw new Error("no </paths> in " + file);
+            fs.writeFileSync(file, xml.replace("</paths>", "    <files-path name=\"notes\" path=\"../notes/\" />\n</paths>"));
+          ' "$main/res/xml/file_paths.xml"
+          grep -q 'android.intent.action.SEND_MULTIPLE' "$main/AndroidManifest.xml"
+          grep -q '\.ShareAll' "$main/AndroidManifest.xml"
+          grep -q 'androidx.core.content.FileProvider' "$main/AndroidManifest.xml"
+          grep -q 'name="notes" path="../notes/"' "$main/res/xml/file_paths.xml"
           grep -q 'MinipadShare' "$activity"
+          grep -q 'fun setOptions' "$activity"
+          grep -q 'fun openFile' "$activity"
           echo "share target added to $activity and the manifest"
+          cat "$main/res/xml/file_paths.xml"
       - name: Build release APK
         run: npm run android:build
       # Reads the launcher icon back out of the built APK, so a build that still carries Tauri's

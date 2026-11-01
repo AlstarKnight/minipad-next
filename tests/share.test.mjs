@@ -1,7 +1,7 @@
 // 分享到 Minipad(0.5.5):分享的内容怎么拆开、写成什么样、放在页面的哪里
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseShared, shareLines, shareBlock, insertShare } from "../src/js/share.js";
+import { parseShared, shareLines, shareBlock, insertShare, shareSkippedText } from "../src/js/share.js";
 
 const date = new Date(2026, 9, 27, 13, 5);
 const STAMP = "13:05 2026/10/27";
@@ -65,4 +65,42 @@ test("written at the end or the start (under a leading heading), joining a list 
   assert.equal(insertShare("#不是标题\n", one, { where: "start" }), "记一下\n\n#不是标题\n");
   assert.equal(insertShare("# 只有标题", one, { where: "start", format: "list" }), "# 只有标题\n\n- 记一下\n");
   assert.equal(insertShare("", one, { where: "start" }), "记一下\n");
+});
+
+// 附件链接(0.5.6):电脑上拖进来的文件、手机上分享来的文件
+test("attachment links show the name and the size; Markdown marks are escaped, spaces go inside <>", async () => {
+  const { sizeText, attachmentLabel, attachmentMarkdown, imageMarkdown } = await import("../src/js/attachments.js");
+  assert.deepEqual([0, 800, 1024, 350 * 1024, 1.24 * 1024 * 1024, 50 * 1024 * 1024, 3 * 1024 ** 3].map(sizeText),
+    ["0 B", "800 B", "1 KB", "350 KB", "1.2 MB", "50 MB", "3 GB"]);
+  assert.equal(attachmentLabel("季度报告.pdf", 1.2 * 1024 * 1024), "📎 季度报告.pdf（1.2 MB）");
+  assert.equal(attachmentLabel("季度报告.pdf", 1.2 * 1024 * 1024, { size: false }), "📎 季度报告.pdf");
+  assert.equal(attachmentLabel("季度报告.pdf", 1.2 * 1024 * 1024, { clip: false }), "季度报告.pdf（1.2 MB）");
+  assert.equal(attachmentMarkdown("assets/季度报告.pdf", "季度报告.pdf", 1.2 * 1024 * 1024), "[📎 季度报告.pdf（1.2 MB）](assets/季度报告.pdf)");
+  assert.equal(attachmentMarkdown("assets/季度 报告(1).pdf", "季度 报告(1).pdf", 10, { size: false }), "[📎 季度 报告(1).pdf](<assets/季度 报告(1).pdf>)");
+  assert.equal(attachmentMarkdown("assets/a_[b]*.zip", "a_[b]*.zip", 1, { clip: false, size: false }), "[a\\_\\[b\\]\\*.zip](assets/a_[b]*.zip)");
+  assert.equal(imageMarkdown("assets/img-20261101-130501.jpg"), "![](assets/img-20261101-130501.jpg)");
+});
+
+// 分享图片和文件(0.5.6):一个一行,默认在文字下面,可以放到上面;时间加在最前面那一行;每一条照样是段落、列表项或待办
+test("shared images and files are one line each, below the text or above it, with the time on the first line", () => {
+  const media = ["![](assets/img-20261101-130501.jpg)", "[📎 季度报告.pdf（1.2 MB）](assets/季度报告.pdf)"];
+  assert.deepEqual(shareLines({ text: "看这个 https://x.y", title: "" }, { date, media }),
+    [`${STAMP} [看这个](https://x.y)`, ...media]);
+  assert.deepEqual(shareLines({ text: "说明" }, { date, media, mediaFirst: true }),
+    [`${STAMP} ${media[0]}`, media[1], "说明"]);
+  // 只有图片和文件
+  assert.deepEqual(shareLines({}, { date, media, stamp: false }), media);
+  assert.deepEqual(shareLines({ text: " " }, { date, media: [] }), []);
+  assert.equal(shareBlock(shareLines({ text: "两张" }, { date, media: media.slice(0, 1), stamp: false }), "task"), "- [ ] 两张\n  ![](assets/img-20261101-130501.jpg)");
+  assert.equal(insertShare("# 收集箱\n\n旧的", shareLines({}, { date, media, stamp: false }), { where: "start" }),
+    `# 收集箱\n\n${media[0]}\n${media[1]}\n\n旧的\n`);
+});
+
+test("files that were not saved are listed with the reason, grouped when there are many", () => {
+  assert.equal(shareSkippedText([{ name: "大.mp4", reason: "超过 50 MB" }]), "「大.mp4」没存(超过 50 MB)");
+  assert.equal(shareSkippedText([
+    { name: "a.pdf", reason: "接收文件已关闭" }, { name: "b.zip", reason: "接收文件已关闭" },
+    ...[1, 2, 3].map((n) => ({ name: `IMG_${n}.jpg`, reason: "一次最多 20 个" })),
+  ]), "「a.pdf」「b.zip」没存(接收文件已关闭);「IMG_1.jpg」等 3 个没存(一次最多 20 个)");
+  assert.equal(shareSkippedText([]), "");
 });

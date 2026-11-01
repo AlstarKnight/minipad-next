@@ -139,6 +139,30 @@ pub fn write_atomic_bytes(path: &Path, data: &[u8]) -> Result<(), String> {
     result
 }
 
+/// 把已经写好的临时文件 temp 放到 path(WebDAV 下载的大文件):直接改名过去;
+/// 改不了(不在同一个盘)时先复制到 path 旁边的临时文件(点开头,不会被同步)再改名,中途失败也不会留下半个文件
+pub fn move_into_place(temp: &Path, path: &Path) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    if rename_with_retry(|| fs::rename(temp, path)).is_ok() {
+        return Ok(());
+    }
+    let seq = TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let name = path.file_name().ok_or("无效的文件路径")?.to_string_lossy();
+    let near = path.with_file_name(format!(".{name}.{}.{seq}.tmp~", std::process::id()));
+    let result = (|| {
+        fs::copy(temp, &near)?;
+        fs::File::open(&near)?.sync_all()?;
+        rename_with_retry(|| fs::rename(&near, path))
+    })()
+    .map_err(|e| e.to_string());
+    if result.is_err() {
+        let _ = fs::remove_file(&near);
+    }
+    result
+}
+
 /// 杀毒软件、OneDrive、索引服务正打开着目标文件时 Windows 会暂时拒绝改名:
 /// 稍等一下再试几次(临时文件一直留着),还不行才算失败
 fn rename_with_retry(mut rename: impl FnMut() -> std::io::Result<()>) -> std::io::Result<()> {
@@ -179,6 +203,9 @@ pub fn cleanup_stale_temps(root: &Path) {
     if let Ok(books) = list_books(root) {
         dirs.extend(books.into_iter().map(|b| root.join(b)));
     }
+    // 各笔记本 assets 里传了一半的附件(.upload-….tmp~)、写了一半的图片
+    let assets: Vec<PathBuf> = dirs.iter().map(|d| d.join(crate::images::DIR)).collect();
+    dirs.extend(assets);
     for dir in dirs {
         let Ok(entries) = fs::read_dir(dir) else {
             continue;
@@ -201,6 +228,11 @@ pub fn cleanup_stale_temps(root: &Path) {
 
 /// 把名字变成合法的 Windows 文件名,清理完是空的就用 `fallback`
 fn clean_name(name: &str, fallback: &str) -> String {
+    clean_name_within(name, fallback, 80)
+}
+
+/// 同上,最多留 `max` 个字(附件名要给扩展名留出地方,见 images::attachment_name)
+pub fn clean_name_within(name: &str, fallback: &str, max: usize) -> String {
     let s: String = name
         .chars()
         .map(|c| match c {
@@ -209,7 +241,7 @@ fn clean_name(name: &str, fallback: &str) -> String {
             c => c,
         })
         .collect();
-    let mut s = fit_name(s.trim_start());
+    let mut s = fit_name(s.trim_start(), max);
     if s.starts_with('.') {
         s = format!("_{}", &s[1..]);
     }
@@ -221,15 +253,15 @@ fn clean_name(name: &str, fallback: &str) -> String {
     if is_reserved(stem) {
         let at = stem.len();
         s.insert(at, '_');
-        s = fit_name(&s);
+        s = fit_name(&s, max);
     }
     s
 }
 
-/// 最多留 80 个字,先截短再去掉末尾的空白、点和空格:Windows 会悄悄去掉末尾的点和空格,
+/// 最多留 max 个字(页面名是 80),先截短再去掉末尾的空白、点和空格:Windows 会悄悄去掉末尾的点和空格,
 /// 不然建出来的文件夹和返回的名字对不上
-fn fit_name(s: &str) -> String {
-    let s: String = s.chars().take(80).collect();
+fn fit_name(s: &str, max: usize) -> String {
+    let s: String = s.chars().take(max).collect();
     s.trim_end().trim_end_matches(['.', ' ']).to_string()
 }
 
