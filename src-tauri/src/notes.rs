@@ -139,6 +139,30 @@ pub fn write_atomic_bytes(path: &Path, data: &[u8]) -> Result<(), String> {
     result
 }
 
+/// 把已经写好的临时文件 temp 放到 path(WebDAV 下载的大文件):直接改名过去;
+/// 改不了(不在同一个盘)时先复制到 path 旁边的临时文件(点开头,不会被同步)再改名,中途失败也不会留下半个文件
+pub fn move_into_place(temp: &Path, path: &Path) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    if rename_with_retry(|| fs::rename(temp, path)).is_ok() {
+        return Ok(());
+    }
+    let seq = TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let name = path.file_name().ok_or("无效的文件路径")?.to_string_lossy();
+    let near = path.with_file_name(format!(".{name}.{}.{seq}.tmp~", std::process::id()));
+    let result = (|| {
+        fs::copy(temp, &near)?;
+        fs::File::open(&near)?.sync_all()?;
+        rename_with_retry(|| fs::rename(&near, path))
+    })()
+    .map_err(|e| e.to_string());
+    if result.is_err() {
+        let _ = fs::remove_file(&near);
+    }
+    result
+}
+
 /// 杀毒软件、OneDrive、索引服务正打开着目标文件时 Windows 会暂时拒绝改名:
 /// 稍等一下再试几次(临时文件一直留着),还不行才算失败
 fn rename_with_retry(mut rename: impl FnMut() -> std::io::Result<()>) -> std::io::Result<()> {

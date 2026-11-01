@@ -124,12 +124,19 @@ pub fn parse_multistatus(xml: &str) -> Result<Vec<RemoteEntry>, String> {
     Ok(entries)
 }
 
-use reqwest::blocking::{Client, RequestBuilder, Response};
+use reqwest::blocking::{Body, Client, RequestBuilder, Response};
 use reqwest::header::{HeaderValue, CONTENT_TYPE, ETAG, IF_MATCH, IF_NONE_MATCH};
 use reqwest::{Method, StatusCode, Url};
 use std::collections::BTreeMap;
+use std::io::{Read, Write};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
+
+/// 大文件(assets 里的附件,最大 200 MB)边读边传,整个请求的超时按大小放宽:
+/// 平常的 300 秒,再加上按每秒 128 KB 传完要的时间;不知道大小时按 200 MB 算
+fn transfer_timeout(size: Option<u64>) -> Duration {
+    Duration::from_secs(300 + size.unwrap_or(200 * 1024 * 1024) / (128 * 1024))
+}
 
 /// 429/503 的服务器等待时间对连续触发的同步共享，避免下一次立即重复请求。
 static RETRY_AFTER: OnceLock<Mutex<BTreeMap<String, Instant>>> = OnceLock::new();
@@ -438,6 +445,33 @@ impl WebdavClient {
         Ok((data.to_vec(), etag))
     }
 
+    /// 大文件:边下载边写进 out,不整个放进内存;size 是列目录时看到的大小(用来放宽超时)。
+    /// 连接中途断了、收到的比服务端说的少,都算失败
+    pub fn get_to(
+        &self,
+        path: &str,
+        size: Option<u64>,
+        out: &mut dyn Write,
+    ) -> Result<Option<String>, String> {
+        let mut reply = self.send(
+            self.request(Method::GET, self.url_for(path)?)
+                .timeout(transfer_timeout(size)),
+            &[StatusCode::OK],
+        )?;
+        let etag = reply
+            .headers()
+            .get(ETAG)
+            .and_then(|h| h.to_str().ok())
+            .map(str::to_string);
+        let expected = reply.content_length();
+        let received =
+            std::io::copy(&mut reply, out).map_err(|e| format!("读取 WebDAV 文件失败：{e}"))?;
+        if expected.is_some_and(|n| n != received) {
+            return Err("读取 WebDAV 文件失败：没有收完整".into());
+        }
+        Ok(etag)
+    }
+
     /// 上传已存在的文件要求 ETag 或 Last-Modified 条件保护。
     pub fn put(
         &self,
@@ -445,7 +479,33 @@ impl WebdavClient {
         bytes: Vec<u8>,
         existing: Option<&RemoteEntry>,
     ) -> Result<Option<String>, String> {
-        let mut request = self.request(Method::PUT, self.url_for(path)?).body(bytes);
+        self.put_body(
+            self.request(Method::PUT, self.url_for(path)?).body(bytes),
+            existing,
+        )
+    }
+
+    /// 大文件:从 reader 边读边传(len 是长度),不整个读进内存。条件保护和 put 一样
+    pub fn put_from(
+        &self,
+        path: &str,
+        reader: impl Read + Send + 'static,
+        len: u64,
+        existing: Option<&RemoteEntry>,
+    ) -> Result<Option<String>, String> {
+        self.put_body(
+            self.request(Method::PUT, self.url_for(path)?)
+                .timeout(transfer_timeout(Some(len)))
+                .body(Body::sized(reader, len)),
+            existing,
+        )
+    }
+
+    fn put_body(
+        &self,
+        mut request: RequestBuilder,
+        existing: Option<&RemoteEntry>,
+    ) -> Result<Option<String>, String> {
         match existing {
             Some(old) if old.etag.is_some() => {
                 let value = HeaderValue::from_str(old.etag.as_deref().unwrap())
@@ -751,6 +811,80 @@ mod tests {
         paths.sort_unstable();
         assert_eq!(paths, ["默认/", "默认/a.md", "默认/assets/"]);
         server.join().unwrap();
+    }
+
+    #[test]
+    fn a_big_file_cut_off_while_downloading_leaves_no_half_file() {
+        use crate::syncer::{self, FirstSync, SyncOptions};
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let entry = |href: &str, folder: bool| {
+            let kind = if folder {
+                "<d:resourcetype><d:collection/></d:resourcetype>".to_string()
+            } else {
+                "<d:resourcetype/><d:getetag>\"1\"</d:getetag><d:getcontentlength>1000000</d:getcontentlength>".to_string()
+            };
+            format!("<d:response><d:href>{href}</d:href><d:propstat><d:prop>{kind}</d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>")
+        };
+        let listing = |entries: &[(&str, bool)]| {
+            let body: String = entries.iter().map(|(h, f)| entry(h, *f)).collect();
+            let xml = format!(
+                r#"<?xml version="1.0"?><d:multistatus xmlns:d="DAV:">{body}</d:multistatus>"#
+            );
+            format!("HTTP/1.1 207 Multi-Status\r\nContent-Type: application/xml\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{xml}", xml.len())
+        };
+        let replies = vec![
+            listing(&[("/Big/", true), ("/Big/book/", true)]),
+            listing(&[("/Big/book/", true), ("/Big/book/assets/", true)]),
+            listing(&[
+                ("/Big/book/assets/", true),
+                ("/Big/book/assets/big.bin", false),
+            ]),
+            // 说好 1000000 字节,只发了 10 个就断了
+            "HTTP/1.1 200 OK\r\nContent-Length: 1000000\r\nConnection: close\r\n\r\n0123456789"
+                .to_string(),
+        ];
+        let server = std::thread::spawn(move || {
+            for reply in replies {
+                let (mut stream, _) = listener.accept().unwrap();
+                let _ = stream.read(&mut [0u8; 4096]);
+                let _ = stream.write_all(reply.as_bytes());
+            }
+        });
+        let client = WebdavClient::new(
+            &format!("http://127.0.0.1:{port}/"),
+            "tester",
+            "pw",
+            "/Big/",
+            true,
+        )
+        .unwrap();
+        let root = crate::notes::temp_dir("webdav-cut-off");
+        let records = crate::notes::temp_dir("webdav-cut-off-records");
+        let opts = SyncOptions {
+            images: true,
+            first_mode: FirstSync::Merge,
+            conflict_copy: true,
+            confirm_deletes: false,
+            delete_limit: 20,
+            delete_divisor: 3,
+        };
+        let error = syncer::sync_once(&client, &root, &records.join("j.json"), &opts, || Ok(()))
+            .unwrap_err();
+        assert!(error.contains("读取 WebDAV 文件失败"), "{error}");
+        server.join().unwrap();
+        assert!(
+            !root.join("book").exists(),
+            "nothing is placed in the notebook"
+        );
+        assert!(
+            !root.join(".sync-tmp").exists(),
+            "the half download is removed"
+        );
+        for path in [root, records] {
+            std::fs::remove_dir_all(path).unwrap();
+        }
     }
 
     #[test]
@@ -1109,6 +1243,105 @@ mod tests {
         syncer::sync_once(&client, &first, &journal_a, &opts, || Ok(())).unwrap();
         syncer::sync_once(&client, &second, &journal_b, &opts, || Ok(())).unwrap();
         assert_eq!(fs::read(second.join(image)).unwrap(), b"image updated");
+        for path in [first, second, records] {
+            fs::remove_dir_all(path).unwrap();
+        }
+    }
+
+    #[test]
+    fn webdav_live_large_attachment_streams_between_devices() {
+        let Ok(server) = std::env::var("MINIPAD_TEST_WEBDAV_URL") else {
+            return;
+        };
+        use crate::syncer::{self, FirstSync, SyncOptions};
+        use sha2::{Digest, Sha256};
+        use std::fs;
+
+        let client = WebdavClient::new(
+            &server,
+            "tester",
+            "test-password",
+            "/MinipadLargeFiles/",
+            true,
+        )
+        .unwrap();
+        let first = crate::notes::temp_dir("webdav-large-one");
+        let second = crate::notes::temp_dir("webdav-large-two");
+        let records = crate::notes::temp_dir("webdav-large-records");
+        let video = "工作/assets/录像 1.mp4";
+        let size = 48 * 1024 * 1024 + 123;
+        let content = |seed: u32| -> Vec<u8> {
+            (0..size as u32)
+                .map(|i| (i.wrapping_mul(2_654_435_761).wrapping_add(seed) >> 13) as u8)
+                .collect()
+        };
+        let digest = |bytes: &[u8]| format!("{:x}", Sha256::digest(bytes));
+        fs::create_dir_all(first.join("工作/assets")).unwrap();
+        fs::write(first.join(video), content(1)).unwrap();
+        fs::write(
+            first.join("工作/页.md"),
+            "[📎 录像 1.mp4](<assets/录像 1.mp4>)",
+        )
+        .unwrap();
+        let opts = SyncOptions {
+            images: true,
+            first_mode: FirstSync::Merge,
+            conflict_copy: true,
+            confirm_deletes: false,
+            delete_limit: 20,
+            delete_divisor: 3,
+        };
+        let journal_a = records.join("first.json");
+        let journal_b = records.join("second.json");
+        let up = syncer::sync_once(&client, &first, &journal_a, &opts, || Ok(())).unwrap();
+        assert_eq!(up.uploaded, 2);
+        let listed = client.list("工作/assets/").unwrap();
+        let remote = listed.iter().find(|(p, _)| p == video).expect("uploaded");
+        assert_eq!(remote.1.size, Some(size as u64));
+        let down = syncer::sync_once(&client, &second, &journal_b, &opts, || Ok(())).unwrap();
+        assert_eq!(down.downloaded, 2);
+        assert_eq!(
+            digest(&fs::read(second.join(video)).unwrap()),
+            digest(&content(1))
+        );
+        assert!(!second.join(".sync-tmp").exists());
+        // 没改过:两边都不再传
+        for (root, journal) in [(&first, &journal_a), (&second, &journal_b)] {
+            let again = syncer::sync_once(&client, root, journal, &opts, || Ok(())).unwrap();
+            assert_eq!((again.uploaded, again.downloaded), (0, 0));
+        }
+        // 改了:带着 ETag 条件上传,另一边换成新的
+        fs::write(first.join(video), content(2)).unwrap();
+        let up = syncer::sync_once(&client, &first, &journal_a, &opts, || Ok(())).unwrap();
+        assert_eq!(up.uploaded, 1);
+        let down = syncer::sync_once(&client, &second, &journal_b, &opts, || Ok(())).unwrap();
+        assert_eq!(down.downloaded, 1);
+        assert_eq!(
+            digest(&fs::read(second.join(video)).unwrap()),
+            digest(&content(2))
+        );
+        // 两边都改了:本机的传上去,网盘那份留成冲突副本
+        fs::write(first.join(video), content(3)).unwrap();
+        fs::write(second.join(video), content(4)).unwrap();
+        syncer::sync_once(&client, &first, &journal_a, &opts, || Ok(())).unwrap();
+        let both = syncer::sync_once(&client, &second, &journal_b, &opts, || Ok(())).unwrap();
+        assert_eq!(both.conflicts, 1);
+        let copy = fs::read_dir(second.join("工作/assets"))
+            .unwrap()
+            .flatten()
+            .find(|f| f.file_name().to_string_lossy().contains("冲突"))
+            .expect("conflict copy");
+        assert_eq!(digest(&fs::read(copy.path()).unwrap()), digest(&content(3)));
+        let mut buffer = Vec::new();
+        client.get_to(video, None, &mut buffer).unwrap();
+        assert_eq!(digest(&buffer), digest(&content(4)));
+        // 一边删了:另一边移进回收站
+        fs::remove_file(second.join(video)).unwrap();
+        fs::remove_file(copy.path()).unwrap();
+        syncer::sync_once(&client, &second, &journal_b, &opts, || Ok(())).unwrap();
+        syncer::sync_once(&client, &first, &journal_a, &opts, || Ok(())).unwrap();
+        assert!(!first.join(video).exists());
+        assert!(!first.join(".sync-tmp").exists());
         for path in [first, second, records] {
             fs::remove_dir_all(path).unwrap();
         }
