@@ -2483,6 +2483,18 @@ test("share files: the image and file settings are saved, sent to Android and gr
   } finally { await context.close(); }
 });
 
+test("share files: a phone that turned 分享到 Minipad off in 0.5.5 keeps images and files off too", async () => {
+  const { context, page, errors } = await open({ look: { ui: "classic", share_enabled: false }, share: null });
+  try {
+    assert.deepEqual(await page.evaluate(() => window.__share.options.at(-1)),
+      { text: false, images: false, files: false, max_mb: 50, max_count: 20, heic: true, compress: false });
+    await page.click("#open-drawer");
+    await page.click("#open-settings");
+    assert.deepEqual(await Promise.all(["#look-share", "#look-share-images", "#look-share-files"].map((id) => page.locator(id).isChecked())), [false, false, false]);
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
 test("share files: tapping a file link opens it with an installed app, the same way as web links", async () => {
   const { context, page, errors } = await open({ share: null });
   try {

@@ -1753,9 +1753,10 @@ function loadLook() {
     share_stamp: saved.share_stamp !== false,
     share_source: saved.share_source !== false,
     share_after: saved.share_after === "open" ? "open" : "back",
-    // 分享图片和文件(0.5.6):share_enabled 是「接收文字」,另有图片、文件两个开关;下面几项给图片和文件用
-    share_images: saved.share_images !== false,
-    share_files: saved.share_files !== false,
+    // 分享图片和文件(0.5.6):share_enabled 是「接收文字」,另有图片、文件两个开关;下面几项给图片和文件用。
+    // 0.5.5 里关掉了总开关(分享列表里不要 Minipad)的,升级后图片、文件也是关的
+    share_images: typeof saved.share_images === "boolean" ? saved.share_images : saved.share_enabled !== false,
+    share_files: typeof saved.share_files === "boolean" ? saved.share_files : saved.share_enabled !== false,
     share_image_quality: saved.share_image_quality === "compress" ? "compress" : "original",
     share_heic: saved.share_heic !== false,
     share_max_mb: SHARE_MAX_MB.includes(saved.share_max_mb) ? saved.share_max_mb : 50,
