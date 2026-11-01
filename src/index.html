@@ -121,6 +121,11 @@
         <div class="ol-empty muted" hidden>这一页没有标题</div>
       </div>
     </aside>
+    <!-- 反向链接面板(0.5.6,见 js/backlinkpanel.js):链接到这一页的页面和那一行,点一下过去 -->
+    <aside id="backlinks" aria-label="反向链接" hidden>
+      <div class="bl-title">反向链接 <span class="bl-count"></span></div>
+      <div class="bl-list"></div>
+    </aside>
     <div id="read-error" role="alert" hidden></div>
   </main>
 
@@ -493,6 +498,8 @@
             <label class="row"><span>下划线</span><select id="set-local-path-underline"><option value="dashed">虚线</option><option value="solid">实线</option><option value="none">无</option></select></label>
             <label class="row check"><input id="set-local-path-missing" type="checkbox" /> <span>不存在的路径显示灰色</span></label>
             <label class="row check"><input id="set-local-path-confirm" type="checkbox" /> <span>运行可执行文件和脚本前确认</span></label>
+            <label class="row check"><input id="set-attachment-click" type="checkbox" /> <span>附件链接可点击:Ctrl+点击 [📎 文件](assets/…) 用关联的程序打开,右键可以在文件夹中显示、复制路径(只认这个笔记本自己 assets 里的文件)</span></label>
+            <div class="row col"><span>附件链接颜色（留空跟随链接颜色）</span><div id="set-attachment-color" class="swatches"></div></div>
             <label class="row"><span>代码块退出方式</span><select id="set-code-exit">
               <option value="blank3">第三次 Enter 退出（默认）</option>
               <option value="blank2">第二次 Enter 退出</option>
@@ -506,6 +513,19 @@
               <option value="medium">中等(最宽一半多一点)</option>
               <option value="small">小图(最宽 240 像素)</option>
             </select></label>
+            <label class="row check"><input id="set-attachment-drop" type="checkbox" /> <span>拖进来的文件(不是图片的)复制进 assets,页面里写成 [📎 文件名](assets/…)</span></label>
+            <label class="row"><span>单个文件大小上限</span><select id="set-attachment-max">
+              <option value="10">10 MB</option>
+              <option value="25">25 MB</option>
+              <option value="50">50 MB</option>
+              <option value="100">100 MB</option>
+              <option value="200">200 MB</option>
+            </select></label>
+            <label class="row"><span>文件链接显示</span><select id="set-attachment-label">
+              <option value="size">文件名 + 大小</option>
+              <option value="name">只显示文件名</option>
+            </select></label>
+            <label class="row check"><input id="set-attachment-clip" type="checkbox" /> <span>文件链接前加 📎</span></label>
             <label class="row"><span>F5 插入的日期时间</span><input id="set-date-format" type="text" spellcheck="false" autocomplete="off" /></label>
             <div class="row col">
               <span id="set-date-preview" class="muted"></span>
@@ -538,6 +558,13 @@
               <option value="dashed">虚线</option>
               <option value="none">无</option>
             </select></label>
+            <label class="row check"><input id="set-backlinks" type="checkbox" /> <span>反向链接面板:列出链接到当前页面的页面和那一行,点一下过去</span></label>
+            <label class="row"><span>面板放在</span><select id="set-backlinks-place">
+              <option value="right">编辑区右边(窗口太窄时放到下面)</option>
+              <option value="bottom">编辑区下面</option>
+            </select></label>
+            <label class="row check"><input id="set-backlinks-count" type="checkbox" /> <span>面板标题旁显示有几个页面</span></label>
+            <div class="row col"><span>面板里页面名的颜色（留空跟随正文）</span><div id="set-backlinks-color" class="swatches"></div></div>
             <h3>模板和片段</h3>
             <label class="row"><span>模板放在哪个笔记本</span><input id="set-template-book" type="text" spellcheck="false" autocomplete="off" /></label>
             <div class="row"><span class="muted grow">这个笔记本里的每一页就是一个模板。右键 + 按钮或者按 Ctrl+Shift+N 选模板新建页面。名字和内容里可以用 {{日期}} {{时间}} {{星期}} {{日期时间}} {{日期:yyyy年M月d日}} {{标题}} {{笔记本}},{{光标}} 是建好后光标放的地方</span></div>

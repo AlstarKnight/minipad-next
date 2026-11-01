@@ -35,7 +35,11 @@ export function pageNamesChanged() {
   candidates = null;
   version++;
   queueRefresh();
+  for (const fn of namesListeners) fn();
 }
+// 名单变了还要通知谁(电脑上的反向链接面板)
+const namesListeners = [];
+export const onPageNamesChanged = (fn) => void namesListeners.push(fn);
 
 let refreshQueued = false;
 function queueRefresh() {
@@ -123,6 +127,30 @@ function decorate(doc, from = 0, to = doc.content.size) {
     return false;
   });
   return out;
+}
+
+// 反向链接(0.5.6)点了跳过去:这一页(在笔记本 home 里)第 nth 个指向 target({ book, page })的链接,
+// 返回链接名字开头的位置(放光标用),没有就是 null。和上面一样,代码、普通链接里的不算
+export function linkPosition(doc, home, target, nth) {
+  const idx = linkIndex();
+  let seen = -1;
+  let at = null;
+  doc.descendants((node, pos) => {
+    if (at != null || node.type.spec.code) return false;
+    if (!node.isTextblock) return true;
+    node.forEach((child, offset) => {
+      if (at != null || !child.isText || child.marks.some((m) => m.type.spec.code || m.type.name === "link")) return;
+      for (const l of findPageLinks(child.text)) {
+        const r = resolveTarget(idx, l.target, home);
+        if (r.exists && r.book === target.book && r.page === target.page && ++seen === nth) {
+          at = pos + 1 + offset + l.from + 2;
+          return;
+        }
+      }
+    });
+    return false;
+  });
+  return at;
 }
 
 // 文档变了只重算改到的那几段(几万字的页面每打一个字都整篇重算太慢)

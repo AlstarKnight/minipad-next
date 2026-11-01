@@ -28,7 +28,7 @@ export function parseShared({ text = "", title = "" } = {}) {
 
 // 分享来的是纯文字:会被当成 Markdown 格式的字符前面加 \,显示出来还是原来的字。
 // 字母、数字中间的 _ 不会变成斜体,不用加
-const inline = (s) =>
+export const inline = (s) =>
   s.replace(/[\\`*[\]<~]/g, "\\$&").replace(/_/g, (m, i, t) => (/[\p{L}\p{N}]/u.test(t[i - 1] ?? "") && /[\p{L}\p{N}]/u.test(t[i + 1] ?? "") ? m : "\\_"));
 // 行首会变成标题、引用、列表、分隔线、表格的
 const BLOCK_START = /^(?:#{1,6}(?:\s|$)|>|[-+](?:\s|$)|-{2,}|=+\s*$|\|)/;

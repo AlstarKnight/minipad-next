@@ -66,3 +66,17 @@ test("written at the end or the start (under a leading heading), joining a list 
   assert.equal(insertShare("# 只有标题", one, { where: "start", format: "list" }), "# 只有标题\n\n- 记一下\n");
   assert.equal(insertShare("", one, { where: "start" }), "记一下\n");
 });
+
+// 附件链接(0.5.6):电脑上拖进来的文件、手机上分享来的文件
+test("attachment links show the name and the size; Markdown marks are escaped, spaces go inside <>", async () => {
+  const { sizeText, attachmentLabel, attachmentMarkdown, imageMarkdown } = await import("../src/js/attachments.js");
+  assert.deepEqual([0, 800, 1024, 350 * 1024, 1.24 * 1024 * 1024, 50 * 1024 * 1024, 3 * 1024 ** 3].map(sizeText),
+    ["0 B", "800 B", "1 KB", "350 KB", "1.2 MB", "50 MB", "3 GB"]);
+  assert.equal(attachmentLabel("季度报告.pdf", 1.2 * 1024 * 1024), "📎 季度报告.pdf（1.2 MB）");
+  assert.equal(attachmentLabel("季度报告.pdf", 1.2 * 1024 * 1024, { size: false }), "📎 季度报告.pdf");
+  assert.equal(attachmentLabel("季度报告.pdf", 1.2 * 1024 * 1024, { clip: false }), "季度报告.pdf（1.2 MB）");
+  assert.equal(attachmentMarkdown("assets/季度报告.pdf", "季度报告.pdf", 1.2 * 1024 * 1024), "[📎 季度报告.pdf（1.2 MB）](assets/季度报告.pdf)");
+  assert.equal(attachmentMarkdown("assets/季度 报告(1).pdf", "季度 报告(1).pdf", 10, { size: false }), "[📎 季度 报告(1).pdf](<assets/季度 报告(1).pdf>)");
+  assert.equal(attachmentMarkdown("assets/a_[b]*.zip", "a_[b]*.zip", 1, { clip: false, size: false }), "[a\\_\\[b\\]\\*.zip](assets/a_[b]*.zip)");
+  assert.equal(imageMarkdown("assets/img-20261101-130501.jpg"), "![](assets/img-20261101-130501.jpg)");
+});

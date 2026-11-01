@@ -110,3 +110,37 @@ export function retarget(md, home, index, change) {
     return `[[${escapeName(labelOf(book))}/${escapeName(page)}]]`;
   });
 }
+
+// ---------- 反向链接(0.5.6):哪些页面链接到了某一页 ----------
+// pages 是 [{ book, name, content }](电脑上是内存里的全部页面,手机上是后端挑出来的有 [[ 的页面),
+// index 是现在的名单索引(makeIndex),target 是 { book, page }(实际的名字)。
+// 返回 [{ book, name, lines }],lines 是链接所在的那几行 [{ text, link }]:text 去掉了行首的 #、-、>、序号、[ ] 这些,
+// link 是这一行的第一个链接是这一页里指向 target 的第几个(从 0 数,点了跳过去用,见 pagelinkview 的 linkPosition)。
+// 同一页里一样的行只算一次;代码里的不算,这一页自己链自己的不算。顺序和 pages 一样
+export function backlinks(pages, index, target) {
+  const out = [];
+  for (const p of pages) {
+    if (p.book === target.book && p.name === target.page) continue;
+    const md = p.content || "";
+    if (!md.includes("[[") && !md.includes("\\[\\[")) continue;
+    const lines = [];
+    let n = 0;
+    for (const m of md.matchAll(CODE_OR_LINK)) {
+      if (m[2] == null) continue;
+      const r = resolveTarget(index, unescape(m[2]), p.book);
+      if (!r.exists || r.book !== target.book || r.page !== target.page) continue;
+      const text = lineAt(md, m.index);
+      if (!lines.some((l) => l.text === text)) lines.push({ text, link: n });
+      n++;
+    }
+    if (lines.length) out.push({ book: p.book, name: p.name, lines });
+  }
+  return out;
+}
+
+const BLOCK_MARKS = /^\s*(?:(?:#{1,6}|>|[-*+]|\d+[.)])\s+|>)*(?:\[[ xX]\]\s+)?/;
+function lineAt(md, at) {
+  const start = md.lastIndexOf("\n", at - 1) + 1;
+  const end = md.indexOf("\n", at);
+  return unescape(md.slice(start, end < 0 ? md.length : end).replace(BLOCK_MARKS, "").trim());
+}

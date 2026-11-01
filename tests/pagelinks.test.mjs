@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { findPageLinks, parseTarget, makeIndex, resolveTarget, retarget, linkable, fileName } from "../src/js/pagelinks.js";
+import { findPageLinks, parseTarget, makeIndex, resolveTarget, retarget, linkable, fileName, backlinks } from "../src/js/pagelinks.js";
 import { nameScore, pageScore, termsOf } from "../src/js/match.js";
 
 const index = makeIndex([
@@ -100,6 +100,28 @@ test("moving a page to another notebook: links to it follow, its own short links
   // 那边重名换了名字
   assert.equal(retarget("[[开发计划]]", { book: "", page: "周报" }, index, { move: ["", "开发计划", "工作", "开发计划 (2)"] }),
     "[[工作/开发计划 (2)]]");
+});
+
+test("backlinks list the pages and lines linking to a page, not code, other pages or the page itself", () => {
+  const index = makeIndex([{ name: "", pages: ["首页", "目标", "Other"] }, { name: "书", pages: ["目标", "别的"] }]);
+  const pages = [
+    { book: "", name: "首页", content: "# 标题\n\n- [ ] 看 [[目标]] 和 [[书/目标]]\n- [ ] 看 [[目标]] 和 [[书/目标]]\n```\n[[目标]]\n```\n> 引用 [[ 目标 ]]\n`[[目标]]` [[Other]]" },
+    { book: "书", name: "别的", content: "见 [[默认/目标]]\n1. 第二 \\[\\[默认/目标]] 和 [[目标]]" },
+    { book: "", name: "目标", content: "自己 [[目标]]" },
+    { book: "", name: "Other", content: "没有链接" },
+  ];
+  // 每一行:文字,这一行的第一个链接是这页里指向目标的第几个(重复的那行、代码里的不算行,但重复的那行里的链接要数上)
+  assert.deepEqual(backlinks(pages, index, { book: "", page: "目标" }), [
+    { book: "", name: "首页", lines: [{ text: "看 [[目标]] 和 [[书/目标]]", link: 0 }, { text: "引用 [[ 目标 ]]", link: 2 }] },
+    { book: "书", name: "别的", lines: [{ text: "见 [[默认/目标]]", link: 0 }, { text: "第二 [[默认/目标]] 和 [[目标]]", link: 1 }] },
+  ]);
+  // 书/目标:首页里写了笔记本的那个,别的 里的短写法 [[目标]] 也指向它
+  assert.deepEqual(backlinks(pages, index, { book: "书", page: "目标" }).map((x) => [x.name, x.lines]), [
+    ["首页", [{ text: "看 [[目标]] 和 [[书/目标]]", link: 0 }]],
+    ["别的", [{ text: "第二 [[默认/目标]] 和 [[目标]]", link: 0 }]],
+  ]);
+  assert.deepEqual(backlinks(pages, index, { book: "", page: "Other" }), [{ book: "", name: "首页", lines: [{ text: "`[[目标]]` [[Other]]", link: 0 }] }]);
+  assert.deepEqual(backlinks(pages, index, { book: "", page: "首页" }), []);
 });
 
 test("page names match by prefix, substring, pinyin (full, initials, mixed) and in order", () => {

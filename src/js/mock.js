@@ -130,6 +130,16 @@ const DEFAULT_SETTINGS = {
   sel_bar_pos: "above",
   image_paste: true,
   image_size: "full",
+  attachment_drop: true,
+  attachment_max_mb: 50,
+  attachment_label: "size",
+  attachment_clip: true,
+  attachment_click: true,
+  attachment_color: "",
+  backlinks: false,
+  backlinks_place: "right",
+  backlinks_count: true,
+  backlinks_color: "",
   mini_enabled: true,
   mini_on_top: true,
   mini_hotkey: "follow",
@@ -393,6 +403,8 @@ export function mockApi() {
 
   // 开着的小窗 [{ book, name }]
   let minis = [];
+  // 正在传的附件:编号 → 已经传了多少字节
+  const uploads = {};
   const emitMinis = () => window.__mockEmit?.("mini-changed", minis.map((m) => ({ ...m })));
   const cmds = {
     load_state: ({ only } = {}) => {
@@ -482,10 +494,13 @@ export function mockApi() {
       const n = uniqPage(dst, name);
       dst.files[n] = src.files[name];
       delete src.files[name];
-      // 页面用到的图片也复制过去(和后端一样,原来的留着)
-      for (const [, rel] of String(dst.files[n]).matchAll(/\]\(<?(assets\/[^)\s>]+)/g)) {
+      // 页面用到的图片和附件也复制过去(和后端一样,原来的留着)
+      for (const [, angled, plain] of String(dst.files[n]).matchAll(/\]\((?:<(assets\/[^>\n]+)>|(assets\/[^)\s]+))/g)) {
+        const rel = angled || plain;
         const from = db.images?.[book + "\n" + rel];
         if (from && !db.images[target + "\n" + rel]) db.images[target + "\n" + rel] = from;
+        const file = db.attachments?.[book + "\n" + rel];
+        if (file && !db.attachments[target + "\n" + rel]) db.attachments[target + "\n" + rel] = { ...file };
       }
       return n;
     },
@@ -831,6 +846,49 @@ export function mockApi() {
       db.images[book + "\n" + path] = `data:image/${type};base64,${btoa(bin)}`;
       return path;
     },
+    // 附件(0.5.6):拖进来的文件一块一块传,最后一块到了记进 db.attachments(只记名字和大小)
+    save_attachment: (bytes, { headers } = {}) => {
+      const { book, name, id, offset, last } = JSON.parse(decodeURIComponent(headers?.["x-attachment"] || ""));
+      const s = db.settings;
+      if (!s.attachment_drop) throw "拖进来的文件存成附件已经关掉了,可以在 设置 → 编辑 里打开";
+      if (!has(db.books, book)) throw "找不到这个笔记本";
+      const control = window.__mockControl;
+      if (control) (control.attachmentChunks ||= []).push({ name, offset, size: bytes.length, last });
+      uploads[id] = (offset ? uploads[id] || 0 : 0) + bytes.length;
+      if (uploads[id] > (s.attachment_max_mb || 50) * 1024 * 1024) {
+        delete uploads[id];
+        throw `文件太大了(超过 ${s.attachment_max_mb} MB)`;
+      }
+      if (control?.attachmentError) {
+        delete uploads[id];
+        throw control.attachmentError;
+      }
+      if (!last) return "";
+      db.attachments ||= {};
+      const clean = name.replace(/[<>:"/\\|?*]/g, "_");
+      const dot = clean.lastIndexOf(".");
+      const [stem, ext] = dot > 0 ? [clean.slice(0, dot), clean.slice(dot)] : [clean, ""];
+      let rel = `assets/${clean}`;
+      for (let n = 2; db.attachments[book + "\n" + rel.toLowerCase()] || Object.keys(db.attachments).some((k) => k.toLowerCase() === (book + "\n" + rel).toLowerCase()); n++) rel = `assets/${stem}-${n}${ext}`;
+      db.attachments[book + "\n" + rel] = { size: uploads[id] };
+      delete uploads[id];
+      persist();
+      return rel;
+    },
+    discard_attachment: ({ id }) => {
+      delete uploads[id];
+      if (window.__mockControl) (window.__mockControl.attachmentsDiscarded ||= []).push(id);
+    },
+    attachment_path: ({ book, path }) => {
+      let rel = path.replace(/^\.\//, "");
+      if (!db.attachments?.[book + "\n" + rel]) {
+        try { rel = decodeURIComponent(rel); } catch { /* 原样 */ }
+      }
+      if (!/^assets\/[^/]/.test(rel) || rel.split("/").some((p) => p === ".." || p.startsWith(".")) || !db.attachments?.[book + "\n" + rel]) {
+        throw "找不到这个附件,可能已经删掉或者改了名字";
+      }
+      return ["C:\\Users\\me\\Minipad", book, ...rel.split("/")].filter(Boolean).join("\\");
+    },
     mini_flush_all: () => window.__mockControl?.miniFlushErrors ?? [],
     mini_flushed: ({ error }) => {
       if (window.__mockControl) (window.__mockControl.miniFlushed ||= []).push(error);
@@ -840,6 +898,8 @@ export function mockApi() {
   // 方便在浏览器控制台(和界面测试)里模拟"文件在别处被改了":直接改这两个对象,不要整个换掉
   window.__mockBooks = db.books;
   window.__mockImage = (book, path) => db.images?.[book + "\n" + path.replace(/^\.\//, "")] || "";
+  // 附件:"笔记本\nassets/名字" → { size },测试里可以直接放进去
+  window.__mockAttachments = (db.attachments ||= {});
   window.__mockFiles = db.books[""].files;
   // 模拟后端发来的事件(比如贴边隐藏):window.__mockEmit("edge-hidden", "top")
   const listeners = {};
