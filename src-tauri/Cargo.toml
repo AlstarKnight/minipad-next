@@ -24,7 +24,7 @@ quick-xml = "0.42"
 reqwest = { version = "0.13", default-features = false, features = ["blocking", "rustls-no-provider"] }
 # Same rustls as reqwest; tells certificate errors from other TLS failures and provides the ring crypto.
 rustls = { version = "0.23", default-features = false, features = ["std", "ring"] }
-sha2 = "0.10"
+sha2 = "0.11"
 webpki-root-certs = "1.0.9"
 percent-encoding = "2"
 chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
