@@ -352,6 +352,23 @@ pub struct Settings {
     calc_decimals: String,
     /// 结果加千分位逗号
     calc_thousands: bool,
+    /// 0.5.5 改过的应用内快捷键:命令 → 按键(写法同 hotkey),空数组是不用;没改过的不存,用前端的默认值
+    shortcuts: std::collections::BTreeMap<String, Vec<String>>,
+    /// 0.5.5 全屏编辑:只留正文
+    fullscreen_enabled: bool,
+    /// screen 铺满整个屏幕 / window 窗口大小不变
+    fullscreen_mode: String,
+    /// 正文最宽多少逻辑像素,480–2000(2000 是不限)
+    fullscreen_width: u32,
+    /// 全屏时的字号,0 跟随平时的字号,否则 10–40
+    fullscreen_font_size: u32,
+    /// 全屏时留着顶栏(标签和按钮)、格式栏
+    fullscreen_tabs: bool,
+    fullscreen_format_bar: bool,
+    /// 全屏时右上角显示「退出全屏」按钮
+    fullscreen_exit_button: bool,
+    /// 顶栏显示全屏编辑按钮
+    fullscreen_button: bool,
     /// 每页小窗的位置、大小、置顶和不透明度(程序自己记,保存设置时沿用这里的)
     mini_windows: Vec<mini::MiniWin>,
     /// 快速记录小窗的位置和大小(程序自己记,保存设置时沿用这里的)
@@ -514,6 +531,15 @@ impl Default for Settings {
             calc_key: "tab".into(),
             calc_decimals: "auto".into(),
             calc_thousands: false,
+            shortcuts: Default::default(),
+            fullscreen_enabled: true,
+            fullscreen_mode: "screen".into(),
+            fullscreen_width: 860,
+            fullscreen_font_size: 0,
+            fullscreen_tabs: false,
+            fullscreen_format_bar: false,
+            fullscreen_exit_button: true,
+            fullscreen_button: true,
             mini_windows: Vec::new(),
             capture_window: None,
             window: None,
@@ -591,6 +617,8 @@ struct AppState {
     capture_item: Mutex<Option<MenuItem<tauri::Wry>>>,
     /// 设置里正在录新热键,全局热键暂时停用
     hotkey_paused: AtomicBool,
+    /// 全屏编辑(0.5.5)铺满了屏幕:这时窗口的位置和大小不记
+    fullscreen: AtomicBool,
     /// 窗口出来以后用户打过字:只要窗口还有焦点,就不自动缩回去
     typing: AtomicBool,
     /// 最近一次自动备份是哪天(这一天就不用再备份了)
@@ -977,6 +1005,23 @@ fn tidy_snippets(list: &mut Vec<Snippet>) {
     list.truncate(200);
 }
 
+/// 快捷键:命令名最多 40 个字,每个命令最多 4 个按键(每个最多 40 个字,去掉空的和重复的),最多 100 个命令
+fn tidy_shortcuts(map: &mut std::collections::BTreeMap<String, Vec<String>>) {
+    map.retain(|id, keys| {
+        let mut seen = std::collections::HashSet::new();
+        *keys = keys
+            .iter()
+            .map(|k| k.trim().to_string())
+            .filter(|k| !k.is_empty() && k.chars().count() <= 40 && seen.insert(k.to_lowercase()))
+            .take(4)
+            .collect();
+        !id.is_empty() && id.chars().count() <= 40
+    });
+    while map.len() > 100 {
+        map.pop_last();
+    }
+}
+
 /// 启动读取后和保存前整理设置:去掉首尾空格,数字限制在合理范围
 fn tidy_settings(s: &mut Settings) {
     s.hotkey = s.hotkey.trim().to_string();
@@ -1099,6 +1144,12 @@ fn tidy_settings(s: &mut Settings) {
     pick_one(&mut s.capture_position, &["remember", "center", "cursor"]);
     tidy_name(&mut s.template_book, DEFAULT_TEMPLATE_BOOK);
     tidy_snippets(&mut s.snippets);
+    tidy_shortcuts(&mut s.shortcuts);
+    pick_one(&mut s.fullscreen_mode, &["screen", "window"]);
+    s.fullscreen_width = s.fullscreen_width.clamp(480, 2000);
+    if s.fullscreen_font_size != 0 {
+        s.fullscreen_font_size = s.fullscreen_font_size.clamp(10, 40);
+    }
     pick_one(&mut s.snippet_key, &["tab", "space", "off"]);
     pick_one(&mut s.calc_key, &["tab", "equals", "off"]);
     pick_one(
@@ -1803,6 +1854,19 @@ fn save_settings(
     }
     // 先验证并更新全局热键和开机启动，最后才复制目录。
     // 后续失败时回滚系统设置，避免产生“设置未切换、目标已有副本”的半途状态。
+    // 新的全局热键被系统或别的程序占用了:这一个换回原来的,别的设置照常保存(前端看到热键没变会单独提示)
+    if new.hotkey != old.hotkey || capture_of(&new) != capture_of(&old) {
+        state.hotkey_paused.store(false, Ordering::SeqCst);
+        if register_hotkey(&app, &new.hotkey, capture_of(&new)).is_err() {
+            new.hotkey = old.hotkey.clone();
+        }
+        if (capture_of(&new) != capture_of(&old) && state.capture_error.lock().unwrap().is_some())
+            || check_capture_hotkey(&new).is_err()
+        {
+            new.capture_enabled = old.capture_enabled;
+            new.capture_hotkey = old.capture_hotkey.clone();
+        }
+    }
     let hotkey_changed = new.hotkey != old.hotkey;
     let capture_changed = capture_of(&new) != capture_of(&old);
     let retry_hotkey = state.hotkey_error.lock().unwrap().is_some()
@@ -1819,16 +1883,9 @@ fn save_settings(
             let target = if use_new { &new } else { &old };
             let hotkey = &target.hotkey;
             let result = register_hotkey(&app, hotkey, capture_of(target));
-            *state.hotkey_error.lock().unwrap() =
-                result.as_ref().err().map(|e| format!("{hotkey}:{e}"));
-            result.map_err(|e| format!("热键 {hotkey} 无法使用:{e}"))?;
-            // 刚改的快速记录热键注册不上:和呼出热键一样,不保存
-            match state.capture_error.lock().unwrap().clone() {
-                Some(e) if use_new && capture_changed => {
-                    Err(format!("快速记录的热键无法使用({e}),换一个吧"))
-                }
-                _ => Ok(()),
-            }
+            // 注册不上的新热键上面已经换回原来的;原来的也注册不上时记在 hotkey_error 里,不挡着别的设置保存
+            *state.hotkey_error.lock().unwrap() = result.err().map(|e| format!("{hotkey}:{e}"));
+            Ok(())
         },
         |enable| {
             let result = if enable {
@@ -1913,6 +1970,77 @@ fn pause_hotkey(app: AppHandle) {
 #[tauri::command]
 fn resume_hotkey(app: AppHandle) {
     resume_hotkey_if_paused(&app);
+}
+
+/// 设置里录全局热键时先试一下(录的时候全局热键已经停用了):被系统或别的程序占用了就报错
+#[tauri::command]
+fn probe_hotkey(app: AppHandle, combo: String) -> Result<(), String> {
+    let key: Shortcut = combo
+        .parse()
+        .map_err(|e| format!("认不出 {combo}:{e}"))?;
+    let gs = app.global_shortcut();
+    if gs.is_registered(key) {
+        return Ok(());
+    }
+    gs.register(key).map_err(|e| e.to_string())?;
+    let _ = gs.unregister(key);
+    Ok(())
+}
+
+/// 快捷键导出成 JSON 文件,选好位置才写;返回写了没有
+#[tauri::command]
+async fn export_shortcuts(app: AppHandle, text: String) -> Result<bool, String> {
+    let mut dialog = app
+        .dialog()
+        .file()
+        .set_title("导出快捷键")
+        .set_file_name("Minipad Next 快捷键.json")
+        .add_filter("JSON", &["json"]);
+    if let Some(win) = main_window(&app) {
+        dialog = dialog.set_parent(&win);
+    }
+    let Some(path) = dialog.blocking_save_file().and_then(|p| p.into_path().ok()) else {
+        return Ok(false);
+    };
+    fs::write(&path, text).map_err(|e| e.to_string())?;
+    Ok(true)
+}
+
+/// 选一个导出过的快捷键文件,返回里面的文字(最多 256 KB),取消就是空
+#[tauri::command]
+async fn import_shortcuts(app: AppHandle) -> Result<Option<String>, String> {
+    let mut dialog = app
+        .dialog()
+        .file()
+        .set_title("导入快捷键")
+        .add_filter("JSON", &["json"]);
+    if let Some(win) = main_window(&app) {
+        dialog = dialog.set_parent(&win);
+    }
+    let Some(path) = dialog.blocking_pick_file().and_then(|p| p.into_path().ok()) else {
+        return Ok(None);
+    };
+    if fs::metadata(&path).map_err(|e| e.to_string())?.len() > 256 * 1024 {
+        return Err("文件太大了,不像是导出的快捷键".into());
+    }
+    fs::read_to_string(&path)
+        .map(Some)
+        .map_err(|e| e.to_string())
+}
+
+/// 全屏编辑(0.5.5):主窗口铺满整个屏幕,退出时回到原来的位置和大小(全屏时不记位置和大小,贴边隐藏也不动)
+#[tauri::command]
+fn set_fullscreen(app: AppHandle, on: bool) -> Result<(), String> {
+    let win = main_window(&app).ok_or("找不到主窗口")?;
+    let st = app.state::<AppState>();
+    if on {
+        st.fullscreen.store(true, Ordering::SeqCst);
+    }
+    let result = win.set_fullscreen(on).map_err(|e| e.to_string());
+    if !on || result.is_err() {
+        st.fullscreen.store(false, Ordering::SeqCst);
+    }
+    result
 }
 
 /// 前端在用户打字时调用(有节流),用来判断贴边隐藏该不该缩回去
@@ -3432,6 +3560,10 @@ pub fn run() {
             save_settings,
             pause_hotkey,
             resume_hotkey,
+            probe_hotkey,
+            export_shortcuts,
+            import_shortcuts,
+            set_fullscreen,
             note_activity,
             pick_folder,
             minipad2_preview,
@@ -3643,6 +3775,8 @@ pub fn run() {
                     if let (Ok(p), Ok(s)) = (window.outer_position(), window.inner_size()) {
                         if window.is_minimized().unwrap_or(false)
                             || window.is_maximized().unwrap_or(false)
+                            || st.fullscreen.load(Ordering::SeqCst)
+                            || window.is_fullscreen().unwrap_or(false)
                             || s.width == 0
                         {
                             return;
@@ -4319,6 +4453,70 @@ mod tests {
         // 0.3.0 的设置文件里没有这一项,读出来是默认值
         let old: Settings = serde_json::from_str(r#"{"hotkey":"Ctrl+M"}"#).unwrap();
         assert_eq!(old.settings_nav, "left");
+    }
+
+    #[test]
+    fn tidy_settings_keeps_shortcuts_small_and_unique() {
+        let mut s = Settings::default();
+        assert!(s.shortcuts.is_empty());
+        s.shortcuts.insert(
+            "find".into(),
+            vec![
+                " Ctrl+F ".into(),
+                "ctrl+f".into(),
+                "".into(),
+                "Ctrl+G".into(),
+                "Ctrl+1".into(),
+                "Ctrl+2".into(),
+                "Ctrl+3".into(),
+            ],
+        );
+        // 空数组是「不用」,要留着
+        s.shortcuts.insert("save".into(), vec![]);
+        s.shortcuts.insert("x".repeat(41), vec!["F2".into()]);
+        s.shortcuts
+            .insert("replace".into(), vec![format!("Ctrl+{}", "K".repeat(40))]);
+        tidy_settings(&mut s);
+        assert_eq!(s.shortcuts["find"], ["Ctrl+F", "Ctrl+G", "Ctrl+1", "Ctrl+2"]);
+        assert_eq!(s.shortcuts["save"], Vec::<String>::new());
+        assert_eq!(s.shortcuts["replace"], Vec::<String>::new());
+        assert!(!s.shortcuts.contains_key(&"x".repeat(41)));
+        // 最多 100 项
+        for i in 0..120 {
+            s.shortcuts.insert(format!("cmd{i:03}"), vec!["F9".into()]);
+        }
+        tidy_settings(&mut s);
+        assert_eq!(s.shortcuts.len(), 100);
+        // 0.5.4 的设置文件里没有这一项:旧的热键照旧,快捷键都是默认的
+        let old: Settings =
+            serde_json::from_str(r#"{"hotkey":"Ctrl+Q","capture_hotkey":"Ctrl+Alt+Q","quick_switch_key":"Ctrl+E"}"#)
+                .unwrap();
+        assert!(old.shortcuts.is_empty());
+        assert_eq!(
+            (old.hotkey.as_str(), old.capture_hotkey.as_str(), old.quick_switch_key.as_str()),
+            ("Ctrl+Q", "Ctrl+Alt+Q", "Ctrl+E")
+        );
+    }
+
+    #[test]
+    fn tidy_settings_keeps_fullscreen_options_in_range() {
+        let mut s = Settings::default();
+        assert!(s.fullscreen_enabled && s.fullscreen_exit_button && s.fullscreen_button);
+        assert_eq!((s.fullscreen_mode.as_str(), s.fullscreen_width, s.fullscreen_font_size), ("screen", 860, 0));
+        s.fullscreen_mode = "window".into();
+        s.fullscreen_width = 100;
+        s.fullscreen_font_size = 99;
+        tidy_settings(&mut s);
+        assert_eq!((s.fullscreen_mode.as_str(), s.fullscreen_width, s.fullscreen_font_size), ("window", 480, 40));
+        s.fullscreen_mode = "kiosk".into();
+        s.fullscreen_width = 5000;
+        s.fullscreen_font_size = 3;
+        tidy_settings(&mut s);
+        assert_eq!((s.fullscreen_mode.as_str(), s.fullscreen_width, s.fullscreen_font_size), ("screen", 2000, 10));
+        // 0 是跟随正文字号
+        s.fullscreen_font_size = 0;
+        tidy_settings(&mut s);
+        assert_eq!(s.fullscreen_font_size, 0);
     }
 
     #[test]

@@ -578,4 +578,6 @@ html[data-mobile] .more-list .danger, html[data-mobile] .more-list .danger svg {
 
 /* 外观设置的「界面布局」:经典布局用不上的几项灰掉 */
 html[data-mobile] .clean-only-setting.off { opacity: .45; }
+/* 「分享到 Minipad」:总开关关着时、「每次新建一页」时用不上的几项灰掉 */
+html[data-mobile] .share-option.off { opacity: .45; }
 html[data-mobile] #mobile-settings .seg button { white-space: normal; line-height: 1.3; }

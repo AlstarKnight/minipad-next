@@ -846,7 +846,7 @@ html[data-find-pos="bottom"] #status { order: 2; }
 .form .row.col { flex-direction: column; align-items: stretch; gap: 5px; }
 .form .row.col > span { color: var(--muted); font-size: 12px; }
 .form .check > span { min-width: 0; }
-.form input[type="text"], .form input[type="number"], .form select {
+.form input[type="text"], .form input[type="search"], .form input[type="number"], .form select {
   flex: 1;
   min-width: 0;
   padding: 5px 8px;
@@ -858,8 +858,26 @@ html[data-find-pos="bottom"] #status { order: 2; }
   outline: none;
 }
 .form input:focus, .form select:focus { border-color: var(--accent); }
-#set-hotkey { cursor: pointer; text-align: center; font-family: var(--mono); }
-#set-hotkey.recording, #set-quick-key.recording, #set-capture-key.recording { border-color: var(--accent); background: var(--accent-soft); }
+/* 设置 → 快捷键(0.5.5,见 js/keytable.js):每行是名字、按键、恢复默认;点按键录新的 */
+#set-keys h3:first-child { margin-top: 4px; }
+.key-row { display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: 13px; border-bottom: 1px solid var(--code-border); }
+.key-name { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.key-keys { display: inline-flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; min-width: 96px; padding: 3px 6px; border: 1px solid transparent; border-radius: 6px; }
+button.key-keys { border-color: var(--bar-border); }
+button.key-keys:hover { border-color: var(--accent); }
+.key-keys.recording { border-color: var(--accent); background: var(--accent-soft); font-size: 12px; }
+.key-keys kbd { font-family: var(--mono); font-size: 11.5px; padding: 1px 6px; border-radius: 4px; background: var(--code-bg); border: 1px solid var(--code-border); white-space: nowrap; }
+.key-reset { font-size: 12px; color: var(--accent); padding: 0 2px; white-space: nowrap; }
+.key-none { padding: 10px 0; font-size: 12.5px; }
+#set-keys-msg { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 4px 0 6px; padding: 6px 8px; border-radius: 6px; font-size: 12.5px; background: var(--accent-soft); }
+#set-keys-msg[hidden] { display: none; }
+#set-keys-msg.warn { background: color-mix(in srgb, #e5a50a 16%, transparent); }
+#set-keys-msg.error { background: color-mix(in srgb, var(--danger) 14%, transparent); color: var(--danger); }
+#set-keys-msg button { padding: 2px 10px; border-radius: 6px; border: 1px solid var(--bar-border); font-size: 12px; color: var(--text); }
+.keys-foot { flex-wrap: wrap; }
+#set-keys-preview { margin: 6px 0; padding: 8px 10px; border: 1px solid var(--code-border); border-radius: 8px; font-size: 12.5px; }
+#set-keys-changes { margin: 6px 0; padding-left: 18px; max-height: 160px; overflow: auto; }
+.fs-option.off { opacity: 0.5; }
 .form .link { color: var(--accent); padding: 0; font-size: 12.5px; }
 .form .error { color: var(--danger); font-size: 12.5px; margin: 8px 0 0; }
 .form .inline { display: flex; gap: 6px; }
@@ -2092,3 +2110,20 @@ html[data-side="rail"] .side-list { align-items: center; gap: 6px; padding: 10px
 .snippet-row .snippet-text:focus { border-color: var(--accent); }
 .snippet-row .snippet-del { flex-shrink: 0; width: 26px; height: 28px; padding: 0; border: none; border-radius: 6px; background: transparent; color: var(--muted); font-size: 16px; line-height: 1; }
 .snippet-row .snippet-del:hover { background: var(--accent-soft); color: var(--text); }
+
+/* ---------- 全屏编辑(0.5.5,见 js/fullscreen.js):只留正文,居中限宽 ---------- */
+html[data-fullscreen] body { border: none; }
+html[data-fullscreen] #side, html[data-fullscreen] #status { display: none !important; }
+html[data-fullscreen]:not([data-fs-tabs]) #bar { display: none; }
+html[data-fullscreen]:not([data-fs-format]) #format-bar { display: none; }
+html[data-fullscreen] #editor { font-size: var(--fs-font-size, 1em); }
+html[data-fullscreen] #editor .ProseMirror { width: 100%; max-width: var(--fs-width, 860px); margin: 0 auto; padding-top: 40px; padding-bottom: 30vh; }
+#fs-exit {
+  position: fixed; top: 10px; right: 14px; z-index: 30;
+  display: flex; align-items: center; gap: 5px; padding: 5px 10px;
+  border-radius: 999px; border: 1px solid var(--bar-border); background: var(--panel);
+  color: var(--muted); font-size: 12px; opacity: 0.3; transition: opacity .15s;
+}
+#fs-exit:hover, #fs-exit:focus-visible { opacity: 1; color: var(--text); }
+#fs-exit[hidden] { display: none; }
+html[data-fs-tabs] #fs-exit { top: 44px; }

@@ -446,7 +446,7 @@ function selectCodeBlock(state, dispatch) {
   return true;
 }
 
-// Ctrl+B:选中了文字就加粗;没选中时留给窗口(打开笔记本列表)
+// Ctrl+B:选中了文字就加粗;没选中时留给窗口(设成 Ctrl+B 的命令,默认是打开笔记本列表)
 let emptyBold = () => {};
 
 const keys = $prose(
@@ -477,8 +477,9 @@ const keys = $prose(
           else if (e.key === "Backspace" && !mod && !e.altKey && !e.shiftKey) run = (state, dispatch) =>
             undoCodeRule(state, dispatch) || removeEmptyFirstCode(state, dispatch);
           else if (mod && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "b" && v.state.selection.empty) {
+            // 返回 false:Ctrl+B 没设成窗口的命令,照常交给 Milkdown(接着打的字是粗体)
+            if (emptyBold(e) === false) return false;
             e.preventDefault();
-            emptyBold();
             return true;
           }
           if (!run || !run(v.state, v.dispatch)) return false;

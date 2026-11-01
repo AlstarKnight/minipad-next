@@ -34,8 +34,20 @@ async function chooseNote(page, name) {
 // They were also written for the 0.5.2 layout, so a look without a layout gets layout "classic" (0.5.4);
 // look: null is a fresh install (the clean layout).
 // sharedColors: the color library file already in the notes folder (synced from the desktop).
-async function open({ colorScheme, keyboard, look = { ui: "classic" }, sharedColors = null } = {}) {
+// share (0.5.5): gives the page the Android MinipadShare bridge; an object is a share the app was opened with.
+async function open({ colorScheme, keyboard, look = { ui: "classic" }, sharedColors = null, share = undefined } = {}) {
   const context = await browser.newContext({ viewport: { width: 390, height: 740 }, colorScheme });
+  if (share !== undefined) {
+    await context.addInitScript((first) => {
+      const queue = first ? [JSON.stringify(first)] : [];
+      window.__share = { queue, done: [], enabled: [] };
+      window.MinipadShare = {
+        take: () => queue.shift() ?? null,
+        done: (message, back) => window.__share.done.push({ message, back }),
+        setEnabled: (on) => window.__share.enabled.push(on),
+      };
+    }, share);
+  }
   if (sharedColors) await context.addInitScript((c) => { window.__sharedColors = c; }, sharedColors);
   if (look && !look.layout) look = { layout: "classic", ...look };
   if (look) await context.addInitScript((v) => { if (!localStorage.getItem("minipad-mobile-look")) localStorage.setItem("minipad-mobile-look", v); }, JSON.stringify(look));
@@ -2183,6 +2195,125 @@ test("long pages on the phone only lay out what is on screen, and the appearance
     await page.click("#close-settings");
     assert.equal(await mode(), null);
     assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem("minipad-mobile-look")).long_page_lazy), false);
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+// ---- 分享到 Minipad(0.5.5) ----
+const STAMP = String.raw`\d{1,2}:\d\d \d{4}/\d{1,2}/\d{1,2}`;
+const note = (page, name, book = "") => page.evaluate(([b, n]) => window.__mobileTest.disk.find((x) => x.name === b)?.notes.find((x) => x.name === n)?.content ?? null, [book, name]);
+const shareDone = (page, count) => page.waitForFunction((n) => window.__share.done.length >= n, count);
+const shareAgain = (page, shared) => page.evaluate((s) => { window.__share.queue.push(JSON.stringify(s)); window.__minipadShared(); }, shared);
+
+test("share: a link shared while closed and text shared while open both go to 收集箱, then back to the other app", async () => {
+  const { context, page, errors } = await open({ share: { text: "https://example.com/a", title: "Example" } });
+  try {
+    await shareDone(page, 1);
+    assert.match(await note(page, "收集箱"), new RegExp(`^${STAMP} \\[Example\\]\\(https://example\\.com/a\\)\n$`));
+    assert.deepEqual(await page.evaluate(() => window.__share.done), [{ message: "已记到「收集箱」", back: true }]);
+    // 总开关开着:告诉安卓那边分享入口开着
+    assert.deepEqual(await page.evaluate(() => window.__share.enabled), [true]);
+    // 屏幕上还是原来那一页
+    assert.equal(await page.locator("#editor .ProseMirror h1").textContent(), "标题");
+    await shareAgain(page, { text: "第二条\n还有一行" });
+    await shareDone(page, 2);
+    assert.match(await note(page, "收集箱"), new RegExp(`^${STAMP} \\[Example\\]\\(https://example\\.com/a\\)\n\n${STAMP} 第二条\n还有一行\n$`));
+    // 两次都是照着读到的内容写的,没有冲突副本
+    assert.equal(await page.evaluate(() => window.__mobileTest.disk[0].notes.some((n) => /冲突/.test(n.name))), false);
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test("share: into the open page with unsaved typing, at the start under the heading as a to-do, then shown in Minipad", async () => {
+  const look = { ui: "classic", share_page: "一", share_where: "start", share_format: "task", share_after: "open" };
+  const { context, page, errors } = await open({ look, share: null });
+  try {
+    await page.locator("#editor .ProseMirror p").click();
+    await page.keyboard.press("End");
+    await page.keyboard.type("加一句");
+    await shareAgain(page, { text: "记一下" });
+    await page.waitForFunction(() => /记一下/.test(document.querySelector("#editor .ProseMirror").textContent));
+    assert.match(await note(page, "一"), new RegExp(`^# 标题\n\n- \\[ \\] ${STAMP} 记一下\n\n第一段加一句\n$`));
+    // 留在 Minipad:用页面里的提示,不叫安卓那边回去
+    assert.deepEqual(await page.evaluate(() => window.__share.done), []);
+    assert.equal(await page.locator("#editor .ProseMirror li[data-item-type=task], #editor .ProseMirror li[data-checked]").count(), 1);
+    assert.equal(await page.evaluate(() => window.__mobileTest.disk[0].notes.some((n) => /冲突/.test(n.name))), false);
+    // 接着打字照常保存
+    await page.locator("#editor .ProseMirror p").last().click();
+    await page.keyboard.press("End");
+    await page.keyboard.type("!");
+    await page.waitForFunction(() => /第一段加一句!/.test(window.__mobileTest.disk[0].notes[0].content));
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test("share: a new page each time as list items, the text as it was; empty shares write nothing", async () => {
+  const look = { ui: "classic", share_target: "new", share_format: "list", share_stamp: false, share_source: false };
+  const { context, page, errors } = await open({ look, share: { text: "原样 https://x.y", title: "不要的标题" } });
+  try {
+    await shareDone(page, 1);
+    const names = () => page.evaluate(() => window.__mobileTest.disk[0].notes.map((n) => n.name));
+    const made = (await names()).filter((n) => /^分享 /.test(n));
+    assert.equal(made.length, 1);
+    assert.match(made[0], /^分享 \d{4}-\d\d-\d\d \d\d\.\d\d$/);
+    assert.equal(await note(page, made[0]), "- 原样 https://x.y\n");
+    assert.deepEqual(await page.evaluate(() => window.__share.done[0]), { message: `已记到「${made[0]}」`, back: true });
+    await shareAgain(page, { text: "  \n ", title: "" });
+    await shareDone(page, 2);
+    assert.deepEqual(await page.evaluate(() => window.__share.done[1]), { message: "分享的内容是空的,没有记下来", back: false });
+    assert.equal((await names()).filter((n) => /^分享 /.test(n)).length, 1);
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test("share: the 分享到 Minipad settings are saved, greyed out when unused, and the switch turns the share target off", async () => {
+  const { context, page, errors } = await open({ share: null });
+  try {
+    await page.evaluate(() => window.__mobileTest.disk.push({ name: "工作", notes: [{ name: "待办", content: "", unreadable: false }] }));
+    await page.click("#refresh");
+    await page.click("#open-drawer");
+    await page.click("#open-settings");
+    const pressed = (box) => page.locator(`#${box} [aria-pressed=true]`).textContent();
+    assert.equal(await page.locator("#look-share").isChecked(), true);
+    assert.equal(await pressed("look-share-target"), "追加到一个页面");
+    assert.equal(await page.locator("#look-share-book").inputValue(), "");
+    assert.deepEqual(await page.locator("#look-share-book option").allTextContents(), ["默认笔记本", "工作"]);
+    assert.equal(await page.locator("#look-share-page").inputValue(), "收集箱");
+    assert.equal(await pressed("look-share-where"), "末尾");
+    assert.equal(await pressed("look-share-format"), "段落");
+    assert.equal(await page.locator("#look-share-stamp").isChecked(), true);
+    assert.equal(await page.locator("#look-share-source").isChecked(), true);
+    assert.equal(await pressed("look-share-after"), "提示一下,回到原来的 App");
+    // 换一个笔记本:页面的候选跟着换
+    await page.selectOption("#look-share-book", "工作");
+    assert.deepEqual(await page.locator("#look-share-pages option").evaluateAll((o) => o.map((x) => x.value)), ["待办"]);
+    await page.fill("#look-share-page", "待办");
+    await page.locator("#look-share-page").dispatchEvent("change");
+    await page.click("#look-share-format [data-share-format=task]");
+    await page.click("#look-share-after [data-share-after=open]");
+    await page.locator("#look-share-stamp").uncheck();
+    // 每次新建一页:页面和加在哪里用不上
+    await page.click("#look-share-target [data-share-target=new]");
+    assert.equal(await page.locator("#look-share-page").isDisabled(), true);
+    assert.equal(await page.locator(".share-page-only.off").count(), 2);
+    assert.equal(await page.locator("#look-share-format button").first().isDisabled(), false);
+    const saved = await page.evaluate(() => JSON.parse(localStorage.getItem("minipad-mobile-look")));
+    assert.deepEqual(
+      [saved.share_book, saved.share_page, saved.share_format, saved.share_after, saved.share_stamp, saved.share_target],
+      ["工作", "待办", "task", "open", false, "new"]);
+    // 关掉总开关:下面都灰掉,安卓那边停用分享入口;关着时送来的分享不写
+    await page.locator("#look-share").uncheck();
+    assert.equal(await page.locator(".share-option:not(.off)").count(), 0);
+    assert.equal(await page.evaluate(() => window.__share.enabled.at(-1)), false);
+    // 设的是留在 Minipad:提示在页面里
+    await shareAgain(page, { text: "关着" });
+    await page.waitForFunction(() => /分享到 Minipad 已关闭/.test(document.querySelector("#toast").textContent));
+    assert.deepEqual(await page.evaluate(() => window.__share.done), []);
+    assert.equal(await page.evaluate(() => JSON.stringify(window.__mobileTest.disk).includes("关着")), false);
+    // 重新打开还是这些设置
+    await page.reload();
+    await page.locator("#editor .ProseMirror h1").waitFor();
+    assert.equal(await page.evaluate(() => window.__share.enabled.at(-1)), false);
     assert.deepEqual(errors, []);
   } finally { await context.close(); }
 });

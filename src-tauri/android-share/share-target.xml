@@ -1,0 +1,12 @@
+        <!-- 分享到 Minipad(0.5.5):别的 App 分享文字时列出 Minipad,交给 MainActivity。
+             设置里关掉「分享」时 MainActivity 停用这个别名,分享列表里就没有 Minipad 了 -->
+        <activity-alias
+            android:name=".ShareTarget"
+            android:targetActivity=".MainActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+        </activity-alias>

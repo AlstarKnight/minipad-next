@@ -29,13 +29,20 @@ import { bindPageLinks } from "./pagelinkapp.js";
 import { setExpandHost } from "./expand.js";
 import { bindTemplates, openTemplateMenuAtButton } from "./templates.js";
 import { bindCapture } from "./capture.js";
+import { commandOf } from "./shortcuts.js";
+import { bindFullscreen, inFullscreen, setFullscreen } from "./fullscreen.js";
 
 // ---------- 启动 ----------
 async function init() {
   setLinkPrompt(() => askText("链接地址", "https://"));
   setTaskCommand(toggleTask);
   await createEditor({
-    onChange: markDirty, openLink, emptyBold: () => isMiniWindow || toggleBooks(),
+    // 编辑区里没选中文字时按 Ctrl+B:设成 Ctrl+B 的命令(默认是笔记本列表);没有就照常(接着打的字是粗体)
+    onChange: markDirty, openLink, emptyBold: (e) => {
+      const cmd = commandOf(e, state.settings);
+      if (cmd) runCommand(cmd, e);
+      return !!cmd;
+    },
     openLocalPath: (path) => void openLocalPath(path),
     localPathMenu: (path, x, y) => openMenu([
       { id: "open", label: "打开", act: () => void openLocalPath(path) },
@@ -234,6 +241,60 @@ async function hideWindow() {
   }
 }
 
+// ---------- 快捷键对应的命令(按键在 设置 → 快捷键 里改,见 shortcuts.js) ----------
+const fontStep = (d) => {
+  const fs = Math.min(28, Math.max(10, (state.settings.font_size || 14) + d));
+  saveSettings({ ...state.settings, font_size: fs }).catch(() => {});
+};
+// 在编辑区打字时用的命令:弹层、对话框开着或者焦点在输入框里时什么也不做
+const typing = (e) => !anyOverlay() && !e.target.closest?.("input, textarea, select") && current();
+const COMMAND_RUN = {
+  books: () => toggleBooks(),
+  new_page: () => newNote(),
+  new_from_template: () => openTemplateMenuAtButton(),
+  // Ctrl+F 在当前页面里查找还是搜索全部页面,设置里选(见 shortcuts.js 的默认键)
+  find: () => openFind(),
+  search: () => openSearch(),
+  replace: () => openFind({ replace: true }),
+  // 在当前页面里找下一个 / 上一个(查找栏没开时先打开)
+  find_next: () => !anyOverlay() && current() && findAgain(1),
+  find_prev: () => !anyOverlay() && current() && findAgain(-1),
+  next_page: () => stepPage(1),
+  prev_page: () => stepPage(-1),
+  ...Object.fromEntries([1, 2, 3, 4, 5, 6, 7, 8].map((n) => [`page_${n}`, () => switchTo(n - 1)])),
+  last_page: () => switchTo(book().notes.length - 1),
+  delete_page: () => deleteNote(current()),
+  save: () => void flushAll().catch(() => {}),
+  // 和记事本一样在光标处插入当前的日期时间
+  insert_date: (e) => typing(e) && insertText(formatDate(new Date(), state.settings?.date_format)),
+  font_bigger: () => fontStep(1),
+  font_smaller: () => fontStep(-1),
+  fullscreen: () => setFullscreen(!inFullscreen()),
+};
+// 小窗里只有这一页:换页、新建、删除、笔记本列表、全屏这些都不用(按了也什么都不做);搜索全部页面换成在这一页里找
+const MINI_RUN = {
+  find: COMMAND_RUN.find, search: COMMAND_RUN.find, replace: COMMAND_RUN.replace, find_next: COMMAND_RUN.find_next,
+  find_prev: COMMAND_RUN.find_prev, save: COMMAND_RUN.save, insert_date: COMMAND_RUN.insert_date,
+  font_bigger: COMMAND_RUN.font_bigger, font_smaller: COMMAND_RUN.font_smaller,
+};
+function runCommand(cmd, e) {
+  if (isMiniWindow) return void MINI_RUN[cmd]?.(e);
+  COMMAND_RUN[cmd]?.(e);
+  // 用了别的快捷键就收起笔记本列表
+  if (cmd !== "books") closeBooks();
+}
+// Ctrl+Tab / Ctrl+Shift+Tab:跳过在小窗里编辑的页面
+function stepPage(d) {
+  const b = book();
+  const len = b.notes.length;
+  let i = b.active;
+  for (let step = 0; step < len; step++) {
+    i = (i + d + len) % len;
+    if (!b.notes[i].mini) break;
+  }
+  switchTo(i);
+}
+
 function bindUi() {
   $("#btn-book").addEventListener("click", () => toggleBooks());
   $("#btn-new").addEventListener("click", newNote);
@@ -294,6 +355,7 @@ function bindUi() {
   bindTabBar();
   bindGroups();
   bindTemplates();
+  bindFullscreen();
   // 保存时发现这一页在别处也改过:那边的版本已经另存成冲突副本,放到这一页后面
   document.addEventListener("conflict-copy", (e) => addConflictCopy(e.detail));
   // 格式栏上的查找按钮
@@ -325,27 +387,12 @@ function bindUi() {
   document.addEventListener("keydown", (e) => {
     // 输入法正在拼字时按的回车、Esc 是给输入法的
     if (e.isComposing || e.keyCode === 229) return;
+    // 编辑器自己处理过的按键(Ctrl+Z、选中文字时的 Ctrl+B 加粗……)不再算窗口的
+    const cmd = e.defaultPrevented ? null : commandOf(e, state.settings);
     const ctrl = e.ctrlKey || e.metaKey;
     const k = e.key.toLowerCase();
-    // F5 和记事本一样在光标处插入当前的日期时间;弹层、对话框开着或者在输入框里时什么也不做(也不刷新页面)
-    if (e.key === "F5") {
-      e.preventDefault();
-      if (!ctrl && !e.altKey && !anyOverlay() && !e.target.closest?.("input, textarea, select") && current()) {
-        insertText(formatDate(new Date(), state.settings?.date_format));
-      }
-      return;
-    }
-    // F3 / Shift+F3:在当前页面里找下一个 / 上一个(查找栏没开时先打开)
-    if (e.key === "F3") {
-      e.preventDefault();
-      if (!ctrl && !e.altKey && !anyOverlay() && current()) findAgain(e.shiftKey ? -1 : 1);
-      return;
-    }
-    // 正式版里屏蔽浏览器自带的刷新和打印,免得误按
-    if (!state.debug && ctrl && (k === "r" || k === "p")) {
-      e.preventDefault();
-      return;
-    }
+    // 浏览器自带的刷新(F5)、F3,正式版里还有 Ctrl+R 刷新、Ctrl+P 打印:没设成别的命令时也拦下来,免得误按
+    if (e.key === "F5" || e.key === "F3" || (!state.debug && ctrl && (k === "r" || k === "p"))) e.preventDefault();
     if (dialogOpen()) {
       if (e.key === "Escape" || e.key === "Enter") {
         e.preventDefault();
@@ -356,62 +403,20 @@ function bindUi() {
     }
     if (e.key === "Escape") {
       e.preventDefault();
-      // 一次关一层:先关右键菜单,再关弹层,然后是查找栏,都没有才隐藏窗口
+      // 一次关一层:先关右键菜单,再关弹层,然后是查找栏、全屏编辑,都没有才隐藏窗口
       if (!$("#ctx").hidden) closeMenu();
       else if (!closeImport() && !closeTrash() && !closeOverlays() && !closeFind()) {
         // 快速记录的小窗按 Esc 存好就收起;别的小窗不管
-        if (!isMiniWindow) hideWindow();
-        else if (capturing()) void closeMini(false);
+        if (isMiniWindow) {
+          if (capturing()) void closeMini(false);
+        } else if (inFullscreen()) setFullscreen(false);
+        else hideWindow();
       }
       return;
     }
-    // 编辑器自己处理过的快捷键(Ctrl+Z、Ctrl+B 加粗……)不再算窗口的
-    if (!ctrl || e.defaultPrevented) return;
-    // 小窗里只有这一页:换页、新建、删除、笔记本列表、搜索全部页面都不用
-    if (isMiniWindow) {
-      if (k === "f" || k === "h") (e.preventDefault(), openFind({ replace: k === "h" }));
-      else if (k === "s") (e.preventDefault(), void flushAll().catch(() => {}));
-      else if (k === "=" || k === "+" || k === "-") {
-        e.preventDefault();
-        const fs = Math.min(28, Math.max(10, (state.settings.font_size || 14) + (k === "-" ? -1 : 1)));
-        saveSettings({ ...state.settings, font_size: fs }).catch(() => {});
-      } else if (["b", "t", "n", "w", "tab", "1", "2", "3", "4", "5", "6", "7", "8", "9"].includes(k)) e.preventDefault();
-      return;
-    }
-    if (k === "b") (e.preventDefault(), toggleBooks());
-    // Ctrl+Shift+N:选模板新建页面
-    else if (k === "n" && e.shiftKey) (e.preventDefault(), openTemplateMenuAtButton());
-    else if (k === "t" || k === "n") (e.preventDefault(), newNote());
-    else if (k === "f") {
-      // Ctrl+F 在当前页面里查找还是搜索全部页面,设置里选;Ctrl+Shift+F 是另一个
-      e.preventDefault();
-      if ((state.settings?.ctrl_f !== "all") !== e.shiftKey) openFind();
-      else openSearch();
-    } else if (k === "h") (e.preventDefault(), openFind({ replace: true }));
-    else if (k === "s") (e.preventDefault(), void flushAll().catch(() => {}));
-    else if (k === "w") (e.preventDefault(), deleteNote(current()));
-    else if (e.key === "Tab") {
-      e.preventDefault();
-      const b = book();
-      const len = b.notes.length;
-      // 跳过在小窗里编辑的页面
-      let i = b.active;
-      for (let step = 0; step < len; step++) {
-        i = (i + (e.shiftKey ? -1 : 1) + len) % len;
-        if (!b.notes[i].mini) break;
-      }
-      switchTo(i);
-    } else if (/^[1-9]$/.test(e.key)) {
-      e.preventDefault();
-      const i = Number(e.key) - 1;
-      switchTo(e.key === "9" ? book().notes.length - 1 : i);
-    } else if (k === "=" || k === "+" || k === "-") {
-      e.preventDefault();
-      const fs = Math.min(28, Math.max(10, (state.settings.font_size || 14) + (k === "-" ? -1 : 1)));
-      saveSettings({ ...state.settings, font_size: fs }).catch(() => {});
-    }
-    // 用了别的快捷键就收起笔记本列表
-    if (k !== "b" && e.defaultPrevented) closeBooks();
+    if (!cmd) return;
+    e.preventDefault();
+    runCommand(cmd, e);
   });
 
   window.addEventListener("blur", () => {

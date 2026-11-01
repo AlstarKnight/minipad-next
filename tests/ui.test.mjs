@@ -118,6 +118,13 @@ function syncUntil(h, get, expected, message) {
 
 // 设置里换到某一类(设置分了类,只显示选中的那一类)
 const settingsPage = (p, name) => p.click(`#set-nav [data-page="${name}"]`);
+// 设置 → 快捷键 里一个命令那一行:点按键录新的,keys 是显示的按键
+const keyRow = (p, id) => p.locator(`#set-keys .key-row[data-cmd="${id}"]`);
+const rowKeys = (p, id) => keyRow(p, id).locator(".key-keys kbd").allTextContents();
+async function recordKey(p, id, combo) {
+  await keyRow(p, id).locator(".key-keys").click();
+  await p.keyboard.press(combo);
+}
 // 展开的颜色库里某一分区（quick / solid / gradient）的颜色，按显示顺序
 const sectionColors = (library, kind) => library.locator(".uc-presets").evaluate((el, section) => {
   let active = "";
@@ -376,9 +383,9 @@ describe("0.2.0 checks", () => {
     const { p } = h;
     await p.click("#btn-settings");
     assert.ok((await p.textContent("#set-version")).includes("Minipad Next"), "version shown in settings");
-    await p.click("#set-hotkey");
-    await p.keyboard.press("Control+Shift+KeyK");
-    assert.equal(await p.inputValue("#set-hotkey"), "Ctrl+Shift+K", "hotkey recorded");
+    await settingsPage(p, "keys");
+    await recordKey(p, "hotkey", "Control+Shift+KeyK");
+    assert.deepEqual(await rowKeys(p, "hotkey"), ["Ctrl+Shift+K"], "hotkey recorded");
     await p.click("#set-save");
     await until(() => p.isHidden("#settings"), true, "settings saved and closed");
     await until(async () => (await h.stored())?.settings?.hotkey, "Ctrl+Shift+K", "hotkey persisted");
@@ -575,7 +582,7 @@ describe("notebook manager and window movement", () => {
     });
     await until(() => p.evaluate(() => window.__mockControl.dragStarted), 1, "Alt-click triggers native drag");
     await p.click("#btn-settings");
-    await p.$eval("#set-hotkey", (el) => {
+    await p.$eval("#set-autostart", (el) => {
       el.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, altKey: true, button: 0 }));
     });
     assert.equal(await p.evaluate(() => window.__mockControl.dragStarted), 1, "modal controls do not trigger drag");
@@ -4728,12 +4735,12 @@ describe("0.3.2: settings in five categories", () => {
     await p.click("#btn-settings");
     assert.deepEqual(
       await p.$$eval("#set-nav [role=tab]", (els) => els.map((e) => e.textContent.trim())),
-      ["常规", "外观", "窗口", "编辑", "数据"],
+      ["常规", "快捷键", "外观", "窗口", "编辑", "数据"],
     );
     assert.deepEqual(await shown(p), ["general"], "常规 comes first");
     assert.deepEqual(await p.$$eval('#set-nav [aria-selected="true"]', (els) => els.map((e) => e.dataset.page)), ["general"]);
     assert.equal(await focused(p), "general", "the focus is on the category");
-    assert.ok(await p.isVisible("#set-hotkey"));
+    assert.ok(await p.isVisible("#set-autostart"));
     assert.ok(await p.isHidden("#set-theme"), "other categories are hidden");
 
     await settingsPage(p, "edit");
@@ -4741,7 +4748,7 @@ describe("0.3.2: settings in five categories", () => {
     assert.ok(await p.isVisible("#set-ctrl-f"), "编辑 holds the editor, outline and find settings");
     assert.ok(await p.isVisible("#set-outline"));
     assert.ok(await p.isVisible("#set-code-lines"));
-    assert.ok(await p.isHidden("#set-hotkey"));
+    assert.ok(await p.isHidden("#set-autostart"));
     assert.deepEqual(
       await p.$$eval('.set-page[data-page="edit"] h3', (els) => els.map((e) => e.textContent)),
       ["编辑器", "链接", "页面链接", "模板和片段", "行内计算", "块管理", "悬浮工具栏", "悬浮目录", "查找替换"],
@@ -5714,11 +5721,11 @@ describe("0.3.10: trash, backup notes, import staging, quick switch, pinned tabs
   ui("quick switch: the shortcut can be changed or turned off, and it can look only in the current notebook", { seed: seed({ "": { 首页: "hello", 周记: "a" }, 工作: { 周报: "本周" } }) }, async (h) => {
     const { p } = h;
     await p.click("#btn-settings");
-    assert.equal(await p.inputValue("#set-quick-key"), "Ctrl+P");
+    await settingsPage(p, "keys");
+    assert.deepEqual(await rowKeys(p, "quick_switch"), ["Ctrl+P"]);
+    await recordKey(p, "quick_switch", "Control+Shift+KeyO");
+    assert.deepEqual(await rowKeys(p, "quick_switch"), ["Ctrl+Shift+O"]);
     await settingsPage(p, "general");
-    await p.click("#set-quick-key");
-    await p.keyboard.press("Control+Shift+KeyO");
-    assert.equal(await p.inputValue("#set-quick-key"), "Ctrl+Shift+O");
     await p.selectOption("#set-quick-scope", "book");
     await p.click("#set-save");
     await until(() => p.isHidden("#settings"), true);
@@ -5733,10 +5740,10 @@ describe("0.3.10: trash, backup notes, import staging, quick switch, pinned tabs
     await p.keyboard.press("Escape");
     // 清空就不用快捷键
     await p.click("#btn-settings");
-    await settingsPage(p, "general");
-    await p.click("#set-quick-key");
-    await p.keyboard.press("Backspace");
-    assert.equal(await p.inputValue("#set-quick-key"), "");
+    await settingsPage(p, "keys");
+    await recordKey(p, "quick_switch", "Backspace");
+    assert.deepEqual(await rowKeys(p, "quick_switch"), []);
+    assert.equal(await keyRow(p, "quick_switch").locator(".key-keys").textContent(), "不用");
     await p.click("#set-save");
     await until(() => p.evaluate(() => window.__minipad.state.settings.quick_switch_key), "");
     await p.keyboard.press("Control+Shift+KeyO");
@@ -7574,7 +7581,6 @@ describe("0.5.1: quick capture, templates, snippets and inline calc", () => {
     await p.click("#btn-settings");
     await settingsPage(p, "general");
     assert.equal(await p.isChecked("#set-capture"), true);
-    assert.equal(await p.inputValue("#set-capture-key"), "Ctrl+Alt+M");
     assert.deepEqual(await p.$$eval("#set-capture-book option", (os) => os.map((o) => o.textContent)), ["默认", "工作"]);
     assert.equal(await p.inputValue("#set-capture-page"), "收集箱");
     assert.equal(await p.isVisible("#set-capture-name"), false, "the page name pattern only shows for 每次新建一页");
@@ -7587,14 +7593,13 @@ describe("0.5.1: quick capture, templates, snippets and inline calc", () => {
     await p.selectOption("#set-capture-format", "task");
     await p.uncheck("#set-capture-stamp");
     await p.selectOption("#set-capture-position", "cursor");
-    await p.click("#set-capture-key");
-    await p.keyboard.press("Control+m");
-    assert.equal(await p.inputValue("#set-capture-key"), "Ctrl+M");
-    await p.click("#set-save");
-    await until(() => p.textContent("#set-error"), "快速记录的热键和呼出热键一样,换一个吧");
-    assert.equal((await h.stored()).settings.capture_hotkey, "Ctrl+Alt+M");
-    await p.click("#set-capture-key");
-    await p.keyboard.press("Control+Shift+j");
+    await settingsPage(p, "keys");
+    assert.deepEqual(await rowKeys(p, "capture"), ["Ctrl+Alt+M"]);
+    // 不能和呼出热键一样(呼出热键不能空着,所以也不能替换)
+    await recordKey(p, "capture", "Control+m");
+    await until(() => p.textContent("#set-keys-msg"), "Ctrl+M 是「呼出 / 隐藏主窗口」的热键,它不能空着,先给它换一个");
+    assert.deepEqual(await rowKeys(p, "capture"), ["Ctrl+Alt+M"]);
+    await recordKey(p, "capture", "Control+Shift+j");
     await p.click("#set-save");
     await until(() => p.isHidden("#settings"), true);
     let s = (await h.stored()).settings;
@@ -7603,13 +7608,12 @@ describe("0.5.1: quick capture, templates, snippets and inline calc", () => {
       ["Ctrl+Shift+J", "new", "工作", "灵感 {{日期}}", "task", false, "cursor"],
     );
     await p.click("#btn-settings");
+    await settingsPage(p, "keys");
+    await recordKey(p, "capture", "Backspace");
+    assert.deepEqual(await rowKeys(p, "capture"), [], "Backspace clears the hotkey");
     await settingsPage(p, "general");
-    await p.click("#set-capture-key");
-    await p.keyboard.press("Backspace");
-    assert.equal(await p.inputValue("#set-capture-key"), "", "Backspace clears the hotkey");
     await p.uncheck("#set-capture");
     assert.equal(await p.isDisabled("#set-capture-target"), true, "the other options grey out");
-    assert.equal(await p.isDisabled("#set-capture-key"), true);
     await p.click("#set-save");
     await until(() => p.isHidden("#settings"), true);
     s = (await h.stored()).settings;
@@ -7617,7 +7621,7 @@ describe("0.5.1: quick capture, templates, snippets and inline calc", () => {
   });
 
   ui("a quick capture hotkey that could not be registered is told at startup", { seed: db(), mockControl: { captureError: "Ctrl+Alt+M:被别的程序占用了" } }, async (h) => {
-    await until(h.toast, "快速记录的热键注册失败(Ctrl+Alt+M:被别的程序占用了),可以在 设置 → 常规 里换一个");
+    await until(h.toast, "快速记录的热键注册失败(Ctrl+Alt+M:被别的程序占用了),可以在 设置 → 快捷键 里换一个");
   });
 
   ui("templates: right-click + makes a template notebook with two examples; a template fills its variables and puts the cursor at {{光标}}", { seed: db() }, async (h) => {
@@ -7893,5 +7897,281 @@ describe("0.5.3: long pages stay fast", () => {
     const wide = await secondLine();
     await p.evaluate(() => { document.querySelector("#editor .ProseMirror").style.maxWidth = "320px"; });
     await until(async () => (await secondLine()).every((gap, i) => gap > wide[i]), true, "line 2 moves down in every block when line 1 wraps more");
+  });
+});
+
+describe("0.5.5: shortcuts in a table, fullscreen editing", () => {
+  const PAGES = seed({ "": { 甲: "第一页", 乙: "第二页" } });
+  const visibleRows = (p) => p.$$eval("#set-keys .key-row[data-cmd]", (els) => els.map((e) => e.dataset.cmd));
+
+  ui("shortcuts: every shortcut is listed in groups; a new key works and the old one stops; Esc cancels; restore default", { seed: PAGES }, async (h) => {
+    const { p } = h;
+    await p.click("#btn-settings");
+    await settingsPage(p, "keys");
+    assert.deepEqual(await p.$$eval("#set-keys h3", (els) => els.map((e) => e.textContent)), ["应用内", "全局热键(在别的程序里也能按)", "编辑区(固定,不能改)"]);
+    assert.deepEqual(await rowKeys(p, "new_page"), ["Ctrl+T", "Ctrl+N"]);
+    assert.deepEqual(await rowKeys(p, "font_bigger"), ["Ctrl+=", "Ctrl+Shift+=", "Ctrl+小键盘+"]);
+    assert.deepEqual(await rowKeys(p, "hotkey"), ["Ctrl+M"]);
+    assert.ok(await keyRow(p, "new_page").locator(".key-reset").isHidden(), "no restore button while it is the default");
+    // Esc 不录了,按键不变
+    await recordKey(p, "delete_page", "Escape");
+    assert.deepEqual(await rowKeys(p, "delete_page"), ["Ctrl+W"]);
+    assert.ok(await p.isVisible("#settings"), "Esc while recording does not close the settings");
+    await recordKey(p, "new_page", "Alt+KeyN");
+    assert.deepEqual(await rowKeys(p, "new_page"), ["Alt+N"]);
+    assert.ok(await keyRow(p, "new_page").locator(".key-reset").isVisible());
+    await p.click("#set-save");
+    await until(() => p.isHidden("#settings"), true);
+    assert.deepEqual((await h.stored()).settings.shortcuts, { new_page: ["Alt+N"] }, "only the changed command is stored");
+    assert.equal(await p.getAttribute("#btn-new", "title"), "新建页面 (Alt+N);右键或 Ctrl+Shift+N 选模板");
+    await p.click("#editor");
+    await p.keyboard.press("Control+t");
+    await sleep(150);
+    assert.deepEqual(await h.tabs(), ["甲", "乙"], "the old key does nothing now");
+    await p.keyboard.press("Alt+KeyN");
+    await p.waitForSelector("#tabs .tab input");
+    await p.keyboard.press("Escape");
+    await until(async () => (await h.tabs()).length, 3, "the new key makes a page");
+    // 恢复默认
+    await p.click("#btn-settings");
+    await settingsPage(p, "keys");
+    await keyRow(p, "new_page").locator(".key-reset").click();
+    assert.deepEqual(await rowKeys(p, "new_page"), ["Ctrl+T", "Ctrl+N"]);
+    await p.click("#set-save");
+    await until(async () => (await h.stored()).settings.shortcuts, {}, "back to the default, nothing stored");
+  });
+
+  ui("shortcuts: a key another command uses asks 替换 or 取消; risky and editor keys are warned about; bad keys are refused", {
+    seed: PAGES, mockControl: { takenHotkeys: ["Ctrl+Shift+Q"] },
+  }, async (h) => {
+    const { p } = h;
+    await p.click("#btn-settings");
+    await settingsPage(p, "keys");
+    await recordKey(p, "new_page", "Control+KeyW");
+    await until(() => p.textContent("#set-keys-msg"), "Ctrl+W 已经是「删除当前页面」的快捷键替换取消");
+    await p.click("#set-keys-msg button:text('取消')");
+    assert.deepEqual(await rowKeys(p, "new_page"), ["Ctrl+T", "Ctrl+N"], "取消 keeps both");
+    assert.deepEqual(await rowKeys(p, "delete_page"), ["Ctrl+W"]);
+    await recordKey(p, "new_page", "Control+KeyW");
+    await p.click("#set-keys-msg button:text('替换')");
+    assert.deepEqual(await rowKeys(p, "new_page"), ["Ctrl+W"]);
+    assert.deepEqual(await rowKeys(p, "delete_page"), []);
+    assert.equal(await keyRow(p, "delete_page").locator(".key-keys").textContent(), "不用");
+    // 编辑区的按键、AltGr、输入法
+    await recordKey(p, "books", "Control+KeyI");
+    await until(() => p.textContent("#set-keys-msg"), "编辑区里 Ctrl+I 是「斜体」,在编辑区里按时还是斜体");
+    await recordKey(p, "save", "Control+Alt+KeyS");
+    assert.match(await p.textContent("#set-keys-msg"), /AltGr/);
+    await recordKey(p, "search", "Control+Space");
+    assert.match(await p.textContent("#set-keys-msg"), /输入法/);
+    // 不带 Ctrl、Alt 的普通键不行,接着等
+    await recordKey(p, "replace", "Shift+KeyA");
+    await until(() => p.textContent("#set-keys-msg"), "要带上 Ctrl、Alt 或 Win 键(F1~F12 可以单独用)");
+    await p.keyboard.press("Escape");
+    assert.deepEqual(await rowKeys(p, "replace"), ["Ctrl+H"]);
+    // 全局热键:被占用的不换,呼出热键不能空着
+    await recordKey(p, "hotkey", "Control+Shift+KeyQ");
+    await until(() => p.textContent("#set-keys-msg"), "Ctrl+Shift+Q 被系统或别的程序占用了,换一个吧(HotKey already registered)");
+    assert.deepEqual(await rowKeys(p, "hotkey"), ["Ctrl+M"]);
+    await recordKey(p, "hotkey", "Backspace");
+    await until(() => p.textContent("#set-keys-msg"), "呼出 / 隐藏主窗口的热键不能空着");
+    await p.click("#set-save");
+    await until(() => p.isHidden("#settings"), true);
+    const s = (await h.stored()).settings;
+    assert.deepEqual(
+      [s.shortcuts.new_page, s.shortcuts.delete_page, s.shortcuts.books, s.shortcuts.save, s.shortcuts.search, s.hotkey],
+      [["Ctrl+W"], [], ["Ctrl+I"], ["Ctrl+Alt+S"], ["Ctrl+Space"], "Ctrl+M"],
+    );
+  });
+
+  ui("shortcuts: Ctrl+B in the editor without a selection runs whatever has Ctrl+B, or makes the next words bold when nothing has", { seed: PAGES }, async (h) => {
+    const { p } = h;
+    await p.click("#editor");
+    await p.keyboard.press("Control+End");
+    await p.keyboard.press("Control+b");
+    await p.locator("#books").waitFor();
+    await p.keyboard.press("Escape");
+    await p.click("#btn-settings");
+    await settingsPage(p, "keys");
+    await recordKey(p, "books", "Control+Shift+KeyL");
+    await p.click("#set-save");
+    await until(() => p.isHidden("#settings"), true);
+    await p.click("#editor");
+    await p.keyboard.press("Control+End");
+    await p.keyboard.press("Control+b");
+    await p.keyboard.type("粗");
+    await until(h.editor, "第一页**粗**", "Ctrl+B is plain bold now");
+    assert.ok(await p.isHidden("#books"));
+    await p.keyboard.press("Control+Shift+KeyL");
+    await p.locator("#books").waitFor();
+  });
+
+  ui("shortcuts: the 查找 setting decides which of find and search gets Ctrl+F", { seed: PAGES }, async (h) => {
+    const { p } = h;
+    await p.click("#btn-settings");
+    await settingsPage(p, "keys");
+    assert.deepEqual([await rowKeys(p, "find"), await rowKeys(p, "search")], [["Ctrl+F"], ["Ctrl+Shift+F"]]);
+    await settingsPage(p, "edit");
+    await p.selectOption("#set-ctrl-f", "all");
+    await settingsPage(p, "keys");
+    assert.deepEqual([await rowKeys(p, "find"), await rowKeys(p, "search")], [["Ctrl+Shift+F"], ["Ctrl+F"]]);
+    await p.click("#set-save");
+    await until(() => p.isHidden("#settings"), true);
+    await p.click("#editor");
+    await p.keyboard.press("Control+f");
+    await p.locator("#search").waitFor();
+  });
+
+  ui("shortcuts: search the table by name or key; export, and import with a preview of what changes", { seed: PAGES }, async (h) => {
+    const { p } = h;
+    await p.click("#btn-settings");
+    await settingsPage(p, "keys");
+    await p.fill("#set-keys-filter", "新建");
+    assert.deepEqual(await visibleRows(p), ["new_page", "new_from_template"]);
+    await p.fill("#set-keys-filter", "ctrl+w");
+    assert.deepEqual(await visibleRows(p), ["delete_page"]);
+    await p.fill("#set-keys-filter", "斜体");
+    assert.deepEqual(await p.$$eval("#set-keys .key-row .key-name", (els) => els.map((e) => e.textContent)), ["斜体"], "the fixed editor keys are searched too");
+    await p.fill("#set-keys-filter", "没有这个");
+    assert.equal(await p.textContent("#set-keys"), "没有找到");
+    await p.fill("#set-keys-filter", "");
+    await p.evaluate(() => { window.__mockControl = {}; });
+    await p.click("#set-keys-export");
+    const exported = JSON.parse(await p.evaluate(() => window.__mockControl.exported));
+    assert.equal(exported.minipad_shortcuts, 1);
+    assert.deepEqual([exported.keys.new_page, exported.keys.quick_switch, exported.keys.hotkey], [["Ctrl+T", "Ctrl+N"], ["Ctrl+P"], ["Ctrl+M"]]);
+    // 不是 JSON
+    await p.evaluate(() => { window.__mockControl.importText = "不是 JSON"; });
+    await p.click("#set-keys-import");
+    await until(() => p.textContent("#set-keys-summary"), "这个文件不是 JSON");
+    assert.equal(await p.isDisabled("#set-keys-apply"), true);
+    // 导入后重复了
+    await p.evaluate(() => { window.__mockControl.importText = JSON.stringify({ keys: { new_page: ["Ctrl+W"] } }); });
+    await p.click("#set-keys-import");
+    await until(() => p.textContent("#set-keys-summary"), "导入后有 1 项会改变:导入后这些按键重复了,先改好文件再导入:Ctrl+W(新建页面、删除当前页面)");
+    assert.equal(await p.isDisabled("#set-keys-apply"), true);
+    await p.click("#set-keys-cancel");
+    assert.ok(await p.isHidden("#set-keys-preview"));
+    await p.evaluate(() => {
+      window.__mockControl.importText = JSON.stringify({ minipad_shortcuts: 1, keys: { new_page: ["Alt+N"], hotkey: ["Ctrl+Shift+M"], save: ["Ctrl+S"], 不认识: ["Ctrl+Q"] } });
+    });
+    await p.click("#set-keys-import");
+    await until(() => p.textContent("#set-keys-summary"), "导入后有 2 项会改变:(1 项认不出,跳过)");
+    assert.deepEqual(await p.$$eval("#set-keys-changes li", (els) => els.map((e) => e.textContent)), [
+      "新建页面:Ctrl+T、Ctrl+N → Alt+N",
+      "呼出 / 隐藏主窗口:Ctrl+M → Ctrl+Shift+M",
+    ]);
+    assert.deepEqual(await rowKeys(p, "new_page"), ["Ctrl+T", "Ctrl+N"], "nothing changes before 导入 is clicked");
+    await p.click("#set-keys-apply");
+    assert.deepEqual([await rowKeys(p, "new_page"), await rowKeys(p, "hotkey")], [["Alt+N"], ["Ctrl+Shift+M"]]);
+    await p.click("#set-save");
+    await until(() => p.isHidden("#settings"), true);
+    const s = (await h.stored()).settings;
+    assert.deepEqual([s.shortcuts, s.hotkey], [{ new_page: ["Alt+N"] }, "Ctrl+Shift+M"]);
+  });
+
+  ui("shortcuts: hotkeys from an old settings file show in the table; 全部恢复默认 brings every default back", {
+    seed: { ...PAGES, settings: { ...PAGES.settings, hotkey: "Ctrl+Alt+N", quick_switch_key: "Ctrl+Shift+P", capture_hotkey: "Ctrl+Shift+J" } },
+  }, async (h) => {
+    const { p } = h;
+    await p.click("#btn-settings");
+    await settingsPage(p, "keys");
+    assert.deepEqual([await rowKeys(p, "hotkey"), await rowKeys(p, "quick_switch"), await rowKeys(p, "capture")], [["Ctrl+Alt+N"], ["Ctrl+Shift+P"], ["Ctrl+Shift+J"]]);
+    await recordKey(p, "new_page", "Alt+KeyN");
+    await p.click("#set-keys-reset");
+    assert.deepEqual(
+      [await rowKeys(p, "hotkey"), await rowKeys(p, "quick_switch"), await rowKeys(p, "capture"), await rowKeys(p, "new_page")],
+      [["Ctrl+M"], ["Ctrl+P"], ["Ctrl+Alt+M"], ["Ctrl+T", "Ctrl+N"]],
+    );
+    await p.click("#set-save");
+    await until(() => p.isHidden("#settings"), true);
+    const s = (await h.stored()).settings;
+    assert.deepEqual([s.hotkey, s.quick_switch_key, s.capture_hotkey, s.shortcuts], ["Ctrl+M", "Ctrl+P", "Ctrl+Alt+M", {}]);
+  });
+
+  ui("shortcuts: a hotkey that turns out to be taken when saving keeps the old one, and the other settings are still saved", { seed: PAGES }, async (h) => {
+    const { p } = h;
+    await p.click("#btn-settings");
+    await settingsPage(p, "keys");
+    await recordKey(p, "hotkey", "Control+Shift+KeyK");
+    await recordKey(p, "capture", "Control+Shift+KeyJ");
+    await p.evaluate(() => { window.__mockControl = { takenHotkeys: ["Ctrl+Shift+K", "Ctrl+Shift+J"] }; });
+    await settingsPage(p, "look");
+    await p.selectOption("#set-theme", "dark");
+    await p.click("#set-save");
+    await until(h.toast, "呼出热键 Ctrl+Shift+K 被系统或别的程序占用了,还是用 Ctrl+M;快速记录的热键 Ctrl+Shift+J 被占用了,还是用 Ctrl+Alt+M。其他设置已保存");
+    const s = (await h.stored()).settings;
+    assert.deepEqual([s.hotkey, s.capture_hotkey, s.theme], ["Ctrl+M", "Ctrl+Alt+M", "dark"]);
+  });
+
+  ui("fullscreen: F11 leaves only the text, centered; Esc and the corner button leave; the top bar button enters", { seed: PAGES }, async (h) => {
+    const { p } = h;
+    const full = () => p.evaluate(() => document.documentElement.hasAttribute("data-fullscreen"));
+    await p.evaluate(() => { window.__mockControl = {}; });
+    await p.click("#editor");
+    await p.keyboard.press("F11");
+    await until(full, true);
+    assert.equal(await p.evaluate(() => window.__mockControl.fullscreen), true, "the window covers the screen");
+    assert.ok(await p.isHidden("#bar"));
+    assert.ok(await p.isHidden("#status"));
+    assert.ok(await p.isHidden("#format-bar"));
+    assert.ok(await p.isVisible("#fs-exit"));
+    assert.equal(await p.$eval("#editor .ProseMirror", (el) => getComputedStyle(el).maxWidth), "860px");
+    await p.keyboard.press("Escape");
+    await until(full, false, "Esc leaves fullscreen first");
+    assert.equal(await p.evaluate(() => window.__mockControl.fullscreen), false);
+    assert.ok(await p.isVisible("#bar"));
+    assert.equal(await h.toast(), "", "the window is not hidden");
+    await p.click("#btn-fullscreen");
+    await until(full, true);
+    await p.click("#fs-exit");
+    await until(full, false);
+  });
+
+  ui("fullscreen settings: window mode, width, font size, keeping the bars, no corner button; turned off it does nothing", { seed: PAGES }, async (h) => {
+    const { p } = h;
+    const full = () => p.evaluate(() => document.documentElement.hasAttribute("data-fullscreen"));
+    await p.evaluate(() => { window.__mockControl = {}; });
+    await p.click("#btn-settings");
+    await settingsPage(p, "window");
+    assert.equal(await p.isChecked("#set-fs"), true);
+    assert.equal(await p.textContent("#set-fs-width-val"), "860 像素");
+    await p.selectOption("#set-fs-mode", "window");
+    await p.$eval("#set-fs-width", (el) => { el.value = "600"; el.dispatchEvent(new Event("input", { bubbles: true })); });
+    assert.equal(await p.textContent("#set-fs-width-val"), "600 像素");
+    await p.fill("#set-fs-font", "20");
+    await p.check("#set-fs-tabs");
+    await p.uncheck("#set-fs-exit");
+    await p.click("#set-save");
+    await until(() => p.isHidden("#settings"), true);
+    await p.click("#editor");
+    await p.keyboard.press("F11");
+    await until(full, true);
+    assert.equal(await p.evaluate(() => window.__mockControl.fullscreen), undefined, "the window keeps its size");
+    assert.ok(await p.isVisible("#bar"), "the top bar stays");
+    assert.ok(await p.isHidden("#fs-exit"));
+    assert.equal(await p.$eval("#editor .ProseMirror", (el) => getComputedStyle(el).maxWidth), "600px");
+    assert.equal(await p.$eval("#editor", (el) => getComputedStyle(el).fontSize), "20px");
+    await p.keyboard.press("F11");
+    await until(full, false, "the same key leaves");
+    // 拉到最右是不限宽度;关掉全屏编辑后按钮不见,按键也不管用
+    await p.click("#btn-settings");
+    await settingsPage(p, "window");
+    await p.$eval("#set-fs-width", (el) => { el.value = "2000"; el.dispatchEvent(new Event("input", { bubbles: true })); });
+    assert.equal(await p.textContent("#set-fs-width-val"), "不限");
+    await p.uncheck("#set-fs");
+    assert.equal(await p.isDisabled("#set-fs-mode"), true);
+    await p.click("#set-save");
+    await until(() => p.isHidden("#settings"), true);
+    assert.ok(await p.isHidden("#btn-fullscreen"));
+    await p.click("#editor");
+    await p.keyboard.press("F11");
+    await sleep(150);
+    assert.equal(await full(), false);
+    const s = (await h.stored()).settings;
+    assert.deepEqual(
+      [s.fullscreen_enabled, s.fullscreen_mode, s.fullscreen_width, s.fullscreen_font_size, s.fullscreen_tabs, s.fullscreen_exit_button],
+      [false, "window", 2000, 20, true, false],
+    );
   });
 });

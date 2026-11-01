@@ -23,6 +23,10 @@
     <button id="btn-all" aria-expanded="false" hidden><span id="all-count"></span><svg viewBox="0 0 16 16"><path d="M4.5 6.5 8 10l3.5-3.5"/></svg></button>
     <button id="btn-new" class="icon" title="新建页面 (Ctrl+T);右键或 Ctrl+Shift+N 选模板">+</button>
     <div class="spacer" data-tauri-drag-region></div>
+    <!-- 全屏编辑(0.5.5,见 js/fullscreen.js) -->
+    <button id="btn-fullscreen" class="icon" title="全屏编辑 (F11)">
+      <svg viewBox="0 0 16 16"><path d="M2.5 6V2.5H6M10 2.5h3.5V6M13.5 10v3.5H10M6 13.5H2.5V10"/></svg>
+    </button>
     <button id="btn-format" class="icon" title="显示 / 收起格式栏" aria-pressed="true">
       <svg viewBox="0 0 16 16"><rect x="1.8" y="2.3" width="12.4" height="11.4" rx="2"/><path d="M1.8 6.3h12.4"/><path d="M4.4 4.3h.01M6.7 4.3h.01M9 4.3h.01"/><path d="M4.4 9h7.2M4.4 11.2h4.4" opacity=".55"/></svg>
     </button>
@@ -102,6 +106,9 @@
     </div>
   </div>
 
+  <button id="fs-exit" type="button" title="退出全屏 (Esc)" hidden>
+    <svg viewBox="0 0 16 16"><path d="M6 2.5V6H2.5M13.5 6H10V2.5M10 13.5V10h3.5M2.5 10H6v3.5"/></svg><span>退出全屏</span>
+  </button>
   <main id="main">
     <!-- 编辑区:Milkdown 编辑器由 js/editor.js 放进来 -->
     <div id="editor" class="code-lines"></div>
@@ -148,6 +155,7 @@
       <div class="set-body">
         <nav id="set-nav" role="tablist" aria-label="设置的分类">
           <button type="button" role="tab" data-page="general" aria-controls="set-page-general"><svg viewBox="0 0 16 16"><path d="M2.5 4h2M7.5 4h6M2.5 8h6M11.5 8h2M2.5 12h1M6.5 12h7"/><circle cx="6" cy="4" r="1.5"/><circle cx="10" cy="8" r="1.5"/><circle cx="5" cy="12" r="1.5"/></svg><span>常规</span></button>
+          <button type="button" role="tab" data-page="keys" aria-controls="set-page-keys"><svg viewBox="0 0 16 16"><rect x="1.5" y="4" width="13" height="8.5" rx="1.5"/><path d="M4 6.6h.01M6.7 6.6h.01M9.3 6.6h.01M12 6.6h.01M4.5 9.8h7"/></svg><span>快捷键</span></button>
           <button type="button" role="tab" data-page="look" aria-controls="set-page-look"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.5"/><path d="M8 2.5a5.5 5.5 0 0 1 0 11z" fill="currentColor"/></svg><span>外观</span></button>
           <button type="button" role="tab" data-page="window" aria-controls="set-page-window"><svg viewBox="0 0 16 16"><rect x="2" y="3" width="8.5" height="10" rx="1.5"/><path d="M13.5 2.5v11"/></svg><span>窗口</span></button>
           <button type="button" role="tab" data-page="edit" aria-controls="set-page-edit"><svg viewBox="0 0 16 16"><path d="M3 13l.9-3.4 6.6-6.6a1.4 1.4 0 0 1 2 0l.5.5a1.4 1.4 0 0 1 0 2l-6.6 6.6z"/><path d="m9.4 4.1 2.5 2.5"/></svg><span>编辑</span></button>
@@ -155,20 +163,12 @@
         </nav>
         <div class="set-pages">
           <section id="set-page-general" class="set-page" role="tabpanel" data-page="general">
-            <label class="row">
-              <span>呼出热键</span>
-              <input id="set-hotkey" type="text" readonly placeholder="点这里然后按下组合键" />
-            </label>
             <label class="row check"><input id="set-autostart" type="checkbox" /> <span>开机启动(启动后藏在托盘)</span></label>
             <label class="row check"><input id="set-taskbar" type="checkbox" /> <span>在任务栏显示</span></label>
             <label class="row check"><input id="set-top" type="checkbox" /> <span>窗口总在最前</span></label>
             <label class="row check"><input id="set-update-check" type="checkbox" /> <span>启动时检查新版本,有新版在状态栏右下角提示</span></label>
             <h3>快速切换页面</h3>
-            <label class="row">
-              <span>快捷键</span>
-              <input id="set-quick-key" type="text" readonly placeholder="不用(点这里然后按下组合键)" />
-            </label>
-            <div class="row"><span class="muted grow">输入几个字找到页面直接打开。点上面的框再按组合键就换成它;按 Backspace 或 Delete 清空,就不用这个快捷键</span></div>
+            <div class="row"><span class="muted grow">输入几个字找到页面直接打开。快捷键(默认 Ctrl+P)在 设置 → 快捷键 里改</span></div>
             <label class="row">
               <span>找哪些页面</span>
               <select id="set-quick-scope">
@@ -179,10 +179,6 @@
             <label class="row check"><input id="set-pinyin" type="checkbox" /> <span>按拼音找页面(打 kf 或 kaifa 能找到「开发」;[[ 补全页面名时也一样)</span></label>
             <h3>快速记录</h3>
             <label class="row check"><input id="set-capture" type="checkbox" /> <span>按热键(或托盘菜单「快速记录」)弹出一个小窗,随手记一条</span></label>
-            <label class="row capture-option">
-              <span>热键</span>
-              <input id="set-capture-key" type="text" readonly placeholder="不用热键(点这里然后按下组合键)" />
-            </label>
             <label class="row capture-option"><span>写到</span><select id="set-capture-target">
               <option value="page">追加到一个页面</option>
               <option value="new">每次新建一页</option>
@@ -205,7 +201,27 @@
               <option value="center">屏幕中间</option>
               <option value="cursor">鼠标旁边</option>
             </select></label>
-            <div class="row capture-option"><span class="muted grow">写完按 Esc 或者再按一次热键收起;没写东西就收起时什么也不留下。点上面的框再按组合键就换成它,按 Backspace 或 Delete 清空就不用热键。新页面的名字里可以用 {{日期}}、{{时间:HH.mm}} 这些变量</span></div>
+            <div class="row capture-option"><span class="muted grow">写完按 Esc 或者再按一次热键收起;没写东西就收起时什么也不留下。热键(默认 Ctrl+Alt+M)在 设置 → 快捷键 里改。新页面的名字里可以用 {{日期}}、{{时间:HH.mm}} 这些变量</span></div>
+          </section>
+
+          <!-- 快捷键(0.5.5):表由 js/keytable.js 画,点一行的按键录新的组合键 -->
+          <section id="set-page-keys" class="set-page" role="tabpanel" data-page="keys" hidden>
+            <label class="row"><input id="set-keys-filter" class="grow" type="search" placeholder="按名字或按键找,比如 新建、Ctrl+T" spellcheck="false" autocomplete="off" aria-label="找快捷键" /></label>
+            <div id="set-keys"></div>
+            <div class="row keys-foot">
+              <button id="set-keys-reset" class="small" type="button">全部恢复默认</button>
+              <button id="set-keys-export" class="small" type="button">导出…</button>
+              <button id="set-keys-import" class="small" type="button">导入…</button>
+            </div>
+            <div id="set-keys-preview" hidden>
+              <div id="set-keys-summary"></div>
+              <ul id="set-keys-changes"></ul>
+              <div class="row">
+                <button id="set-keys-apply" class="small" type="button">导入</button>
+                <button id="set-keys-cancel" class="small" type="button">取消</button>
+              </div>
+            </div>
+            <div class="row"><span class="muted grow">点一行的按键,再按下新的组合键就换成它;Esc 取消,Backspace 清空(不用这个快捷键)。要带上 Ctrl、Alt 或 Win 键,F1~F12 可以单独用。改完点下面的「保存」才生效</span></div>
           </section>
 
           <section id="set-page-look" class="set-page" role="tabpanel" data-page="look" hidden>
@@ -445,6 +461,22 @@
               <input id="set-mini-max" type="number" min="1" max="20" step="1" placeholder="不限" />
             </label>
             <div class="row mini-option"><span class="muted grow">小窗和主窗口外观一样;每一页的小窗分别记住位置、大小、置顶和透明度,鼠标移到小窗上时不透明。贴边隐藏和悬浮图标只管主窗口。</span></div>
+            <h3>全屏编辑</h3>
+            <label class="row check"><input id="set-fs" type="checkbox" /> <span>可以全屏编辑:只留正文,顶栏、侧栏和状态栏藏起来(快捷键默认 F11,在 设置 → 快捷键 里改;Esc 退出)</span></label>
+            <label class="row fs-option"><span>全屏时</span><select id="set-fs-mode">
+              <option value="screen">铺满整个屏幕</option>
+              <option value="window">窗口大小不变,只藏起顶栏这些</option>
+            </select></label>
+            <label class="row fs-option">
+              <span>正文最宽</span>
+              <input id="set-fs-width" type="range" min="480" max="2000" step="20" />
+              <span id="set-fs-width-val" class="muted"></span>
+            </label>
+            <label class="row fs-option"><span>全屏时的字号</span><input id="set-fs-font" type="number" min="10" max="40" step="1" placeholder="跟随" /></label>
+            <label class="row check fs-option"><input id="set-fs-tabs" type="checkbox" /> <span>全屏时留着顶栏(标签和按钮)</span></label>
+            <label class="row check fs-option"><input id="set-fs-format" type="checkbox" /> <span>全屏时留着格式栏</span></label>
+            <label class="row check fs-option"><input id="set-fs-exit" type="checkbox" /> <span>右上角显示「退出全屏」按钮(鼠标移上去才看得清)</span></label>
+            <label class="row check fs-option"><input id="set-fs-button" type="checkbox" /> <span>顶栏显示全屏编辑按钮</span></label>
           </section>
 
           <section id="set-page-edit" class="set-page" role="tabpanel" data-page="edit" hidden>

@@ -9,9 +9,11 @@ import { ACCENTS, applyAccent, tidyAccent, parseAccent } from "./accent.js";
 import { makeSharedColorTools, setColorLibrarySaver, refreshSharedColors } from "./sharedcolors.js";
 import { ask, askText, closeDialog, dialogOpen, openMenu, toast } from "./ui.js";
 import { setPageLinkHost, pageNamesChanged, applyPageLinkSettings, linkIndex } from "./pagelinkview.js";
-import { resolveTarget, retarget } from "./pagelinks.js";
+import { resolveTarget, retarget, fileName } from "./pagelinks.js";
 import { BOOK_ICONS, bookIcon, iconColor } from "./bookicons.js";
 import { applyExpandSettings, setExpandHost } from "./expand.js";
+import { DEFAULT_SHARE_PAGE, SHARE_PAGE_NAME, shareLines, shareBlock, insertShare } from "./share.js";
+import { fillVars } from "./vars.js";
 
 const invoke = window.__TAURI__?.core?.invoke;
 const el = (id) => document.getElementById(id);
@@ -1570,6 +1572,16 @@ function loadLook() {
     page_link_broken_color: tidyAccent(typeof saved.page_link_broken_color === "string" ? saved.page_link_broken_color : ""),
     // 行内计算:手机上只有「打 = 就算」,默认不开
     calc_key: saved.calc_key === "equals" ? "equals" : "off",
+    // 分享到 Minipad(0.5.5):别的 App 分享来的文字记到哪个页面、怎么记(写法和电脑上的快速记录一样)
+    share_enabled: saved.share_enabled !== false,
+    share_target: saved.share_target === "new" ? "new" : "page",
+    share_book: typeof saved.share_book === "string" ? saved.share_book : "",
+    share_page: typeof saved.share_page === "string" && saved.share_page.trim() ? saved.share_page.trim() : DEFAULT_SHARE_PAGE,
+    share_where: saved.share_where === "start" ? "start" : "end",
+    share_format: ["list", "task"].includes(saved.share_format) ? saved.share_format : "paragraph",
+    share_stamp: saved.share_stamp !== false,
+    share_source: saved.share_source !== false,
+    share_after: saved.share_after === "open" ? "open" : "back",
   };
 }
 
@@ -1578,6 +1590,7 @@ function setLook(change) {
   try { localStorage.setItem(LOOK_KEY, JSON.stringify(look)); } catch { /* 这次照样生效,只是下次打开不记得 */ }
   applyLook();
   setMobileLocalPathEnabled(look.local_path_enabled);
+  if ("share_enabled" in change) syncShareTarget();
 }
 
 function applyLook() {
@@ -1608,6 +1621,8 @@ function applyLook() {
     ["look-layout", "layoutChoice", look.layout], ["look-header-meta", "headerMeta", look.header_meta],
     ["look-new-page", "newPage", look.new_page_button], ["look-sync-place", "syncPlace", look.sync_button_place],
     ["look-drawer-tree", "drawerTree", look.drawer_tree],
+    ["look-share-target", "shareTarget", look.share_target], ["look-share-where", "shareWhere", look.share_where],
+    ["look-share-format", "shareFormat", look.share_format], ["look-share-after", "shareAfter", look.share_after],
   ]) for (const b of el(box).children) b.setAttribute("aria-pressed", String(b.dataset[attr] === value));
   // 经典布局用不上的几项灰掉
   for (const row of settingsSheet.querySelectorAll(".clean-only-setting")) {
@@ -1630,6 +1645,7 @@ function applyLook() {
   applyExpandSettings({ calc_key: look.calc_key });
   el("viewport-debug").hidden = !look.debug;
   if (look.debug) requestAnimationFrame(fitViewport);
+  showShareOptions();
   renderDrawer();
   showMeta();
   showSyncRows();
@@ -1655,6 +1671,8 @@ for (const [box, attr, field] of [
   ["look-layout", "layoutChoice", "layout"], ["look-header-meta", "headerMeta", "header_meta"],
   ["look-new-page", "newPage", "new_page_button"], ["look-sync-place", "syncPlace", "sync_button_place"],
   ["look-drawer-tree", "drawerTree", "drawer_tree"],
+  ["look-share-target", "shareTarget", "share_target"], ["look-share-where", "shareWhere", "share_where"],
+  ["look-share-format", "shareFormat", "share_format"], ["look-share-after", "shareAfter", "share_after"],
 ]) for (const b of el(box).children) b.addEventListener("click", () => setLook({ [field]: b.dataset[attr] }));
 el("look-debug").addEventListener("change", (e) => setLook({ debug: e.target.checked }));
 el("look-local-path").addEventListener("change", (e) => setLook({ local_path_enabled: e.target.checked }));
@@ -1665,17 +1683,108 @@ el("look-page-links").addEventListener("change", (e) => setLook({ page_links: e.
 for (const b of el("look-page-link-suggest").children) b.addEventListener("click", () => setLook({ page_link_suggest: b.dataset.suggest }));
 el("look-page-link-cn").addEventListener("change", (e) => setLook({ page_link_cn_brackets: e.target.checked }));
 el("look-calc").addEventListener("change", (e) => setLook({ calc_key: e.target.checked ? "equals" : "off" }));
+el("look-share").addEventListener("change", (e) => setLook({ share_enabled: e.target.checked }));
+el("look-share-book").addEventListener("change", (e) => setLook({ share_book: e.target.value }));
+el("look-share-page").addEventListener("change", (e) => setLook({ share_page: e.target.value.trim() || DEFAULT_SHARE_PAGE }));
+el("look-share-stamp").addEventListener("change", (e) => setLook({ share_stamp: e.target.checked }));
+el("look-share-source").addEventListener("change", (e) => setLook({ share_source: e.target.checked }));
 // 算不出来时在状态栏说一句
 setExpandHost({ notify });
 systemDark.addEventListener("change", applyLook);
 // 格式栏「自定义」改了就记下来,重启后照旧
 el("format-bar").addEventListener("format-bar-items", (e) => setLook(e.detail));
 
+// ---- 分享到 Minipad(0.5.5) ----
+// 别的 App 里点「分享」选 Minipad:安卓那边(src-tauri/android-share/MainActivity.kt)先记下分享的文字,
+// 这里用 MinipadShare.take() 拿走,写进设好的页面(走 mobile_save_note,带冲突检测),写完提示一下;
+// 默认接着回到原来的 App,也可以留在 Minipad 打开这一页
+function showShareOptions() {
+  el("look-share").checked = look.share_enabled;
+  el("look-share-stamp").checked = look.share_stamp;
+  el("look-share-source").checked = look.share_source;
+  el("look-share-page").value = look.share_page;
+  // 设的笔记本不在了:写的时候用默认笔记本,这里也显示默认笔记本
+  const book = books.find((b) => b.name === look.share_book) || books.find((b) => b.name === "");
+  el("look-share-book").replaceChildren(...books.map((b) => new Option(bookLabel(b.name), b.name)));
+  el("look-share-book").value = book?.name ?? "";
+  el("look-share-pages").replaceChildren(...(book?.notes || []).map((n) => new Option(n.name, n.name)));
+  // 总开关关着时下面都用不上;「每次新建一页」时用不上页面和加在哪里
+  for (const row of settingsSheet.querySelectorAll(".share-option")) {
+    const off = !look.share_enabled || (look.share_target === "new" && row.classList.contains("share-page-only"));
+    row.classList.toggle("off", off);
+    for (const c of row.querySelectorAll("button, input, select")) c.disabled = off;
+  }
+}
+
+// 「分享」关掉时安卓那边停用分享入口,分享列表里就没有 Minipad 了
+function syncShareTarget() {
+  try { window.MinipadShare?.setEnabled(look.share_enabled); } catch { /* 下次打开再试 */ }
+}
+
+let sharing = Promise.resolve();
+// 拿一条分享来写;连着分享了几次也一条一条写
+function takeShared() {
+  sharing = sharing.then(async () => {
+    let shared = null;
+    try { shared = JSON.parse(window.MinipadShare?.take() || "null"); } catch { /* 不是分享来的 */ }
+    if (shared) await receiveShare(shared);
+  });
+  return sharing;
+}
+
+async function receiveShare(shared) {
+  const back = look.share_after !== "open";
+  // 回原来的 App 时用系统的提示(Minipad 已经退到后台了);写不进去时留在 Minipad
+  const finish = (message, ok = true) => {
+    if (back) window.MinipadShare?.done(message, ok);
+    else toast(message, ok ? 2500 : 5000);
+  };
+  if (!look.share_enabled) return finish("分享到 Minipad 已关闭,可以在 外观 → 分享到 Minipad 里打开", false);
+  const lines = shareLines(shared, { stamp: look.share_stamp, source: look.share_source });
+  if (!lines.length) return finish("分享的内容是空的,没有记下来", false);
+  try {
+    await flush();
+    const loaded = await listBooks();
+    const book = loaded.find((b) => b.name === look.share_book) || loaded.find((b) => b.name === "") || loaded[0];
+    if (!book) throw new Error("没有笔记本");
+    let name;
+    let before = "";
+    let content;
+    if (look.share_target === "new") {
+      name = await invoke("mobile_create_note", { book: book.name, name: fillVars(SHARE_PAGE_NAME) });
+      content = shareBlock(lines, look.share_format) + "\n";
+    } else {
+      const wanted = fileName(look.share_page).toLowerCase();
+      name = book.notes.find((n) => n.name.toLowerCase() === wanted)?.name
+        ?? await invoke("mobile_create_note", { book: book.name, name: look.share_page });
+      const page = await invoke("mobile_read_note", { book: book.name, name });
+      if (page.unreadable) throw new Error(`「${name}」读取失败,不能写进去`);
+      before = page.content;
+      content = insertShare(before, lines, { where: look.share_where, format: look.share_format });
+    }
+    const result = await invoke("mobile_save_note", { book: book.name, name, content, expected: before });
+    scheduleMobileSync();
+    if (!back) {
+      await refresh(book.name, name);
+      if (look.share_target === "new" || look.share_where === "end") el("page").scrollTop = el("page").scrollHeight;
+    } else if (selected?.book === book.name && selected.name === name) {
+      // 写的就是屏幕上开着的这一页:读一遍新的内容,接着编辑时不会当成别处改过
+      await refresh();
+    } else await showNewPages();
+    finish(result?.conflict_name ? `记下了,页面刚被别处改过,这一条在冲突副本「${result.conflict_name}」里` : `已记到「${name}」`);
+  } catch (error) {
+    finish("没能记下分享的内容:" + error, false);
+  }
+}
+document.addEventListener("visibilitychange", () => { if (!document.hidden) window.__minipadShared?.(); });
+syncShareTarget();
+
 function showSettings(open) {
   settingsSheet.hidden = !open;
   settingsBackdrop.hidden = !open;
   if (open) {
     for (const c of pageLinkColors) c.reopen();
+    showShareOptions();
     if (!drawer.hidden) toggleDrawer(false);
     el("close-settings").focus();
   }
@@ -1815,6 +1924,9 @@ async function start() {
     view.dom.addEventListener("open-find", () => showFind(true));
     if (!invoke) throw new Error("请使用 Android 应用打开");
     await refresh(null, null);
+    // 分享到 Minipad:应用是分享叫起来的,或者网页加载时安卓那边已经收到了一条
+    window.__minipadShared = () => void takeShared();
+    void takeShared();
     await adoptSharedColors();
     updateSyncTimers();
     if (window.__TAURI__?.event?.listen) {

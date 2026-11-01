@@ -176,6 +176,29 @@ Check the in-app sync status and error history for problems.
 until the Windows and Android workflow passes real-device testing. A successful
 mock/browser test cannot verify phone storage and network behavior.
 
+## Share to Minipad (0.5.5)
+
+- Other apps' **Share** sheet lists Minipad for plain text. The manifest gets a `.ShareTarget`
+  `<activity-alias>` (`ACTION_SEND`, `text/plain`) pointing at `MainActivity`; the Android CI
+  job adds it after `tauri android init` from `src-tauri/android-share/share-target.xml`, and
+  replaces the generated `MainActivity.kt` with `src-tauri/android-share/MainActivity.kt`
+  (which keeps the generated `enableEdgeToEdge()`).
+- `MainActivity` keeps the shared text (`EXTRA_TEXT`, title from `EXTRA_SUBJECT` / `EXTRA_TITLE`)
+  and exposes a `MinipadShare` JavaScript interface: `take()` hands it to the page once,
+  `done(message, back)` shows a toast and, after a successful write, moves the task to the back
+  so the user returns to the app they shared from, and `setEnabled(on)` enables or disables the
+  alias (the 总开关 in 外观 → 分享到 Minipad). A cold start is picked up when the page has loaded;
+  a share while the app is running calls `window.__minipadShared()`. Intents relaunched from
+  Recents (`FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY`) or replayed after the activity is restored are
+  ignored, so one share is never written twice.
+- The page (`src/js/share.js`, `receiveShare` in `src/js/mobile.js`) writes through the normal
+  `mobile_save_note` with the content it just read as `expected`, so a concurrent change ends up
+  in a conflict copy, never lost. Unsaved edits are saved first; when the page written is the one
+  on screen it is read again afterwards.
+- On a device, check: share a web page from a browser with Minipad closed and with it open (both
+  land in 收集箱 once, then you are back in the browser); share with 打开 Minipad 看这一条; turn
+  the switch off and see Minipad disappear from the Share sheet, then on again.
+
 ## Planned follow-ups
 
 The touch interface, Milkdown editor and image import were added **within PR #38**
