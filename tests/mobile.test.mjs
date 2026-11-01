@@ -144,6 +144,10 @@ async function open({ colorScheme, keyboard, look = { ui: "classic" }, sharedCol
         if (command === "mobile_link_pages") {
           return disk.flatMap((b) => b.notes.filter((n) => n.content.includes("[[")).map((n) => [b.name, n.name]));
         }
+        if (command === "mobile_link_bodies") {
+          calls.linkBodies = (calls.linkBodies || 0) + 1;
+          return disk.flatMap((b) => b.notes.filter((n) => n.content.includes("[[")).map((n) => ({ book: b.name, name: n.name, content: n.content })));
+        }
         if (command === "mobile_read_colors") return window.__mobileTest.colors;
         if (command === "mobile_write_colors") {
           const changed = JSON.stringify(window.__mobileTest.colors) !== JSON.stringify(args.colors);
@@ -1943,7 +1947,7 @@ test("clean: every item of the ⋯ sheet works", async () => {
       assert.equal(await page.locator("#more-sheet").isHidden(), true, id + " closes the sheet");
     };
     await page.click("#open-more");
-    assert.deepEqual(await page.locator("#more-sheet button").allTextContents(),
+    assert.deepEqual(await page.locator("#more-sheet button:visible").allTextContents(),
       ["查找替换", "插入图片", "新建页面", "⟳重新读取", "调整页面顺序", "笔记本管理", "外观设置", "同步设置未开启", "删除这一页"]);
     await page.keyboard.press("Escape");
     assert.equal(await page.locator("#more-sheet").isHidden(), true);
@@ -2506,6 +2510,164 @@ test("share files: tapping a file link opens it with an installed app, the same 
     assert.equal((await opened()).length, 2);
     // web links still go to the browser
     assert.deepEqual(await page.evaluate(() => window.__mobileTest.opened || []), []);
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+// ---- 谁链接了这页、模板新建页面(0.5.6) ----
+// 跳过去以后闪一下的那一层盖在哪一段上(那一段的文字)
+const flashed = (page) => page.waitForFunction(() => {
+  const mark = document.querySelector("#main .bl-flash")?.getBoundingClientRect();
+  if (!mark) return null;
+  const block = [...document.querySelectorAll("#editor .ProseMirror :is(p, li)")].find((b) => Math.abs(b.getBoundingClientRect().top - mark.top) < 2);
+  return block?.textContent ?? null;
+}).then((h) => h.jsonValue());
+// 长按:手指按下(上一次长按的状态清掉),再是安卓 WebView 长按时发的 contextmenu
+const longPressOn = async (locator) => {
+  await locator.dispatchEvent("pointerdown", { button: 0, isPrimary: true });
+  await locator.dispatchEvent("contextmenu");
+};
+const sheetItems = (page) => page.$$eval("#backlinks-list .bl-item, #backlinks-list .bl-empty", (els) => els.map((e) => e.classList.contains("bl-empty")
+  ? e.textContent
+  : [...e.querySelectorAll("button")].map((b) => (b.classList.contains("bl-page") ? "# " : "") + b.textContent).join(" | ")));
+
+test("backlinks on the phone: off by default; the page menu lists the pages and lines linking here; a tap goes to that link", async () => {
+  const { context, page, errors } = await open();
+  try {
+    await page.evaluate(() => {
+      const disk = window.__mobileTest.disk;
+      disk[0].notes.push(
+        { name: "周报", content: "本周", unreadable: false },
+        { name: "首页", content: "看 [[周报]]\n\n- [ ] 再看 [[周报]] 和 `[[周报]]`\n\n" + "很长的一段。\n\n".repeat(60) + "最后 [[ 周报 ]]", unreadable: false },
+      );
+      disk.push({ name: "工作", notes: [{ name: "计划", content: "参考 [[默认/周报]]", unreadable: false }, { name: "周报", content: "工作周报", unreadable: false }] });
+    });
+    await page.click("#refresh");
+    const longPress = async (name) => {
+      if (await page.locator("#mobile-drawer").isHidden()) await page.click("#open-drawer");
+      await longPressOn(page.locator(`#notes-list button[data-page="${name}"]`));
+      await page.locator("#ctx").waitFor({ state: "visible" });
+    };
+    await longPress("周报");
+    assert.deepEqual(await page.locator("#ctx button").allTextContents(), ["打开", "调整顺序", "删除页面"], "off by default");
+    await page.evaluate(() => window.__mobileTest.back());
+    await page.click("#open-settings");
+    assert.equal(await page.locator("#look-backlinks").isChecked(), false);
+    await page.locator("#look-backlinks").check();
+    await page.click("#close-settings");
+    assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem("minipad-mobile-look")).backlinks), true);
+    // 只在点开时才查
+    assert.equal(await page.evaluate(() => window.__mobileTest.calls.linkBodies ?? 0), 0);
+    await longPress("周报");
+    assert.deepEqual(await page.locator("#ctx button").allTextContents(), ["打开", "谁链接了这页", "调整顺序", "删除页面"]);
+    await page.click('#ctx [data-act="backlinks"]');
+    await page.locator("#mobile-backlinks").waitFor({ state: "visible" });
+    assert.equal(await page.locator("#mobile-drawer").isHidden(), true);
+    assert.equal(await page.locator("#backlinks-page").textContent(), "「周报」");
+    // 每一行一次,代码里的不算;别的笔记本的页面写上是哪个笔记本
+    assert.deepEqual(await sheetItems(page), [
+      "# 首页 | 看 [[周报]] | 再看 [[周报]] 和 `[[周报]]` | 最后 [[ 周报 ]]",
+      "# 计划 工作 | 参考 [[默认/周报]]",
+    ]);
+    assert.equal(await page.evaluate(() => window.__mobileTest.calls.linkBodies), 1);
+    // 点最后一行:打开首页,滚到那一段,那一段闪一下
+    await page.locator("#backlinks-list .bl-line", { hasText: "最后" }).click();
+    assert.equal(await flashed(page), "最后 [[ 周报 ]]");
+    assert.equal(await page.locator("#mobile-backlinks").isHidden(), true);
+    assert.equal(await page.locator("#page-title").textContent(), "首页");
+    assert.ok(await page.locator("#page").evaluate((e) => e.scrollTop > 200), "scrolled down to the link");
+    // 点页面名:第一行的链接;别的笔记本的页面也能过去
+    await longPress("周报");
+    await page.click('#ctx [data-act="backlinks"]');
+    await page.locator("#backlinks-list .bl-page", { hasText: "计划" }).click();
+    assert.equal(await flashed(page), "参考 [[默认/周报]]");
+    assert.equal(await page.locator("#page-title").textContent(), "计划");
+    // 没有页面链接到这一页;返回键关掉
+    await longPress("计划");
+    await page.click('#ctx [data-act="backlinks"]');
+    await page.locator("#mobile-backlinks").waitFor({ state: "visible" });
+    assert.deepEqual(await sheetItems(page), ["没有页面链接到这一页"]);
+    await page.evaluate(() => window.__mobileTest.back());
+    assert.equal(await page.locator("#mobile-backlinks").isHidden(), true);
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test("backlinks on the phone: the clean layout has 谁链接了这页 in 更多 for the open page", async () => {
+  const { context, page, errors } = await open({ look: null });
+  try {
+    await page.evaluate(() => window.__mobileTest.disk[0].notes.push({ name: "三", content: "回到 [[一]]", unreadable: false }));
+    await page.click("#refresh");
+    await page.click("#open-more");
+    assert.equal(await page.locator("#more-backlinks").isHidden(), true, "off by default");
+    await page.evaluate(() => localStorage.setItem("minipad-mobile-look", JSON.stringify({ ...JSON.parse(localStorage.getItem("minipad-mobile-look") || "{}"), backlinks: true })));
+    await page.reload();
+    await page.locator("#editor .ProseMirror h1").waitFor();
+    await page.evaluate(() => window.__mobileTest.disk[0].notes.push({ name: "三", content: "回到 [[一]]", unreadable: false }));
+    await page.click("#open-more");
+    await page.click("#more-backlinks");
+    await page.locator("#mobile-backlinks").waitFor({ state: "visible" });
+    assert.equal(await page.locator("#more-sheet").isHidden(), true);
+    assert.deepEqual(await sheetItems(page), ["# 三 | 回到 [[一]]"]);
+    await page.click("#close-backlinks");
+    assert.equal(await page.locator("#mobile-backlinks").isHidden(), true);
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test("template new page: long-press 新建页面 lists the 模板 notebook, fills {{日期}} and puts the caret at {{光标}}", async () => {
+  const { context, page, errors } = await open();
+  try {
+    const menu = async () => {
+      await longPressOn(page.locator("#new-page"));
+      await page.locator("#ctx").waitFor({ state: "visible" });
+      return page.locator("#ctx button").allTextContents();
+    };
+    assert.deepEqual(await menu(), ["没有「模板」笔记本", "空白页面"]);
+    assert.equal(await page.locator('#ctx [data-act="no-templates"]').isDisabled(), true);
+    // 「空白页面」和点一下一样
+    await page.click('#ctx [data-act="blank"]');
+    await page.locator("#dialog").waitFor({ state: "visible" });
+    await page.click("#dialog-cancel");
+    await page.evaluate(() => window.__mobileTest.disk.push({ name: "模板", notes: [
+      { name: "日记 {{日期}}", content: "# {{日期}} {{笔记本}}\n\n{{光标}}\n\n- [ ] 记一笔\n", unreadable: false },
+      { name: "折叠", content: "<details><summary>标题</summary>{{光标}}内容</details>\n", unreadable: false },
+    ] }));
+    await page.click("#refresh");
+    assert.deepEqual(await menu(), ["日记 {{日期}}", "折叠", "空白页面"]);
+    await page.click('#ctx button:has-text("日记")');
+    const today = await page.evaluate(() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; });
+    await page.waitForFunction((t) => document.getElementById("page-title").textContent === `日记 ${t}`, today);
+    // 光标在 {{光标}} 那里:打的字进那一段;存下来的没有占位的字
+    await page.keyboard.type("今天");
+    await page.waitForFunction((t) => window.__mobileTest.disk[0].notes.find((n) => n.name === `日记 ${t}`)?.content.includes("今天"), today);
+    const saved = await note(page, `日记 ${today}`);
+    assert.equal(saved, `# ${today} 默认笔记本\n\n今天\n\n- [ ] 记一笔\n`);
+    assert.equal(saved.includes("⁣"), false);
+    // 编辑器不能原样保留的 HTML:直接写进文件,用源码打开
+    await menu();
+    await page.click('#ctx button:has-text("折叠")');
+    await page.waitForFunction(() => document.getElementById("page-title").textContent === "折叠");
+    assert.equal(await note(page, "折叠"), "<details><summary>标题</summary>内容</details>\n");
+    // 设置:换模板笔记本的名字;关掉以后长按就是点一下
+    await page.click("#open-drawer");
+    await page.click("#open-settings");
+    assert.equal(await page.locator("#look-templates").isChecked(), true);
+    assert.equal(await page.locator("#look-template-book").inputValue(), "模板");
+    await page.fill("#look-template-book", "我的模板");
+    await page.locator("#look-template-book").dispatchEvent("change");
+    await page.click("#close-settings");
+    assert.deepEqual(await menu(), ["没有「我的模板」笔记本", "空白页面"]);
+    await page.evaluate(() => window.__mobileTest.back());
+    await page.click("#open-drawer");
+    await page.click("#open-settings");
+    await page.locator("#look-templates").uncheck();
+    assert.equal(await page.locator("#look-template-book").isDisabled(), true);
+    await page.click("#close-settings");
+    await longPressOn(page.locator("#new-page"));
+    assert.equal(await page.locator("#ctx").isVisible(), false);
+    const saved2 = await page.evaluate(() => JSON.parse(localStorage.getItem("minipad-mobile-look")));
+    assert.deepEqual([saved2.templates, saved2.template_book], [false, "我的模板"]);
     assert.deepEqual(errors, []);
   } finally { await context.close(); }
 });

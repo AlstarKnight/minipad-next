@@ -196,6 +196,7 @@
     </div>
     <div class="more-line" aria-hidden="true"></div>
     <div class="more-list">
+      <button id="more-backlinks" type="button" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></svg>谁链接了这页</button>
       <button id="more-sort" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 4v16M4 8l4-4 4 4M16 20V4M12 16l4 4 4-4"/></svg>调整页面顺序</button>
       <button id="more-books" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h4v15H4zM10 5h4v15h-4z"/><path d="m16 6 3.5-1 3 14-3.5 1z"/></svg>笔记本管理</button>
       <button id="more-look" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a9 9 0 1 0 0 18c1.2 0 1.8-.9 1.4-2-.5-1.3.4-2.5 1.8-2.5H18a3 3 0 0 0 3-3A9 9 0 0 0 12 3z"/><circle cx="7.5" cy="11" r="1"/><circle cx="10" cy="7" r="1"/><circle cx="15" cy="7.5" r="1"/></svg>外观设置</button>
@@ -272,6 +273,10 @@
     <label class="switch-row"><span>中文的 【【 】】 当作 [[ ]]</span><input id="look-page-link-cn" type="checkbox"></label>
     <div class="sync-field"><span>链接颜色</span><div id="look-page-link-color" class="accent-swatches" role="radiogroup" aria-label="页面链接颜色"></div></div>
     <div class="sync-field"><span>还没有的页面的颜色</span><div id="look-page-link-broken-color" class="accent-swatches" role="radiogroup" aria-label="还没有的页面的颜色"></div></div>
+    <label class="switch-row"><span>谁链接了这页:长按抽屉里的页面(或者在「更多」里)列出链接到这一页的页面和那一行,点一下过去</span><input id="look-backlinks" type="checkbox"></label>
+    <h3>模板新建页面</h3>
+    <label class="switch-row"><span>长按「新建页面」列出模板笔记本里的页面,选一个就照着它新建({{日期}}、{{时间}}、{{光标}} 这些变量和电脑上一样)</span><input id="look-templates" type="checkbox"></label>
+    <label class="sync-field template-option">模板笔记本(和电脑上的是同一个)<input id="look-template-book" autocapitalize="off" spellcheck="false"></label>
     <h3>行内计算</h3>
     <label class="switch-row"><span>打 = 就算出结果(比如打 12*3.5= 后面写上 42;代码里不算)</span><input id="look-calc" type="checkbox"></label>
     <h3>分享到 Minipad</h3>
@@ -327,6 +332,14 @@
       <button type="button" data-share-media-place="above">上面</button>
     </div></div>
     <p class="sheet-note">只保存在这台手机上,改了马上生效。</p>
+  </section>
+  <!-- 谁链接了这页(0.5.6):底部弹出链接到这一页的页面,每条下面是链接所在的那一行,点一下过去 -->
+  <div id="backlinks-backdrop" class="drawer-backdrop" hidden></div>
+  <section id="mobile-backlinks" class="sheet" role="dialog" aria-modal="true" aria-labelledby="backlinks-title" hidden>
+    <div class="sheet-grip" aria-hidden="true"></div>
+    <div class="sheet-top"><h2 id="backlinks-title">谁链接了这页</h2><button id="close-backlinks" type="button" class="icon-button" aria-label="关闭">✕</button></div>
+    <p id="backlinks-page" class="sheet-note"></p>
+    <div id="backlinks-list" class="backlinks-list"></div>
   </section>
   <!-- 笔记本管理(和电脑版一样):图标、颜色、改名、删除、新建。图标和颜色存在笔记本的 .minipad.json,会同步 -->
   <div id="books-backdrop" class="drawer-backdrop" hidden></div>

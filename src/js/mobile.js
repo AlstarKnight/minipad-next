@@ -1,5 +1,5 @@
 // Android-only Milkdown editor. Persist Markdown; binary images go to the book's assets folder.
-import { $prose, Plugin, TextSelection } from "../vendor/milkdown.js";
+import { $prose, Plugin, Selection, TextSelection } from "../vendor/milkdown.js";
 import { createEditor, editorDebug, showInEditor, syncContent, setMobileLocalPathEnabled, setLazyLongPages, toggleTask } from "./editor.js";
 import { imageSrc } from "./images.js";
 import { state as desktopState } from "./state.js";
@@ -8,13 +8,13 @@ import { setLinkPrompt, setTaskCommand } from "./toolbar.js";
 import { ACCENTS, applyAccent, tidyAccent, parseAccent } from "./accent.js";
 import { makeSharedColorTools, setColorLibrarySaver, refreshSharedColors } from "./sharedcolors.js";
 import { ask, askText, closeDialog, dialogOpen, openMenu, toast } from "./ui.js";
-import { setPageLinkHost, pageNamesChanged, applyPageLinkSettings, linkIndex } from "./pagelinkview.js";
-import { resolveTarget, retarget, fileName } from "./pagelinks.js";
+import { setPageLinkHost, pageNamesChanged, applyPageLinkSettings, linkIndex, linkPosition } from "./pagelinkview.js";
+import { resolveTarget, retarget, fileName, backlinks } from "./pagelinks.js";
 import { BOOK_ICONS, bookIcon, iconColor } from "./bookicons.js";
 import { applyExpandSettings, setExpandHost } from "./expand.js";
 import { DEFAULT_SHARE_PAGE, SHARE_PAGE_NAME, shareLines, shareBlock, insertShare, shareSkippedText } from "./share.js";
 import { attachmentMarkdown, imageMarkdown } from "./attachments.js";
-import { fillVars } from "./vars.js";
+import { fillVars, CURSOR } from "./vars.js";
 
 const invoke = window.__TAURI__?.core?.invoke;
 const el = (id) => document.getElementById(id);
@@ -235,6 +235,7 @@ function renderDrawer() {
         add.className = "tree-new";
         add.textContent = "＋ 新建页面";
         add.addEventListener("click", () => el("add-note").click());
+        onLongPress(add, templateMenu);
         noteList.append(add);
       }
     }
@@ -574,7 +575,8 @@ document.addEventListener("keydown", (e) => {
     }
     return;
   }
-  if (e.key === "Escape" && !moreSheet.hidden) showMore(false);
+  if (e.key === "Escape" && !backlinksSheet.hidden) showBacklinksSheet(false);
+  else if (e.key === "Escape" && !moreSheet.hidden) showMore(false);
   else if (e.key === "Escape" && !settingsSheet.hidden) showSettings(false);
   else if (e.key === "Escape" && !drawer.hidden) toggleDrawer(false);
 });
@@ -732,6 +734,56 @@ el("add-note").addEventListener("click", async () => {
   } catch (error) { notify("新建页面失败：" + error); }
 });
 
+// ---- 模板新建页面(0.5.6):长按「新建页面」列出模板笔记本里的页面,选一个就照着它新建,最下面是「空白页面」 ----
+// 和电脑上一样:模板的页面名是新页面的名字,内容是新页面的内容,{{日期}}、{{时间}}、{{光标}} 这些变量用同一份 vars.js
+function templateMenu(at) {
+  if (!look.templates || el("add-note").disabled) return false;
+  navigator.vibrate?.(15);
+  const tb = books.find((b) => b.name === look.template_book);
+  const items = tb?.notes.length
+    ? tb.notes.map((n) => ({ id: "template", label: n.name, act: () => void newFromTemplate(tb.name, n.name) }))
+    : [{ id: "no-templates", label: tb ? `「${look.template_book}」里还没有页面` : `没有「${look.template_book}」笔记本`, disabled: true, act: () => {} }];
+  items.push({ id: "blank", label: "空白页面", act: () => el("add-note").click() });
+  openMenu(items, at.x, at.y);
+}
+for (const button of [el("add-note"), el("new-page")]) onLongPress(button, templateMenu);
+
+async function newFromTemplate(templateBook, template) {
+  const book = currentBook;
+  try {
+    await flush();
+    const tpl = await invoke("mobile_read_note", { book: templateBook, name: template });
+    if (tpl.unreadable) throw new Error(`模板「${template}」读取失败`);
+    const vars = { book: bookLabel(book) };
+    const created = await invoke("mobile_create_note", { book, name: fillVars(template, vars).trim() || "新页面" });
+    const content = fillVars(tpl.content, { ...vars, title: created, cursor: true });
+    // 有编辑器不能原样保留的 HTML:直接写进文件,和别的这种页面一样用源码打开
+    if (needsSource(content)) {
+      await invoke("mobile_save_note", { book, name: created, content: content.replace(CURSOR, ""), expected: "" });
+      await refresh(book, created);
+      return;
+    }
+    await refresh(book, created);
+    if (selected?.book !== book || selected.name !== created || selected.sourceOnly) return;
+    // 新页面换成模板的内容(撤销不会退回空白),光标放到 {{光标}} 的地方(去掉占位的字),没有就放在最后
+    selected = { ...selected, content, state: null, mdStale: false };
+    loading = true;
+    showInEditor(selected);
+    loading = false;
+    let at = null;
+    view.state.doc.descendants((node, pos) => {
+      if (at == null && node.isText && node.text.includes(CURSOR)) at = pos + node.text.indexOf(CURSOR);
+      return at == null;
+    });
+    const tr = view.state.tr.setMeta("addToHistory", false);
+    if (at != null) tr.delete(at, at + 1).setSelection(TextSelection.create(tr.doc, at));
+    else tr.setSelection(Selection.atEnd(tr.doc));
+    view.dispatch(tr.scrollIntoView());
+    scheduleSave();
+    if (view.editable) view.focus();
+  } catch (error) { notify("新建页面失败：" + error); }
+}
+
 el("delete-note").addEventListener("click", () => { if (selected) void deletePage(selected.book, selected.name); });
 
 // ---- 简洁布局(0.5.4)的抽屉:🔍 展开搜索框,「笔记本」右边 ⇅ 排序、＋ 新建笔记本,底部 同步 / 明暗 / 设置 ----
@@ -770,6 +822,7 @@ for (const [id, act] of [
   ["more-find", () => showFind(true)],
   ["more-image", () => el("insert-image").click()],
   ["more-new-page", () => el("add-note").click()],
+  ["more-backlinks", () => { if (selected) void showBacklinks(selected.book, selected.name); }],
   ["more-sync", () => el("refresh").click()],
   ["more-sort", () => { toggleDrawer(true); setSorting(true); }],
   ["more-books", () => showBookManager(true)],
@@ -815,14 +868,15 @@ async function deletePage(book, name) {
   } catch (error) { notify("删除失败：" + error); }
 }
 
-// ---- 长按(0.5.2):页面弹出菜单(删除、调整顺序),笔记本打开笔记本管理。手指挪开就是在滚动列表,不算长按 ----
+// ---- 长按(0.5.2):页面弹出菜单(删除、调整顺序),笔记本打开笔记本管理。手指挪开就是在滚动列表,不算长按。
+// act 返回 false 时这次长按不算(比如模板新建关着),松手照样算点击 ----
 const LONG_PRESS_MS = 500;
 function onLongPress(target, act) {
   let timer = 0;
   let start = null;
   let fired = false;
   const cancel = () => { clearTimeout(timer); timer = 0; };
-  const fire = (at) => { cancel(); fired = true; act(at); };
+  const fire = (at) => { cancel(); fired = act(at) !== false; };
   target.addEventListener("pointerdown", (e) => {
     fired = false;
     cancel();
@@ -852,10 +906,100 @@ function pageMenu(book, name, at) {
   navigator.vibrate?.(15);
   openMenu([
     { id: "open", label: "打开", act: () => { void refresh(book, name).then(() => toggleDrawer(false)); } },
+    ...(look.backlinks ? [{ id: "backlinks", label: "谁链接了这页", act: () => void showBacklinks(book, name) }] : []),
     { id: "sort", label: "调整顺序", act: () => setSorting(true) },
     { id: "delete", label: "删除页面", danger: true, act: () => void deletePage(book, name) },
   ], at.x, at.y);
 }
+
+// ---- 谁链接了这页(0.5.6):页面菜单里点开,底部弹出链接到这一页的页面和链接所在的那一行,点一下过去。
+// 手机上的页面是用到时才读的,所以只在点开时让 Rust 读一遍有链接的页面,平时不查
+const backlinksSheet = el("mobile-backlinks");
+let backlinkList = [];
+let backlinkTarget = null;
+function showBacklinksSheet(open) {
+  backlinksSheet.hidden = !open;
+  el("backlinks-backdrop").hidden = !open;
+}
+async function showBacklinks(book, name) {
+  if (!look.backlinks) return;
+  try {
+    await flush();
+    const pages = await invoke("mobile_link_bodies");
+    backlinkTarget = { book, page: name };
+    backlinkList = backlinks(pages, linkIndex(), backlinkTarget);
+  } catch (error) {
+    toast("没能找出链接到这页的页面:" + error, 5000);
+    return;
+  }
+  el("backlinks-page").textContent = `「${name}」` + (book === currentBook ? "" : `(${bookLabel(book)})`);
+  const items = backlinkList.map((x, i) => {
+    const item = document.createElement("div");
+    item.className = "bl-item";
+    const page = document.createElement("button");
+    page.type = "button";
+    page.className = "bl-page";
+    page.dataset.i = i;
+    page.textContent = x.name;
+    // 别的笔记本的页面:后面写上是哪个笔记本
+    if (x.book !== book) {
+      const where = document.createElement("span");
+      where.className = "bl-book";
+      where.textContent = bookLabel(x.book);
+      page.append(" ", where);
+    }
+    item.append(page);
+    x.lines.forEach((l, j) => {
+      const line = document.createElement("button");
+      line.type = "button";
+      line.className = "bl-line";
+      line.dataset.i = i;
+      line.dataset.l = j;
+      line.textContent = l.text;
+      item.append(line);
+    });
+    return item;
+  });
+  if (!items.length) {
+    const empty = document.createElement("div");
+    empty.className = "bl-empty";
+    empty.textContent = "没有页面链接到这一页";
+    items.push(empty);
+  }
+  el("backlinks-list").replaceChildren(...items);
+  if (!drawer.hidden) toggleDrawer(false);
+  showBacklinksSheet(true);
+}
+// 打开那一页,滚到那一行指向原来那一页的链接,那一段闪一下(点页面名是第一行;找不到就只打开)
+async function jumpToBacklink(entry, line) {
+  const target = backlinkTarget;
+  showBacklinksSheet(false);
+  await refresh(entry.book, entry.name);
+  if (selected?.book !== entry.book || selected.name !== entry.name || selected.sourceOnly) return;
+  const at = linkPosition(view.state.doc, entry.book, target, line.link);
+  if (at == null) return;
+  view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, at)));
+  const scroller = el("page");
+  scroller.scrollTop += view.coordsAtPos(at).top - scroller.getBoundingClientRect().top - scroller.clientHeight / 3;
+  // 闪的是盖在那一段上面的一层(编辑器自己的元素上加的样式会被它改回去)
+  const { node } = view.domAtPos(at);
+  const block = (node.nodeType === 1 ? node : node.parentElement)?.closest("p, li, h1, h2, h3, h4, h5, h6, td, th");
+  if (!block) return;
+  const r = block.getBoundingClientRect();
+  const box = el("main").getBoundingClientRect();
+  const mark = document.createElement("div");
+  mark.className = "bl-flash";
+  Object.assign(mark.style, { top: `${r.top - box.top}px`, left: `${r.left - box.left}px`, width: `${r.width}px`, height: `${r.height}px` });
+  el("main").append(mark);
+  setTimeout(() => mark.remove(), 1600);
+}
+el("backlinks-list").addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-i]");
+  const entry = b && backlinkList[Number(b.dataset.i)];
+  if (entry) void jumpToBacklink(entry, entry.lines[Number(b.dataset.l || 0)]);
+});
+el("close-backlinks").addEventListener("click", () => showBacklinksSheet(false));
+el("backlinks-backdrop").addEventListener("click", () => showBacklinksSheet(false));
 
 // ---- 页面排序(0.5.2):按住每行右边的把手上下拖,松手就存进笔记本的 .minipad.json(和电脑版标签的顺序是同一份,会同步) ----
 function setSorting(on) {
@@ -1523,6 +1667,8 @@ const THEMES = ["system", "light", "dark"];
 const systemDark = window.matchMedia("(prefers-color-scheme: dark)");
 const settingsSheet = el("mobile-settings");
 const settingsBackdrop = el("settings-backdrop");
+// 模板笔记本的默认名字(和电脑版 templates.js 的 DEFAULT_TEMPLATE_BOOK 一样)
+const TEMPLATE_BOOK = "模板";
 // 分享图片和文件(0.5.6):单个文件大小上限(MB)、一次最多几个的选项
 const SHARE_MAX_MB = [10, 25, 50, 100, 200];
 const SHARE_MAX_COUNT = [5, 20, 50];
@@ -1590,6 +1736,11 @@ function loadLook() {
     page_link_cn_brackets: saved.page_link_cn_brackets !== false,
     page_link_color: tidyAccent(typeof saved.page_link_color === "string" ? saved.page_link_color : ""),
     page_link_broken_color: tidyAccent(typeof saved.page_link_broken_color === "string" ? saved.page_link_broken_color : ""),
+    // 谁链接了这页(0.5.6),默认不开
+    backlinks: saved.backlinks === true,
+    // 长按「新建页面」用模板新建(0.5.6);模板笔记本和电脑上是同一个
+    templates: saved.templates !== false,
+    template_book: typeof saved.template_book === "string" && saved.template_book.trim() ? saved.template_book.trim() : TEMPLATE_BOOK,
     // 行内计算:手机上只有「打 = 就算」,默认不开
     calc_key: saved.calc_key === "equals" ? "equals" : "off",
     // 分享到 Minipad(0.5.5):别的 App 分享来的文字记到哪个页面、怎么记(写法和电脑上的快速记录一样)
@@ -1675,6 +1826,14 @@ function applyLook() {
   for (const c of pageLinkColors) c.show();
   applyPageLinkSettings(look, { mobile: true, tapEdit: look.link_tap_edit });
   el("look-calc").checked = look.calc_key === "equals";
+  el("look-backlinks").checked = look.backlinks;
+  el("more-backlinks").hidden = !look.backlinks;
+  el("look-templates").checked = look.templates;
+  el("look-template-book").value = look.template_book;
+  for (const row of settingsSheet.querySelectorAll(".template-option")) {
+    row.classList.toggle("off", !look.templates);
+    for (const c of row.querySelectorAll("input")) c.disabled = !look.templates;
+  }
   applyExpandSettings({ calc_key: look.calc_key });
   el("viewport-debug").hidden = !look.debug;
   if (look.debug) requestAnimationFrame(fitViewport);
@@ -1721,6 +1880,9 @@ el("look-page-links").addEventListener("change", (e) => setLook({ page_links: e.
 for (const b of el("look-page-link-suggest").children) b.addEventListener("click", () => setLook({ page_link_suggest: b.dataset.suggest }));
 el("look-page-link-cn").addEventListener("change", (e) => setLook({ page_link_cn_brackets: e.target.checked }));
 el("look-calc").addEventListener("change", (e) => setLook({ calc_key: e.target.checked ? "equals" : "off" }));
+el("look-backlinks").addEventListener("change", (e) => setLook({ backlinks: e.target.checked }));
+el("look-templates").addEventListener("change", (e) => setLook({ templates: e.target.checked }));
+el("look-template-book").addEventListener("change", (e) => setLook({ template_book: e.target.value.trim() || TEMPLATE_BOOK }));
 el("look-share").addEventListener("change", (e) => setLook({ share_enabled: e.target.checked }));
 el("look-share-book").addEventListener("change", (e) => setLook({ share_book: e.target.value }));
 el("look-share-page").addEventListener("change", (e) => setLook({ share_page: e.target.value.trim() || DEFAULT_SHARE_PAGE }));
@@ -1888,14 +2050,15 @@ el("close-settings").addEventListener("click", () => showSettings(false));
 settingsBackdrop.addEventListener("click", () => showSettings(false));
 applyLook();
 
-// ---- 返回键(0.4.5):按一次关掉最上面开着的一层,顺序是 对话框 → 菜单和弹窗 → 查找栏 → 「更多」 → 笔记本管理 → 同步设置 → 外观设置 → 抽屉。
+// ---- 返回键(0.4.5):按一次关掉最上面开着的一层,顺序是 对话框 → 菜单和弹窗 → 谁链接了这页 → 查找栏 → 「更多」 → 笔记本管理 → 同步设置 → 外观设置 → 抽屉。
 // 只在有东西开着时才接管返回键(Tauri 的 onBackButtonPress),全关了就交还,返回键照常让应用退到后台。
 const syncSheet = el("mobile-webdav-settings");
 const openMenus = () => [...document.querySelectorAll(".menu:not([hidden])")];
-const layerOpen = () => dialogOpen() || openMenus().length > 0 || !findPanel.hidden || !moreSheet.hidden || !booksSheet.hidden || !syncSheet.hidden || !settingsSheet.hidden || !drawer.hidden;
+const layerOpen = () => dialogOpen() || openMenus().length > 0 || !backlinksSheet.hidden || !findPanel.hidden || !moreSheet.hidden || !booksSheet.hidden || !syncSheet.hidden || !settingsSheet.hidden || !drawer.hidden;
 function closeTopLayer() {
   if (dialogOpen()) closeDialog(false);
   else if (openMenus().length) for (const menu of openMenus()) menu.hidden = true;
+  else if (!backlinksSheet.hidden) showBacklinksSheet(false);
   else if (!findPanel.hidden) showFind(false);
   else if (!moreSheet.hidden) showMore(false);
   else if (!booksSheet.hidden) showBookManager(false);

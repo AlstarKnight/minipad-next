@@ -580,4 +580,19 @@ html[data-mobile] .more-list .danger, html[data-mobile] .more-list .danger svg {
 html[data-mobile] .clean-only-setting.off { opacity: .45; }
 /* 「分享到 Minipad」:总开关关着时、「每次新建一页」时用不上的几项灰掉 */
 html[data-mobile] .share-option.off { opacity: .45; }
+html[data-mobile] .template-option.off { opacity: .45; }
+
+/* 谁链接了这页(0.5.6):每个页面一块,页面名下面是链接所在的那几行;名字和那一行太长时换行,不截断 */
+html[data-mobile] .backlinks-list { display: grid; gap: 10px; margin-top: 8px; }
+html[data-mobile] .backlinks-list .bl-item { display: grid; gap: 0; padding: 6px 10px; border: 1px solid var(--border); border-radius: 14px; background: var(--surface); }
+html[data-mobile] .backlinks-list button { display: block; width: 100%; min-height: 40px; padding: 6px 2px; border: 0; background: transparent;
+  color: var(--ink); font-size: 15px; text-align: left; overflow-wrap: anywhere; }
+html[data-mobile] .backlinks-list .bl-page { font-weight: 650; }
+html[data-mobile] .backlinks-list .bl-book { color: var(--subtle); font-size: 12px; font-weight: 500; }
+html[data-mobile] .backlinks-list .bl-line { min-height: 36px; color: var(--subtle); font-size: 14px; }
+html[data-mobile] .backlinks-list .bl-empty { padding: 18px 2px; color: var(--subtle); }
+/* 点了那一行过去以后,链接所在的那一段闪一下(盖在那一段上面,不挡手指) */
+html[data-mobile] .bl-flash { position: absolute; pointer-events: none; border-radius: 6px; background: var(--accent); opacity: 0;
+  animation: bl-flash 1.6s ease-out; }
+@keyframes bl-flash { from { opacity: .3; } to { opacity: 0; } }
 html[data-mobile] #mobile-settings .seg button { white-space: normal; line-height: 1.3; }

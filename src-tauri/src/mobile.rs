@@ -121,26 +121,53 @@ fn mobile_write_colors(app: AppHandle, colors: notes::SharedColors) -> Result<bo
     notes::write_colors(&root(&app)?, &colors)
 }
 
-/// Pages that contain a [[ link at all (also the escaped \[\[ older versions wrote): after a
-/// notebook is renamed only these are read and rewritten, not every page over IPC.
-#[tauri::command(async)]
-fn mobile_link_pages(app: AppHandle) -> Result<Vec<(String, String)>, String> {
-    let _order = notes::io_order();
-    let root = root(&app)?;
+/// Pages that contain a [[ link at all (also the escaped \[\[ older versions wrote), with their text.
+fn link_pages(root: &Path) -> Result<Vec<(String, String, String)>, String> {
     let mut found = Vec::new();
-    for book in notes::index_books(&root)? {
-        let dir = notes::book_dir(&root, &book.name)?;
+    for book in notes::index_books(root)? {
+        let dir = notes::book_dir(root, &book.name)?;
         for name in book.notes {
             let Ok(bytes) = fs::read(notes::note_path(&dir, &name)) else {
                 continue;
             };
             let text = notes::decode_text(&bytes);
             if text.contains("[[") || text.contains("\\[\\[") {
-                found.push((book.name.clone(), name));
+                found.push((book.name.clone(), name, text));
             }
         }
     }
     Ok(found)
+}
+
+/// After a notebook is renamed only the pages with links are read and rewritten, not every page over IPC.
+#[tauri::command(async)]
+fn mobile_link_pages(app: AppHandle) -> Result<Vec<(String, String)>, String> {
+    let _order = notes::io_order();
+    Ok(link_pages(&root(&app)?)?
+        .into_iter()
+        .map(|(book, name, _)| (book, name))
+        .collect())
+}
+
+#[derive(Serialize)]
+struct LinkBody {
+    book: String,
+    name: String,
+    content: String,
+}
+
+/// 谁链接了这页(0.5.6):有链接的页面连同内容,点开列表时才读一次;前端挑出链到那一页的那几行
+#[tauri::command(async)]
+fn mobile_link_bodies(app: AppHandle) -> Result<Vec<LinkBody>, String> {
+    let _order = notes::io_order();
+    Ok(link_pages(&root(&app)?)?
+        .into_iter()
+        .map(|(book, name, content)| LinkBody {
+            book,
+            name,
+            content,
+        })
+        .collect())
 }
 
 #[derive(Serialize)]
@@ -650,6 +677,7 @@ pub fn run() {
             mobile_set_book_appearance,
             mobile_set_page_order,
             mobile_link_pages,
+            mobile_link_bodies,
             mobile_read_colors,
             mobile_write_colors,
             mobile_save_note,
