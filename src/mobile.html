@@ -275,7 +275,7 @@
     <h3>行内计算</h3>
     <label class="switch-row"><span>打 = 就算出结果(比如打 12*3.5= 后面写上 42;代码里不算)</span><input id="look-calc" type="checkbox"></label>
     <h3>分享到 Minipad</h3>
-    <label class="switch-row"><span>在别的 App 里点「分享」可以选 Minipad,分享的文字记到下面的页面(关掉后分享列表里没有 Minipad)</span><input id="look-share" type="checkbox"></label>
+    <label class="switch-row"><span>接收文字:在别的 App 里分享文字、链接时可以选 Minipad,记到下面的页面(关掉后分享文字时列表里没有 Minipad)</span><input id="look-share" type="checkbox"></label>
     <div class="sync-field share-option"><span>写到</span><div id="look-share-target" class="seg" role="group" aria-label="分享的文字写到">
       <button type="button" data-share-target="page">追加到一个页面</button>
       <button type="button" data-share-target="new">每次新建一页</button>
@@ -297,6 +297,34 @@
     <div class="sync-field share-option"><span>分享完以后</span><div id="look-share-after" class="seg" role="group" aria-label="分享完以后">
       <button type="button" data-share-after="back">提示一下,回到原来的 App</button>
       <button type="button" data-share-after="open">打开 Minipad 看这一条</button>
+    </div></div>
+    <label class="switch-row"><span>接收图片:在相册等 App 里分享图片时可以选 Minipad,存进笔记本的 assets,页面里直接显示(关掉后分享图片时列表里没有 Minipad)</span><input id="look-share-images" type="checkbox"></label>
+    <label class="switch-row"><span>接收文件:分享 pdf、文档、压缩包、音频、视频等文件时可以选 Minipad,页面里是一个文件链接,点了用手机里的应用打开(关掉后同上)</span><input id="look-share-files" type="checkbox"></label>
+    <div class="sync-field share-option share-image-only"><span>图片质量</span><div id="look-share-quality" class="seg" role="group" aria-label="图片质量">
+      <button type="button" data-share-quality="original">保留原图</button>
+      <button type="button" data-share-quality="compress">压缩(长边 2048 像素;gif、svg 不压)</button>
+    </div></div>
+    <label class="switch-row share-option share-image-only"><span>heic 照片转成 jpg(关掉时当文件存)</span><input id="look-share-heic" type="checkbox"></label>
+    <div class="sync-field share-option share-media-only"><span>单个文件大小上限</span><div id="look-share-max" class="seg" role="group" aria-label="单个文件大小上限">
+      <button type="button" data-share-max="10">10 MB</button>
+      <button type="button" data-share-max="25">25 MB</button>
+      <button type="button" data-share-max="50">50 MB</button>
+      <button type="button" data-share-max="100">100 MB</button>
+      <button type="button" data-share-max="200">200 MB</button>
+    </div></div>
+    <div class="sync-field share-option share-media-only"><span>一次最多几个</span><div id="look-share-count" class="seg" role="group" aria-label="一次最多几个">
+      <button type="button" data-share-count="5">5 个</button>
+      <button type="button" data-share-count="20">20 个</button>
+      <button type="button" data-share-count="50">50 个</button>
+    </div></div>
+    <div class="sync-field share-option share-file-only"><span>文件链接显示</span><div id="look-share-file-label" class="seg" role="group" aria-label="文件链接显示">
+      <button type="button" data-share-file-label="size">文件名和大小</button>
+      <button type="button" data-share-file-label="name">只显示文件名</button>
+    </div></div>
+    <label class="switch-row share-option share-file-only"><span>文件链接前加 📎</span><input id="look-share-clip" type="checkbox"></label>
+    <div class="sync-field share-option share-media-only"><span>和文字一起分享时,图片和文件放在文字的</span><div id="look-share-media-place" class="seg" role="group" aria-label="图片和文件放在文字的">
+      <button type="button" data-share-media-place="below">下面</button>
+      <button type="button" data-share-media-place="above">上面</button>
     </div></div>
     <p class="sheet-note">只保存在这台手机上,改了马上生效。</p>
   </section>
@@ -355,6 +383,6 @@
   <div id="ctx" class="menu" role="menu" hidden></div>
   <div id="toast" class="mobile-toast" role="status" hidden></div>
   <pre id="viewport-debug" class="viewport-debug" aria-hidden="true" hidden></pre>
-  <input id="image-file" type="file" accept="image/jpeg,image/png,image/gif,image/webp,image/bmp" hidden>
+  <input id="image-file" type="file" accept="image/jpeg,image/png,image/gif,image/webp,image/bmp,image/svg+xml,image/avif" hidden>
 </body>
 </html>

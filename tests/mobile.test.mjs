@@ -35,16 +35,23 @@ async function chooseNote(page, name) {
 // look: null is a fresh install (the clean layout).
 // sharedColors: the color library file already in the notes folder (synced from the desktop).
 // share (0.5.5): gives the page the Android MinipadShare bridge; an object is a share the app was opened with.
+// 0.5.6: setOptions records the share settings (enabled keeps the text switch), openFile and discard record their calls.
 async function open({ colorScheme, keyboard, look = { ui: "classic" }, sharedColors = null, share = undefined } = {}) {
   const context = await browser.newContext({ viewport: { width: 390, height: 740 }, colorScheme });
   if (share !== undefined) {
     await context.addInitScript((first) => {
       const queue = first ? [JSON.stringify(first)] : [];
-      window.__share = { queue, done: [], enabled: [] };
+      window.__share = { queue, done: [], enabled: [], options: [], opened: [], discarded: [], openResult: "" };
       window.MinipadShare = {
         take: () => queue.shift() ?? null,
         done: (message, back) => window.__share.done.push({ message, back }),
-        setEnabled: (on) => window.__share.enabled.push(on),
+        setOptions: (json) => {
+          const options = JSON.parse(json);
+          window.__share.options.push(options);
+          window.__share.enabled.push(options.text);
+        },
+        openFile: (path) => { window.__share.opened.push(path); return window.__share.openResult; },
+        discard: (json) => window.__share.discarded.push(...JSON.parse(json)),
       };
     }, share);
   }
@@ -152,6 +159,31 @@ async function open({ colorScheme, keyboard, look = { ui: "classic" }, sharedCol
         if (command === "mobile_save_image") {
           images["assets/test.png"] = { mime: args.mime, data: args.data };
           return "assets/test.png";
+        }
+        // 分享来的文件(0.5.6):像 Rust 那样起名字(图片 img-日期-时间,文件留着名字,重名加 -2)放进 assets;
+        // 文件带着 fail 时当成没放成。assets 里的图片放一张 1×1 的 png,页面里能显示
+        if (command === "mobile_place_shared") {
+          const assets = (window.__mobileTest.assets ||= {});
+          (window.__mobileTest.placed ||= []).push(args);
+          return args.files.map((f) => {
+            if (f.fail) return { rel: "", image: false, size: 0, name: f.name, error: f.fail };
+            const ext = { "image/jpeg": ".jpg", "image/png": ".png", "image/gif": ".gif", "image/webp": ".webp", "image/svg+xml": ".svg" }[f.mime];
+            const [stem, tail] = ext ? ["img-20261101-130501", ext] : [f.name.replace(/\.[^.]+$/, ""), f.name.match(/\.[^.]+$/)?.[0] ?? ""];
+            let rel = `assets/${stem}${tail}`;
+            for (let n = 2; assets[args.book + "\n" + rel]; n++) rel = `assets/${stem}-${n}${tail}`;
+            assets[args.book + "\n" + rel] = f;
+            if (ext) images[rel] = { mime: "image/png", data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+nP7sAAAAASUVORK5CYII=" };
+            return { rel, image: !!ext, size: f.size, name: f.name, error: null };
+          });
+        }
+        if (command === "mobile_remove_assets") {
+          (window.__mobileTest.removed ||= []).push(args);
+          for (const rel of args.paths) delete window.__mobileTest.assets?.[args.book + "\n" + rel];
+          return null;
+        }
+        if (command === "mobile_attachment_path") {
+          if (!window.__mobileTest.assets?.[args.book + "\n" + args.path]) throw "找不到这个附件,可能已经删掉或者改了名字";
+          return `/data/user/0/io.github.alstarknight.minipadnext/notes/${args.book ? args.book + "/" : ""}${args.path}`;
         }
         if (command === "mobile_open_url") {
           (window.__mobileTest.opened ||= []).push(args);
@@ -2301,11 +2333,18 @@ test("share: the 分享到 Minipad settings are saved, greyed out when unused, a
     assert.deepEqual(
       [saved.share_book, saved.share_page, saved.share_format, saved.share_after, saved.share_stamp, saved.share_target],
       ["工作", "待办", "task", "open", false, "new"]);
-    // 关掉总开关:下面都灰掉,安卓那边停用分享入口;关着时送来的分享不写
+    // 关掉「接收文字」:安卓那边停用文字的分享入口;图片和文件还收,下面的设置照样能改;送来的文字不写
     await page.locator("#look-share").uncheck();
-    assert.equal(await page.locator(".share-option:not(.off)").count(), 0);
     assert.equal(await page.evaluate(() => window.__share.enabled.at(-1)), false);
+    assert.equal(await page.locator("#look-share-format button").first().isDisabled(), false);
     // 设的是留在 Minipad:提示在页面里
+    await shareAgain(page, { text: "关着" });
+    await page.waitForFunction(() => /接收文字已关闭/.test(document.querySelector("#toast").textContent));
+    // 三个都关:下面都灰掉;关着时送来的分享不写
+    await page.locator("#look-share-images").uncheck();
+    await page.locator("#look-share-files").uncheck();
+    assert.equal(await page.locator(".share-option:not(.off)").count(), 0);
+    assert.deepEqual(await page.evaluate(() => [window.__share.options.at(-1).images, window.__share.options.at(-1).files]), [false, false]);
     await shareAgain(page, { text: "关着" });
     await page.waitForFunction(() => /分享到 Minipad 已关闭/.test(document.querySelector("#toast").textContent));
     assert.deepEqual(await page.evaluate(() => window.__share.done), []);
@@ -2314,6 +2353,159 @@ test("share: the 分享到 Minipad settings are saved, greyed out when unused, a
     await page.reload();
     await page.locator("#editor .ProseMirror h1").waitFor();
     assert.equal(await page.evaluate(() => window.__share.enabled.at(-1)), false);
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+// ---- 分享图片和文件(0.5.6) ----
+const photo = { path: "/data/user/0/io.github.alstarknight.minipadnext/cache/share/share-1.tmp", name: "IMG_0001.jpg", mime: "image/jpeg", size: 2048 };
+const pdf = { path: "/data/user/0/io.github.alstarknight.minipadnext/cache/share/share-2.tmp", name: "季度报告.pdf", mime: "application/pdf", size: 1258291 };
+
+test("share files: a photo and a pdf shared with text go below the text, one per line; the ones not saved are named", async () => {
+  const shared = { text: "看看这个", title: "", files: [photo, pdf], skipped: [{ name: "录像.mp4", reason: "超过 50 MB" }] };
+  const { context, page, errors } = await open({ share: shared });
+  try {
+    await shareDone(page, 1);
+    assert.match(await note(page, "收集箱"),
+      new RegExp(`^${STAMP} 看看这个\n!\\[\\]\\(assets/img-20261101-130501\\.jpg\\)\n\\[📎 季度报告\\.pdf（1\\.2 MB）\\]\\(assets/季度报告\\.pdf\\)\n$`));
+    assert.deepEqual(await page.evaluate(() => window.__share.done),
+      [{ message: "已记到「收集箱」;「录像.mp4」没存(超过 50 MB)", back: true }]);
+    // 文件交给 Rust 放进默认笔记本的 assets,上限照着设置
+    assert.deepEqual(await page.evaluate(() => window.__mobileTest.placed), [{ book: "", files: [photo, pdf], maxMb: 50 }]);
+    // 默认设置也告诉了安卓那边
+    assert.deepEqual(await page.evaluate(() => window.__share.options[0]),
+      { text: true, images: true, files: true, max_mb: 50, max_count: 20, heic: true, compress: false });
+    // 同一个文件再分享一次:不盖掉原来的,叫 季度报告-2.pdf
+    await shareAgain(page, { files: [pdf] });
+    await shareDone(page, 2);
+    assert.match(await note(page, "收集箱"), new RegExp(`\n\n${STAMP} \\[📎 季度报告\\.pdf（1\\.2 MB）\\]\\(assets/季度报告-2\\.pdf\\)\n$`));
+    // 打开这一页:图片照常显示
+    await chooseNote(page, "收集箱");
+    await page.waitForFunction(() => document.querySelector("#editor img:not(.ProseMirror-separator)")?.naturalWidth === 1);
+    assert.equal(await page.locator("#editor a", { hasText: "季度报告.pdf（1.2 MB）" }).count(), 2);
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test("share files: above the text as a to-do, only the file name without 📎; text off keeps only the files; failures clean up", async () => {
+  const look = { ui: "classic", share_media_place: "above", share_format: "task", share_file_label: "name", share_file_clip: false, share_stamp: false };
+  const { context, page, errors } = await open({ look, share: null });
+  try {
+    await shareAgain(page, { text: "说明", files: [pdf, photo] });
+    await shareDone(page, 1);
+    assert.equal(await note(page, "收集箱"), "- [ ] [季度报告.pdf](assets/季度报告.pdf)\n  ![](assets/img-20261101-130501.jpg)\n  说明\n");
+    // 关掉「接收文字」:一起分享来的文字不记,文件照样存
+    await page.click("#open-drawer");
+    await page.click("#open-settings");
+    await page.locator("#look-share").uncheck();
+    await page.click("#look-share-format [data-share-format=paragraph]");
+    await page.click("#close-settings");
+    await shareAgain(page, { text: "不要这句", files: [{ ...photo, name: "IMG_0002.png", mime: "image/png" }] });
+    await shareDone(page, 2);
+    const inbox = await note(page, "收集箱");
+    assert.ok(inbox.endsWith("\n\n![](assets/img-20261101-130501.png)\n"), inbox);
+    assert.equal(inbox.includes("不要这句"), false);
+    // Rust 没放成的说原因;一个也没放成时什么也不写
+    await shareAgain(page, { files: [{ ...pdf, fail: "是空的" }] });
+    await shareDone(page, 3);
+    assert.deepEqual(await page.evaluate(() => window.__share.done[2]), { message: "没有记下来:「季度报告.pdf」没存(是空的)", back: false });
+    // 页面没写成:刚放进 assets 的文件删掉
+    await page.evaluate(() => { window.__mobileTest.failSaves = 1; });
+    await shareAgain(page, { files: [pdf] });
+    await shareDone(page, 4);
+    assert.match((await page.evaluate(() => window.__share.done[3])).message, /^没能记下分享的内容:/);
+    assert.deepEqual(await page.evaluate(() => window.__mobileTest.removed), [{ book: "", paths: ["assets/季度报告-2.pdf"] }]);
+    assert.equal(await note(page, "收集箱"), inbox);
+    // 三个都关着时,复制来的文件叫安卓那边删掉
+    await page.click("#open-drawer");
+    await page.click("#open-settings");
+    await page.locator("#look-share-images").uncheck();
+    await page.locator("#look-share-files").uncheck();
+    await page.click("#close-settings");
+    await shareAgain(page, { files: [pdf] });
+    await shareDone(page, 5);
+    assert.deepEqual(await page.evaluate(() => window.__share.done[4]), { message: "分享到 Minipad 已关闭,可以在 外观 → 分享到 Minipad 里打开", back: false });
+    assert.deepEqual(await page.evaluate(() => window.__share.discarded), [pdf]);
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test("share files: the image and file settings are saved, sent to Android and greyed out when their switch is off", async () => {
+  const { context, page, errors } = await open({ share: null });
+  try {
+    await page.click("#open-drawer");
+    await page.click("#open-settings");
+    const pressed = (box) => page.locator(`#${box} [aria-pressed=true]`).textContent();
+    assert.equal(await page.locator("#look-share-images").isChecked(), true);
+    assert.equal(await page.locator("#look-share-files").isChecked(), true);
+    assert.equal(await pressed("look-share-quality"), "保留原图");
+    assert.equal(await page.locator("#look-share-heic").isChecked(), true);
+    assert.equal(await pressed("look-share-max"), "50 MB");
+    assert.equal(await pressed("look-share-count"), "20 个");
+    assert.equal(await pressed("look-share-file-label"), "文件名和大小");
+    assert.equal(await page.locator("#look-share-clip").isChecked(), true);
+    assert.equal(await pressed("look-share-media-place"), "下面");
+    await page.click("#look-share-quality [data-share-quality=compress]");
+    await page.locator("#look-share-heic").uncheck();
+    await page.click("#look-share-max [data-share-max='200']");
+    await page.click("#look-share-count [data-share-count='5']");
+    await page.click("#look-share-file-label [data-share-file-label=name]");
+    await page.locator("#look-share-clip").uncheck();
+    await page.click("#look-share-media-place [data-share-media-place=above]");
+    assert.deepEqual(await page.evaluate(() => window.__share.options.at(-1)),
+      { text: true, images: true, files: true, max_mb: 200, max_count: 5, heic: false, compress: true });
+    // 关掉「接收图片」:图片的两项灰掉;再关掉「接收文件」:文件链接和大小、个数、位置也灰掉,文字的还能改
+    await page.locator("#look-share-images").uncheck();
+    assert.equal(await page.locator("#look-share-heic").isDisabled(), true);
+    assert.equal(await page.locator("#look-share-quality button").first().isDisabled(), true);
+    assert.equal(await page.locator("#look-share-clip").isDisabled(), false);
+    assert.equal(await page.locator("#look-share-max button").first().isDisabled(), false);
+    await page.locator("#look-share-files").uncheck();
+    assert.equal(await page.locator("#look-share-clip").isDisabled(), true);
+    assert.equal(await page.locator("#look-share-max button").first().isDisabled(), true);
+    assert.equal(await page.locator("#look-share-media-place button").first().isDisabled(), true);
+    assert.equal(await page.locator("#look-share-format button").first().isDisabled(), false);
+    assert.deepEqual(await page.evaluate(() => [window.__share.options.at(-1).images, window.__share.options.at(-1).files]), [false, false]);
+    const saved = await page.evaluate(() => JSON.parse(localStorage.getItem("minipad-mobile-look")));
+    assert.deepEqual(
+      ["share_images", "share_files", "share_image_quality", "share_heic", "share_max_mb", "share_max_count", "share_file_label", "share_file_clip", "share_media_place"].map((k) => saved[k]),
+      [false, false, "compress", false, 200, 5, "name", false, "above"]);
+    // 重新打开:设置照旧,也照旧告诉安卓那边
+    await page.reload();
+    await page.locator("#editor .ProseMirror h1").waitFor();
+    assert.deepEqual(await page.evaluate(() => window.__share.options.at(-1)),
+      { text: true, images: false, files: false, max_mb: 200, max_count: 5, heic: false, compress: true });
+    assert.deepEqual(errors, []);
+  } finally { await context.close(); }
+});
+
+test("share files: tapping a file link opens it with an installed app, the same way as web links", async () => {
+  const { context, page, errors } = await open({ share: null });
+  try {
+    await shareAgain(page, { files: [pdf] });
+    await shareDone(page, 1);
+    await chooseNote(page, "收集箱");
+    const link = page.locator("#editor a", { hasText: "季度报告.pdf" });
+    await link.waitFor();
+    const opened = () => page.evaluate(() => window.__share.opened);
+    // 编辑时点一下只放光标(和网页链接一样)
+    await link.click();
+    assert.deepEqual(await opened(), []);
+    // 阅读时点一下就用手机里的应用打开
+    await page.click("#mode");
+    await link.click();
+    assert.deepEqual(await opened(), ["/data/user/0/io.github.alstarknight.minipadnext/notes/assets/季度报告.pdf"]);
+    // 没有能打开它的应用
+    await page.evaluate(() => { window.__share.openResult = "none"; });
+    await link.click();
+    await page.waitForFunction(() => document.querySelector("#toast").textContent === "没有可以打开它的应用");
+    // 文件已经不在了
+    await page.evaluate(() => { window.__mobileTest.assets = {}; });
+    await link.click();
+    await page.waitForFunction(() => /找不到这个附件/.test(document.querySelector("#toast").textContent));
+    assert.equal((await opened()).length, 2);
+    // web links still go to the browser
+    assert.deepEqual(await page.evaluate(() => window.__mobileTest.opened || []), []);
     assert.deepEqual(errors, []);
   } finally { await context.close(); }
 });

@@ -12,7 +12,8 @@ import { setPageLinkHost, pageNamesChanged, applyPageLinkSettings, linkIndex } f
 import { resolveTarget, retarget, fileName } from "./pagelinks.js";
 import { BOOK_ICONS, bookIcon, iconColor } from "./bookicons.js";
 import { applyExpandSettings, setExpandHost } from "./expand.js";
-import { DEFAULT_SHARE_PAGE, SHARE_PAGE_NAME, shareLines, shareBlock, insertShare } from "./share.js";
+import { DEFAULT_SHARE_PAGE, SHARE_PAGE_NAME, shareLines, shareBlock, insertShare, shareSkippedText } from "./share.js";
+import { attachmentMarkdown, imageMarkdown } from "./attachments.js";
 import { fillVars } from "./vars.js";
 
 const invoke = window.__TAURI__?.core?.invoke;
@@ -44,7 +45,7 @@ const notify = (message) => {
   if (look.layout === "clean" && /^保存失败|冲突副本/.test(message)) toast(message);
 };
 const markdown = () => { syncContent(selected); return selected?.content ?? ""; };
-const allowedImage = { "image/jpeg": true, "image/png": true, "image/gif": true, "image/webp": true, "image/bmp": true };
+const allowedImage = { "image/jpeg": true, "image/png": true, "image/gif": true, "image/webp": true, "image/bmp": true, "image/svg+xml": true, "image/avif": true };
 
 // Desktop folds, styled spans and titled code are handled by the shared editor. Any other raw
 // HTML tag cannot be round-tripped by Milkdown, so those notes open as raw Markdown instead of
@@ -531,7 +532,7 @@ function dataURL(file) {
 async function insertImage(file) {
   if (!selected || selected.unreadable || reading) return;
   if (!allowedImage[file.type] || file.size > 10 * 1024 * 1024 || !file.size) {
-    notify("仅支持 PNG、JPG、GIF、WebP、BMP，且不超过 10 MB");
+    notify("仅支持 PNG、JPG、GIF、WebP、BMP、SVG、AVIF，且不超过 10 MB");
     return;
   }
   const note = selected;
@@ -583,9 +584,11 @@ el("dialog").addEventListener("pointerdown", (e) => { if (e.target.closest("butt
 el("dialog-ok").addEventListener("click", () => closeDialog(true));
 el("dialog-cancel").addEventListener("click", () => closeDialog(false));
 el("dialog").addEventListener("click", (e) => { if (e.target === e.currentTarget) closeDialog(false); });
-// 链接交给系统浏览器(或应用内浏览器)、邮件和电话应用打开,应用自己的页面不跳走
+// 链接交给系统浏览器(或应用内浏览器)、邮件和电话应用打开,应用自己的页面不跳走;
+// 附件链接 assets/…(0.5.6)交给手机里装的应用打开
 async function openLink(href) {
   const url = (href || "").trim();
+  if (/^(\.\/)?assets\//i.test(url)) return openAttachment(url);
   if (!/^(https?:|mailto:|tel:)/i.test(url)) {
     notify("这个链接不能在手机上打开");
     return;
@@ -594,6 +597,18 @@ async function openLink(href) {
     await invoke("mobile_open_url", { url, inApp: look.link_open === "inapp" });
   } catch (error) {
     notify("打不开链接：" + error);
+  }
+}
+// 附件链接 [📎 文件](assets/…):Rust 找到这个笔记本 assets 里的文件,安卓那边用 FileProvider 交给能打开它的应用
+async function openAttachment(href) {
+  if (!selected) return;
+  try {
+    const path = await invoke("mobile_attachment_path", { book: selected.book, path: href });
+    const result = window.MinipadShare ? window.MinipadShare.openFile(path) : "none";
+    if (result === "none") toast("没有可以打开它的应用");
+    else if (result) toast("打不开这个附件:" + result, 5000);
+  } catch (error) {
+    toast(String(error), 5000);
   }
 }
 // 不能编辑时(阅读模式、只读页面)点链接就打开;编辑时默认只放光标,外观设置里可以改成也打开。
@@ -1508,6 +1523,11 @@ const THEMES = ["system", "light", "dark"];
 const systemDark = window.matchMedia("(prefers-color-scheme: dark)");
 const settingsSheet = el("mobile-settings");
 const settingsBackdrop = el("settings-backdrop");
+// 分享图片和文件(0.5.6):单个文件大小上限(MB)、一次最多几个的选项
+const SHARE_MAX_MB = [10, 25, 50, 100, 200];
+const SHARE_MAX_COUNT = [5, 20, 50];
+// 安卓那边收分享时要知道的设置(见 syncShareTarget)
+const SHARE_NATIVE = ["share_enabled", "share_images", "share_files", "share_image_quality", "share_heic", "share_max_mb", "share_max_count"];
 let look = loadLook();
 // 页面链接的两种颜色:第一个色块是默认的(跟随强调色 / 灰色),别的颜色来自共用的颜色库,和电脑版一样
 const pageLinkColors = [
@@ -1582,6 +1602,16 @@ function loadLook() {
     share_stamp: saved.share_stamp !== false,
     share_source: saved.share_source !== false,
     share_after: saved.share_after === "open" ? "open" : "back",
+    // 分享图片和文件(0.5.6):share_enabled 是「接收文字」,另有图片、文件两个开关;下面几项给图片和文件用
+    share_images: saved.share_images !== false,
+    share_files: saved.share_files !== false,
+    share_image_quality: saved.share_image_quality === "compress" ? "compress" : "original",
+    share_heic: saved.share_heic !== false,
+    share_max_mb: SHARE_MAX_MB.includes(saved.share_max_mb) ? saved.share_max_mb : 50,
+    share_max_count: SHARE_MAX_COUNT.includes(saved.share_max_count) ? saved.share_max_count : 20,
+    share_file_label: saved.share_file_label === "name" ? "name" : "size",
+    share_file_clip: saved.share_file_clip !== false,
+    share_media_place: saved.share_media_place === "above" ? "above" : "below",
   };
 }
 
@@ -1590,7 +1620,7 @@ function setLook(change) {
   try { localStorage.setItem(LOOK_KEY, JSON.stringify(look)); } catch { /* 这次照样生效,只是下次打开不记得 */ }
   applyLook();
   setMobileLocalPathEnabled(look.local_path_enabled);
-  if ("share_enabled" in change) syncShareTarget();
+  if (SHARE_NATIVE.some((key) => key in change)) syncShareTarget();
 }
 
 function applyLook() {
@@ -1623,6 +1653,9 @@ function applyLook() {
     ["look-drawer-tree", "drawerTree", look.drawer_tree],
     ["look-share-target", "shareTarget", look.share_target], ["look-share-where", "shareWhere", look.share_where],
     ["look-share-format", "shareFormat", look.share_format], ["look-share-after", "shareAfter", look.share_after],
+    ["look-share-quality", "shareQuality", look.share_image_quality], ["look-share-max", "shareMax", String(look.share_max_mb)],
+    ["look-share-count", "shareCount", String(look.share_max_count)], ["look-share-file-label", "shareFileLabel", look.share_file_label],
+    ["look-share-media-place", "shareMediaPlace", look.share_media_place],
   ]) for (const b of el(box).children) b.setAttribute("aria-pressed", String(b.dataset[attr] === value));
   // 经典布局用不上的几项灰掉
   for (const row of settingsSheet.querySelectorAll(".clean-only-setting")) {
@@ -1673,7 +1706,12 @@ for (const [box, attr, field] of [
   ["look-drawer-tree", "drawerTree", "drawer_tree"],
   ["look-share-target", "shareTarget", "share_target"], ["look-share-where", "shareWhere", "share_where"],
   ["look-share-format", "shareFormat", "share_format"], ["look-share-after", "shareAfter", "share_after"],
+  ["look-share-quality", "shareQuality", "share_image_quality"], ["look-share-file-label", "shareFileLabel", "share_file_label"],
+  ["look-share-media-place", "shareMediaPlace", "share_media_place"],
 ]) for (const b of el(box).children) b.addEventListener("click", () => setLook({ [field]: b.dataset[attr] }));
+for (const [box, attr, field] of [["look-share-max", "shareMax", "share_max_mb"], ["look-share-count", "shareCount", "share_max_count"]]) {
+  for (const b of el(box).children) b.addEventListener("click", () => setLook({ [field]: Number(b.dataset[attr]) }));
+}
 el("look-debug").addEventListener("change", (e) => setLook({ debug: e.target.checked }));
 el("look-local-path").addEventListener("change", (e) => setLook({ local_path_enabled: e.target.checked }));
 el("look-long-page").addEventListener("change", (e) => setLook({ long_page_lazy: e.target.checked }));
@@ -1688,37 +1726,56 @@ el("look-share-book").addEventListener("change", (e) => setLook({ share_book: e.
 el("look-share-page").addEventListener("change", (e) => setLook({ share_page: e.target.value.trim() || DEFAULT_SHARE_PAGE }));
 el("look-share-stamp").addEventListener("change", (e) => setLook({ share_stamp: e.target.checked }));
 el("look-share-source").addEventListener("change", (e) => setLook({ share_source: e.target.checked }));
+el("look-share-images").addEventListener("change", (e) => setLook({ share_images: e.target.checked }));
+el("look-share-files").addEventListener("change", (e) => setLook({ share_files: e.target.checked }));
+el("look-share-heic").addEventListener("change", (e) => setLook({ share_heic: e.target.checked }));
+el("look-share-clip").addEventListener("change", (e) => setLook({ share_file_clip: e.target.checked }));
 // 算不出来时在状态栏说一句
 setExpandHost({ notify });
 systemDark.addEventListener("change", applyLook);
 // 格式栏「自定义」改了就记下来,重启后照旧
 el("format-bar").addEventListener("format-bar-items", (e) => setLook(e.detail));
 
-// ---- 分享到 Minipad(0.5.5) ----
+// ---- 分享到 Minipad(0.5.5 文字,0.5.6 起还有图片和文件) ----
 // 别的 App 里点「分享」选 Minipad:安卓那边(src-tauri/android-share/MainActivity.kt)先记下分享的文字,
-// 这里用 MinipadShare.take() 拿走,写进设好的页面(走 mobile_save_note,带冲突检测),写完提示一下;
+// 图片和文件复制到应用的临时文件夹;这里用 MinipadShare.take() 拿走,文件交给 Rust 移进笔记本的 assets,
+// 写进设好的页面(走 mobile_save_note,带冲突检测),写完提示一下;页面没写成就把刚放进去的文件删掉。
 // 默认接着回到原来的 App,也可以留在 Minipad 打开这一页
+const shareAnyOn = () => look.share_enabled || look.share_images || look.share_files;
+
 function showShareOptions() {
   el("look-share").checked = look.share_enabled;
   el("look-share-stamp").checked = look.share_stamp;
   el("look-share-source").checked = look.share_source;
   el("look-share-page").value = look.share_page;
+  el("look-share-images").checked = look.share_images;
+  el("look-share-files").checked = look.share_files;
+  el("look-share-heic").checked = look.share_heic;
+  el("look-share-clip").checked = look.share_file_clip;
   // 设的笔记本不在了:写的时候用默认笔记本,这里也显示默认笔记本
   const book = books.find((b) => b.name === look.share_book) || books.find((b) => b.name === "");
   el("look-share-book").replaceChildren(...books.map((b) => new Option(bookLabel(b.name), b.name)));
   el("look-share-book").value = book?.name ?? "";
   el("look-share-pages").replaceChildren(...(book?.notes || []).map((n) => new Option(n.name, n.name)));
-  // 总开关关着时下面都用不上;「每次新建一页」时用不上页面和加在哪里
+  // 文字、图片、文件都不收时下面都用不上;「每次新建一页」时用不上页面和加在哪里;
+  // 图片的几项跟着「接收图片」,文件链接的几项跟着「接收文件」,大小、个数、放在哪跟着这两个
   for (const row of settingsSheet.querySelectorAll(".share-option")) {
-    const off = !look.share_enabled || (look.share_target === "new" && row.classList.contains("share-page-only"));
-    row.classList.toggle("off", off);
-    for (const c of row.querySelectorAll("button, input, select")) c.disabled = off;
+    const c = row.classList;
+    const off = !shareAnyOn() || (look.share_target === "new" && c.contains("share-page-only"))
+      || (c.contains("share-image-only") && !look.share_images) || (c.contains("share-file-only") && !look.share_files)
+      || (c.contains("share-media-only") && !look.share_images && !look.share_files);
+    c.toggle("off", off);
+    for (const control of row.querySelectorAll("button, input, select")) control.disabled = off;
   }
 }
 
-// 「分享」关掉时安卓那边停用分享入口,分享列表里就没有 Minipad 了
+// 安卓那边按这几项收分享:关掉的那一类分享列表里就没有 Minipad;大小、个数、heic、压缩在复制时就照着做
 function syncShareTarget() {
-  try { window.MinipadShare?.setEnabled(look.share_enabled); } catch { /* 下次打开再试 */ }
+  const options = {
+    text: look.share_enabled, images: look.share_images, files: look.share_files,
+    max_mb: look.share_max_mb, max_count: look.share_max_count, heic: look.share_heic, compress: look.share_image_quality === "compress",
+  };
+  try { window.MinipadShare?.setOptions(JSON.stringify(options)); } catch { /* 下次打开再试 */ }
 }
 
 let sharing = Promise.resolve();
@@ -1732,21 +1789,55 @@ function takeShared() {
   return sharing;
 }
 
+// 复制来的文件用不上了(分享关着、写进页面之前就出错了):叫安卓那边删掉
+function discardShared(files) {
+  if (!files.length) return;
+  try { window.MinipadShare?.discard(JSON.stringify(files)); } catch { /* 安卓那边一天后自己清掉 */ }
+}
+
 async function receiveShare(shared) {
   const back = look.share_after !== "open";
   // 回原来的 App 时用系统的提示(Minipad 已经退到后台了);写不进去时留在 Minipad
-  const finish = (message, ok = true) => {
+  const finish = (message, ok = true, slow = !ok) => {
     if (back) window.MinipadShare?.done(message, ok);
-    else toast(message, ok ? 2500 : 5000);
+    else toast(message, slow ? 5000 : 2500);
   };
-  if (!look.share_enabled) return finish("分享到 Minipad 已关闭,可以在 外观 → 分享到 Minipad 里打开", false);
-  const lines = shareLines(shared, { stamp: look.share_stamp, source: look.share_source });
-  if (!lines.length) return finish("分享的内容是空的,没有记下来", false);
+  const files = Array.isArray(shared.files) ? shared.files : [];
+  const skipped = Array.isArray(shared.skipped) ? [...shared.skipped] : [];
+  if (!shareAnyOn()) {
+    discardShared(files);
+    return finish("分享到 Minipad 已关闭,可以在 外观 → 分享到 Minipad 里打开", false);
+  }
+  // 「接收文字」关着时不记分享的文字(和图片、文件一起分享来的也不记)
+  const text = look.share_enabled ? shared : {};
+  const opts = { stamp: look.share_stamp, source: look.share_source };
+  if (!files.length && !shareLines(text, opts).length) {
+    if (skipped.length) return finish("没有记下来:" + shareSkippedText(skipped), false);
+    if (!look.share_enabled && (shared.text || shared.title)) return finish("接收文字已关闭,可以在 外观 → 分享到 Minipad 里打开", false);
+    return finish("分享的内容是空的,没有记下来", false);
+  }
+  let book = null;
+  let placed = [];
   try {
     await flush();
     const loaded = await listBooks();
-    const book = loaded.find((b) => b.name === look.share_book) || loaded.find((b) => b.name === "") || loaded[0];
+    book = loaded.find((b) => b.name === look.share_book) || loaded.find((b) => b.name === "") || loaded[0];
     if (!book) throw new Error("没有笔记本");
+    if (files.length) {
+      // 文件移进这个笔记本的 assets(图片叫 img-日期-时间,文件留着原来的名字,重名加 -2);没移成的说一下原因
+      const result = await invoke("mobile_place_shared", { book: book.name, files, maxMb: look.share_max_mb });
+      placed = result.filter((f) => !f.error);
+      skipped.push(...result.filter((f) => f.error).map((f) => ({ name: f.name, reason: f.error })));
+    }
+  } catch (error) {
+    discardShared(files);
+    return finish("没能记下分享的内容:" + error, false);
+  }
+  const media = placed.map((f) => (f.image ? imageMarkdown(f.rel)
+    : attachmentMarkdown(f.rel, f.name, f.size, { clip: look.share_file_clip, size: look.share_file_label !== "name" })));
+  const lines = shareLines(text, { ...opts, media, mediaFirst: look.share_media_place === "above" });
+  if (!lines.length) return finish("没有记下来:" + shareSkippedText(skipped), false);
+  try {
     let name;
     let before = "";
     let content;
@@ -1771,8 +1862,11 @@ async function receiveShare(shared) {
       // 写的就是屏幕上开着的这一页:读一遍新的内容,接着编辑时不会当成别处改过
       await refresh();
     } else await showNewPages();
-    finish(result?.conflict_name ? `记下了,页面刚被别处改过,这一条在冲突副本「${result.conflict_name}」里` : `已记到「${name}」`);
+    const saved = result?.conflict_name ? `记下了,页面刚被别处改过,这一条在冲突副本「${result.conflict_name}」里` : `已记到「${name}」`;
+    finish(skipped.length ? saved + ";" + shareSkippedText(skipped) : saved, true, skipped.length > 0);
   } catch (error) {
+    // 页面没写成:刚放进 assets 的文件删掉,不留没人用的文件
+    if (placed.length) await invoke("mobile_remove_assets", { book: book.name, paths: placed.map((f) => f.rel) }).catch(() => {});
     finish("没能记下分享的内容:" + error, false);
   }
 }

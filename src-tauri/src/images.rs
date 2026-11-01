@@ -275,6 +275,29 @@ pub fn place(book_dir: &Path, temp: &Path, name: &str) -> Result<String, String>
     Err("同名的附件太多了,请换个名字".into())
 }
 
+/// 手机分享来的一个文件(0.5.6)存进 assets 时叫什么、是不是能直接显示的图片(还没去掉重名,place 会加 -2、-3):
+/// 图片叫 img-日期-时间.扩展名(heic 已经在安卓那边转成了 jpg;没转的当文件),别的文件保留原来的名字(清理过)。
+/// 空文件、超过上限(max 字节)的不存,返回原因
+#[cfg_attr(not(mobile), allow(dead_code))]
+pub fn shared_target(
+    name: &str,
+    mime: &str,
+    size: u64,
+    max: u64,
+    stamp: &str,
+) -> Result<(String, bool), String> {
+    if size == 0 {
+        return Err("是空的".into());
+    }
+    if size > max {
+        return Err(format!("超过 {} MB", max / 1024 / 1024));
+    }
+    Ok(match image_ext(name, mime) {
+        Some(ext) => (format!("img-{stamp}.{ext}"), true),
+        None => (attachment_name(name), false),
+    })
+}
+
 /// %E4%B8%AD 这样的写法换回文字(encodeURIComponent 的反过程)
 pub fn percent_decode(s: &str) -> Option<String> {
     let b = s.as_bytes();
@@ -520,6 +543,61 @@ mod tests {
             "no empty file is left behind"
         );
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn shared_files_are_named_as_images_or_kept_as_files_and_checked_for_size() {
+        const MB: u64 = 1024 * 1024;
+        let target = |name: &str, mime: &str, size: u64| {
+            shared_target(name, mime, size, 50 * MB, "20261101-130501")
+        };
+        assert_eq!(
+            target("IMG_0001.JPG", "image/jpeg", 10),
+            Ok(("img-20261101-130501.jpg".into(), true))
+        );
+        // 安卓那边转成 jpg 的 heic 照片
+        assert_eq!(
+            target("IMG_0002.jpg", "image/jpeg", 10),
+            Ok(("img-20261101-130501.jpg".into(), true))
+        );
+        assert_eq!(
+            target("", "image/png", 10),
+            Ok(("img-20261101-130501.png".into(), true))
+        );
+        assert_eq!(
+            target("logo.svg", "image/svg+xml", 10),
+            Ok(("img-20261101-130501.svg".into(), true))
+        );
+        assert_eq!(
+            target("a.avif", "", 10),
+            Ok(("img-20261101-130501.avif".into(), true))
+        );
+        // 没转的 heic(设置关掉了,或者系统解不开)当文件存
+        assert_eq!(
+            target("IMG_0003.HEIC", "image/heic", 10),
+            Ok(("IMG_0003.HEIC".into(), false))
+        );
+        assert_eq!(
+            target("季度 报告:终版?.pdf", "application/pdf", 10),
+            Ok(("季度 报告_终版_.pdf".into(), false))
+        );
+        assert_eq!(
+            target("notes.md", "text/markdown", 10),
+            Ok(("notes.md".into(), false))
+        );
+        assert_eq!(
+            target("../../x.zip", "application/zip", 10),
+            Ok(("x.zip".into(), false))
+        );
+        assert_eq!(
+            target("big.mp4", "video/mp4", 51 * MB),
+            Err("超过 50 MB".into())
+        );
+        assert_eq!(
+            target("ok.mp4", "video/mp4", 50 * MB),
+            Ok(("ok.mp4".into(), false))
+        );
+        assert_eq!(target("empty.txt", "text/plain", 0), Err("是空的".into()));
     }
 
     #[test]
