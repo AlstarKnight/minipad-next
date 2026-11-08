@@ -36,6 +36,8 @@ let loading = false;
 let busy = false;
 let reading = false;
 let sorting = false; // 抽屉里正在调整页面顺序(见 setSorting)
+// 开着的笔记本和页面,下次打开应用时回到这里(只记在这台手机上,和外观设置一样存在 localStorage)
+const LAST_PAGE_KEY = "minipad-mobile-last-page";
 
 // 简洁布局没有状态条:状态写进标题上面那行小字,保存失败和冲突副本再弹一次提示
 const notify = (message) => {
@@ -488,6 +490,7 @@ async function refresh(bookName, noteName) {
       unreadable: note.unreadable, sourceOnly: needsSource(note.content),
       state: null, mdStale: false, scroll: 0,
     } : null;
+    try { localStorage.setItem(LAST_PAGE_KEY, JSON.stringify({ book: currentBook, page: selected?.name ?? null })); } catch { /* 存不了就下次从第一页开始 */ }
     source.value = note?.content ?? "";
     loading = true;
     // An empty notebook shows an empty page instead of the previous page's text.
@@ -1923,7 +1926,10 @@ async function start() {
     setMobileLocalPathEnabled(look.local_path_enabled);
     view.dom.addEventListener("open-find", () => showFind(true));
     if (!invoke) throw new Error("请使用 Android 应用打开");
-    await refresh(null, null);
+    // 回到上次开着的那一页;那一页不在了打开那个笔记本的第一页,笔记本也不在了打开第一个笔记本
+    let last = {};
+    try { last = JSON.parse(localStorage.getItem(LAST_PAGE_KEY)) || {}; } catch { /* 从第一页开始 */ }
+    await refresh(last.book ?? null, last.page ?? null);
     // 分享到 Minipad:应用是分享叫起来的,或者网页加载时安卓那边已经收到了一条
     window.__minipadShared = () => void takeShared();
     void takeShared();
