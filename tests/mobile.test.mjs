@@ -570,6 +570,44 @@ test("tapping the notebook already on screen keeps the open page", async () => {
   }
 });
 
+test("reopening the app goes back to the notebook and page that were open", async () => {
+  const { context, page, errors } = await open();
+  // The mocked notes folder is rebuilt on every start: this notebook is there after each restart,
+  // pages and notebooks created in the app are not (like ones deleted on another device meanwhile).
+  await context.addInitScript(() => window.__mobileTest.disk.push({ name: "工作", notes: [
+    { name: "甲", content: "甲页", unreadable: false },
+    { name: "乙", content: "乙页", unreadable: false },
+  ] }));
+  const restart = async (text, title) => {
+    await page.reload();
+    await page.locator(".ProseMirror p").filter({ hasText: text }).waitFor();
+    assert.equal(await page.locator("#page-title").textContent(), title);
+  };
+  try {
+    await restart("第一段", "一");
+    await page.click("#open-drawer");
+    await page.locator("#books-list button").filter({ hasText: "工作" }).click();
+    await chooseNote(page, "乙");
+    await page.locator(".ProseMirror p").filter({ hasText: "乙页" }).waitFor();
+    await restart("乙页", "乙");
+    // the page is gone: that notebook's first page
+    await page.click("#open-drawer");
+    await page.click("#add-note");
+    await answerDialog(page, "丙");
+    await page.waitForFunction(() => document.getElementById("page-title").textContent === "丙");
+    await restart("甲页", "甲");
+    // the notebook is gone: the first notebook's first page
+    await page.click("#open-drawer");
+    await page.click("#add-book");
+    await answerDialog(page, "新书");
+    await page.waitForFunction(() => document.getElementById("book-title").textContent.startsWith("新书"));
+    await restart("第一段", "一");
+    assert.deepEqual(errors, []);
+  } finally {
+    await context.close();
+  }
+});
+
 test("the toolbar stays visible while another page loads", async () => {
   const { context, page, errors } = await open();
   try {
